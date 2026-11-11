@@ -56,17 +56,43 @@ if compgen -G "$dir/*.deb" >/dev/null; then
 fi
 
 sudo mkdir -p "$dir/partial"
+# Keep terminal dependency errors in check annotations too. Actions may serve
+# full logs from a separate host inaccessible to a restricted API client.
+# Reporting does not turn a failed update/install into a successful step.
+log=$(mktemp "${RUNNER_TEMP:-/tmp}/ptos-apt.XXXXXX")
+trap 'rm -f "$log"' EXIT
+report_failure() {
+  [ "${GITHUB_ACTIONS:-}" = true ] || return 0
+  awk '
+    /^(E:|Err:)|Temporary failure resolving|Could not resolve|Network is unreachable|404  Not Found/ {
+      gsub(/%/, "%25"); gsub(/\r/, "%0D");
+      print "::error title=APT dependency setup::" $0;
+      if (++count == 12) exit;
+    }' "$log"
+}
+
 # Error-Mode=any: an index that failed to download is an error, not a warning
 # that "apt-get update" survives with an old index (and exit status 0).
 for attempt in 1 2 3; do
-  sudo apt-get update -qq -o APT::Update::Error-Mode=any && break
-  [ "$attempt" -lt 3 ] || exit 1
+  if sudo apt-get update -qq -o APT::Update::Error-Mode=any 2>&1 | tee "$log"; then
+    break
+  fi
+  if [ "$attempt" -eq 3 ]; then
+    report_failure
+    exit 1
+  fi
   sleep 10
 done
 # --fix-broken: a cached install that failed half way leaves unpacked packages
 # whose dependencies are missing; this repairs them too.
-sudo apt-get install -y --fix-broken ${opts[@]+"${opts[@]}"} \
-  -o Dir::Cache::archives="$dir" "${pkgs[@]}"
+if sudo apt-get install -y --fix-broken ${opts[@]+"${opts[@]}"} \
+    -o Dir::Cache::archives="$dir" "${pkgs[@]}" 2>&1 | tee "$log"; then
+  :
+else
+  rc=$?
+  report_failure
+  exit "$rc"
+fi
 
 # The cache is packed by the runner's user: apt's lock file is not readable
 # by it, and the files are root's.

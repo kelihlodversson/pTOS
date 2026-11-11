@@ -43,7 +43,9 @@ void aspace_hw_init_root(PADDR root);
 /* one 4 KiB leaf; FALSE if a table page could not be had (nothing mapped) */
 BOOL aspace_hw_map(PADDR root, VADDR va, PADDR phys, UWORD prot, UWORD flags,
                    ASPACE_TABLE_ALLOC alloc, void *ctx);
-/* the leaf at va: its page, effective permissions and flags; FALSE if none */
+/* The leaf at va: its page, declared logical permissions and flags; FALSE
+ * if none. m68k records EXEC in software bits (the CPU still has no NX).
+ * COW may impose additional temporary hardware write protection. */
 BOOL aspace_hw_lookup(PADDR root, VADDR va, PADDR *phys, UWORD *prot, UWORD *flags);
 /* removes the leaf at va; TRUE if there was one */
 BOOL aspace_hw_unmap(PADDR root, VADDR va);

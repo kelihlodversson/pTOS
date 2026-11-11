@@ -20,6 +20,7 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#include "biosext.h"
 #include "mem.h"
 #include "endian.h"
 #include "time.h"
@@ -440,6 +441,9 @@ static LONG fat_rmdir_dnd(DND *d)
 
     if (!d->d_parent)
         return EACCDN;
+#if CONF_WITH_PLUGGABLE_FS
+    if (d->d_cookie_refs) return EACCDN;
+#endif
 
     if (!(fd = d->d_ofd))
         fd = makofd(d);
@@ -537,6 +541,9 @@ static BOOL fat_open_descendants(const DND *dn)
 {
     const DND *child;
     if (dn->d_files) return TRUE;
+#if CONF_WITH_PLUGGABLE_FS
+    if (dn->d_cookie_refs) return TRUE;
+#endif
     for (child = dn->d_left; child; child = child->d_right)
         if (fat_open_descendants(child)) return TRUE;
     return FALSE;
@@ -766,6 +773,19 @@ static LONG fat_abspath(PFSCOOKIE *dir, const char *tail, char *buf, int buflen)
     return E_OK;
 }
 
+/* Every durable directory cookie owns one cache hold. The cache cannot
+ * recycle its DND while a CWD/search/temporary lookup still references it.
+ * File cookies remain ordinary SFT handles (pos >= 0), not directory holds. */
+static LONG fat_directory_cookie(DND *dn, PFSCOOKIE *out)
+{
+    if (dn->d_cookie_refs == ~(ULONG)0) return ENSMEM;
+    dn->d_cookie_refs++;
+    out->fs = &fat_pfs_ops;
+    DND_TO_COOKIE(dn, out);
+    out->pos = -1;
+    return E_OK;
+}
+
 static LONG fat_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
 {
     char path[4];
@@ -785,11 +805,7 @@ static LONG fat_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
     if (!dn)
         return EPTHNF;
 
-    out->fs = &fat_pfs_ops;
-    DND_TO_COOKIE(dn, out);
-    out->pos = 0;
-
-    return E_OK;
+    return fat_directory_cookie(dn, out);
 }
 
 static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
@@ -809,11 +825,7 @@ static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
     if (!dn)
         return EPTHNF;
 
-    out->fs = &fat_pfs_ops;
-    DND_TO_COOKIE(dn, out);
-    out->pos = 0;
-
-    return E_OK;
+    return fat_directory_cookie(dn, out);
 }
 
 static LONG fat_close(PFSCOOKIE *fc)
@@ -932,16 +944,18 @@ static LONG fat_mediach(struct pfs_ops *fs, WORD drive)
     return Mediach(drive);
 }
 
-/* DND-based directory cookies and sft[]-backed file handles both
- * outlive a single call already (the DND tree is a cache, and file
- * handles are freed by close), so there is nothing to release for
- * those. The one thing that does need releasing is a directory
- * cookie's attached fat_readdir_pool[] slot, if fat_readdir() gave it
- * one (cookie->aux != 0) and the search was abandoned before running
- * to end-of-directory - see fat_readdir()'s comment.
- */
+/* Consume one independently acquired directory hold and any search cursor.
+ * Media invalidation releases durable cookies before freeing the DND tree. */
 static void fat_release(PFSCOOKIE *fc)
 {
+    if (fc->pos == -1)
+    {
+        DND *dn = COOKIE_TO_DND(fc);
+        if (!dn || !dn->d_cookie_refs) panic("FAT directory cookie underflow");
+        dn->d_cookie_refs--;
+        fc->pos = 0;
+        fc->index = 0;
+    }
     if (fc->aux > 0)
     {
         WORD slot = (WORD)(fc->aux - 1);
@@ -1099,6 +1113,18 @@ LONG fat_rmdir_path(char *p)
     return fat_rmdir_dnd(d);
 }
 
+#if CONF_WITH_PLUGGABLE_FS
+LONG fat_chdir_path(char *path)
+{
+    return pfs_do_chdir(path); /* Dsetpath never selects the named drive. */
+}
+#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+LONG fat_set_process_directory(char *path, PD *process)
+{
+    return pfs_set_process_directory(path, process);
+}
+#endif
+#else
 #if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
 static LONG fat_chdir_process(char *p, PD *process)
 #else
@@ -1159,8 +1185,13 @@ LONG fat_set_process_directory(char *path, PD *process)
 }
 #endif
 
+#endif /* CONF_WITH_PLUGGABLE_FS */
+
 LONG fat_getdir_path(char *buf, int drv)
 {
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_getdir(buf, drv);
+#else
     DND *p;
     int n;
     int len;
@@ -1180,6 +1211,7 @@ LONG fat_getdir_path(char *buf, int drv)
     *--buf = 0;
 
     return E_OK;
+#endif
 }
 
 LONG fat_unlink_path(char *name)

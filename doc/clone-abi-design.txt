@@ -12,6 +12,13 @@ architecture-owned user entry and CPU/FPU context. Unsupported policies and
 unmanaged execution contexts remain gated with EINVFN. The remaining sections
 describe the historical Phase 1 foundation, not current backend availability.
 
+Current acceptance is tracked in doc/clone-phase1-acceptance.txt. The public
+header has a 28-byte original prefix and a 32-byte child_pid extension. Supported
+managed callers can create shared-ASPACE PROCESSes or SAME_PROCESS THREADs;
+non-NULL TLS/unknown flags are rejected, public private VM and unmanaged callers
+remain unsupported. None of the historical rejection-only statements below
+supersede that supported contract or imply a current ARM/m68k limitation.
+
 The combined scheduling and process-model epic (#713, #889) needs one clone
 path shared by public Pclone and the kernel's Pexec/Pfork/Pvfork paths.  The
 public entry must not pass a caller-owned argument structure to that path.
@@ -19,8 +26,8 @@ This document records constraints on the first ABI slice (#890).  The draft
 initial structure is in include/pclone.h; creation remains unavailable until
 the process/thread backend in #891-#893 is implemented.
 
-Current boundaries
-------------------
+Historical foundation boundaries
+--------------------------------
 * x32 applications use 32-bit pointers while the x86-64 kernel is LP64.
   ARM and m68k users also use 32-bit pointers, but their trap argument layouts
   differ.  The public structure's pointer fields must use the caller's native
@@ -34,8 +41,8 @@ Current boundaries
   space, with overflow-safe range and alignment checks.  Copy the structure
   once to kernel storage before interpreting its fields; user storage is not
   a durable snapshot when multiple threads can share an address space.
-* The current scheduler already has task records and per-task scheduler stacks
-  in bdos/arch/x86_64/native_sched.c.  KPROC separately owns its address space,
+* At the initial checkpoint, task records and per-task scheduler stacks lived
+  in the then-architecture-local bdos/arch/x86_64/native_sched.c.  KPROC separately owns its address space,
   process resources and syscall stack.  The new design must define ownership
   and cleanup for both stacks before a thread can share a process or VM.
   Process completion, CUIS child notifications, orphaning and wait state

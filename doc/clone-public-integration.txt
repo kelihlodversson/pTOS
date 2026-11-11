@@ -2,8 +2,9 @@ Public clone integration contract (#890/#892)
 =================================================
 
 Public NEW_PROCESS/SHARE_VM startup is now connected on x32, ARM MMU and m68k MMU when Pclone and
-native cooperative scheduling are configured and the caller is a managed task
-in an active group. Other execution contexts remain
+native cooperative scheduling are configured and the caller is a managed
+THREAD admitted to the persistent scheduler. An explicit launch group is not
+required; ordinary asynchronously admitted managed tasks use the same path. Other execution contexts remain
 unsupported (EINVFN). Managed SAME_PROCESS startup is also enabled through
 the thread-only lifetime described in thread-group-execution.txt. Private VM
 startup is not enabled.
@@ -25,7 +26,7 @@ Preserve the public void (*entry)(void *) prototype. Normal return therefore
 means status zero, not an incidental EAX value. The trusted internal test bridge
 currently consumes LONG entry results; public startup selects the separately validated kernel-owned
 zero-status stub using the same Pterm handoff.
-Explicit Pterm keeps its supplied status. No user-supplied return PC or exit-scope
+Explicit Pterm follows the existing THREAD completion and public Pwait encoding. No user-supplied return PC or exit-scope
 flag is introduced. A prepared internal LONG-return image is not proof that the
 public void-entry return convention has been implemented.
 
@@ -69,7 +70,9 @@ The opaque argument is not dereferenced. Non-NULL tls remains EINVAL under #908;
 its existing slot cannot be removed, reused or treated as startup support.
 
 Outputs are optional, aligned writable int32_t destinations in the caller's
-KASPACE. Reject overlap with one another, startup stack or executable pages.
+KASPACE. Reject overlap with one another, the startup stack, the entry page
+or the trusted return-bridge page. Other output pages must pass the existing
+writable-memory validation; this is not a new executable-region policy.
 Back/COW and obtain protected RAM aliases before publication; revalidate at
 commit and seal all leases as one group. Reject same-address replacement as a
 stale lease, even if permissions match. On every failure leave both words and
@@ -85,12 +88,12 @@ yield or a fallible operation in the final transition.
 
 EINVAL: bad scalar size/flags/alignment, undersized startup frame, non-NULL TLS.
 EIMBA: unreadable/wrapping pointers, inaccessible entry/stack/output or stale lease.
-ENSMEM: allocation/backing failure. EAGAIN: slot/identity capacity exhausted.
+ENSMEM: allocation/backing failure. EREADF: snapshot backing I/O failure. EAGAIN: slot/identity capacity exhausted.
 EINVFN: configuration/backend or policy unavailable. Do not advertise runtime
 capability merely because CONF_WITH_PCLONE routes a validated syscall. Unsupported
 configurations must not silently fall back to unsafely runnable legacy contexts.
 
-Active-group prerequisite and integration tests
+Managed-execution prerequisite and integration tests
 -----------------------------------------------
 
 ksched_task_reserve/cancel/publish is now shared by the internal root clone runner
@@ -187,4 +190,68 @@ backing failure returns ENSMEM/EIMBA, with no output or runnable child, rather
 than invoking ordinary user-copy fatal-OOM termination. Existing backed user
 pages can remain resident after a failed construction; no return-frame or
 identity data is stored until publication. ARM/m68k native ABI and packed-trap
-validation remain enabled while their runnable requests return EINVFN.
+validation support runnable managed NEW_PROCESS and SAME_PROCESS requests.
+Unmanaged/nested synchronous launcher continuations and unavailable backends
+still return EINVFN; this is a context/policy gate, not an ARM/m68k limitation.
+
+Phase 1 validation boundary
+--------------------------
+The request snapshot uses the existing error-returning KPROC checked copy.
+Invalid ranges return EIMBA; backing allocation/I/O errors return ENSMEM/EREADF
+without fatal THREAD exit. This uses the same range/materialization/resident
+copy engine, not a second uaccess subsystem. The existing cooperative built-in
+backing path may not yield/reenter mapping destruction during materialization;
+this is not an arbitrary driver-unwind, preemption or SMP guarantee.
+
+Pclone encloses snapshot, construction, publication and all rollback/source
+reference release in the existing execution-owned cleanup scope. It leaves
+pending cancellation visible and allows cooperative progress; scope exit never
+checkpoints. osif's existing public-return checkpoint delivers only after local
+ownership is settled. Nested synchronous Pexec has a distinct execution and
+cannot inherit the managed parent's guard. No arbitrary kernel frame is unwound.
+
+Only the understood 28/32-byte input prefix is read, once. The request may be
+read-only or unaligned (copied as bytes into aligned kernel storage). Unknown
+tail bytes need not be readable, but address+declared-size must not wrap the
+32-bit user range. Writable outputs may alias the copied request; mutual output,
+startup-stack, entry-page and trusted return-bridge-page overlap still fail.
+Other executable pages are not categorically excluded: they must pass the
+ordinary writable-memory checks. m68k output words have
+native two-byte alignment and may straddle pages; both backing aliases are
+secured before the first store. Successful outputs are not retained on exit.
+
+The Phase 1 evidence map is doc/clone-phase1-acceptance.txt. The common native
+trap fixture now covers all sizes 28..36, unknown flag bits, high-bit addresses,
+output alias/alignment/overlap, copy policies, nested unmanaged rejection,
+cross-page requests/stores and optional MMAP permission/lifetime boundaries.
+Existing disabled PRIVATE_CLONE_TEST controls can inject the same established
+factory/acquisition/publication failures on all three MMU targets; the tested
+creation calls still use ordinary CLONE_VM/32, not private-VM startup. These
+controls are not public ABI or production activation. Actual group cancellation,
+x32 allocation/stale-mapping hooks and counted hosted production tests remain
+separate evidence layers. No Phase 2-8 capability follows from this contract.
+
+Filesystem ownership recovery (#948)
+-----------------------------------
+The expanded native Phase1 matrix exposed a FAT/PFS directory-index collision.
+The in-PR recovery separates the PROCESS namespaces, acquires child directory
+references transactionally, retains FAT cache nodes through cookie lifetime and
+invalidates durable cookies before media-tree reclamation. See
+clone-pfs-prerequisite.txt for the implemented contract and limitations.
+Traditional FAT results are not a substitute for standard-PFS evidence: final
+native and CI acceptance must include both configurations on the actual head.
+
+Shared executable policy (#948 recovery)
+---------------------------------------
+The declaring mapping owns executable permission, not the PROCESS that first
+loaded it. m68k030/040/060 descriptors retain EXEC in software bits even with
+PRIVATE_CLONE disabled. This survives CLONE_VM, owner exit and PD reuse with
+the KASPACE; unmap/protect/root retirement update or release the same policy.
+It is not hardware NX. x32/ARM keep their existing mapping permissions; COW
+lookup preserves logical rights while hardware WRITE is temporarily removed.
+File-loaded PRG text bounds are snapshotted by the trusted loader before the
+PD is exposed. Its existing borrowed TPA remains writable; only text pages
+carry logical EXEC. No new allocation pin or execution owner is created.
+Basepage-created caller-supplied code without a file text extent keeps its
+existing contract. Permissions are page-granular; this is not byte-level NX.
+Native nested/orphan tests exercise both segmented ELF and classic PRG.

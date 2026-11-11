@@ -401,6 +401,8 @@ LONG kproc_uheap_free(PD *pd, VADDR va);
 LONG kproc_uheap_shrink(PD *pd, VADDR va, long len);
 #if KPROC_LEGACY_PRG
 void kproc_mark_legacy(PD *pd);
+/* Trusted file loader only, after relocation and before exposing the PD. */
+BOOL kproc_record_legacy_text(PD *pd, ULONG text_bytes);
 LONG kproc_shrink_tpa(PD *caller, void *blk, long len);
 #endif
 VADDR kproc_user_stack(PD *pd);         /* initial RSP of the private stack of a prepared process; 0 if not prepared */

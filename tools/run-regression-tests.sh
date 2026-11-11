@@ -641,6 +641,12 @@ case "$machine" in
             if ! grep -aq 'pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS' "$suite_log"; then
                 record "native managed clone execution" FAIL "native clone worker did not execute"
             fi
+            if ! grep -aq 'native Pclone ABI prefix/flags/pointers/atomic outputs: PASS' "$suite_log"; then
+                record "native Pclone ABI contract" FAIL "public trap matrix did not execute successfully"
+            fi
+            if ! grep -aq 'native shared image execute policy nested/orphan: PASS' "$suite_log"; then
+                record "native shared image execute policy" FAIL "nested/orphan public clone policy did not pass"
+            fi
             if ! grep -aq 'native scheduler growth and mixed PROCESS/THREAD round-robin: tested' "$suite_log"; then
                 record "native scheduler growth/fairness" FAIL "mixed twelve-peer runtime assertions did not execute"
             fi

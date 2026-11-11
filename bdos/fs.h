@@ -288,6 +288,9 @@ struct _dnd         /* directory node descriptor */
 
     long d_scan;        /*  current posn in dir for DND tree    */
     OFD  *d_files;      /* open files on this node              */
+#if CONF_WITH_PLUGGABLE_FS
+    ULONG d_cookie_refs; /* independently owned FAT directory cookies */
+#endif
 }  ;
 
 /*

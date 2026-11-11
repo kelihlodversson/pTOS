@@ -330,6 +330,10 @@ BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
     return TRUE;
 }
 
+#if defined(__m68k__) && CONF_WITH_PRG_LOADER
+#include "aspace_procmem_text.h"
+#endif
+
 void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes)
 {
     VADDR keep_end = va + ((bytes + PAGE - 1) & ~(PAGE - 1));

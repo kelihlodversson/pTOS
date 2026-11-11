@@ -1891,6 +1891,8 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(CONF_WITH_ELF_LOADER),-DTEST_WITH_ELF_LOADER) \
+              $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
               $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
               $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_PRIVATE_CLONE_TEST) \
@@ -1985,6 +1987,24 @@ endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+# Test both loader formats: m68k normally links a classic TOS PRG. Link the
+# same native objects as ELF too, with independent segment pages and holes.
+# The PRG loader snapshots its text extent; neither test relies on CPU NX.
+ifdef ARCH_M68K
+ifdef CONF_WITH_USER_ASPACE
+ifdef CONF_WITH_PCLONE
+ifdef CONF_WITH_ELF_LOADER
+TEST_CLONE_ABI_FILES = CLNABI.TOS
+TEST_CLONE_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
+CLNABI.TOS: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
+	  $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  -L$(TEST_CLONE_LIBGCC_DIR) -lgcc -o $@
+endif
+endif
+endif
+endif
 
 # poweroff.tos, reboot.tos, coldboot.tos and halt.tos: Shutdown() with each
 # mode, programs of their own because the machine does not come back (see
@@ -2214,7 +2234,7 @@ PROCXIT.TOS: $(TEST_STARTUP) obj/process_transport_child.o $(LIBCMINI_LIB)
 TEST_PROCESS_EXEC_FILES = PROCXIT.TOS
 endif
 
-TEST_HD_FILES = $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
+TEST_HD_FILES = $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2230,7 +2250,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2261,7 +2281,7 @@ test-hd-shell: test-hd-shell.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(TEST_GLOBAL_BUILD) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)

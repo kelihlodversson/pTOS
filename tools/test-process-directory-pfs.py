@@ -22,9 +22,18 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     # the host KPROC layout even though real x32 FAT PFS remains unsupported.
     with (work/'autoconf.h').open('a') as header:
         header.write('\n#undef CONF_WITH_PLUGGABLE_FS\n#define CONF_WITH_PLUGGABLE_FS 1\n#define CONF_PFS_MAX_CWD 8\n#define CONF_PFS_MAX_SEARCHES 8\n')
+    (work/'setjmp.h').write_text('#include <setjmp.h>\n'
+        '#ifdef SETJMP_H\n#error kernel jump ABI selected for hosted libc unwind\n#endif\n')
     cc=shlex.split(os.environ.get('HOSTCC','cc'))
-    subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
-        '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
+    extra=shlex.split(os.environ.get('HOSTCFLAGS',''))
+    if '--sanitize' in sys.argv: extra += ['-fsanitize=address,undefined','-fno-omit-frame-pointer']
+    subprocess.run(cc+extra+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
+        '-ffunction-sections','-fdata-sections','-iquote',str(work),'-iquote','include',
         '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
         'tests/process_directory_pfs.c','-Wl,--gc-sections','-o',str(work/'observer')],check=True)
     subprocess.run([str(work/'observer')],check=True)
+    subprocess.run(cc+extra+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
+        '-ffunction-sections','-fdata-sections','-iquote',str(work),'-iquote','include',
+        '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
+        'tests/process_directory_cache.c','-Wl,--gc-sections','-o',str(work/'cache')],check=True)
+    subprocess.run([str(work/'cache')],check=True)

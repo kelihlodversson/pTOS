@@ -18,6 +18,7 @@ ASSERT(entry_type, __builtin_types_compatible_p(__typeof__(((CLONE_ARGS *)0)->en
 ASSERT(argument_type, __builtin_types_compatible_p(__typeof__(((CLONE_ARGS *)0)->argument), void *));
 ASSERT(stack_type, __builtin_types_compatible_p(__typeof__(((CLONE_ARGS *)0)->stack_base), void *));
 ASSERT(tls_type, __builtin_types_compatible_p(__typeof__(((CLONE_ARGS *)0)->tls), void *));
+ASSERT(pid_type, __builtin_types_compatible_p(__typeof__(((CLONE_ARGS *)0)->child_pid), int32_t *));
 ASSERT(tid_type, __builtin_types_compatible_p(__typeof__(((CLONE_ARGS *)0)->child_tid), int32_t *));
 #define MATCH(field, offset) ASSERT(offset_##field, offsetof(struct ptos_clone_args, field) == (offset) && offsetof(CLONE_USER_V1, field) == (offset))
 MATCH(flags, 0);
@@ -28,4 +29,7 @@ MATCH(stack_size, 16);
 MATCH(tls, 20);
 MATCH(child_tid, 24);
 MATCH(child_pid, 28);
-ASSERT(prefix_size, PTOS_CLONE_ARGS_MIN_SIZE == 28);
+ASSERT(prefix_size, PTOS_CLONE_ARGS_MIN_SIZE == 28 && PTOS_CLONE_ARGS_MIN_SIZE == offsetof(struct ptos_clone_args,child_pid));
+ASSERT(extended_size, PTOS_CLONE_ARGS_PID_SIZE == sizeof(struct ptos_clone_args));
+ASSERT(opcode, GEMDOS_PCLONE == 0x190);
+ASSERT(flags, CLONE_VM == 1 && CLONE_SAME_PROCESS == 2 && CLONE_COPY_STANDARD_HANDLES == 4 && CLONE_COPY_CWD == 8 && PTOS_CLONE_FLAG_MASK == 15);

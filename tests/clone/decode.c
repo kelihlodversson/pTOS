@@ -3,7 +3,7 @@
 #include <string.h>
 #include "clone_args.h"
 
-struct fixture { CLONE_USER_V1 wire; int calls, readable; uint64_t address; };
+struct fixture { CLONE_USER_V1 wire; int calls, readable; uint64_t address; int mutate; };
 static int copy_from_user(void *context, uint64_t address, void *dst, uint32_t size)
 {
     struct fixture *fixture = context;
@@ -11,6 +11,7 @@ static int copy_from_user(void *context, uint64_t address, void *dst, uint32_t s
     if (!fixture->readable || address != fixture->address || (size != 28 && size != 32))
         return 0;
     memcpy(dst, &fixture->wire, size);
+    if (fixture->mutate) memset(&fixture->wire,0xff,sizeof(fixture->wire));
     return 1;
 }
 
@@ -39,7 +40,7 @@ int main(void)
     assert((uintptr_t)decoded.child_tid == UINT32_C(0x87654321));
     assert((uintptr_t)decoded.child_pid == UINT32_C(0xfedcba98));
     {
-        struct fixture f = { { 0 }, 0, 1, UINT64_C(0x80000000) };
+        struct fixture f = { { 0 }, 0, 1, UINT64_C(0x80000000), 0 };
         CLONE_ARGS before;
         f.wire = wire;
         memset(&decoded, 0xa5, sizeof(decoded));
@@ -69,6 +70,11 @@ int main(void)
         f.address = UINT64_C(0xffffffe4);
         assert(clone_copy_v1(&decoded, f.address, 28, copy_from_user, &f) == CLONE_COPY_OK);
         assert(f.calls == 7);
+        f.wire = wire; f.mutate = 1;
+        assert(clone_copy_v1(&decoded,f.address,28,copy_from_user,&f) == CLONE_COPY_OK);
+        assert(f.calls == 8 && decoded.flags == wire.flags &&
+               (uintptr_t)decoded.entry == UINT32_C(0x80000001) && !decoded.child_pid);
+        assert(f.wire.flags == UINT32_MAX); /* later source mutation is not reread */
     }
     {
         CLONE_ARGS a = { 0 };

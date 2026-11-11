@@ -76,7 +76,9 @@ LONG    drvsel;
  */
 WORD ckdrv(int d, BOOL checkrem)
 {
+#if !CONF_WITH_PLUGGABLE_FS
     int curdir;
+#endif
     LONG mask;
     BPB *b;
 
@@ -118,6 +120,7 @@ WORD ckdrv(int d, BOOL checkrem)
      * ensure that current process has a valid default directory
      * on this drive
      */
+#if !CONF_WITH_PLUGGABLE_FS
     curdir = PD_CURDIR(run)[d];
     if (curdir >= NCURDIR)      /* validate */
         curdir = 0;             /* if invalid, say none */
@@ -130,6 +133,7 @@ WORD ckdrv(int d, BOOL checkrem)
         PD_CURDIR(run)[d] = curdir;  /* link to process  */
     }
 
+#endif /* PFS owns PD_CURDIR; media setup must not publish a FAT index. */
     return d;
 }
 
@@ -212,6 +216,9 @@ WORD log_media(BPB *b, int drv)
     dm->m_drvnum = drv;         /*  drv nbr into media descr    */
     f->o_dmd = dm;              /*  link to OFD for rt dir file */
 
+#if CONF_WITH_PLUGGABLE_FS
+    d->d_cookie_refs = 0;
+#endif
     d->d_drv = dm;              /*  link root DND with DMD      */
     d->d_name[0] = 0;           /*  null out name of root       */
 
