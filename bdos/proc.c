@@ -73,7 +73,7 @@
 static void ixterm( PD *r );
 static WORD envsize( char *env );
 static void init_pd_fields(PD *p, char *tail, long max, char *envptr);
-static void init_pd_files(PD *p);
+static LONG init_pd_files(PD *p);
 static char *alloc_env(ULONG flags, char *v);
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail);
 static void proc_go(PD *p, WORD entry_type);
@@ -422,26 +422,16 @@ static void release_pd_files(PD *r)
 #endif
         }
 
-    /* decrement usage counts for current directories */
-
+#if CONF_WITH_PLUGGABLE_FS
+    pfs_proc_exit(r);
+#else
+    /* Legacy PROCESS slots own only legacy dirtbl references. */
     for (i = 0; i < NUMCURDIR; i++)
     {
-        if ((h = PD_CURDIR(r)[i]) != 0)
-            decr_curdir_usage(h);
+        h = PD_CURDIR(r)[i];
+        PD_CURDIR(r)[i] = 0;
+        if (h) decr_curdir_usage(h);
     }
-
-#if CONF_WITH_PLUGGABLE_FS
-    /*
-     * p_curdir[] above indexes fs/pfs.c's own directory table instead of
-     * dirtbl[] for a pluggable drive - decr_curdir_usage() is harmless
-     * either way (it no-ops below NCURDIR's dirtbl[] range and dirtbl[]
-     * stays empty for the lifetime of a pluggable-fs build, since
-     * nothing calls incr_curdir_usage() once this option is on), but the
-     * pluggable table still needs its own matching cleanup so its slots
-     * (and any open Fsfirst/Fsnext searches this process owned) don't
-     * leak.
-     */
-    pfs_proc_exit(r);
 #endif
 #if CONF_WITH_USER_ASPACE
     /* Inherited aliases and service-owned residual references reserve their
@@ -647,7 +637,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             return ENSMEM;
         }
         p->p_flags = (ULONG)(uintptr_t)path;   /* set the flags */
-        init_pd_files(p);
+        rc = init_pd_files(p);
+        if (rc != E_OK) {
+            kproc_destroy(p);
+            xexec_free(env_ptr);
+            xexec_free(p);
+            return rc;
+        }
 #if CONF_WITH_USER_ASPACE
         hand_over(p);
 #endif
@@ -900,7 +896,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return ENSMEM;
     }
 #endif
-    init_pd_files(cur_p);
+    rc = init_pd_files(cur_p);
+    if (rc != E_OK) {
+        kproc_destroy(cur_p);
+        xexec_free(USERPTR_TO_PTR(cur_p->p_env));
+        xexec_free(cur_p);
+        return rc;
+    }
 #if CONF_WITH_USER_ASPACE
     if (flag == PE_LOAD)
         hand_over(cur_p);
@@ -1014,33 +1016,35 @@ static LONG init_pd_standard_files_from(PD *p, PD *source)
     return error;
 }
 
-static void init_pd_cwd_from(PD *p, PD *source)
+static LONG init_pd_cwd_from(PD *p, PD *source)
 {
-    int i;
-    /* The same native/PFS CWD reference operations used by Pexec. */
-    for (i = 0; i < NUMCURDIR; i++) {
-        int dn = PD_CURDIR(source)[i];
-        PD_CURDIR(p)[i] = dn;
-        if (dn)
-            dirtbl[dn].use++;
 #if CONF_WITH_PLUGGABLE_FS
-        /* p_curdir[] indexes fs/pfs.c's own table instead when this
-         * option is on (see the comment above PFS_MAX_CWD in fs/pfs.c);
-         * the dirtbl[] bump above is harmless but meaningless in that
-         * case, so also bump the table actually in use. */
-        if (dn)
-            pfs_cwd_addref((WORD)dn);
-#endif
+    return pfs_cwd_inherit(p, source);
+#else
+    int i, dn;
+    for (i = 0; i < NUMCURDIR; i++) {
+        dn = PD_CURDIR(source)[i];
+        if (dn >= NCURDIR) return EIMBA;
+        if (dn && dirtbl[dn].dnd && dirtbl[dn].use == 0x7fff) return ENSMEM;
     }
-
-    /* and current drive */
+    for (i = 0; i < NUMCURDIR; i++) {
+        dn = PD_CURDIR(source)[i];
+        if (dn && !dirtbl[dn].dnd) dn = 0; /* invalidated media: root */
+        if (dn) dirtbl[dn].use++;
+        PD_CURDIR(p)[i] = dn;
+    }
     p->p_curdrv = source->p_curdrv;
+    return E_OK;
+#endif
 }
 
-static void init_pd_files(PD *p)
+static LONG init_pd_files(PD *p)
 {
+    LONG rc = init_pd_cwd_from(p, run);
+    if (rc != E_OK) return rc;
+    /* Preserve Pexec's existing standard-file inheritance policy. */
     (void)init_pd_standard_files_from(p, run);
-    init_pd_cwd_from(p, run);
+    return E_OK;
 }
 
 #if CONF_WITH_USER_ASPACE
@@ -1091,7 +1095,11 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
     }
     error = ENSMEM;
     if (clone_factory_injected(4)) goto record_failed;
-    if (resources & PROC_CLONE_COPY_CWD) init_pd_cwd_from(p, parent);
+    if (resources & PROC_CLONE_COPY_CWD) {
+        error = init_pd_cwd_from(p, parent);
+        if (error != E_OK) goto record_failed;
+    }
+    error = ENSMEM;
     if (clone_factory_injected(5)) goto record_failed;
     /* No image staging and no loader grant survives resource construction. */
     kproc_unborrow(env); kproc_unborrow(p);

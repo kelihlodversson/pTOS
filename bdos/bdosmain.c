@@ -31,6 +31,9 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 #include "console.h"
 #include "time.h"
 #include "gemerror.h"
@@ -944,6 +947,9 @@ restrt:
             /* first, out with the old stuff */
             dmd = drvtbl[errdrv];
             dn = dmd->m_dtl;
+#if CONF_WITH_PLUGGABLE_FS
+            pfs_invalidate_fat_drive(errdrv);
+#endif
             offree(dmd);
             xmfreblk(dmd);
             drvtbl[errdrv] = NULL;

@@ -800,7 +800,7 @@ FCB *dirinit(DND *dn)
      *  for each record in the current cluster, besides the first record,
      *  get the record and zero it out
      */
-    for (i2 = 1; i2 < dm->m_clsiz; i2++)
+    for (i2 = 1; i2 < (RECNO)dm->m_clsiz; i2++)
     {
         KDEBUG(("dirinit i2 = %li\n",i2));
         s1 = getrec(fd->o_currec+i2,fd,1);
@@ -1114,7 +1114,11 @@ DND *makdnd(DND *p, FCB *b)
         if (!p1->d_left)
         {
             /* do not scavenge if it's locked */
-            if (p1->d_flag & DND_LOCKED)
+            if ((p1->d_flag & DND_LOCKED)
+#if CONF_WITH_PLUGGABLE_FS
+                || p1->d_cookie_refs
+#endif
+               )
                 continue;
 
             /* check dirtbl[] to see if anyone is using this guy */
@@ -1154,6 +1158,9 @@ DND *makdnd(DND *p, FCB *b)
 
     /* complete the initialization */
 
+#if CONF_WITH_PLUGGABLE_FS
+    p1->d_cookie_refs = 0;
+#endif
     p1->d_ofd = (OFD *) 0;
     p1->d_strtcl = le2cpu16(b->f_clust);
     p1->d_drv = p->d_drv;
@@ -1218,8 +1225,15 @@ static DND *dcrack(const char **np)
     }
     else
     {
+#if CONF_WITH_PLUGGABLE_FS
+        /* Legacy FAT loader/I/O paths share the authoritative PFS CWD.
+         * A foreign driver's cookie is never a FAT cache index. */
+        p = pfs_fat_current_directory(run, d);
+        if (DND_IS_ERRCODE(p)) return p;
+#else
         int curdir = PD_CURDIR(run)[d];
         p = dirtbl[curdir].dnd; /*  else use curr dir   */
+#endif
     }
 
     /* whew ! */ /*  <= thankyou, Jason, for that wonderful comment */
@@ -1469,7 +1483,11 @@ static void process_dnd_tree(DND *dndstart)
         /*
          * no children - but are there open files?
          */
-        if (dnd->d_files) {     /* open files in this directory, can't free DND */
+        if (dnd->d_files
+#if CONF_WITH_PLUGGABLE_FS
+            || dnd->d_cookie_refs
+#endif
+           ) {     /* open files in this directory, can't free DND */
             KDEBUG(("DND at %p has open files\n",dnd));
             prev = dnd;
             continue;

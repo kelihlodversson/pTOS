@@ -1527,6 +1527,7 @@ void pclone_run_staged_tests(void)
     long stack = Malloc(RUNNABLE_STACK_SIZE), result, status, file;
     volatile unsigned char touch;
     ptest_begin("Pclone from staged executable text");
+    ptest_assert_msg(Dsetpath("C:\\TESTS") == 0,"staged owner selects inheritable non-root CWD");
     phase1_policy_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
     /* Loader-owned slack is resident data, but outside executable segments. */
     if (_base->p_tbase == (void *)(_base + 1)) {
@@ -1545,7 +1546,7 @@ void pclone_run_staged_tests(void)
     ptest_assert_msg(stack > 0 && phase1_policy_stack,"staged-image entry stacks");
     if (stack > 0 && phase1_policy_stack) {
         ptest_assert_msg(phase1_policy_checks() == 0,"staged owner enforces text/data/BSS/image-hole policy");
-        args.flags = CLONE_VM; args.entry = phase1_policy_child;
+        args.flags = CLONE_VM | CLONE_COPY_CWD; args.entry = phase1_policy_child;
         args.stack_base = (void *)stack; args.stack_size = RUNNABLE_STACK_SIZE;
         args.child_pid = &pid; args.child_tid = &tid;
         phase1_resources = 0; phase1_resource_error = 0;
@@ -1561,6 +1562,8 @@ void pclone_run_staged_tests(void)
         args.argument = (void *)1;
         result = pclone_trap(&args,32);
         ptest_assert_msg(result > 0 && result == tid,"orphan staged-policy child admitted");
+        ptest_assert_msg(Dsetpath("C:\\") == 0,
+                         "parent changes CWD before orphan continues independently");
         file = Fopen(phase1_policy_file,2);
         memset(&report,0,sizeof(report)); report.magic=0x50434c4eL;
         report.creator=Pgetpid(); report.worker=pid;

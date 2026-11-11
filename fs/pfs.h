@@ -238,14 +238,16 @@ LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt);
  */
 void pfs_proc_exit(PD *r);
 
-/* Called from bdos/proc.c's init_pd_files() for each non-zero p_curdir[]
- * entry ('n', an index into fs/pfs.c's own directory table) it copies
- * into a newly created process - mirrors the bump init_pd_files()
- * already does to the legacy dirtbl[n].use for a non-pluggable drive,
- * so a pluggable current-directory slot shared by a parent and child
- * process is not invalidated by one of them exiting first.
- */
-void pfs_cwd_addref(WORD n);
+/* Transactional inheritance: acquire all slots before publishing child CWD.
+ * No driver callbacks or allocations. Failure leaves the child unchanged. */
+LONG pfs_cwd_inherit(PD *child, PD *parent);
+/* FAT-only native path consumers borrow the DND held by the current CWD.
+ * The PROCESS table is never interpreted as a legacy FAT dirtbl index. */
+struct _dnd;
+struct _dnd *pfs_fat_current_directory(PD *process, WORD drive);
+/* Media change: invalidate durable FAT cookies before freeing their DND tree.
+ * Referenced table slots remain reserved tombstones until their owners drop. */
+void pfs_invalidate_fat_drive(WORD drive);
 
 /* The 12 GEMDOS-shaped helpers the bdos/ x* shims call when
  * CONF_WITH_PLUGGABLE_FS is on.  Signatures mirror the GEMDOS opcodes:

@@ -18,6 +18,7 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#include "kproc.h"
 #include "tosvars.h"    /* for drvbits, same convention as
                                  * bdos/proc.c and bdos/umem.c */
 #include "../bdos/bdosstub.h"   /* for run, same convention as fs/fatfs_pfs.c */
@@ -212,16 +213,10 @@ static BOOL pfs_match(const char *name, const char *pattern)
 /* current-directory tracking                                         */
 /* ------------------------------------------------------------------ */
 
-/*
- * Reuses PD.p_curdir[] (already part of the real Atari basepage layout,
- * sized BLKDEVNUM) as an index into this table instead of the legacy
- * dirtbl[] - safe because fat_pfs_ops never relies on ambient
- * CWD/dirtbl[] state (it always reconstructs absolute paths, see
- * fs/fatfs_pfs.c), so dirtbl[] is simply unused for the lifetime of a
- * pluggable-fs build.  Index 0 is reserved to mean "not cached yet, use
- * this drive's root" - which is exactly what a freshly Pexec()'d
- * process's zero-initialised p_curdir[] already reads as.
- */
+/* PD_CURDIR indexes only this table in a PFS build. FAT DND cache holds
+ * belong to driver cookies, not to PROCESS-visible legacy dirtbl indices.
+ * Zero means the drive root. Referenced invalidated slots are tombstones,
+ * so media change cannot redirect an old owner to a reused slot. */
 #define PFS_MAX_CWD CONF_PFS_MAX_CWD
 
 typedef struct {
@@ -235,16 +230,29 @@ typedef struct {
 
 static PFS_DIRTBL_ENTRY pfs_dirtbl[PFS_MAX_CWD];
 
-/* One more process now shares pfs_dirtbl[n] - e.g. bdos/proc.c's
- * init_pd_files() inheriting p_curdir[] into a freshly created process,
- * mirroring the bump it already does to the legacy dirtbl[n].use for a
- * non-pluggable drive. n==0 (root sentinel) is a no-op, matching how it
- * is never a real slot.
- */
-void pfs_cwd_addref(WORD n)
+LONG pfs_cwd_inherit(PD *child, PD *parent)
 {
-    if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use)
-        pfs_dirtbl[n].use++;
+    UBYTE slots[NUMCURDIR];
+    WORD drive, n;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(child)) return EACCDN;
+#endif
+    /* Validate before any reference increment or child publication. */
+    for (drive = 0; drive < NUMCURDIR; drive++)
+    {
+        n = PD_CURDIR(parent)[drive];
+        if (PD_CURDIR(child)[drive]) return EACCDN;
+        if (!n) { slots[drive] = 0; continue; }
+        if (n >= PFS_MAX_CWD || !pfs_dirtbl[n].use ||
+            pfs_dirtbl[n].drive != drive) return EIMBA;
+        if (pfs_dirtbl[n].use == 0x7fff) return ENSMEM;
+        slots[drive] = pfs_dirtbl[n].fs ? n : 0;
+    }
+    for (drive = 0; drive < NUMCURDIR; drive++)
+        if (slots[drive]) pfs_dirtbl[slots[drive]].use++;
+    memcpy(PD_CURDIR(child), slots, sizeof(slots));
+    child->p_curdrv = parent->p_curdrv;
+    return E_OK;
 }
 
 /* Drop this process's reference to pfs_dirtbl[n] (n==0, the root
@@ -259,9 +267,12 @@ static void pfs_dirtbl_release(WORD n)
     {
         if (!--pfs_dirtbl[n].use)
         {
-            if (pfs_dirtbl[n].fs->release)
-                pfs_dirtbl[n].fs->release(&pfs_dirtbl[n].cwd);
+            PFSCOOKIE cookie = pfs_dirtbl[n].cwd;
+            struct pfs_ops *fs = pfs_dirtbl[n].fs;
+            /* Detach before invoking a consuming/reentrant destructor. */
             pfs_dirtbl[n].fs = NULL;
+            memset(&pfs_dirtbl[n].cwd, 0, sizeof(cookie));
+            if (fs && fs->release) fs->release(&cookie);
         }
     }
 }
@@ -303,12 +314,33 @@ static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const ch
     return pfs_cwd_get_at(run, fs, drive, out, path, owned);
 }
 
+DND *pfs_fat_current_directory(PD *process, WORD drive)
+{
+    WORD n;
+    if (drive < 0 || drive >= BLKDEVNUM ||
+        pfs_drive_fs(drive) != &fat_pfs_ops) return (DND *)(intptr_t)EDRIVE;
+    n = PD_CURDIR(process)[drive];
+    if (n > 0 && n < PFS_MAX_CWD && pfs_dirtbl[n].use &&
+        pfs_dirtbl[n].fs == &fat_pfs_ops && pfs_dirtbl[n].drive == drive)
+        return (DND *)(intptr_t)pfs_dirtbl[n].cwd.index;
+    return drvtbl[drive]->m_dtl; /* ckdrv already established the root. */
+}
+
 /* Transfer an owned cookie only after acquiring replacement storage. Failure
  * leaves both the caller's cookie and the PROCESS's previous CWD untouched. */
 static LONG pfs_cwd_set(PD *process, WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const char *path)
 {
     WORD old = PD_CURDIR(process)[drive];
     WORD i;
+    PFSCOOKIE replaced = {0};
+    struct pfs_ops *replaced_fs = NULL;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(process)) return EACCDN;
+#endif
+    /* A stale/empty index owns nothing; never release a newly allocated slot
+     * merely because it happens to reuse the same small number. */
+    if (old <= 0 || old >= PFS_MAX_CWD || !pfs_dirtbl[old].use) old = 0;
+    else if (pfs_dirtbl[old].drive != drive) return EIMBA;
 
     if (!path[0])
     {
@@ -329,7 +361,8 @@ static LONG pfs_cwd_set(PD *process, WORD drive, struct pfs_ops *fs, PFSCOOKIE *
         if (old <= 0 || old >= PFS_MAX_CWD || pfs_dirtbl[old].use != 1)
             return ENSMEM;
         i = old;
-        pfs_dirtbl_release(old);
+        replaced = pfs_dirtbl[old].cwd;
+        replaced_fs = pfs_dirtbl[old].fs;
         old = 0;
     }
 
@@ -340,6 +373,7 @@ static LONG pfs_cwd_set(PD *process, WORD drive, struct pfs_ops *fs, PFSCOOKIE *
     strlcpy(pfs_dirtbl[i].path, path, sizeof(pfs_dirtbl[i].path));
     PD_CURDIR(process)[drive] = i;
     pfs_dirtbl_release(old);
+    if (replaced_fs && replaced_fs->release) replaced_fs->release(&replaced);
     return E_OK;
 }
 
@@ -363,10 +397,10 @@ static PFS_SEARCH pfs_searches[CONF_PFS_MAX_SEARCHES];
 
 static void pfs_search_free(PFS_SEARCH *s)
 {
-    if (s->dir_owned && s->dir.fs && s->dir.fs->release)
-        s->dir.fs->release(&s->dir);
-    s->owner = NULL;
-    s->proc = NULL;
+    PFSCOOKIE cookie = s->dir;
+    BOOL owned = s->dir_owned;
+    memset(s, 0, sizeof(*s));
+    if (owned && cookie.fs && cookie.fs->release) cookie.fs->release(&cookie);
 }
 
 /* Is a directory entry with attribute byte 'entry_attr' visible to an
@@ -628,6 +662,9 @@ static LONG pfs_chdir_at(PD *process, const char *path, BOOL select_drive)
     LONG rc;
     const char *t;
 
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(process)) return EACCDN;
+#endif
     /* matches legacy xchdir()'s contains_wildcard_characters() check
      * (bdos/fsdir.c) - Dsetpath() is not a search, and a driver's
      * lookup() has no obligation to treat '*'/'?' as anything but
@@ -961,6 +998,9 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
     WORD i;
     LONG rc;
 
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
@@ -1099,21 +1139,32 @@ LONG pfs_do_snext_at(DTAINFO *dta)
 void pfs_proc_exit(PD *r)
 {
     WORD i;
-
+    UBYTE slots[NUMCURDIR];
+    /* Unpublish the entire namespace before the first release callback. */
+    memcpy(slots, PD_CURDIR(r), sizeof(slots));
+    memset(PD_CURDIR(r), 0, sizeof(slots));
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if (pfs_searches[i].proc == r)
-            pfs_search_free(&pfs_searches[i]);
+        if (pfs_searches[i].proc == r) pfs_search_free(&pfs_searches[i]);
+    for (i = 0; i < NUMCURDIR; i++) pfs_dirtbl_release(slots[i]);
+}
 
-    /*
-     * decrement pfs_dirtbl[] usage for every drive this process cached a
-     * current directory for - p_curdir[] indexes pfs_dirtbl[] here, not
-     * the legacy dirtbl[] (see the comment above PFS_MAX_CWD), so this
-     * needs its own loop rather than reusing bdos/proc.c's
-     * decr_curdir_usage() calls, which stay harmlessly pointed at the
-     * (otherwise unused, while this option is on) legacy table.
-     */
-    for (i = 0; i < BLKDEVNUM; i++)
-        pfs_dirtbl_release(PD_CURDIR(r)[i]);
+void pfs_invalidate_fat_drive(WORD drive)
+{
+    WORD i;
+    for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
+        if (pfs_searches[i].proc && pfs_searches[i].dir.fs == &fat_pfs_ops &&
+            ((DND *)(intptr_t)pfs_searches[i].dir.index)->d_drv->m_drvnum == drive)
+            pfs_search_free(&pfs_searches[i]);
+    for (i = 1; i < PFS_MAX_CWD; i++)
+        if (pfs_dirtbl[i].use && pfs_dirtbl[i].fs == &fat_pfs_ops &&
+            pfs_dirtbl[i].drive == drive)
+        {
+            PFSCOOKIE cookie = pfs_dirtbl[i].cwd;
+            pfs_dirtbl[i].fs = NULL;
+            pfs_dirtbl[i].path[0] = 0;
+            memset(&pfs_dirtbl[i].cwd, 0, sizeof(cookie));
+            fat_pfs_ops.release(&cookie);
+        }
 }
 
 

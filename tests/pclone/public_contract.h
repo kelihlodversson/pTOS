@@ -114,6 +114,9 @@ static void phase1_resource_matrix(struct ptos_clone_args good)
                      Dgetpath(phase1_parent_path,3) == 0 && phase1_parent_path[0] && Fwrite(file,2,"AB") == 2 &&
                      Fseek(0,file,0) == 0 && Fforce(0,file) == 0,
                      "prepare independent standard-handle and CWD policy");
+    ptest_assert_msg(Dgetcwd(phase1_child_path,3,sizeof(phase1_child_path)) == 0 &&
+                     !strcmp(phase1_child_path,phase1_parent_path),
+                     "non-root Dgetcwd preserves the selected filesystem directory");
     good.child_pid = &pid; good.child_tid = &tid;
     for (bits = 0; bits < 4; bits++) {
         good.flags = CLONE_VM | (bits << 2);
@@ -217,6 +220,16 @@ struct phase1_policy_report { long magic, creator, worker, gate, done, error; };
 #define PHASE1_POLICY_PRG "C:\\PRGPOL.TMP"
 static const char *phase1_policy_file = PHASE1_POLICY_ELF;
 
+static volatile int phase1_policy_cwd_error;
+static void phase1_policy_cwd_leaf(void *argument)
+{
+    char path[128], cwd[128];
+    if (Dgetpath(path,3) || strcmp(path,"TESTS") ||
+        Dgetcwd(cwd,3,sizeof(cwd)) || strcmp(path,cwd) || Dsetpath("C:\\"))
+        phase1_policy_cwd_error=1;
+    phase1_entry(argument);
+}
+
 static long phase1_policy_checks(void)
 {
     struct ptos_clone_args args = {0};
@@ -225,7 +238,10 @@ static long phase1_policy_checks(void)
     unsigned i;
     unsigned char sentinel[16], *frame = phase1_policy_stack + RUNNABLE_STACK_SIZE - 16;
     void *bad[3];
-    args.flags = CLONE_VM; args.stack_base = phase1_policy_stack;
+    char cwd[128], path[128];
+    if (Dgetpath(path,3) || strcmp(path,"TESTS") ||
+        Dgetcwd(cwd,3,sizeof(cwd)) || strcmp(path,cwd)) error |= 2048;
+    args.flags = CLONE_VM | CLONE_COPY_CWD; args.stack_base = phase1_policy_stack;
     args.stack_size = RUNNABLE_STACK_SIZE; args.child_pid = &pid; args.child_tid = &tid;
     bad[0] = (void *)&phase1_policy_data[1023]; bad[1] = (void *)&phase1_policy_bss[1023]; bad[2] = phase1_policy_hole;
     for (i = 0; i < 3; i++) {
@@ -256,13 +272,15 @@ static long phase1_policy_checks(void)
         (void)Syield(); (void)Syield();
         if(Pwaitpid(-1,1,0)!=-33L) error|=32;
     }
-    args.entry = phase1_entry; args.argument = 0; args.child_tid=&tid; phase1_entered = 0;
+    args.entry = phase1_policy_cwd_leaf; args.argument = 0; args.child_tid=&tid; phase1_entered = 0;
+    phase1_policy_cwd_error=0;
     pid = tid = -99;
     result = pclone_trap(&args,32);
     if (result <= 0 || result != tid || pid <= 0 || pid == Pgetpid()) return error | 64;
     status = Pwaitpid(pid,0,0);
     if ((status >> 16) != pid || (status & 65535) || phase1_entered != 1 ||
         phase1_argument || phase1_pid != pid || Pwaitpid(pid,1,0) != -33L) error |= 128;
+    if (phase1_policy_cwd_error || Dgetpath(path,3) || strcmp(path,"TESTS")) error |= 4096;
     return error;
 }
 
