@@ -29,9 +29,10 @@ typedef struct pfs_cookie {
     struct pfs_ops *fs;
     LONG index;
     LONG aux;
-    LONG pos;   /* core-managed sequential Fread/Fwrite position for an
-                 * open file; drivers never touch this directly - see
-                 * pfs_handle_read()/pfs_handle_write() in fs/pfs.c */
+    LONG pos;   /* Core-managed sequential position for open files; drivers
+                 * leave that position to pfs_handle_read()/write(). Directory
+                 * cookies are not file positions: FAT uses -1 to identify an
+                 * owned DND hold, independently of aux's search cursor. */
 } PFSCOOKIE;
 
 /* GEMDOS-native file/directory attributes, as used by Fsfirst/Fsnext,

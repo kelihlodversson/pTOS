@@ -104,24 +104,37 @@ acceptance only after the actual criterion matrix is reviewed; final completion
 requires separate authorized merge and integration-head validation. No Phase2
 or downstream public feature is implemented by this focused contract work.
 
-Open native prerequisite finding (not accepted)
-----------------------------------------------
-The new resource matrix reproduces a pre-existing FAT/PFS CWD namespace bug on
-ARM/m68k's PLUGGABLE_FS configuration before public clone publication:
-ckdrv() installs a legacy dirtbl index into the same PD_CURDIR slot that PFS
-owns. pfs_cwd_set can then choose that free PFS slot as its new entry and release
-it through the old numeric index. Native diagnostics observed set slot1/old1
-/use1/pathTESTS immediately followed by slot1/use0/path fallback empty. Both
-Dgetpath and Dgetcwd lose the non-root directory; the COPY_CWD matrix fails.
-The original x32 traditional-FAT backend does not have this collision.
+FAT/PFS recovery in this candidate
+---------------------------------
+The original native resource matrix exposed a FAT/PFS namespace collision on
+ARM/m68k before clone publication: ckdrv installed a legacy dirtbl index into
+PD_CURDIR, while PFS could allocate and immediately release that same number
+as its new directory slot. Dgetpath/Dgetcwd lost the non-root directory. The
+original failing preparation assertion is retained, including standard PFS.
 
-A diagnostic-only attempt to stop the legacy write was rejected: subsequent
-relative program loading failed on ARM/m68k. It is NOT part of this candidate.
-A safe prerequisite needs coherent FAT/PFS directory-cookie and lookup lifetime,
-not a silent skip, a new PROCESS namespace just for clone, or passing retries.
-Traditional-FAT native results must be labeled as that configuration and cannot
-substitute for the still-failing PFS configuration. No100% Phase1 acceptance
-or final owner approval is claimed while this native prerequisite is unresolved.
+A one-site diagnostic prototype failed relative loading and was rejected.
+The user subsequently authorized the coherent ownership correction in #948:
+PFS builds now have one PROCESS CWD namespace; native FAT relative lookup
+borrows the authoritative PFS cookie; construction acquires every reference
+before publication; teardown releases only its actual namespace. FAT cookies
+hold their DND cache nodes, and media invalidation reserves referenced old
+slots until their owners release. No parallel PROCESS/CWD registry is added.
+
+Temporary cookies are released before ordinary disk-error longjmp propagation,
+including nested rename resolution and search callbacks. Typed helper frames
+preserve the existing error continuation/code/rw/drive; they do not swallow
+media-change retry or promise arbitrary fatal/destructor unwind safety.
+Trailing-slash removal resolves a parent/name pair without discounting an
+independent live CWD/search hold or subsequently releasing a freed target.
+
+Production hosted tests count cookie/cache lifetime, failed inheritance,
+retirement reentry and real error jumps; the old production source fails the
+new unwind baseline assertion. Native public tests cover non-root CWD reads,
+all resource flags, nested/orphan inheritance, independent directory mutation
+and both exit orders. Traditional FAT remains separate compatibility coverage.
+See clone-pfs-prerequisite.txt for the implemented contract and supported scope.
+Final exact-head native/CI and owner acceptance remain mandatory: no100%
+Phase1 claim, automatic merge or issue closure follows from a source correction.
 
 Native accounting fixture boundary
 ----------------------------------
@@ -153,8 +166,8 @@ models separately test an empty child layout and substituted original PD.
 This correction is not accepted solely by the model: actual no-PRIVATE_CLONE
 m68k040 and x32/ARM native execution remain required.
 
-The PFS recovery audit and exact proposed independent prerequisite are in
-clone-pfs-prerequisite.txt. No filesystem prototype is included in #948.
+The implemented in-PR PFS recovery and its audit are documented in
+clone-pfs-prerequisite.txt; the earlier proposal-only checkpoint is historical.
 
 The native executable-policy fixture uses ELF on all targets and also classic
 file-loaded PRG on m68k. CLNABI.TOS links the same native objects as ELF with
