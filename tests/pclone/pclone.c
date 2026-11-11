@@ -1527,7 +1527,10 @@ void pclone_run_staged_tests(void)
     long stack = Malloc(RUNNABLE_STACK_SIZE), result, status, file;
     volatile unsigned char touch;
     ptest_begin("Pclone from staged executable text");
-    ptest_assert_msg(Dsetpath("C:\\TESTS") == 0,"staged owner selects inheritable non-root CWD");
+    ptest_assert_msg(Dsetpath("C:\\TESTS") == 0 &&
+                     Dgetpath(phase1_policy_cwd,3) == 0 &&
+                     (!strcmp(phase1_policy_cwd,"TESTS") || !strcmp(phase1_policy_cwd,"\\TESTS")),
+                     "staged owner selects inheritable non-root CWD");
     phase1_policy_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
     /* Loader-owned slack is resident data, but outside executable segments. */
     if (_base->p_tbase == (void *)(_base + 1)) {

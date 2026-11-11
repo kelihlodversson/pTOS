@@ -220,11 +220,12 @@ struct phase1_policy_report { long magic, creator, worker, gate, done, error; };
 #define PHASE1_POLICY_PRG "C:\\PRGPOL.TMP"
 static const char *phase1_policy_file = PHASE1_POLICY_ELF;
 
+static char phase1_policy_cwd[128];
 static volatile int phase1_policy_cwd_error;
 static void phase1_policy_cwd_leaf(void *argument)
 {
     char path[128], cwd[128];
-    if (Dgetpath(path,3) || strcmp(path,"TESTS") ||
+    if (Dgetpath(path,3) || strcmp(path,phase1_policy_cwd) ||
         Dgetcwd(cwd,3,sizeof(cwd)) || strcmp(path,cwd) || Dsetpath("C:\\"))
         phase1_policy_cwd_error=1;
     phase1_entry(argument);
@@ -239,7 +240,7 @@ static long phase1_policy_checks(void)
     unsigned char sentinel[16], *frame = phase1_policy_stack + RUNNABLE_STACK_SIZE - 16;
     void *bad[3];
     char cwd[128], path[128];
-    if (Dgetpath(path,3) || strcmp(path,"TESTS") ||
+    if (Dgetpath(path,3) || strcmp(path,phase1_policy_cwd) ||
         Dgetcwd(cwd,3,sizeof(cwd)) || strcmp(path,cwd)) error |= 2048;
     args.flags = CLONE_VM | CLONE_COPY_CWD; args.stack_base = phase1_policy_stack;
     args.stack_size = RUNNABLE_STACK_SIZE; args.child_pid = &pid; args.child_tid = &tid;
@@ -280,7 +281,7 @@ static long phase1_policy_checks(void)
     status = Pwaitpid(pid,0,0);
     if ((status >> 16) != pid || (status & 65535) || phase1_entered != 1 ||
         phase1_argument || phase1_pid != pid || Pwaitpid(pid,1,0) != -33L) error |= 128;
-    if (phase1_policy_cwd_error || Dgetpath(path,3) || strcmp(path,"TESTS")) error |= 4096;
+    if (phase1_policy_cwd_error || Dgetpath(path,3) || strcmp(path,phase1_policy_cwd)) error |= 4096;
     return error;
 }
 
