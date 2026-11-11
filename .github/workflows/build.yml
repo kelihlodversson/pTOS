@@ -56,6 +56,12 @@ jobs:
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
       - name: Test metadata, corrupt inputs and Kconfig isolation
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
+      - name: Test executable handlers and interpreter arguments
+        run: |
+          sh tools/test-binfmt.sh
+          BINFMT_SANITIZE=1 sh tools/test-binfmt.sh
+          /tmp/elf-shared-venv/bin/python tools/test-binfmt-io.py
+          BINFMT_SANITIZE=1 /tmp/elf-shared-venv/bin/python tools/test-binfmt-io.py
       - name: Test CUIS ownership and caller-local AES object contracts
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test Atari higher-half DMA translation
@@ -236,6 +242,19 @@ jobs:
         if: matrix.group == 'x86-desktop' && !cancelled()
         run: tools/ci-group.sh --names pc-x86_64 tools/ci-regression.sh
 
+      - name: Run native executable-handler boot tests
+        if: matrix.group == 'x86-desktop' && !cancelled()
+        run: tools/ci-binfmt.sh x32
+
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.group == 'x86-desktop'
+        with:
+          name: binfmt-x32
+          path: |
+            obj/binfmt/x32/*.log
+            obj/binfmt/x32/test.json
+          retention-days: 14
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -289,6 +308,21 @@ jobs:
 
       - name: Run the regression suite
         run: tools/ci-group.sh --names "${{ matrix.machines }}" tools/ci-regression.sh
+
+      - name: Run native executable-handler boot tests
+        if: ${{ !cancelled() }}
+        run: |
+          tools/ci-binfmt.sh '${{ matrix.arch }}'
+          if [ '${{ matrix.arch }}' = arm ]; then tools/ci-binfmt.sh arm shared; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: binfmt-${{ matrix.arch }}
+          path: |
+            obj/binfmt/${{ matrix.arch }}*/*.log
+            obj/binfmt/${{ matrix.arch }}*/test.json
+          retention-days: 14
 
   pmmu-check:
     name: PMMU startup check (virt-m68k-mmu)

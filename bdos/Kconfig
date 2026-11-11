@@ -302,4 +302,16 @@ config CONF_WITH_PRG_LOADER
 	  into, code in a foreign instruction set. Non-m68k targets rely on
 	  CONF_WITH_ELF_LOADER instead.
 
+config CONF_WITH_BINFMT
+	bool "Boot-configured executable interpreters and shebang scripts"
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
+	default n if TARGET_AMIGA_ROM && !CONF_AMIGA_ROM_512K
+	default y
+	help
+	  Read PTOS.INI once from the boot drive before starting applications.
+	  Register general magic/mask executable handlers and support #! scripts
+	  through the same bounded interpreter path. Native formats take
+	  precedence. No proc filesystem or runtime registration API is needed.
+	  See doc/binfmt.txt for the INI syntax and implementation limits.
+
 endmenu

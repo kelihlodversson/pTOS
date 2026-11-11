@@ -486,6 +486,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
     long needed;
     FH fh;
+#if CONF_WITH_BINFMT
+    BINFMT_LAUNCH interpreter;
+#endif
 
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
@@ -635,14 +638,30 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return EFILNF;      /*  file not found      */
     }
 
-    /* load the header - if I/O error occurs now, the longjmp in rwabs will
-     * jump directly back to bdosmain.c, which is not a problem because
-     * we haven't allocated anything yet.
+    /* Load the header before allocating process memory. Interpreter probes
+     * guard disk I/O so their temporary buffers can be freed on failure;
+     * the ordinary loader may still return via bdosmain.c's disk longjmp
+     * when interpreter support is disabled.
      */
 #if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
     elf_set_load_into_caller(flag == PE_LOAD);
 #endif
+#if CONF_WITH_BINFMT
+    rc = binfmt_load_header(path, tail, env ? env : (char *)USERPTR_TO_PTR(run->p_env), &hdr, &fh, &interpreter,
+#if CONF_WITH_CUIS
+                           directory != NULL
+#else
+                           FALSE
+#endif
+                           );
+    if (!rc && interpreter.environment) {
+        path = interpreter.path;
+        tail = interpreter.tail;
+        env = interpreter.environment;
+    }
+#else
     rc = kpgmhdrld(path, &hdr, &fh);
+#endif
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmhdrld returned %ld (0x%lx)\n",rc,rc));
         return rc;
@@ -651,10 +670,21 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* allocate the environment first, depending on memory policy */
     env_ptr = alloc_env(hdr.h01_flags, env);
     if (env_ptr == NULL) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         KDEBUG(("BDOS xexec: no memory for environment\n"));
         xclose(fh);
         return ENSMEM;
     }
+#if CONF_WITH_BINFMT
+    if (interpreter.environment) {
+        /* The final interpreter name is argv[0] in the generated environment.
+         * Use its owned child copy after freeing the temporary argument arena. */
+        path = env_ptr + (interpreter.path - interpreter.environment);
+        binfmt_release_environment(&interpreter);
+    }
+#endif
 
     /* allocate the basepage depending on memory policy */
     needed = hdr.h01_tlen + hdr.h01_dlen + hdr.h01_blen + sizeof(PD);
@@ -680,6 +710,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* if failed, free env_ptr and return */
     if (p == NULL) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         KDEBUG(("BDOS xexec: no memory for TPA\n"));
         xexec_free(env_ptr);
         xclose(fh);
@@ -699,6 +732,9 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
+#if CONF_WITH_BINFMT
+    binfmt_release(&interpreter);       /* tail is now part of the basepage */
+#endif
     if (!kproc_create(p)) {
         xexec_free(env_ptr);
         xexec_free(p);

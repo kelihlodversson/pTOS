@@ -42,8 +42,10 @@ long kdos_fopen(long name, long mode)
  * again).  Only an interrupted close is repeated: one that returned, even
  * with an error, has given up its reference already.  The first result is
  * what is returned.
+ * A caller providing an error record also retains the original failing
+ * drive/error for rethrowing after its other resources have been released.
  */
-long kdos_fclose(long h)
+long kdos_fclose_error(long h, DISK_ERROR *error)
 {
     long rc = 0, r;
     volatile BOOL returned;
@@ -52,11 +54,11 @@ long kdos_fclose(long h)
     for (tries = 0; tries <= BLKDEVNUM; tries++)
     {
         returned = FALSE;
-        r = DISK_CALL(__extension__ ({
+        r = DISK_CALL_ERROR(__extension__ ({
             long closed = xclose((WORD)h);
             returned = TRUE;
             closed;
-        }));
+        }), error);
         if (!tries)
             rc = r;
         if (returned)
@@ -64,6 +66,11 @@ long kdos_fclose(long h)
     }
 
     return rc;
+}
+
+long kdos_fclose(long h)
+{
+    return kdos_fclose_error(h, NULL);
 }
 
 long kdos_fread(long h, long count, long buf)

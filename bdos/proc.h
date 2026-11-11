@@ -53,13 +53,21 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 
 LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h);
 BOOL kpgm_is_prg(void);
+#if CONF_WITH_BINFMT
+#include "binfmt.h"
+struct disk_error;
+LONG kpgmhdrld_error(char *s, PGMHDR01 *hd, FH *h, struct disk_error *error);
+BOOL kpgm_can_interpret(void);
+LONG binfmt_load_header(char *path, char *tail, char *environment,
+                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch, BOOL qualify);
+#endif
 LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename);
 
 #if CONF_WITH_ELF_LOADER
 /*
  * in elfld.c
  */
-LONG elf_pgmhdrld(FH h, PGMHDR01 *hd);
+LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign);
 LONG elf_pgmld(FH h, PD *p);
 #if CONF_WITH_USER_ASPACE
 /* whether the next ELF load is Pexec(PE_LOAD), whose image goes into the

@@ -21,7 +21,7 @@ static unsigned successor_aliases, explicit_open;
 static jmp_buf exit_resume;
 
 jmp_buf errbuf;
-long errcode;
+long errcode, rwerr;
 int errdrv;
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
