@@ -10,6 +10,8 @@ static KPROC parent, child;
 static UWORD text = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
 BOOL kaspace_mmap_protection(KASPACE *space, UQUAD address, UWORD *prot)
 { (void)space; (void)address; (void)prot; return FALSE; }
+BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *prot)
+{ (void)space; (void)address; (void)prot; return FALSE; }
 BOOL kaspace_heap_contains(KASPACE *space, UQUAD address)
 { (void)space; (void)address; return FALSE; }
 BOOL aspace_translate(const ASPACE *space, VADDR address, PADDR *physical, UWORD *prot)
