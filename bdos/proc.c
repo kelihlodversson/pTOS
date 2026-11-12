@@ -260,6 +260,10 @@ static long proc_mfree(void *addr, BOOL trusted)
     if (procmem_pins(addr) > 0)
         return EACCDN;
 #endif
+    {
+        ULONG bytes = procmem_size(addr);
+        if (bytes && !procmem_mutation_allowed(addr,procmem_gen(addr),0,bytes)) return EACCDN;
+    }
     proc_release_block(addr);     /* also returns it if it was borrowed */
     return procmem_free(addr) ? E_OK : EIMBA;
 }

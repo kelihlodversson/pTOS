@@ -54,6 +54,13 @@ int main(void)
     procmem_free_owned(&owner,NULL);
     CHECK(!procmem_owner(p) && procmem_size(p)==8192 && !notices);
     CHECK(!procmem_set_owner(p,NULL)); /* cannot cancel a retired owner's reclaim */
+    {
+        PROCMEM_HOLD child = {0};
+        CHECK(procmem_hold_duplicate(&a,&canonical,&child));
+        CHECK(child.ticket != a.ticket && child.allocation == a.allocation);
+        CHECK(procmem_hold_release(&child,&identity) && identity==&canonical);
+        identity=NULL;
+    }
     CHECK(procmem_hold_release(&a,&identity) && identity==&canonical && !a.ticket);
     identity=NULL;
     CHECK(!procmem_hold_release(&stale,&identity) && !identity);

@@ -91,6 +91,10 @@ BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
         const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
         UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
 BOOL procmem_hold_info(const PROCMEM_HOLD *hold, PROCMEM_HOLD_INFO *result);
+/* An already-owned hold may be duplicated after original PROCESS retirement.
+ * The supplied reference must duplicate the same canonical owner identity. */
+BOOL procmem_hold_duplicate(const PROCMEM_HOLD *source, void *owner_identity,
+                           PROCMEM_HOLD *result);
 BOOL procmem_hold_release(PROCMEM_HOLD *hold, void **owner_identity);
 /* Whole-range, non-mutating check before any metadata/leaf/owner change. */
 BOOL procmem_mutation_allowed(const void *base, UQUAD allocation,

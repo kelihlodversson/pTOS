@@ -53,6 +53,24 @@ BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
     return TRUE;
 }
 
+BOOL procmem_hold_duplicate(const PROCMEM_HOLD *source, void *owner_identity,
+                           PROCMEM_HOLD *result)
+{
+    struct alloc **allocation;
+    struct allocation_hold **link, *copy;
+    if (!result || result->base || result->allocation || result->ticket) return FALSE;
+    link = hold_find(source,&allocation);
+    if (!link || !owner_identity || (*link)->owner_identity != owner_identity ||
+        (*allocation)->hold_count == (ULONG)~0UL || hold_tickets == ~(UQUAD)0) return FALSE;
+    copy = kalloc(sizeof(*copy));
+    if (!copy) return FALSE;
+    *copy = **link; copy->ticket = ++hold_tickets;
+    copy->next = (*allocation)->holds; (*allocation)->holds = copy;
+    (*allocation)->hold_count++;
+    *result = *source; result->ticket = copy->ticket;
+    return TRUE;
+}
+
 BOOL procmem_hold_info(const PROCMEM_HOLD *token, PROCMEM_HOLD_INFO *result)
 {
     struct allocation_hold **link = hold_find(token,NULL), *hold;

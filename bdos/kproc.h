@@ -22,6 +22,7 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length);
 LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection);
 #endif
 #include "procmem.h"      /* ASPACE */
+#include "kaspace.h"      /* reservation-hold token, internal only */
 #include "progimage.h"
 #endif
 
@@ -426,6 +427,14 @@ typedef struct { PROCMEM_HOLD token; } KPROC_ALLOCATION_HOLD;
 LONG kproc_allocation_hold(PD *owner, const void *base, UQUAD generation,
         VADDR offset, VADDR bytes, UWORD rights, KPROC_ALLOCATION_HOLD *result);
 BOOL kproc_allocation_release(KPROC_ALLOCATION_HOLD *hold);
+LONG kproc_reservation_hold(PD *owner, VADDR address, VADDR bytes,
+        UQUAD reservation, UWORD rights, KASPACE_RESERVATION_HOLD *result);
+LONG kproc_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
+                                KASPACE_RESERVATION_HOLD *result);
+BOOL kproc_reservation_release(KASPACE_RESERVATION_HOLD *hold);
+
+LONG kproc_allocation_duplicate(const KPROC_ALLOCATION_HOLD *source,
+                                KPROC_ALLOCATION_HOLD *result);
 
 BOOL kproc_validate_user_write(VADDR address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);

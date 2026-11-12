@@ -2619,6 +2619,9 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
         }
         region->offset = (ULONG)offset;
     }
+    if (!(region->reservation=kaspace_reservation_next())) {
+        fileback_put(region->backing); kfree(region); return ENSMEM;
+    }
     region->address = (ULONG)address;
     region->length = (ULONG)length;
     region->prot = prot;
@@ -2675,6 +2678,7 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
             tail->address = (ULONG)last;
             tail->length = (ULONG)(region_end - last);
             tail->prot = region->prot;
+            tail->reservation = region->reservation;
             tail->backing = region->backing;
             tail->offset = region->offset + (ULONG)(last - region->address);
             tail->next = region->next;
@@ -2818,6 +2822,7 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
         MMAP_REGION *next = region->next;
 
         if ((UQUAD)region->address + region->length == next->address &&
+            region->reservation == next->reservation &&
             region->prot == next->prot && region->backing == next->backing &&
             (!region->backing || (UQUAD)region->offset + region->length == next->offset)) {
             region->length += next->length;
@@ -2908,6 +2913,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
 {
     VADDR va, largest, size;
     ULONG index = 0;
+    UQUAD reservation = 0;
 
     if (!kproc || !kproc->aspace || !bytes ||
         bytes > heap_limit(kproc) - USER_HEAP_BASE)
@@ -2923,6 +2929,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
      * once) */
     if (!CONF_WITH_DEMAND_PAGING)
         eager = TRUE;
+    if (kind == UH_MALLOC && !(reservation=kaspace_reservation_next())) return 0;
     if (!va || (eager && !aspace_map_private(kproc->aspace, va, size,
                                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER)))
         return 0;
@@ -2933,6 +2940,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
                 (heap->count - index) * sizeof(heap->blocks[0]));
         heap->blocks[index].va = va;
         heap->blocks[index].pages = (ULONG)(size / USER_PAGE_SIZE);
+        heap->blocks[index].reservation = reservation;
         heap->count++;
         return va;
     }
@@ -3704,6 +3712,9 @@ LONG kproc_allocation_hold(PD *pd, const void *base, UQUAD generation,
     if (!owner || kproc_live_pd(owner) != pd || procmem_owner(base) != pd) {
         kproc_release(owner); return EACCDN;
     }
+#if CONF_WITH_PTERMGRP
+    if (kproc_group_status(owner,NULL)) { kproc_release(owner); return EACCDN; }
+#endif
     address += offset;
     if (!kproc_user_access(pd,address,(ULONG)bytes,(rights & ASPACE_PROT_WRITE) != 0)) {
         kproc_release(owner); return EACCDN;
@@ -3727,6 +3738,64 @@ LONG kproc_allocation_hold(PD *pd, const void *base, UQUAD generation,
     if (!procmem_hold_acquire(base,generation,pd,offset,bytes,rights,
                              kproc_ref_number(owner),owner,&result->token)) {
         kproc_release(owner); return ENSMEM;
+    }
+    return E_OK;
+}
+
+LONG kproc_reservation_hold(PD *pd, VADDR address, VADDR bytes,
+        UQUAD reservation, UWORD rights, KASPACE_RESERVATION_HOLD *result)
+{
+    KPROC *owner;
+    KASPACE *space;
+    LONG error;
+    if (!result || result->ticket) return EINVAL;
+    owner = kproc_retain(pd);
+    if (!owner || kproc_live_pd(owner) != pd || !(space=kproc_active_space(owner))) {
+        kproc_release(owner); return EACCDN;
+    }
+#if CONF_WITH_PTERMGRP
+    if (kproc_group_status(owner,NULL)) { kproc_release(owner); return EACCDN; }
+#endif
+    error = kaspace_reservation_hold(space,reservation,address,bytes,rights,
+                                    kproc_ref_number(owner),owner,result);
+    if (error) kproc_release(owner);
+    return error;
+}
+
+LONG kproc_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
+                                KASPACE_RESERVATION_HOLD *result)
+{
+    KPROC *identity;
+    LONG error;
+    if (!result || result->ticket) return EINVAL;
+    identity = kaspace_reservation_owner(source);
+    if (!identity) return EIMBA;
+    if (!(identity=kproc_retain_identity(identity))) return ENSMEM;
+    error = kaspace_reservation_duplicate(source,identity,result);
+    if (error) kproc_release(identity);
+    return error;
+}
+
+BOOL kproc_reservation_release(KASPACE_RESERVATION_HOLD *hold)
+{
+    void *identity = NULL;
+    if (!kaspace_reservation_release(hold,&identity)) return FALSE;
+    kproc_release(identity);
+    return TRUE;
+}
+
+LONG kproc_allocation_duplicate(const KPROC_ALLOCATION_HOLD *source,
+                                KPROC_ALLOCATION_HOLD *result)
+{
+    PROCMEM_HOLD_INFO info;
+    KPROC *identity;
+    if (!source || !result || result->token.base || result->token.allocation || result->token.ticket)
+        return EINVAL;
+    if (!procmem_hold_info(&source->token,&info)) return EIMBA;
+    identity = kproc_retain_identity(info.owner_identity);
+    if (!identity) return ENSMEM;
+    if (!procmem_hold_duplicate(&source->token,identity,&result->token)) {
+        kproc_release(identity); return ENSMEM;
     }
     return E_OK;
 }

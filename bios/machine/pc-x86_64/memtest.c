@@ -1251,7 +1251,12 @@ static void test_allocation_holds(void)
         CHECK(!procmem_free(base),"held allocation cannot be explicitly freed");
         if (mode) CHECK(kproc_allocation_release(&first),"borrower-first release preserves original owner");
         proc_free_owned(pd);
-        CHECK(!kproc_find(pd) && procmem_size(base) && !procmem_owner(base) &&
+        {
+            KPROC *retired = kproc_retain(pd);
+            CHECK(!retired,"retired allocation holder has no live PD registry entry");
+            kproc_release(retired);
+        }
+        CHECK(procmem_size(base) && !procmem_owner(base) &&
               procmem_hold_info(&second.token,&info) &&
               kproc_ref_number(info.owner_identity)==number && !kproc_ref_has_basepage(info.owner_identity),
               "retirement leaves exact allocation plus metadata identity, no live PD/root");
@@ -1262,6 +1267,12 @@ static void test_allocation_holds(void)
             KPROC *identity = kproc_retain(replacement);
             CHECK(identity && kproc_ref_number(identity)!=number,"PD churn cannot substitute canonical allocation owner");
             kproc_release(identity);
+        }
+        {
+            KPROC_ALLOCATION_HOLD descendant = {{0}};
+            CHECK(kproc_allocation_duplicate(&second,&descendant)==E_OK,
+                  "orphan holder can duplicate canonical ownership without retired PD lookup");
+            CHECK(kproc_allocation_release(&descendant),"descendant returns exactly one metadata reference");
         }
         stale = second;
         if (!mode) CHECK(kproc_allocation_release(&first),"parent-first first hold releases independently");

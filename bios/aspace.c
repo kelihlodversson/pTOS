@@ -601,7 +601,7 @@ BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot)
         return FALSE;
     if (aspace_translate(as, page, NULL, NULL))
         return TRUE;                    /* (a racing mapping: nothing to do) */
-    if (!kaspace_mapping_change(as, page, PAGE)) return FALSE;
+    if (!kaspace_materialization_change(as, page, PAGE, prot)) return FALSE;
     /* the page, the tables it may need and the bookkeeping must leave the
      * reserve alone */
     if (pmem32_free_bytes() < ASPACE_RESERVE + ASPACE_COST)
@@ -678,7 +678,7 @@ int aspace_fault_file(ASPACE *as, VADDR va, FILE_BACKING *backing, ULONG offset,
             return 3;
         old = current;
     }
-    if (!kaspace_mapping_change(as, va, PAGE)) return 2;
+    if (!kaspace_materialization_change(as, va, PAGE, prot)) return 2;
     if (old != PMEM32_NONE) p = file_page_find(old);
     else for (p = file_pages; p; p = p->next)
         if (p->backing == backing && p->offset == offset) break;

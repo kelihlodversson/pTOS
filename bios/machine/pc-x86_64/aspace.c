@@ -294,12 +294,13 @@ ULONG aspace_table_pages(const ASPACE *as)
     return as->count;
 }
 
-BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
+static BOOL map_user_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot, BOOL backing, UWORD logical)
 {
 #if CONF_WITH_PRIVATE_CLONE
     if (cow_find(as, va)) return FALSE;
 #endif
-    if (!kaspace_mapping_change(as, va, X86_64_PAGE_SIZE)) return FALSE;
+    if (!(backing ? kaspace_materialization_change(as,va,X86_64_PAGE_SIZE,logical) :
+                    kaspace_mapping_change(as,va,X86_64_PAGE_SIZE))) return FALSE;
     if ((va | phys) & (X86_64_PAGE_SIZE - 1))
         return FALSE;
     /* The 32-bit ABI constraint, checked where the mapping is made: the
@@ -311,6 +312,11 @@ BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
                                 !!(prot & ASPACE_PROT_EXEC),
                                 !!(prot & ASPACE_PROT_USER),
                                 alloc_table_page, as) == 0;
+}
+
+BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
+{
+    return map_user_page(as,va,phys,prot,FALSE,0);
 }
 
 BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
@@ -637,14 +643,14 @@ int aspace_fault_file(ASPACE *as, UQUAD va, FILE_BACKING *backing, ULONG offset,
         if (!copy || !(*pte & PTE_FILE)) return 3;
         old = *pte & PTE_ADDR;
     }
-    if (!kaspace_mapping_change(as, va, X86_64_PAGE_SIZE)) return 2;
+    if (!kaspace_materialization_change(as, va, X86_64_PAGE_SIZE, prot)) return 2;
     if (old) p = file_page_find(old);
     else for (p = file_pages; p; p = p->next)
         if (p->backing == backing && p->offset == offset) break;
     /* A shared-page hit may still need new page tables and bookkeeping. */
     if (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST) return 2;
     if (!copy && p) {
-        if (!aspace_map_page(as, va, p->physical, prot & ~ASPACE_PROT_WRITE)) return 2;
+        if (!map_user_page(as, va, p->physical, prot & ~ASPACE_PROT_WRITE, TRUE, prot)) return 2;
         *x86_64_user_pte(as->pml4_phys, va) |= X86_64_PTE_OWNED | PTE_FILE;
         if (p->first_root != as->pml4_phys) file_cross_shares++;
         p->references++; file_page_refs++; as->nowned++;
@@ -665,7 +671,7 @@ int aspace_fault_file(ASPACE *as, UQUAD va, FILE_BACKING *backing, ULONG offset,
     }
     /* Replacing an existing leaf uses the present page tables; no old entry
      * is dropped until the complete replacement is ready. */
-    if (!aspace_map_page(as, va, physical, copy ? prot : prot & ~ASPACE_PROT_WRITE)) {
+    if (!map_user_page(as, va, physical, copy ? prot : prot & ~ASPACE_PROT_WRITE, TRUE, prot)) {
         if (!copy) kfree(p);
         x86_64_pmem_free_pages(physical, 1); return 2;
     }
@@ -723,7 +729,7 @@ BOOL aspace_fault_in(ASPACE *as, UQUAD va, UWORD prot)
         return FALSE;
     if (aspace_translate(as, page, NULL, NULL))
         return TRUE;                    /* (a racing mapping: nothing to do) */
-    if (!kaspace_mapping_change(as, page, X86_64_PAGE_SIZE)) return FALSE;
+    if (!kaspace_materialization_change(as, page, X86_64_PAGE_SIZE, prot)) return FALSE;
     /* the page, the tables it may need (three) and the bookkeeping's growth must
      * all leave the reserve alone */
     if (pmem_free_bytes() < ASPACE_FAULT_RESERVE + ASPACE_FAULT_COST)
@@ -732,7 +738,7 @@ BOOL aspace_fault_in(ASPACE *as, UQUAD va, UWORD prot)
     if (backing == X86_64_PMEM_NONE)
         return FALSE;
     memset((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + backing), 0, X86_64_PAGE_SIZE);
-    if (!aspace_map_page(as, page, backing, prot)) {
+    if (!map_user_page(as, page, backing, prot, TRUE, prot)) {
         x86_64_pmem_free_pages(backing, 1);
         return FALSE;
     }
