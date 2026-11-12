@@ -70,6 +70,32 @@ ULONG procmem_size(const void *p);
  * block" from "someone else's block that reused the space". */
 UQUAD procmem_gen(const void *p);
 
+/* Internal allocation ownership, distinct from resident mapping pins. A token
+ * is move-only; copies are non-owning and cannot release a later ticket. The
+ * owner_identity reference is prepared/retained by the canonical owner before
+ * acquire. Success transfers that reference; failure transfers nothing.
+ * release returns it exactly once for destruction OUTSIDE all leaf exclusion.
+ * No allocation, callback or final release occurs in the publication interval.
+ * These operations require cooperative owner serialization (not SMP safe). */
+typedef struct {
+    VADDR base;
+    UQUAD allocation, ticket;
+} PROCMEM_HOLD;
+typedef struct {
+    VADDR offset, bytes;
+    UWORD rights;
+    UQUAD owner_number;
+    void *owner_identity; /* borrowed while the authenticated hold stays owned */
+} PROCMEM_HOLD_INFO;
+BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
+        const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
+        UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
+BOOL procmem_hold_info(const PROCMEM_HOLD *hold, PROCMEM_HOLD_INFO *result);
+BOOL procmem_hold_release(PROCMEM_HOLD *hold, void **owner_identity);
+/* Whole-range, non-mutating check before any metadata/leaf/owner change. */
+BOOL procmem_mutation_allowed(const void *base, UQUAD allocation,
+                             VADDR offset, VADDR bytes);
+
 /*
  * For tests that make memory permanent on purpose (Ptermres): the generation
  * the next allocation will get, and a release of every unpinned allocation
@@ -117,7 +143,7 @@ PADDR procmem_phys_of(VADDR va);
  * same kind of per-address cleanup.  `owner` is only an identity, never
  * dereferenced.
  */
-void procmem_set_owner(const void *p, const void *owner);
+BOOL procmem_set_owner(const void *p, const void *owner);
 const void *procmem_owner(const void *p);   /* NULL: no live owner, or not allocated */
 void procmem_free_owned(const void *owner, void (*pre_free)(void *base));
 void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));

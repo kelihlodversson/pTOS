@@ -35,6 +35,8 @@ KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold); /* borrowed */
  * FALSE means a sealed lease or durable hold rejects it, nothing revoked.
  * TRUE revokes overlapping preparation leases even if the mutation later fails.
  * Inputs are rounded out to pages. Backend lifetime is retained by each lease. */
+/* Pure admission check for a whole multi-root mutation; never revokes. */
+BOOL kaspace_mapping_can_change(struct aspace *backend, VADDR address, VADDR bytes);
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
 #if CONF_WITH_PRIVATE_CLONE
 /* Physical COW preserves logical VA/rights and durable stack holds. Reject

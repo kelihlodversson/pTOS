@@ -137,7 +137,7 @@ void kaspace_lease_release(KASPACE_LEASE **handle)
     kaspace_put(space);
 }
 
-BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
+BOOL kaspace_mapping_can_change(ASPACE *backend, VADDR address, VADDR bytes)
 {
     KASPACE *space;
     KASPACE_LEASE *lease;
@@ -149,6 +149,18 @@ BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
     if (!space) return TRUE; /* backend not yet adopted */
     for (lease = space->leases; lease; lease = lease->next)
         if ((lease->sealed || lease->held) && first <= lease->last && lease->first <= last) return FALSE;
+    return TRUE;
+}
+BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
+{
+    KASPACE *space;
+    KASPACE_LEASE *lease;
+    VADDR first, last;
+    if (!kaspace_mapping_can_change(backend,address,bytes)) return FALSE;
+    first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
+    last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
+    for (space = spaces; space && space->backend != backend; space = space->next) { }
+    if (!space) return TRUE; /* backend not yet adopted */
     for (lease = space->leases; lease; lease = lease->next)
         if (first <= lease->last && lease->first <= last) lease->revoked = TRUE;
     return TRUE;

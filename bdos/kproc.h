@@ -419,6 +419,14 @@ BOOL kproc_validate_user_exec(VADDR address);
 /* the same question for Maccess()/Mvalidate(): the process's own access, with
  * no page backed for the answer */
 BOOL kproc_user_access(PD *pd, VADDR address, ULONG size, BOOL write);
+/* Allocation owner references retain canonical identity only after retirement,
+ * never PD/execution resources. Move-only; release outside leaf/GUI exclusion.
+ * No lazy backing is materialized by acquisition. */
+typedef struct { PROCMEM_HOLD token; } KPROC_ALLOCATION_HOLD;
+LONG kproc_allocation_hold(PD *owner, const void *base, UQUAD generation,
+        VADDR offset, VADDR bytes, UWORD rights, KPROC_ALLOCATION_HOLD *result);
+BOOL kproc_allocation_release(KPROC_ALLOCATION_HOLD *hold);
+
 BOOL kproc_validate_user_write(VADDR address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);

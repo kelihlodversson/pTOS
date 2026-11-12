@@ -59,6 +59,10 @@ int main(void)
     a.protection[1] = 0; a.protection[1] = ASPACE_PROT_USER;
     assert(!kaspace_lease_valid(leases[1]));
     assert(!kaspace_lease_seal(leases,2));
+    /* Whole-operation preflight is observational: it must not revoke an
+     * earlier valid preparation while checking another held region/root. */
+    assert(kaspace_mapping_can_change(&a,0x1000,4096));
+    assert(kaspace_lease_valid(leases[0]));
     /* Failed group seal must not seal the earlier, still-valid lease. */
     assert(kaspace_mapping_change(&a,0x1000,1));
     kaspace_lease_release(&leases[0]); kaspace_lease_release(&leases[1]);

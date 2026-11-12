@@ -2286,6 +2286,12 @@ LONG kproc_shrink_tpa(PD *caller, void *blk, long len)
         return EGSBF;
     if (keep == old)
         return E_OK;
+    if (!procmem_mutation_allowed(blk,procmem_gen(blk),keep,old-keep)) return EACCDN;
+    /* All adopted roots must admit the tail mutation before ANY root or
+     * borrowed-size metadata changes. Checking does not revoke leases. */
+    for (k = kproc_list; k; k = k->next)
+        if (k->aspace && !kaspace_mapping_can_change(k->aspace,
+                (VADDR)(uintptr_t)blk+keep,old-keep)) return EACCDN;
     for (k = kproc_list; k; k = k->next) {
         if (k->aspace)
             aspace_shrink_procmem(k->aspace, (VADDR)(uintptr_t)blk, keep);
@@ -2293,7 +2299,7 @@ LONG kproc_shrink_tpa(PD *caller, void *blk, long len)
             if (k->borrowed[i].bytes && k->borrowed[i].va == (VADDR)(uintptr_t)blk)
                 k->borrowed[i].bytes = keep;
     }
-    procmem_shrink(blk, keep);
+    if (!procmem_shrink(blk, keep)) panic("preflighted TPA shrink refused");
     if (kproc->user_end > (UBYTE *)blk + keep) {
         kproc->user_end = (UBYTE *)blk + keep;
         if (!kproc->aspace)             /* not launched yet: the launch checks p_hitpa against the block */
@@ -3681,6 +3687,56 @@ BOOL kproc_user_access(PD *pd, VADDR address, ULONG size, BOOL write)
         size > USER_VA_LIMIT - address)
         return FALSE;
     return range_allowed(kproc, address, size, write);
+}
+
+LONG kproc_allocation_hold(PD *pd, const void *base, UQUAD generation,
+        VADDR offset, VADDR bytes, UWORD rights, KPROC_ALLOCATION_HOLD *result)
+{
+    KPROC *owner;
+    VADDR address = (VADDR)(uintptr_t)base, page, last;
+    if (!result || result->token.base || result->token.allocation || result->token.ticket ||
+        !bytes || address >= USER_VA_LIMIT || offset >= USER_VA_LIMIT-address ||
+        bytes > USER_VA_LIMIT-address-offset || bytes > (ULONG)~0UL ||
+        !(rights & ASPACE_PROT_USER) ||
+        (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))) return EINVAL;
+    if (!generation || procmem_gen(base) != generation) return EIMBA;
+    owner = kproc_retain(pd);
+    if (!owner || kproc_live_pd(owner) != pd || procmem_owner(base) != pd) {
+        kproc_release(owner); return EACCDN;
+    }
+    address += offset;
+    if (!kproc_user_access(pd,address,(ULONG)bytes,(rights & ASPACE_PROT_WRITE) != 0)) {
+        kproc_release(owner); return EACCDN;
+    }
+    if (rights & ASPACE_PROT_EXEC) {
+        last = (address+bytes-1) & ~(VADDR)(USER_PAGE_SIZE-1);
+        for (page = address & ~(VADDR)(USER_PAGE_SIZE-1); ; page += USER_PAGE_SIZE) {
+            UWORD prot;
+            if ((!
+#if CONF_WITH_PRIVATE_CLONE
+                 aspace_logical_protection(owner->aspace,page,&prot)
+#else
+                 aspace_translate(owner->aspace,page,NULL,&prot)
+#endif
+                 && !lazy_area(owner,page,&prot)) || (prot & rights) != rights) {
+                kproc_release(owner); return EACCDN;
+            }
+            if (page == last) break;
+        }
+    }
+    if (!procmem_hold_acquire(base,generation,pd,offset,bytes,rights,
+                             kproc_ref_number(owner),owner,&result->token)) {
+        kproc_release(owner); return ENSMEM;
+    }
+    return E_OK;
+}
+
+BOOL kproc_allocation_release(KPROC_ALLOCATION_HOLD *hold)
+{
+    void *identity = NULL;
+    if (!hold || !procmem_hold_release(&hold->token,&identity)) return FALSE;
+    kproc_release(identity); /* token is already unpublished; may release metadata */
+    return TRUE;
 }
 
 BOOL kproc_validate_user_range(VADDR address, ULONG size)

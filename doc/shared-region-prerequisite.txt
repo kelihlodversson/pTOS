@@ -3,16 +3,32 @@ Shared-ASPACE allocation retention: prerequisite handoff
 
 Status
 ------
-Design and production-KASPACE policy fixtures only. No allocation-retention
-implementation, shared-Pexec capability or native acceptance is claimed.
-Integration base: epic 2ff82163b1f1fab0af3115be5ecb102f6004d4a3, after
-#933/#936/#943/#934/#932/#914/#940/#941/#937 integration. This is the focused
-#942 design/fixture increment, not a replay of those prerequisites. Public
-modes 4/104/200, Pfork/Pvfork and generic PRIVATE_VM remain disabled. Accepted
-constructor, COW and saved-return work does not establish allocation retention.
+Implementation in progress on feature/894-shared-region-ownership, based on
+merged epic 52b74f64f62ae92059ededa6f03ca277d79703b1. The original #942 was
+DESIGN/HOST FIXTURES ONLY; its acceptance does not establish R1-R4.
 
-Observed owner boundaries
--------------------------
+Initial allocation implementation: both existing procmem backends now share
+allocation-record hold tickets, checked generation/extent/rights/owner metadata,
+count/ticket exhaustion, no-wrap allocation IDs, explicit free/shrink/owner
+barriers and deferred release after both mapping pins and allocation holds.
+The upper KPROC helper retains canonical identity without retaining a retired
+PD/execution context. Tokens are consumed/unpublished before memory notification
+and final identity release, in serialized process context outside leaf locks.
+Pure KASPACE mutation preflight permits checking every TPA root before changing
+any mapping or borrowed-size metadata.
+
+NOT COMPLETE: R2 lazy/file/image/heap/mmap reservation identities and holds;
+R3 complete mutation/callsite migration (including checked owner transfers and
+whole multi-region atomicity); independent child attachment and native lifetime
+acceptance. Current host allocation tests use production records with modeled
+physical windows. The native x32 allocation/KPROC retirement check is a kernel
+self-test, not user-visible shared-Pexec proof. No new API is public.
+
+Public modes4/104/200, Pfork/Pvfork, PRIVATE_VM, TLS, preemption and SMP remain
+disabled. No Pexec consumer is started before prerequisite owner acceptance.
+
+Original #942 observations (before this implementation)
+-----------------------------------------------------
 include/procmem.h exposes a non-recycled allocation generation and size, but
 procmem_pin is void, increments every overlapping allocation, and does not
 authenticate an expected generation, exact extent, overflow or rights.

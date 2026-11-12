@@ -1221,6 +1221,59 @@ static void test_isolation(void)
     CHECK(failed >= 4, "table-rollback failures were exercised");
 }
 
+/* Actual allocation/ASPACE/KPROC retirement, not a hosted CPU model.
+ * This proves allocation holds only; lazy reservation/Pexec4 remains gated. */
+static void test_allocation_holds(void)
+{
+    unsigned mode;
+    for (mode=0;mode<2;mode++) {
+        SNAP baseline;
+        PD *pd, *replacement;
+        void *env, *base, *replacement_env;
+        KPROC_ALLOCATION_HOLD first = {{0}}, second = {{0}}, stale;
+        PROCMEM_HOLD_INFO info;
+        UQUAD generation, number;
+        snap(&baseline);
+        pd = new_basepage();
+        if (!pd) return;
+        env = USERPTR_TO_PTR(pd->p_env);
+        CHECK(procmem_set_owner(pd,pd) && procmem_set_owner(env,pd),"assign allocation-hold source ownership");
+        CHECK(kproc_prepare_user(pd,run),"prepare actual allocation-hold source root");
+        base = mode ? env : (void *)pd;
+        generation = procmem_gen(base);
+        CHECK(kproc_allocation_hold(pd,base,generation+1,0,2,ASPACE_PROT_USER,&first)==EIMBA &&
+              !first.token.ticket,"stale allocation generation has no retained owner/output");
+        CHECK(kproc_allocation_hold(pd,base,generation,0,2,ASPACE_PROT_USER,&first)==E_OK &&
+              kproc_allocation_hold(pd,base,generation,0,2,ASPACE_PROT_USER,&second)==E_OK,
+              "independent actual allocation holds acquire canonical identities");
+        CHECK(procmem_hold_info(&first.token,&info),"read authenticated hold identity");
+        number = info.owner_number;
+        CHECK(!procmem_free(base),"held allocation cannot be explicitly freed");
+        if (mode) CHECK(kproc_allocation_release(&first),"borrower-first release preserves original owner");
+        proc_free_owned(pd);
+        CHECK(!kproc_find(pd) && procmem_size(base) && !procmem_owner(base) &&
+              procmem_hold_info(&second.token,&info) &&
+              kproc_ref_number(info.owner_identity)==number && !kproc_ref_has_basepage(info.owner_identity),
+              "retirement leaves exact allocation plus metadata identity, no live PD/root");
+        replacement = new_basepage();
+        if (!replacement) return;
+        replacement_env = USERPTR_TO_PTR(replacement->p_env);
+        {
+            KPROC *identity = kproc_retain(replacement);
+            CHECK(identity && kproc_ref_number(identity)!=number,"PD churn cannot substitute canonical allocation owner");
+            kproc_release(identity);
+        }
+        stale = second;
+        if (!mode) CHECK(kproc_allocation_release(&first),"parent-first first hold releases independently");
+        CHECK(kproc_allocation_release(&second) && !procmem_size(base),"final hold triggers deferred allocation reclamation");
+        CHECK(!kproc_allocation_release(&stale),"copied spent ticket cannot release a replacement owner");
+        set_owner(replacement,replacement); set_owner(replacement_env,replacement);
+        proc_free_owned(replacement);
+        same(&baseline,"actual allocation holds and canonical retirement reclaim all resources");
+    }
+    kcprintf("native authenticated allocation hold/retirement/release: PASS\n");
+}
+
 /* The user-pointer checks the system calls use are made against the
  * current process's own page tables. */
 static void test_process_validation(void)
@@ -6630,6 +6683,7 @@ void x86_64_memtest_run(void)
     test_aspace();
     test_isolation();
     test_process_validation();
+    test_allocation_holds();
     test_kthread_relationships();
     test_proc_clone();
     test_proc_clone_invalidation();
