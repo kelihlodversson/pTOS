@@ -66,9 +66,11 @@ THREAD/launcher/root handoffs. See group-exit.txt for its pending nested-child
 and blocking-boundary contracts. Outstanding join claims are cancelled by safe
 THREAD reap; group cancellation never consumes a target status as a join.
 
-#909 still owns generic PROCESS waits/reaping. libcmini #25 must integrate
-one-time atexit plus Ptermgrp with older-kernel fallback (EINVFN/EINVAL); libc
-exit is not claimed group-wide here. TLS (#908) remains unsupported.
+#909 still owns generic PROCESS waits/reaping. The pinned libcmini PR #26
+implementation runs one-time atexit followed by Ptermgrp, with EINVFN/EINVAL
+legacy fallback and a nonreturning unexpected-error path. Native tests execute
+that group-exit path; fallback and recursive handlers have hosted tests.
+TLS (#908) remains unsupported.
 
 Validation evidence
 -------------------
@@ -95,6 +97,8 @@ QEMU v10.0.13 target/m68k/cpu.c clears M68K_FEATURE_M68040 for m68060 while
 translate.c registers PFLUSH under that feature. The installed binary has no
 m68060 mmu property (mmu=on is rejected). This is a reproducible pre-existing
 CPU-model/MMU coverage limitation, not evidence of a clone regression. No
-unrelated boot workaround is included. Nonzero FPIAR and native -mfastcall
-runtime remain unverified; local m68k shared-library-disabled runs do not
-establish shared-library runtime support.
+unrelated boot workaround is included. This QEMU limitation does not replace the pinned Hatari Falcon/TT030/040
+and Amiberry68060 native compatibility coverage. Amiberry cache-off/on tests
+require nonzero FPIAR. Native user/library -mfastcall remains compile-only;
+the Amiga kernel's fastcall mode is a distinct tested configuration. Local
+shared-library-disabled runs do not establish shared-library runtime support.
