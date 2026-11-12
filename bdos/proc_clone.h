@@ -142,6 +142,7 @@ LONG proc_create_clone_process(struct kproc *source, UWORD resources, struct kpr
 
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
 /* Inject failure after source, target, VM, THREAD, or owned-observer identity acquisition (1..5). */
+/* Function-entry transaction stages; loader allocation faults use allocator hooks. */
 void proc_clone_test_fail_after(UWORD stage);
 void proc_clone_test_cancel_publication(void);
 /* Environment, PD, KPROC, handles, CWD acquisition (1..5). */

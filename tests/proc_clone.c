@@ -258,6 +258,11 @@ static void exercise_loaded(void)
         assert(allocations - frees == balance && destroys == destroyed);
     }
     assert(stage < 8 && !target.space && !target.threads && target.refs == 1);
+#if CONF_WITH_X86_64_MEMTEST
+    /* Function-entry failure injection must survive non-runnable loader
+     * bootstrap; actual loader allocations were faulted independently above. */
+    proc_clone_test_fail_after(1);
+#endif
     assert(proc_clone(&args, &tx) == E_OK);
     assert(proc_clone_commit(&tx, &result) == E_OK && !tx);
     thread = result.thread;
@@ -266,6 +271,19 @@ static void exercise_loaded(void)
     assert(!kthread_is_executing(thread));
     assert(kthread_set_execution(thread, &target, loaded_reclaim));
     assert(!kthread_start(thread)); /* loader has not committed its VM yet */
+#if CONF_WITH_X86_64_MEMTEST
+    {
+        PROC_CLONE_ARGS next = {0};
+        PROC_CLONE_TRANSACTION *blocked = NULL;
+        next.source = &target; next.process_policy = PROC_CLONE_SAME_PROCESS;
+        next.vm_policy = PROC_CLONE_SHARE_VM;
+        /* Give the intended factory a live selected root without starting it. */
+        target.space = kaspace_share(space);
+        assert(proc_clone(&next,&blocked) == ENSMEM && !blocked);
+        assert(target.threads == thread && !kthread_is_executing(thread));
+        kaspace_put(target.space); target.space = NULL;
+    }
+#endif
     target.space = kaspace_share(space); /* existing loader adoption boundary */
     assert(kthread_start(thread));
     target.started = TRUE;

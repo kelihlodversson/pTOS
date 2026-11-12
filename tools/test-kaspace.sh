@@ -61,6 +61,9 @@ import kconfiglib, sys
 k = kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/' + sys.argv[1] + '_defconfig')
 k.syms['CONF_WITH_MMAP'].set_value(0)
+if sys.argv[1] == 'pc-x86_64':
+    k.syms['CONF_WITH_X86_64_MEMTEST'].set_value(2)
+    assert k.syms['CONF_WITH_X86_64_MEMTEST'].str_value == 'y'
 k.write_config(sys.argv[2])
 PYCONFIG
     CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
