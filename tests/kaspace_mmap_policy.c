@@ -1,5 +1,6 @@
 /* Host-executed policy/lifetime test using each architecture's configuration. */
 #include "emutos.h"
+#include "biosext.h"
 #include "procmem.h"
 #include "kheap.h"
 #include "kaspace.h"
@@ -91,3 +92,7 @@ int main(void)
     assert(backend.destroyed);
     return 0;
 }
+
+void panic(const char *format, ...) { (void)format; abort(); }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }

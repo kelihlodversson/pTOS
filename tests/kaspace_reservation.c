@@ -2,10 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "emutos.h"
+#include "biosext.h"
 #include "../bdos/kaspace.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"reservation hold:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 struct aspace { unsigned destroyed; };
-static unsigned allocations, frees, fail_alloc, walks, backing_puts;
+static unsigned allocations, frees, fail_alloc, walks, backing_puts, retired_private, retired_borrows;
 void *kalloc(ULONG bytes) { void *p; if(fail_alloc) return NULL; p=calloc(1,bytes); if(p) allocations++; return p; }
 void kfree(void *p) { if(p) { frees++; free(p); } }
 void aspace_destroy(ASPACE *as) { CHECK(!as->destroyed); as->destroyed++; }
@@ -45,12 +46,33 @@ int main(void)
         captured.identity=kaspace_reservation_next();
         CHECK(kaspace_reservation_hold_captured(space,&captured,0x20010,8,captured.rights,7,&canonical,&two)==E_OK);
         captured.identity=0; captured.rights=0; /* source descriptor is transient */
+        CHECK(!kaspace_reservation_info(space,0x20ff0,16,&info));
+        CHECK(kaspace_reservation_info(space,0x20008,8,&info) && info.address==0x20008 && info.bytes==8);
         CHECK(kaspace_retained_lazy_protection(space,0x20000,&rights) && rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
         CHECK(kaspace_materialization_change(&backend,0x20000,4096,rights));
         CHECK(!kaspace_mapping_can_change(&backend,0x20000,4096));
         CHECK(kaspace_reservation_release(&one,&owner));owner=NULL;
         CHECK(kaspace_reservation_release(&two,&owner));owner=NULL;
         CHECK(!kaspace_retained_lazy_protection(space,0x20000,&rights));
+    }
+    {
+        KASPACE_RESERVATION_INFO captured={0x30000,8192,kaspace_reservation_next(),ASPACE_PROT_USER,0};
+        KASPACE_RESERVATION_HOLD one={0},two={0},three={0},spent;
+        CHECK(kaspace_reservation_hold_captured(space,&captured,0x30000,16,ASPACE_PROT_USER,7,&canonical,&one)==E_OK);
+        CHECK(kaspace_reservation_duplicate(&one,&canonical,&two)==E_OK);
+        CHECK(kaspace_retire_private(space,0x30000,8192));
+        CHECK(!kaspace_mapping_can_change(&backend,0x31000,4096));
+        spent=one;
+        CHECK(kaspace_reservation_release(&one,&owner) && !retired_private);owner=NULL;
+        CHECK(!kaspace_reservation_release(&spent,&owner));
+        CHECK(kaspace_reservation_duplicate(&two,&canonical,&three)==E_OK);
+        CHECK(kaspace_reservation_release(&two,&owner) && !retired_private);owner=NULL;
+        CHECK(kaspace_reservation_release(&three,&owner) && retired_private==1);owner=NULL;
+        CHECK(kaspace_mapping_can_change(&backend,0x30000,8192));
+        captured.address=0x40000;captured.bytes=13;captured.identity=kaspace_reservation_next();
+        CHECK(kaspace_reservation_hold_captured(space,&captured,0x40000,2,ASPACE_PROT_USER,7,&canonical,&one)==E_OK);
+        CHECK(kaspace_retire_borrow(space,0x40000,13));
+        CHECK(kaspace_reservation_release(&one,&owner) && retired_borrows==1);owner=NULL;
     }
     {
         KASPACE_RESERVATION_HOLD child = {0};
@@ -109,3 +131,11 @@ int main(void)
     puts("Production reservation holds: lazy heap/file ownership without backing, exact birth/rights, stale tickets, partial failure, saturation, mutation barrier and final reclaim: PASS (host)");
     return 0;
 }
+
+void panic(const char *format, ...) { (void)format; abort(); }
+
+BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
+{ CHECK(va==0x30000 && bytes==8192 && kaspace_mapping_can_change(as,va,bytes)); retired_private++;return TRUE; }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes)
+{ CHECK(va==0x40000 && bytes==13 && kaspace_mapping_can_change(as,va,bytes));retired_borrows++; }

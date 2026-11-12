@@ -33,6 +33,23 @@ retired PD nor its heap/layout arrays is needed later. Captured lazy stack
 witnesses authorize reservation-preserving backing after owner retirement;
 nonlazy images never authorize zero-filled replacement data. Known image
 metadata cannot turn a borrowed device/ROM-window leaf into owned RAM.
+Exact captured byte bounds authenticate subsequent acquisitions; page-rounded
+lookup is used ONLY for lazy page backing and mutation exclusion. Fresh live
+subrange permissions take precedence over a broad conservative witness, so
+RX/RW acquisition does not depend on broad/narrow hold order.
+
+Stopped clone compatibility borrows and discarded loader staging transfer
+pending cleanup into an existing overlapping reservation lease, without an
+allocation or second registry. The cleanup owner protects the complete retired
+extent, but never widens authenticated bytes/rights. Its consumed ticket cannot
+be replayed. Other valid holders may duplicate independently; the final
+conflicting release unlinks the cleanup owner before reclaiming pages/pins.
+Original exact borrow-pin dimensions survive page rounding. An exiting loader
+transfers unstarted staging before wiping its heap metadata, so parent-first
+exit leaves no stale PD in a deferred block. Running UH_IMAGE ownership retains
+the existing shared-root contract and is not mistaken for unused staging.
+Cleanup traversal keeps its own root references until all reentry has settled;
+final identity releases/destructors remain outside leaf/GUI exclusion.
 
 R3 preflights all affected mmap regions and TPA roots before the first leaf,
 metadata or borrowed-size change. Explicit allocation disposal and isolated

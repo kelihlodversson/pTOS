@@ -1,6 +1,7 @@
 /* Generic lease policy, host execution under all three user-ABI configs.
  * Backend mutation hooks themselves are exercised by target runtime tests. */
 #include "emutos.h"
+#include "biosext.h"
 #include "procmem.h"
 #include "kheap.h"
 #include "kaspace.h"
@@ -124,3 +125,9 @@ int main(void)
     assert(allocations == frees);
     return 0;
 }
+
+void panic(const char *format, ...) { (void)format; abort(); }
+
+BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }

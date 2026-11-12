@@ -120,6 +120,12 @@ void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold);
 LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
         void *owner_identity, KASPACE_RESERVATION_HOLD *result);
 BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_identity);
+/* Stopped/unstarted owner only. Transfer cleanup into an existing blocking
+ * reservation lease without allocation; release after its last conflicting
+ * owner, outside exclusion. These are not public destructive-mutation bypasses. */
+BOOL kaspace_retire_private(KASPACE *space, VADDR address, VADDR bytes);
+BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes);
+
 
 /* backend must be exclusively owned by the caller and not previously adopted.
  * On success transfers ownership; on failure ownership stays with the caller.

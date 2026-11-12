@@ -5,6 +5,7 @@
 #include "kproc.h"
 #include "kaspace.h"
 #include "proc_clone.h"
+#include "kthread.h"
 #include "mem.h"
 #include "procmem.h"
 #include "mman.h"
@@ -19,12 +20,62 @@ extern PD *run;
 #define REQUIRE(c) do { if (!(c)) panic("native region ownership: %s",#c); } while (0)
 #define PAGE USER_PAGE_SIZE
 
+static void held_staging_discard(KPROC *source)
+{
+    KPROC *child=NULL;
+    PD *pd;
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_RESERVATION_HOLD first={0},last={0};
+    ASPACE *backend=kaspace_backend(kproc_active_space(source));
+    VADDR va;
+    REQUIRE(proc_create_clone_process(source,0,&child)==E_OK && child);
+    pd=kproc_live_pd(child); REQUIRE(pd);
+    va=kproc_load_alloc(run,pd,2*PAGE); REQUIRE(va);
+    kproc_set_creator(pd,run);
+    REQUIRE(kproc_reservation_info(run,va,16,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(run,va,16,info.identity,ASPACE_PROT_USER,&first)==E_OK);
+    REQUIRE(kproc_reservation_duplicate(&first,&last)==E_OK);
+    proc_dispose_process(child);
+    REQUIRE(!kproc_live_pd(child) && aspace_translate(backend,va,NULL,NULL));
+    REQUIRE(!kproc_ref_has_basepage(child));
+    REQUIRE(kproc_reservation_release(&first) && aspace_translate(backend,va,NULL,NULL));
+    REQUIRE(kproc_reservation_release(&last) && !aspace_translate(backend,va,NULL,NULL) &&
+            !aspace_translate(backend,va+PAGE,NULL,NULL));
+    kproc_release(child);
+}
+
+static void held_clone_compat_retirement(KPROC *source)
+{
+    KPROC *child=NULL;
+    KTHREAD *thread;
+    PD *pd;
+    KASPACE *space=kproc_active_space(source), *adopted;
+    ASPACE *backend=kaspace_backend(space);
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_RESERVATION_HOLD hold={0};
+    VADDR address;
+    REQUIRE(proc_create_clone_process(source,0,&child)==E_OK && child);
+    pd=kproc_live_pd(child); address=(VADDR)(uintptr_t)pd;
+    thread=kthread_construct_identity(child,space); REQUIRE(thread);
+    REQUIRE(kproc_clone_prepare_compat(child,thread,space));
+    REQUIRE(aspace_regrant(backend,address,sizeof(PD),ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    adopted=kaspace_share(space); REQUIRE(adopted);
+    REQUIRE(kproc_clone_adopt_space(child,thread,adopted));
+    REQUIRE(kproc_reservation_info(pd,address,sizeof(PD),&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(pd,address,sizeof(PD),info.identity,ASPACE_PROT_USER,&hold)==E_OK);
+    proc_dispose_process(child); /* association keeps the unstarted child until reap */
+    REQUIRE(kthread_stop(thread) && kthread_reap(thread));
+    REQUIRE(!kproc_ref_has_basepage(child) && aspace_translate(backend,address,NULL,NULL));
+    REQUIRE(kproc_reservation_release(&hold) && !aspace_translate(backend,address,NULL,NULL));
+    kproc_release(child);
+}
+
 void kproc_region_selftest(void)
 {
     static BOOL tested;
     KSCHED_CLEANUP_SCOPE scope={0};
     FS_ERROR_STATE error;
-    KPROC *source, *owner=NULL;
+    KPROC *source, *owner=NULL, *orphan_stage=NULL;
     PD *pd;
     void *env;
     ASPACE *backend;
@@ -33,9 +84,9 @@ void kproc_region_selftest(void)
     KPROC_ALLOCATION_HOLD raw={{0}}, raw_copy={{0}};
     KASPACE_RESERVATION_INFO info;
     KASPACE_RESERVATION_HOLD base={0}, environment={0}, stack={0}, copy={0}, image={0};
-    KASPACE_RESERVATION_HOLD staged={0};
+    KASPACE_RESERVATION_HOLD staged={0},broad={0},data={0},orphan_hold={0};
     PROG_LAYOUT layout;
-    VADDR image_address;
+    VADDR image_address,orphan_address;
     ULONG records, value=0x8941234UL;
     VADDR stack_page=USER_STACK_TOP-PAGE;
 #if CONF_WITH_MMAP
@@ -49,6 +100,8 @@ void kproc_region_selftest(void)
     ksched_cleanup_begin(&scope);
     procmem_stats(&before); records=kproc_count();
     source=kproc_retain(run); REQUIRE(source);
+    held_staging_discard(source);
+    held_clone_compat_retirement(source);
     REQUIRE(proc_create_clone_process(source,0,&owner)==E_OK && owner);
     pd=kproc_live_pd(owner); REQUIRE(pd);
     /* Factory output is intentionally absent from the caller root. Reuse
@@ -79,8 +132,18 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_reservation_hold(pd,(VADDR)(uintptr_t)env,2,info.identity,ASPACE_PROT_USER,&environment)==E_OK);
     REQUIRE(kproc_allocation_hold(pd,env,procmem_gen(env),0,2,ASPACE_PROT_USER,&raw)==E_OK);
     REQUIRE(!procmem_free(env));
+    /* Broad READ first must not hide RX/RW subrange permissions. */
+    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(pd,image_address,2*PAGE,info.identity,ASPACE_PROT_USER,&broad)==E_OK);
     REQUIRE(kproc_reservation_info(pd,image_address,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,image_address,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_EXEC,&image)==E_OK);
+    REQUIRE(kproc_reservation_info(pd,image_address+PAGE,PAGE,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(pd,image_address+PAGE,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&data)==E_OK);
+    REQUIRE(kproc_reservation_release(&broad));
+    /* And the opposite order must preserve the same rights. */
+    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(pd,image_address,2*PAGE,info.identity,ASPACE_PROT_USER,&broad)==E_OK);
+    REQUIRE(kproc_reservation_release(&broad));
     REQUIRE(kproc_reservation_info(pd,stack_page,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,stack_page,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&stack)==E_OK);
 #if CONF_WITH_MMAP
@@ -95,8 +158,20 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_munmap(pd,a,2*PAGE)==EACCDN && kproc_mprot(pd,a,2*PAGE,PROT_READ)==EACCDN);
     REQUIRE(aspace_copy_from_user(backend,&actual,a,sizeof(actual)) && actual==value);
 #endif
+    REQUIRE(proc_create_clone_process(source,0,&orphan_stage)==E_OK && orphan_stage);
+    orphan_address=kproc_load_alloc(pd,kproc_live_pd(orphan_stage),2*PAGE); REQUIRE(orphan_address);
+    kproc_set_creator(kproc_live_pd(orphan_stage),pd);
+    REQUIRE(kproc_reservation_info(pd,orphan_address,16,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(pd,orphan_address,16,info.identity,ASPACE_PROT_USER,&orphan_hold)==E_OK);
+    REQUIRE(kaspace_retire_borrow(space,(VADDR)(uintptr_t)env,procmem_size(env)));
     proc_dispose_process(owner);
     REQUIRE(!kproc_live_pd(owner));
+    REQUIRE(aspace_translate(backend,orphan_address,NULL,NULL));
+    proc_dispose_process(orphan_stage); kproc_release(orphan_stage);
+    REQUIRE(kproc_reservation_release(&orphan_hold) &&
+            !aspace_translate(backend,orphan_address,NULL,NULL) &&
+            !aspace_translate(backend,orphan_address+PAGE,NULL,NULL));
+    REQUIRE(!kaspace_reservation_info(space,(VADDR)(uintptr_t)env+PAGE-2,2,&info));
     REQUIRE(kproc_allocation_duplicate(&raw,&raw_copy)==E_OK);
     REQUIRE(kproc_allocation_release(&raw));
     REQUIRE(kproc_reservation_duplicate(&stack,&copy)==E_OK);
@@ -112,9 +187,10 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_allocation_release(&raw_copy));
     REQUIRE(procmem_size(env)); /* mapping pin still owns the retired allocation */
     REQUIRE(kproc_reservation_release(&base));
-    REQUIRE(kproc_reservation_release(&environment));
+    REQUIRE(kproc_reservation_release(&environment) && !procmem_size(env));
     REQUIRE(kproc_reservation_release(&copy));
     REQUIRE(kproc_reservation_release(&image));
+    REQUIRE(kproc_reservation_release(&data));
     kproc_release(owner); kproc_release(source);
     procmem_stats(&after);
     REQUIRE(after.live_allocs==before.live_allocs && after.free_pages==before.free_pages &&

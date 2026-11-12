@@ -1,6 +1,7 @@
 /* Production anonymous-COW/metadata code with modeled leaves and RAM.
  * This is NOT native MMU/fault/TLB evidence. */
 #include "emutos.h"
+#include "biosext.h"
 #include "gemerror.h"
 #include "procmem.h"
 #include "kheap.h"
@@ -274,3 +275,7 @@ int main(void)
     puts("Production COW metadata/refcount/rollback with modeled MMU: PASS");
     return 0;
 }
+
+BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
