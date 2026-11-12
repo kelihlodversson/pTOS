@@ -1447,6 +1447,11 @@ static void test_runnable(void)
                 waited = policy ? trap_1_wll(GEMDOS_PTHJOIN,tid,0) : Pwaitpid(pid,0,0);
                 ptest_assert_msg(policy ? waited == 0 : ((waited >> 16) == pid && !(waited & 65535)),
                                  "initial register probe returned normally");
+                if (initial.passed != 1) {
+                    char diagnostic[96];
+                    sprintf(diagnostic,"native initial-state policy=%u stage=%lu sp=%lx\r\n",policy,initial.passed,initial.sp);
+                    conws(diagnostic);
+                }
                 ptest_assert_msg(initial.passed == 1 && initial.sp >= (unsigned long)runnable_stacks[0] &&
                                  initial.sp < (unsigned long)(runnable_stacks[0]+RUNNABLE_STACK_SIZE),
                                  "first user instructions verify initialized GPR/FPU and owned stack");

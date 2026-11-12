@@ -27,21 +27,27 @@ C_SYM(clone_initial_entry):
         orr r1,r1,r10
         orr r1,r1,r11
         orr r1,r1,r12
+        mov r3,#2
         cmp r1,#0
         bne 9f
+        mov r3,#3
         tst sp,#7
         bne 9f
+        mov r3,#4
         cmp lr,#0
         beq 9f
+        mov r3,#5
         mrs r1,cpsr
         and r1,r1,#0x1f
         cmp r1,#0x10
         bne 9f
 #ifdef __ARM_NEON
+        mov r3,#6
         vmrs r1,fpscr
         cmp r1,#0
         bne 9f
         .irp reg,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+        mov r3,#(32+\reg)
         vmov r1,r2,d\reg
         orrs r1,r1,r2
         bne 9f
@@ -51,8 +57,7 @@ C_SYM(clone_initial_entry):
         mov r1,#1
         str r1,[r0]
         bx lr
-9:      mov r1,#2
-        str r1,[r0]
+9:      str r3,[r0]
         bx lr
         .globl C_SYM(clone_registers)
 C_SYM(clone_registers):
