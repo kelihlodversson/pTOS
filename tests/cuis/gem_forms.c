@@ -1,4 +1,4 @@
-/* Ordinary GEM source, usable with the unchanged GEMlib headers. */
+/* Ordinary GEM calls using the native pTOS global-state type. */
 #include <gem.h>
 #include "gem_forms.h"
 #define VERIFY(c) do { if (!(c)) return 0x7600 | __LINE__; } while (0)
@@ -23,13 +23,14 @@ static void setup(OBJECT tree[3], TEDINFO *ted, char *text)
 }
 int gem_form_checks(short graphics)
 {
-    OBJECT tree[3] = { { 0 } };
+    OBJECT tree[3] = { 0 };
     TEDINFO ted = { 0 };
     char text[7] = "@";
-    short index = 77, fresh_index, global[15];
+    short index = 77, fresh_index;
+    AESGLOBAL global = { 0 };
     int i;
     setup(tree,&ted,text);
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
+    global = aes_global;
     VERIFY(objc_edit(tree,1,0,&index,ED_START) == 1 && index == 77);
     VERIFY(objc_edit(tree,0,0,&index,ED_INIT) == 1 && index == 77);
     VERIFY(form_dial(FMD_START,0,0,0,0,0,0,120,80) == 1);
@@ -44,11 +45,11 @@ int gem_form_checks(short graphics)
     VERIFY(index == 0);
     /* ED_INIT is an output-only index, just like the first form_do edit. */
     VERIFY(objc_edit(tree,1,0,&index,ED_END) == 1);
-    VERIFY(mt_objc_edit(tree,1,0,&fresh_index,ED_INIT,global) == 1 && fresh_index == 0);
+    VERIFY(mt_objc_edit(tree,1,0,&fresh_index,ED_INIT,&global) == 1 && fresh_index == 0);
     index = fresh_index;
     i = objc_edit(tree,1,'a',&index,ED_CHAR);
     VERIFY(i == 1 && index == 1 && text[0] == 'A' && !text[1]);
-    VERIFY(mt_objc_edit(tree,1,'2',&index,ED_CHAR,global) == 1 && index == 2 && text[1] == '2');
+    VERIFY(mt_objc_edit(tree,1,'2',&index,ED_CHAR,&global) == 1 && index == 2 && text[1] == '2');
     VERIFY(objc_edit(tree,1,0x4b00,&index,ED_CHAR) == 1 && index == 1);
     VERIFY(objc_edit(tree,1,'b',&index,ED_CHAR) == 1 && index == 2 && text[1] == 'B' && text[2] == '2');
     VERIFY(objc_edit(tree,1,0x0e08,&index,ED_CHAR) == 1 && index == 1 && text[1] == '2' && !text[2]);

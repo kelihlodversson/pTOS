@@ -7,7 +7,8 @@
 #include "layout.h"
 #include "gem_rsc.h"
 typedef struct {
-    WORD *global, handle;
+    AESGLOBAL *global;
+    WORD handle;
     LONG session;
     BOOL ok, dial;
     OBJECT objects[RS_NOBS], *trees[1];

@@ -9,6 +9,9 @@
 #ifdef AES_RSC_BINDINGS
 #include AES_RSC_BINDINGS
 #endif
+#ifndef rs_trees
+#define rs_trees (rs_global->ap_ptree)
+#endif
 #ifndef RS_ADDR_SLOT_SIZE
 #define RS_ADDR_SLOT_SIZE sizeof(LONG)
 #endif
@@ -35,7 +38,7 @@ void *get_addr(UWORD rstype, UWORD rsindex)
     switch(rstype)
     {
     case R_TREE:
-        return rs_global->ap_ptree[rsindex];
+        return rs_trees[rsindex];
     case R_OBJECT:
         offset = hdr->rsh_object;
         size = sizeof(OBJECT);

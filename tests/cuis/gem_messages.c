@@ -27,13 +27,14 @@ static LONG spawn(char role)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, parent, peer, message[8], header[8], other[15];
+    short id, parent, peer, message[8], header[8];
+    AESGLOBAL other = { 0 };
     short a, b, c, d;
     LONG pid, status;
     ULONG i;
     (void)envp;
     id = appl_init(); VERIFY(id > 0);
-    VERIFY(appl_find(NULL) == id && mt_appl_init(other) == id);
+    VERIFY(appl_find(NULL) == id && mt_appl_init(&other) == id);
     VERIFY(appl_getinfo(4, &a, &b, &c, &d) == 1 && !a && b == 1 && c == 1 && d == 1);
     VERIFY(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && !c && !d);
     for (i = 0; i < sizeof(data); i++) data[i] = (UBYTE)(i * 7 + 3);
@@ -51,9 +52,9 @@ int main(int argc, char **argv, char **envp)
             VERIFY(appl_write(parent, 16, message) == 1 && evnt_timer(1) == 1);
             return 41;
         }
-        VERIFY(mt_evnt_mesag(header, other) == 1 && header[0] == 701 && header[1] == parent && header[2] == 64);
+        VERIFY(mt_evnt_mesag(header, &other) == 1 && header[0] == 701 && header[1] == parent && header[2] == 64);
         VERIFY(appl_read(id, 64, received) == 1 && equal(received, data + 16, 64));
-        message[0] = 702; VERIFY(mt_appl_write(parent, 16, message, other) == 1);
+        message[0] = 702; VERIFY(mt_appl_write(parent, 16, message, &other) == 1);
         VERIFY(appl_read(id, 32767, received) == 1 && equal(received, data, sizeof(data)));
         VERIFY(appl_yield() == 1); /* Resume the blocked writer after freeing ring space. */
         VERIFY(appl_read(id, 32767, received) == 1 && equal(received, data, sizeof(data)));
@@ -73,7 +74,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(appl_read(-1, 16, header) == 0 && appl_read(id, -1, header) == 0);
     VERIFY(appl_write(id, 0, NULL) == 1 && appl_read(id, 0, NULL) == 1);
     VERIFY(appl_write(id, 32767, data) == 1);
-    VERIFY(mt_appl_read(-1, 32767, received, other) == 1 && equal(data, received, sizeof(data)));
+    VERIFY(mt_appl_read(-1, 32767, received, &other) == 1 && equal(data, received, sizeof(data)));
     /* Reads cross writes, and user payload words are not rewritten. */
     VERIFY(appl_write(id, 7, data) == 1 && appl_write(id, 9, data + 7) == 1);
     VERIFY(evnt_mesag(header) == 1 && equal((UBYTE *)header, data, 16));

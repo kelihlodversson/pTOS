@@ -594,7 +594,7 @@ static WORD setup_mono_icons(void)
     WORD i, n, rc, w, h;
 
 #if ARCH_X86_64
-    hdr = ((AESGLOBAL *)global)->ap_rscmem;
+    hdr = global.ap_rscmem;
 #else
     hdr = (RSHDR *)(AP_1RESV);
 #endif
@@ -629,7 +629,7 @@ static WORD setup_mono_icons(void)
     rsrc_free();
 
 #if CONF_WITH_LIBAES_DESK && CONF_WITH_X32_DESKTOP_TEST
-    if (rc == 0 && !((AESGLOBAL *)global)->ap_rscmem && !((AESGLOBAL *)global)->ap_ptree) {
+    if (rc == 0 && !global.ap_rscmem && !global.ap_ptree) {
         extern void desk_test_record(const char *text);
         desk_test_record("x32 desktop custom icons PASS\r\n");
     }

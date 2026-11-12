@@ -25,7 +25,7 @@ static void output_state(const LONG state[4], short *mx, short *my, short *butto
     if (modifiers) *modifiers = (short)(state[3] & 15);
 }
 
-short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global)
+short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, AESGLOBAL *global)
 {
     LONG state[4], session = aes_application_session(global);
     if (session < 0 || snapshot(session, state) != E_OK) return 0;
@@ -34,20 +34,20 @@ short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, sh
 }
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers)
 {
-    return mt_graf_mkstate(mx, my, buttons, modifiers, aes_global);
+    return mt_graf_mkstate(mx, my, buttons, modifiers, &aes_global);
 }
 
 static short event_once(short events, short clicks, short button_mask, short button_state,
                     short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                     short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
                     short message[], unsigned long interval, short *mx, short *my,
-                    short *buttons, short *modifiers, short *key, short *click_count, short *global, BOOL clocked, LONG start, ULONG duration)
+                    short *buttons, short *modifiers, short *key, short *click_count, AESGLOBAL *global, BOOL clocked, LONG start, ULONG duration)
 {
     LONG session, ready, result = 0, state[4], input[5];
     ULONG mask = 0, wait_mask, elapsed, ticks;
     LONG now;
     BOOL frame_work = aes_frames_registered(), child_failed = FALSE, retry_display = FALSE;
-    LONG (*messages)(LONG,short *) = ((events & MU_TIMER) && !interval) ?
+    LONG (*messages)(LONG,AESGLOBAL *) = ((events & MU_TIMER) && !interval) ?
         aes_window_messages_poll : aes_window_messages;
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
         ((events & MU_MESAG) && !message) || ((events & MU_TIMER) && interval > 0xffffffffUL) ||
@@ -166,7 +166,7 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                     short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
                     short message[], unsigned long interval, short *mx, short *my,
-                    short *buttons, short *modifiers, short *key, short *click_count, short *global)
+                    short *buttons, short *modifiers, short *key, short *click_count, AESGLOBAL *global)
 {
     LONG start = 0, session;
     ULONG duration;
@@ -198,20 +198,20 @@ short evnt_multi(short events, short clicks, short button_mask, short button_sta
 {
     return mt_evnt_multi(events, clicks, button_mask, button_state,
                          m1_leave, m1_x, m1_y, m1_w, m1_h, m2_leave, m2_x, m2_y, m2_w, m2_h,
-                         message, interval, mx, my, buttons, modifiers, key, click_count, aes_global);
+                         message, interval, mx, my, buttons, modifiers, key, click_count, &aes_global);
 }
 
-short mt_evnt_keybd(short *global)
+short mt_evnt_keybd(AESGLOBAL *global)
 {
     short key = 0;
     mt_evnt_multi(MU_KEYBD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                   NULL, 0, NULL, NULL, NULL, NULL, &key, NULL, global);
     return key;
 }
-short evnt_keybd(void) { return mt_evnt_keybd(aes_global); }
+short evnt_keybd(void) { return mt_evnt_keybd(&aes_global); }
 
 short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my,
-                     short *buttons, short *modifiers, short *global)
+                     short *buttons, short *modifiers, AESGLOBAL *global)
 {
     short count = 0;
     mt_evnt_multi(MU_BUTTON, clicks, mask, state, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -221,10 +221,10 @@ short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my
 short evnt_button(short clicks, short mask, short state, short *mx, short *my,
                   short *buttons, short *modifiers)
 {
-    return mt_evnt_button(clicks, mask, state, mx, my, buttons, modifiers, aes_global);
+    return mt_evnt_button(clicks, mask, state, mx, my, buttons, modifiers, &aes_global);
 }
 short mt_evnt_mouse(short leave, short x, short y, short width, short height,
-                    short *mx, short *my, short *buttons, short *modifiers, short *global)
+                    short *mx, short *my, short *buttons, short *modifiers, AESGLOBAL *global)
 {
     return mt_evnt_multi(MU_M1, 0, 0, 0, leave, x, y, width, height, 0, 0, 0, 0, 0,
                          NULL, 0, mx, my, buttons, modifiers, NULL, NULL, global) == MU_M1;
@@ -232,9 +232,9 @@ short mt_evnt_mouse(short leave, short x, short y, short width, short height,
 short evnt_mouse(short leave, short x, short y, short width, short height,
                  short *mx, short *my, short *buttons, short *modifiers)
 {
-    return mt_evnt_mouse(leave, x, y, width, height, mx, my, buttons, modifiers, aes_global);
+    return mt_evnt_mouse(leave, x, y, width, height, mx, my, buttons, modifiers, &aes_global);
 }
-short mt_evnt_dclick(short rate, short set, short *global)
+short mt_evnt_dclick(short rate, short set, AESGLOBAL *global)
 {
     static const ULONG intervals[5] = { 450, 330, 275, 220, 165 };
     LONG session = aes_application_session(global), value;
@@ -244,4 +244,4 @@ short mt_evnt_dclick(short rate, short set, short *global)
     for (i = 0; i < 5; i++) if (value == (LONG)intervals[i]) return i;
     return 0;
 }
-short evnt_dclick(short rate, short set) { return mt_evnt_dclick(rate, set, aes_global); }
+short evnt_dclick(short rate, short set) { return mt_evnt_dclick(rate, set, &aes_global); }

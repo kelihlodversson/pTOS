@@ -13,7 +13,7 @@ static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     return (LONG)ax;
 }
 #include "control_message.h"
-static int headless_window_checks(short *global)
+static int headless_window_checks(AESGLOBAL *global)
 {
     short window, x = 99,y = 99,w = 99,h = 99;
     VERIFY(mt_graf_handle(&x,&y,&w,&h,global) == 0 && x == 99 && y == 99 && w == 99 && h == 99);
@@ -29,7 +29,8 @@ static int headless_window_checks(short *global)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, window, message[8], globals[15], x = 99, y, w, h;
+    short id, window, message[8], x = 99, y, w, h;
+    AESGLOBAL globals = { 0 };
     int result;
     BOOL graphics;
     LONG child, status;
@@ -37,7 +38,7 @@ int main(int argc, char **argv, char **envp)
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_create(0, 0, 0, 10, 10) == -1 && wind_get(1, WF_KIND, &x, 0, 0, 0) == 0 && x == 99);
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(globals) == id);
+    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&globals) == id);
     graphics = graf_handle(NULL,NULL,NULL,NULL) > 0;
     if (argc > 1) {
         short parent = appl_find("GEMWIN");
@@ -52,7 +53,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(appl_write(parent, 16, message) == 1 && control_message(message) == 1);
         _Exit(37); /* Kernel cleanup must reclaim the open window. */
     }
-    result = graphics ? gem_window_checks(globals) : headless_window_checks(globals); if (result) return result;
+    result = graphics ? gem_window_checks(&globals) : headless_window_checks(&globals); if (result) return result;
     window = wind_create(graphics ? NAME|INFO : 0, 0, 0, 200, 160);
     VERIFY(window > 0 && wind_set_str(window,WF_NAME,"Parent") == 1);
     VERIFY(wind_set_str(window,WF_INFO,"Shared native frame") == 1);
@@ -68,7 +69,7 @@ int main(int argc, char **argv, char **envp)
     status = process(0x13a, child, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     VERIFY(wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1 && x == 10 && y == 20);
-    VERIFY(mt_appl_exit(globals) == 1 && wind_delete(window) == 0);
+    VERIFY(mt_appl_exit(&globals) == 1 && wind_delete(window) == 0);
     VERIFY(appl_init() == id && wind_get(window, WF_KIND, &x, &y, &w, &h) == 0);
     VERIFY(appl_exit() == 1);
     {

@@ -6,7 +6,7 @@
 #include "string.h"
 #include "runtime.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell failure: %d\n",__LINE__); return __LINE__; } } while (0)
-short aes_global[15] = { 0x400,-1,7 };
+AESGLOBAL aes_global = { .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
 static PD basepage;
 static DL_LAUNCH launch;
 static char environment[AES_SHELL_ENV], long_prefix[AES_SHELL_ENV];
@@ -57,12 +57,12 @@ static void save_environment(UQUAD address)
         if (!source[i] && !source[i+1]) break;
     }
 }
-LONG aes_windows_reset_policy(short *global, BOOL polling, LONG token) { (void)global; (void)polling; (void)token; return E_OK; }
-LONG aes_window_messages_poll(LONG session, short *global) { (void)session; (void)global; return E_OK; }
+LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token) { (void)global; (void)polling; (void)token; return E_OK; }
+LONG aes_window_messages_poll(LONG session, AESGLOBAL *global) { (void)session; (void)global; return E_OK; }
 BOOL aes_frames_wait_display(void) { return FALSE; }
 BOOL aes_windows_pending(void) { return FALSE; }
-LONG aes_application_session(short *global)
-{ return global && global[2] == 7 && !registration_error ? 9 : EACCDN; }
+LONG aes_application_session(AESGLOBAL *global)
+{ return global && global->ap_id == 7 && !registration_error ? 9 : EACCDN; }
 unsigned long __ptos_getauxval(unsigned long type)
 { return type == DL_AT_PTOS_LAUNCH ? (uintptr_t)&launch : type == 0x5000 ? (uintptr_t)&basepage : type == 31 ? (uintptr_t)executable : 0; }
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
@@ -154,7 +154,7 @@ static int search(const char *input, const char *hit, const char *result, int co
     int before = cwd_calls;
     strcpy(path,input); found = hit; attempts = 0; saved_dta = caller_dta;
     aes_shell = &sentinel;
-    VERIFY(mt_shel_find(path,aes_global) == (result != NULL));
+    VERIFY(mt_shel_find(path,&aes_global) == (result != NULL));
     VERIFY(!strcmp(path,result ? result : input) && attempts == count);
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved_dta,sizeof(DTA)));
     VERIFY(aes_shell == &sentinel && cwd_calls == before);
@@ -177,7 +177,7 @@ static int unsupported_checks(void)
         if (mode == SWM_LAUNCH || mode == SWM_LAUNCHNOW || mode == SWM_SHUTDOWN ||
             mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG) continue;
         VERIFY(!shel_write(mode,0,0,(void *)1,(char *)1));
-        VERIFY(!mt_shel_write(mode|SW_DEFDIR,GEMAPP,0,(void *)1,(char *)1,aes_global));
+        VERIFY(!mt_shel_write(mode|SW_DEFDIR,GEMAPP,0,(void *)1,(char *)1,&aes_global));
     }
     for (i = 0; i < sizeof(flags)/sizeof(flags[0]); i++) {
         for (mode = SWM_LAUNCH; mode <= SWM_LAUNCHNOW; mode++) {
@@ -203,7 +203,7 @@ static int unsupported_checks(void)
     VERIFY(allocation_attempts == before_allocation);
     return 0;
 }
-static int launch_checks(short *global)
+static int launch_checks(AESGLOBAL *global)
 {
     char name[] = "NEXT.PRG", minimal[] = { 1, 'x' }, empty[] = { 0 };
     char maximum[127], too_long[AES_SHELL_PATH], invalid[] = { 127 };
@@ -328,7 +328,7 @@ static int argument_checks(void)
     VERIFY(launched_tail[0] == 127 && !memcmp(launched_environment,expected,sizeof(expected)-1));
     VERIFY(!allocation_balance && !strcmp(name,"NEXT.PRG") && !strcmp(custom,"ONLY=child"));
     tail[0] = 127; memset(tail+1,'x',400); tail[401] = 0;
-    VERIFY(mt_shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,name,tail,aes_global) == 42);
+    VERIFY(mt_shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,name,tail,&aes_global) == 42);
     VERIFY(launched_tail[0] == 127 && !allocation_balance);
     /* Explicit ARGV is copied unchanged for CL_NORMAL, including argv[0]. */
     tail[0] = 127;
@@ -364,28 +364,28 @@ int main(void)
     static const char argv_env[] = "FOO=value\0ARGV=\0alias\0PATH=FROM_ARG\0\0";
     static const char env[] = "FOO=value\0PATH=BAD;GOOD,OTHER\0NEXT=not-a-path\0\0";
     char command[AES_SHELL_PATH], tail[128], path[AES_SHELL_PATH], *value;
-    short global[15];
+    AESGLOBAL global = { 0 };
     int i, before;
-    memcpy(global,aes_global,sizeof(global));
+    memcpy(&global,&aes_global,sizeof(global));
     memcpy(environment,env,sizeof(env)); basepage.p_env = PTR_TO_USERPTR(environment);
     initial_tail[0] = 5; memcpy(initial_tail+1,"a b c",5);
     for (i = 6; i < 128; i++) initial_tail[i] = (UBYTE)i;
     memcpy(basepage.p_cmdlin,initial_tail,128); memset(&caller_dta,0x55,sizeof(DTA));
     capture();
     strcpy(cwd,"\\CHANGED"); drive = 3; executable[0] = 'X'; basepage.p_cmdlin[1] = 'X';
-    VERIFY(mt_shel_read(command,tail,global) == 1 && !strcmp(command,"C:\\START\\APP\\TEST.TOS"));
+    VERIFY(mt_shel_read(command,tail,&global) == 1 && !strcmp(command,"C:\\START\\APP\\TEST.TOS"));
     VERIFY(!memcmp(tail,initial_tail,128) && shel_read(command,tail) == 1);
     strcpy(command,"unchanged"); tail[0] = 99;
     VERIFY(!mt_shel_read(command,tail,NULL) && !strcmp(command,"unchanged") && tail[0] == 99);
     VERIFY(!shel_read(NULL,tail) && !shel_read(command,NULL));
     VERIFY(shel_envrn(&value,"FOO=") == 1 && value == environment+4 && !strcmp(value,"value"));
-    VERIFY(mt_shel_envrn(&value,"FO",global) == 1 && !strcmp(value,"O=value"));
+    VERIFY(mt_shel_envrn(&value,"FO",&global) == 1 && !strcmp(value,"O=value"));
     VERIFY(shel_envrn(&value,"missing=") == 1 && !value);
     VERIFY(shel_envrn(&value,"") == 1 && value == environment);
     value = command; VERIFY(!mt_shel_envrn(&value,"FOO=",NULL) && value == command);
     VERIFY(!shel_envrn(NULL,"FOO=") && !shel_envrn(&value,NULL) && value == command);
     VERIFY(!unsupported_checks());
-    VERIFY(!launch_checks(global));
+    VERIFY(!launch_checks(&global));
     VERIFY(!argument_checks());
     VERIFY(!directory_checks());
     VERIFY(!search("DATA.TXT","C:\\START\\APP\\DATA.TXT","C:\\START\\APP\\DATA.TXT",1));

@@ -10,15 +10,15 @@
 #define CHECK(c) do { if (!(c)) { __builtin_printf("selector failure: %d\n",__LINE__); return __LINE__; } } while (0)
 extern void *malloc(__SIZE_TYPE__ bytes);
 extern void free(void *memory);
-short aes_global[15] = { 0x400,-1,7 };
+AESGLOBAL aes_global = { .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
 static LONG display_depth, mouse_depth, keyboard_depth, overlays, dialogs, allocations;
 static LONG next_error, first_error, graphics_error, input_error, draw_error;
 static BOOL fail_alloc, fail_listing, fail_restore;
 static int mode, step, searches, item, files, alerts, copies, saves, restores, opens, closes;
 static void *current_dta = (void *)(uintptr_t)0x123400;
 static char searched[128];
-LONG aes_application_session(short *global) { return global && global[2] == 7 ? 9 : EACCDN; }
-BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
+LONG aes_application_session(AESGLOBAL *global) { return global && global->ap_id == 7 ? 9 : EACCDN; }
+BOOL aes_layout_metrics(LAYOUT_METRICS *m, AESGLOBAL *global)
 {
     if (aes_application_session(global) < 0) return FALSE;
     m->width = 640; m->height = 480; m->wchar = 8; m->hchar = 16; m->hbox = 19;
@@ -90,30 +90,30 @@ LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     }
     return EINVFN;
 }
-WORD mt_objc_draw(OBJECT *tree, WORD object, WORD depth, WORD x, WORD y, WORD w, WORD h, WORD *global)
+WORD mt_objc_draw(OBJECT *tree, WORD object, WORD depth, WORD x, WORD y, WORD w, WORD h, AESGLOBAL *global)
 {
     (void)tree; (void)object; (void)depth; (void)x; (void)y; (void)w; (void)h; (void)global;
     return draw_error ? 0 : 1;
 }
-WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h, WORD state, WORD redraw, WORD *global)
+WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h, WORD state, WORD redraw, AESGLOBAL *global)
 {
     (void)reserved; (void)x; (void)y; (void)w; (void)h; (void)redraw; (void)global;
     if (draw_error) return 0;
     tree[object].ob_state = state; return 1;
 }
-WORD mt_graf_mouse(WORD value, const MFORM *form, WORD *global) { (void)value; (void)form; (void)global; return 1; }
-WORD mt_graf_mkstate(WORD *x, WORD *y, WORD *buttons, WORD *modifiers, WORD *global)
+WORD mt_graf_mouse(WORD value, const MFORM *form, AESGLOBAL *global) { (void)value; (void)form; (void)global; return 1; }
+WORD mt_graf_mkstate(WORD *x, WORD *y, WORD *buttons, WORD *modifiers, AESGLOBAL *global)
 { (void)buttons; (void)modifiers; (void)global; *x = *y = 0; return 1; }
-WORD mt_form_dial(WORD kind, WORD x, WORD y, WORD w, WORD h, WORD dx, WORD dy, WORD dw, WORD dh, WORD *global)
+WORD mt_form_dial(WORD kind, WORD x, WORD y, WORD w, WORD h, WORD dx, WORD dy, WORD dw, WORD dh, AESGLOBAL *global)
 {
     (void)x; (void)y; (void)w; (void)h; (void)dx; (void)dy; (void)dw; (void)dh; (void)global;
     dialogs += kind == FMD_START ? 1 : -1; return 1;
 }
-WORD mt_graf_slidebox(OBJECT *tree, WORD parent, WORD child, WORD vertical, WORD *global)
+WORD mt_graf_slidebox(OBJECT *tree, WORD parent, WORD child, WORD vertical, AESGLOBAL *global)
 { (void)tree; (void)parent; (void)child; (void)vertical; (void)global; return 1000; }
-WORD mt_form_error(WORD error, WORD *global) { (void)error; (void)global; alerts++; return 1; }
-WORD mt_form_alert(WORD button, const char *text, WORD *global) { (void)button; (void)text; (void)global; alerts++; return 1; }
-WORD mt_form_do(OBJECT *tree, WORD start, WORD *global)
+WORD mt_form_error(WORD error, AESGLOBAL *global) { (void)error; (void)global; alerts++; return 1; }
+WORD mt_form_alert(WORD button, const char *text, AESGLOBAL *global) { (void)button; (void)text; (void)global; alerts++; return 1; }
+WORD mt_form_do(OBJECT *tree, WORD start, AESGLOBAL *global)
 {
     WORD object = FSCANCEL;
     (void)start; (void)global;
@@ -142,7 +142,7 @@ static int call_selector(BOOL success, WORD expected, const char *initial, const
     WORD button = 99;
     strcpy(path,initial); strcpy(selection,"OLD.TXT");
     step = searches = 0; files = mode == 6 ? 12 : mode == 7 ? 1700 : 4;
-    CHECK(mt_fsel_exinput(path,selection,&button,"Select a file",aes_global) == success);
+    CHECK(mt_fsel_exinput(path,selection,&button,"Select a file",&aes_global) == success);
     CHECK(current_dta == (void *)(uintptr_t)0x123400 && !allocations && !dialogs && !overlays);
     CHECK(display_depth == 2 && mouse_depth == 3 && keyboard_depth == 1 && opens == closes);
     if (success) {

@@ -25,7 +25,7 @@ static LONG reject(LONG session, LONG token)
     WORD failure[8] = { AP_TFAIL,1,0,0,0,0,0,0 };
     return cuis_call6(CUIS_COHORT_REJECT,session,token,(uintptr_t)failure,sizeof(failure),0,0);
 }
-LONG aes_lifecycle_messages(WORD *global)
+LONG aes_lifecycle_messages(AESGLOBAL *global)
 {
     WORD data[CUIS_COHORT_BYTES/2];
     LONG session, token, work, bytes, result, phase;
@@ -87,7 +87,7 @@ LONG aes_lifecycle_messages(WORD *global)
 
 /* Only standard 16-byte message reads interpret reserved system messages;
  * arbitrary byte transfers retain the ordinary appl_read stream contract. */
-LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global, BOOL polling)
+LONG aes_lifecycle_deliver(void *buffer, LONG bytes, AESGLOBAL *global, BOOL polling)
 {
     WORD message[8];
     LONG session, token, offset, length, result;
@@ -134,7 +134,7 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, WORD *global, BOOL polling)
 /* Peek leaves a reset blocked by another client queued in the native stream.
  * Consume only after policy/cleanup succeeds, preserving byte order and the
  * trusted read metadata used by the desktop's lifecycle checks. */
-LONG aes_lifecycle_read(void *buffer, LONG bytes, WORD *global, BOOL polling)
+LONG aes_lifecycle_read(void *buffer, LONG bytes, AESGLOBAL *global, BOOL polling)
 {
     WORD message[8], consumed[8];
     LONG session = aes_application_session(global), result, policy = E_OK;
@@ -163,7 +163,7 @@ LONG aes_lifecycle_read(void *buffer, LONG bytes, WORD *global, BOOL polling)
     return result;
 }
 
-WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command, WORD *global)
+WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), token, peer, after, tag, result;
     WORD data[CUIS_COHORT_BYTES/2], completion[8] = { SHUT_COMPLETED,0,0,0,0,0,0,0 };

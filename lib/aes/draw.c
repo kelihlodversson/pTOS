@@ -464,7 +464,7 @@ static void draw_object(OBJECT *tree, WORD object, LONG x, LONG y)
     ob_render_object(tree,object,(WORD)x,(WORD)y);
 }
 static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD cw, WORD ch,
-                   WORD *global, BOOL change, UWORD state, WORD key, WORD *index, WORD kind, void (*operation)(void *), void *argument)
+                   AESGLOBAL *global, BOOL change, UWORD state, WORD key, WORD *index, WORD kind, void (*operation)(void *), void *argument)
 {
     PAINTER p = { 0 }, *saved = aes_painter;
     LONG session = aes_application_session(global), right, bottom, lock, x, y;
@@ -527,17 +527,17 @@ done:
     if (lock == E_OK && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) success = FALSE;
     return success ? 1 : 0;
 }
-WORD mt_objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h, WORD *global)
+WORD mt_objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h, AESGLOBAL *global)
 {
     if (!tree || start < 0 || depth < 0 || depth > MAX_DEPTH) return 0;
     return render(tree,start,depth,x,y,w,h,global,FALSE,0,0,NULL,0,NULL,NULL);
 }
 WORD objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h)
 {
-    return mt_objc_draw(tree,start,depth,x,y,w,h,aes_global);
+    return mt_objc_draw(tree,start,depth,x,y,w,h,&aes_global);
 }
 WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h,
-                    WORD state, WORD redraw, WORD *global)
+                    WORD state, WORD redraw, AESGLOBAL *global)
 {
     UWORD old;
     (void)reserved;
@@ -553,7 +553,7 @@ WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WO
 }
 WORD objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h, WORD state, WORD redraw)
 {
-    return mt_objc_change(tree,object,reserved,x,y,w,h,state,redraw,aes_global);
+    return mt_objc_change(tree,object,reserved,x,y,w,h,state,redraw,&aes_global);
 }
 
 /* The editor redraws into the same workstation and immutable update clip. */
@@ -566,7 +566,7 @@ void aes_edit_draw(OBJECT *tree, WORD object, WORD depth)
     everyobj(tree,object,tree[object].ob_next,draw_object,x,y,depth);
 }
 
-WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, WORD *global)
+WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, AESGLOBAL *global)
 {
     TEDINFO *ted;
     OBSPEC spec;
@@ -594,7 +594,7 @@ WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, W
 }
 WORD objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
 {
-    return mt_objc_edit(tree,object,key,index,kind,aes_global);
+    return mt_objc_edit(tree,object,key,index,kind,&aes_global);
 }
 
 typedef struct { WORD kind; GRECT small, large; } FORM_ANIMATION;
@@ -660,7 +660,7 @@ static void animate_form(void *argument)
     else if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
     else gr_shrinkbox(&a->small,&a->large);
 }
-WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, WORD *global)
+WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, AESGLOBAL *global)
 {
     OBJECT dummy = { 0 };
     FORM_ANIMATION a;
@@ -749,7 +749,7 @@ static void drag_frame(void *argument)
     }
 }
 static BOOL track_frame(WORD object, LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y,
-                         GRECT *result, WORD *global)
+                         GRECT *result, AESGLOBAL *global)
 {
     OBJECT dummy = { 0 };
     FRAME_DRAG drag;
@@ -771,22 +771,22 @@ static BOOL track_frame(WORD object, LONG native, const WM_FRAME_STATE *state, L
     return ok && drag.completed;
 }
 
-BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, AESGLOBAL *global)
 {
     return track_frame(W_NAME,native,state,press_x,press_y,result,global);
 }
-BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *result, AESGLOBAL *global)
 {
     return track_frame(W_SIZER,native,state,press_x,press_y,result,global);
 }
 
-BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *result, WORD *global)
+BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *result, AESGLOBAL *global)
 {
     return (object == W_HELEV || object == W_VELEV) && track_frame(object,native,state,press_x,press_y,result,global);
 }
 
 
-WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2, WORD *global)
+WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2, AESGLOBAL *global)
 {
     PAINTER p = { 0 }, *saved = aes_painter;
     VDI_SERVICE_WORKSTATION ws;
@@ -808,7 +808,7 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
     return result;
 }
 WORD objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
-{ return mt_objc_sysvar(mode,which,in1,in2,out1,out2,aes_global); }
+{ return mt_objc_sysvar(mode,which,in1,in2,out1,out2,&aes_global); }
 
 /* Public graphics calls share the native XOR tracking loops. The renderer
  * lends its private workstation; whole-screen and mouse ownership span waits. */

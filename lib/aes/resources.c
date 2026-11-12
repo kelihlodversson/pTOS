@@ -60,9 +60,9 @@ WORD aes_resource_discard(void *memory)
  * until both the image and the record itself have actually been released. */
 static BOOL release_resource(RESOURCE_CONTEXT *resource)
 {
-    if (resource->native.ap_rscmem && !resource->caller_owned) {
-        if (aes_resource_release(resource->native.ap_rscmem) != E_OK) return FALSE;
-        resource->native.ap_rscmem = NULL;
+    if (resource->image && !resource->caller_owned) {
+        if (aes_resource_release(resource->image) != E_OK) return FALSE;
+        resource->image = NULL;
     }
     return aes_resource_release(resource) == E_OK;
 }
@@ -213,28 +213,19 @@ static LONG open_resource(const char *name)
     return EFILNF;
 }
 
-/* Resource global pointers are the standard two-WORD, 32-bit GEM fields. */
-static ULONG global_pointer(const WORD *global, WORD offset)
+/* The caller selects resources through its public typed fields. */
+static void publish(AESGLOBAL *global, RESOURCE_CONTEXT *resource)
 {
-    ULONG value;
-    memcpy(&value,global+offset,sizeof(value));
-    return value;
+    global->ap_ptree = resource ? resource->trees : NULL;
+    global->ap_rscmem = resource ? resource->image : NULL;
+    global->ap_rsclen = resource ? resource->length : 0;
 }
-static void publish(WORD *global, RESOURCE_CONTEXT *resource)
-{
-    ULONG value = resource ? (ULONG)(uintptr_t)resource->native.ap_ptree : 0;
-    memcpy(global+5,&value,sizeof(value));
-    value = resource ? (ULONG)(uintptr_t)resource->native.ap_rscmem : 0;
-    memcpy(global+7,&value,sizeof(value));
-    global[9] = resource ? resource->native.ap_rsclen : 0;
-}
-static RESOURCE_CONTEXT **selected(WORD *global, BOOL tree_table)
+static RESOURCE_CONTEXT **selected(AESGLOBAL *global, BOOL tree_table)
 {
     RESOURCE_CONTEXT **link;
-    ULONG image = global_pointer(global,7), trees = global_pointer(global,5);
     for (link = &resources; *link; link = &(*link)->next)
-        if (tree_table ? (ULONG)(uintptr_t)(*link)->native.ap_ptree == trees :
-            (ULONG)(uintptr_t)(*link)->native.ap_rscmem == image) break;
+        if (tree_table ? (*link)->trees == global->ap_ptree :
+            (*link)->image == global->ap_rscmem) break;
     return link;
 }
 
@@ -243,7 +234,7 @@ static RESOURCE_CONTEXT **selected(WORD *global, BOOL tree_table)
 static BOOL valid_trees(RESOURCE_CONTEXT *resource, BOOL offsets)
 {
     typedef struct { WORD object, next, last; } FRAME;
-    RSHDR *header = resource->native.ap_rscmem;
+    RSHDR *header = resource->image;
     OBJECT *objects = (OBJECT *)((char *)header+header->rsh_object), *tree;
     FRAME *stack;
     UBYTE *visited, *validated;
@@ -257,7 +248,7 @@ static BOOL valid_trees(RESOURCE_CONTEXT *resource, BOOL offsets)
     visited = (UBYTE *)(stack+header->rsh_nobs); validated = visited+header->rsh_nobs;
     memset(validated,0,header->rsh_nobs);
     for (i = 0; i < header->rsh_ntree; i++) {
-        tree = resource->native.ap_ptree[i];
+        tree = resource->trees[i];
         if (offsets) tree = (OBJECT *)((char *)header+(uintptr_t)tree);
         root = tree-objects;
         if (root < 0 || root >= header->rsh_nobs) goto done;
@@ -290,10 +281,11 @@ done:
     aes_resource_discard(stack);
     return ok;
 }
-WORD mt_rsrc_load(const char *name, WORD *global)
+WORD mt_rsrc_load(const char *name, AESGLOBAL *global)
 {
     RESOURCE_CONTEXT *resource, *saved = aes_resource;
     LONG handle, session;
+    AESGLOBAL loaded = { 0 };
     BOOL ok;
     if (!name) return 0;
     session = aes_application_session(global);
@@ -307,9 +299,12 @@ WORD mt_rsrc_load(const char *name, WORD *global)
     if (handle < 0) { dispose_resource(resource); return 0; }
     pending_close = handle;
     aes_resource = resource;
-    ok = aes_resource_read(&resource->native,(UWORD)handle) != 0;
+    ok = aes_resource_read(&loaded,(UWORD)handle) != 0;
+    resource->image = loaded.ap_rscmem;
+    resource->trees = loaded.ap_ptree;
+    resource->length = loaded.ap_rsclen;
     if (!close_resource_file()) ok = FALSE;
-    if (ok) { resource->header = *resource->native.ap_rscmem; ok = valid_trees(resource,FALSE); }
+    if (ok) { resource->header = *resource->image; ok = valid_trees(resource,FALSE); }
     if (ok && aes_application_session(global) != session) ok = FALSE;
     if (ok) {
         aes_resource_fix();
@@ -321,9 +316,9 @@ WORD mt_rsrc_load(const char *name, WORD *global)
     aes_resource = saved;
     return ok ? 1 : 0;
 }
-WORD rsrc_load(const char *name) { return mt_rsrc_load(name,aes_global); }
+WORD rsrc_load(const char *name) { return mt_rsrc_load(name,&aes_global); }
 
-WORD mt_rsrc_rcfix(void *image, WORD *global)
+WORD mt_rsrc_rcfix(void *image, AESGLOBAL *global)
 {
     RSHDR *header = image, *staged;
     UBYTE *roles;
@@ -339,15 +334,15 @@ WORD mt_rsrc_rcfix(void *image, WORD *global)
      * GEM callers release the selected resource before installing rcfix data. */
     if (*selected(global,FALSE)) return 0;
     for (p = resources; p; p = p->next)
-        if (p->native.ap_rscmem == image) return 0;
+        if (p->image == image) return 0;
     retry_resource_releases();
     resource = aes_resource_alloc(sizeof(*resource));
     if (!resource) return 0;
     memset(resource,0,sizeof(*resource));
     resource->caller_owned = TRUE;
-    resource->native.ap_rscmem = image;
-    resource->native.ap_rsclen = header->rsh_rssize;
-    resource->native.ap_ptree = (OBJECT **)((char *)image+header->rsh_trindex);
+    resource->image = image;
+    resource->length = header->rsh_rssize;
+    resource->trees = (OBJECT **)((char *)image+header->rsh_trindex);
     resource->header = *header;
     if (!aes_layout_metrics(&resource->metrics,global)) { dispose_resource(resource); return 0; }
     staged = aes_resource_alloc(header->rsh_rssize);
@@ -373,22 +368,22 @@ WORD mt_rsrc_rcfix(void *image, WORD *global)
     aes_resource_discard(staged);
     return ok ? 1 : 0;
 }
-WORD rsrc_rcfix(void *image) { return mt_rsrc_rcfix(image,aes_global); }
+WORD rsrc_rcfix(void *image) { return mt_rsrc_rcfix(image,&aes_global); }
 
-WORD mt_rsrc_free(WORD *global)
+WORD mt_rsrc_free(AESGLOBAL *global)
 {
     RESOURCE_CONTEXT **link, *resource;
     if (aes_application_session(global) < 0) return 0;
     link = selected(global,FALSE); resource = *link;
     if (!resource || (!resource->caller_owned &&
-        aes_resource_release(resource->native.ap_rscmem) != E_OK)) return 0;
+        aes_resource_release(resource->image) != E_OK)) return 0;
     *link = resource->next;
-    resource->native.ap_rscmem = NULL;
+    resource->image = NULL;
     dispose_resource(resource);
     publish(global,NULL);
     return 1;
 }
-WORD rsrc_free(void) { return mt_rsrc_free(aes_global); }
+WORD rsrc_free(void) { return mt_rsrc_free(&aes_global); }
 void aes_resources_reset(void)
 {
     RESOURCE_CONTEXT *next;
@@ -415,14 +410,14 @@ static BOOL address_index(const RSHDR *header, WORD type, WORD index)
     }
     return index >= 0 && index < count;
 }
-WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, WORD *global)
+WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, AESGLOBAL *global)
 {
     RESOURCE_CONTEXT *resource, *saved = aes_resource;
     void *value = (void *)-1L;
     if (!address) return 0;
     if (aes_application_session(global) >= 0) {
         resource = *selected(global,type == R_TREE);
-        if (resource && !memcmp(resource->native.ap_rscmem,&resource->header,sizeof(resource->header)) &&
+        if (resource && !memcmp(resource->image,&resource->header,sizeof(resource->header)) &&
             address_index(&resource->header,type,index)) {
             aes_resource = resource;
             value = aes_resource_addr(type,index);
@@ -432,12 +427,12 @@ WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, WORD *global)
     memcpy(address,&value,sizeof(value));
     return value != (void *)-1L;
 }
-WORD rsrc_gaddr(WORD type, WORD index, void *address) { return mt_rsrc_gaddr(type,index,address,aes_global); }
-WORD mt_rsrc_saddr(WORD type, WORD index, void *address, WORD *global)
+WORD rsrc_gaddr(WORD type, WORD index, void *address) { return mt_rsrc_gaddr(type,index,address,&aes_global); }
+WORD mt_rsrc_saddr(WORD type, WORD index, void *address, AESGLOBAL *global)
 {
     void *slot;
     if (!mt_rsrc_gaddr(type,index,&slot,global) || !slot) return 0;
     memcpy(slot,&address,sizeof(address));
     return 1;
 }
-WORD rsrc_saddr(WORD type, WORD index, void *address) { return mt_rsrc_saddr(type,index,address,aes_global); }
+WORD rsrc_saddr(WORD type, WORD index, void *address) { return mt_rsrc_saddr(type,index,address,&aes_global); }

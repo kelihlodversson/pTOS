@@ -4,6 +4,7 @@
 #ifndef PTOS_GEM_H
 #define PTOS_GEM_H
 #include "obdefs.h"
+#include "aesglobal.h"
 #include "rsdefs.h"
 #include "gemmenu.h"
 #define AES_GEM_TYPES
@@ -67,7 +68,6 @@ extern "C" {
 #ifndef OF_DEFAULT
 #define OF_DEFAULT DEFAULT
 #endif
-#define AES_GLOBMAX 15
 #define AES_PROCESS 4
 #define AES_PCGEM 5
 #define AES_INQUIRE 6
@@ -102,11 +102,11 @@ extern "C" {
 #define EDC_INQUIRE 0
 #define EDC_SET 1
 #endif
-extern short aes_global[AES_GLOBMAX];
+extern AESGLOBAL aes_global;
 extern short gl_apid, gl_ap_version;
-#define _AESversion (aes_global[0])
-#define _AESnumapps (aes_global[1])
-#define _AESapid (aes_global[2])
+#define _AESversion (aes_global.ap_version)
+#define _AESnumapps (aes_global.ap_count)
+#define _AESapid (aes_global.ap_id)
 short appl_init(void);
 short appl_exit(void);
 short appl_yield(void);
@@ -114,9 +114,9 @@ short evnt_timer(unsigned long interval);
 short appl_getinfo(short type, short *out1, short *out2, short *out3, short *out4);
 short appl_find(const char *name);
 short appl_search(short mode, char *name, short *type, short *id);
-short mt_appl_search(short mode, char *name, short *type, short *id, short *global_aes);
+short mt_appl_search(short mode, char *name, short *type, short *id, AESGLOBAL *global_aes);
 short appl_control(short id, short mode, void *output);
-short mt_appl_control(short id, short mode, void *output, short *global_aes);
+short mt_appl_control(short id, short mode, void *output, AESGLOBAL *global_aes);
 #define APC_HIDE 10
 #define APC_SHOW 11
 #define APC_TOP 12
@@ -139,23 +139,23 @@ short mt_appl_control(short id, short mode, void *output, short *global_aes);
 short appl_write(short id, short length, void *buffer);
 short appl_read(short id, short length, void *buffer);
 short evnt_mesag(short message[8]);
-short mt_appl_init(short *global_aes);
-short mt_appl_exit(short *global_aes);
-short mt_appl_yield(short *global_aes);
-short mt_evnt_timer(unsigned long interval, short *global_aes);
-short mt_appl_getinfo(short type, short *out1, short *out2, short *out3, short *out4, short *global_aes);
-short mt_appl_find(const char *name, short *global_aes);
-short mt_appl_write(short id, short length, void *buffer, short *global_aes);
-short mt_appl_read(short id, short length, void *buffer, short *global_aes);
-short mt_evnt_mesag(short message[8], short *global_aes);
+short mt_appl_init(AESGLOBAL *global_aes);
+short mt_appl_exit(AESGLOBAL *global_aes);
+short mt_appl_yield(AESGLOBAL *global_aes);
+short mt_evnt_timer(unsigned long interval, AESGLOBAL *global_aes);
+short mt_appl_getinfo(short type, short *out1, short *out2, short *out3, short *out4, AESGLOBAL *global_aes);
+short mt_appl_find(const char *name, AESGLOBAL *global_aes);
+short mt_appl_write(short id, short length, void *buffer, AESGLOBAL *global_aes);
+short mt_appl_read(short id, short length, void *buffer, AESGLOBAL *global_aes);
+short mt_evnt_mesag(short message[8], AESGLOBAL *global_aes);
 short evnt_keybd(void);
-short mt_evnt_keybd(short *global_aes);
+short mt_evnt_keybd(AESGLOBAL *global_aes);
 short evnt_button(short clicks, short mask, short state, short *mx, short *my, short *buttons, short *modifiers);
-short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
+short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my, short *buttons, short *modifiers, AESGLOBAL *global_aes);
 short evnt_mouse(short leave, short x, short y, short width, short height, short *mx, short *my, short *buttons, short *modifiers);
-short mt_evnt_mouse(short leave, short x, short y, short width, short height, short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
+short mt_evnt_mouse(short leave, short x, short y, short width, short height, short *mx, short *my, short *buttons, short *modifiers, AESGLOBAL *global_aes);
 short evnt_dclick(short rate, short set);
-short mt_evnt_dclick(short rate, short set, short *global_aes);
+short mt_evnt_dclick(short rate, short set, AESGLOBAL *global_aes);
 short evnt_multi(short events, short clicks, short button_mask, short button_state,
                  short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                  short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
@@ -165,11 +165,11 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short m1_leave, short m1_x, short m1_y, short m1_w, short m1_h,
                     short m2_leave, short m2_x, short m2_y, short m2_w, short m2_h,
                     short message[], unsigned long interval, short *mx, short *my,
-                    short *buttons, short *modifiers, short *key, short *click_count, short *global_aes);
+                    short *buttons, short *modifiers, short *key, short *click_count, AESGLOBAL *global_aes);
 short graf_handle(short *wchar, short *hchar, short *wbox, short *hbox);
-short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, short *global);
+short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, AESGLOBAL *global);
 short graf_mouse(short mode, const MFORM *form);
-short mt_graf_mouse(short mode, const MFORM *form, short *global);
+short mt_graf_mouse(short mode, const MFORM *form, AESGLOBAL *global);
 #ifndef ARROW
 #define ARROW 0
 #define TEXT_CRSR 1
@@ -195,7 +195,7 @@ short mt_graf_mouse(short mode, const MFORM *form, short *global);
 #define BUSYBEE BEE
 #endif
 short graf_mkstate(short *mx, short *my, short *buttons, short *modifiers);
-short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, short *global_aes);
+short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, AESGLOBAL *global_aes);
 #ifndef WM_REDRAW
 #define WM_REDRAW 20
 #endif
@@ -227,7 +227,7 @@ short mt_graf_mkstate(short *mx, short *my, short *buttons, short *modifiers, sh
 #define WF_NEXTXYWH 12
 #endif
 short wind_update(short code);
-short mt_wind_update(short code, short *global);
+short mt_wind_update(short code, AESGLOBAL *global);
 #ifndef NAME
 #define NAME 0x0001
 #endif
@@ -326,7 +326,7 @@ short mt_wind_update(short code, short *global);
 #define WF_INFO 3
 #endif
 short wind_set_str(short id, short field, const char *text);
-short mt_wind_set_str(short id, short field, const char *text, short *global);
+short mt_wind_set_str(short id, short field, const char *text, AESGLOBAL *global);
 #ifndef WF_KIND
 #define WF_KIND 1
 #endif
@@ -422,19 +422,19 @@ short fsel_input(char *path, char *selection, short *button);
 #define SHEL_BUFSIZE (-1)
 #endif
 void shel_rdef(char *command, char *directory);
-void mt_shel_rdef(char *command, char *directory, short *global);
+void mt_shel_rdef(char *command, char *directory, AESGLOBAL *global);
 void shel_wdef(const char *command, const char *directory);
-void mt_shel_wdef(const char *command, const char *directory, short *global);
+void mt_shel_wdef(const char *command, const char *directory, AESGLOBAL *global);
 short scrp_read(char *path);
-short mt_scrp_read(char *path, short *global);
+short mt_scrp_read(char *path, AESGLOBAL *global);
 short scrp_write(const char *path);
-short mt_scrp_write(const char *path, short *global);
+short mt_scrp_write(const char *path, AESGLOBAL *global);
 short shel_get(char *buffer, short length);
-short mt_shel_get(char *buffer, short length, short *global);
+short mt_shel_get(char *buffer, short length, AESGLOBAL *global);
 short shel_put(const char *buffer, short length);
-short mt_shel_put(const char *buffer, short length, short *global);
+short mt_shel_put(const char *buffer, short length, AESGLOBAL *global);
 short shel_read(char *command, char *tail);
-short mt_shel_read(char *command, char *tail, short *global);
+short mt_shel_read(char *command, char *tail, AESGLOBAL *global);
 #define SWM_LAUNCH 0
 #define SWM_LAUNCHNOW 1
 #define SWM_LAUNCHACC 3
@@ -472,52 +472,52 @@ short mt_shel_read(char *command, char *tail, short *global);
 #define ENVIRON_CHANGE 1
 #define ENVIRON_COPY 2
 short shel_write(short mode, short graphical, short execution, const void *command, const char *tail);
-short mt_shel_write(short mode, short graphical, short execution, const void *command, const char *tail, short *global);
+short mt_shel_write(short mode, short graphical, short execution, const void *command, const char *tail, AESGLOBAL *global);
 short shel_find(char *path);
-short mt_shel_find(char *path, short *global);
+short mt_shel_find(char *path, AESGLOBAL *global);
 short shel_envrn(char **result, const char *prefix);
-short mt_shel_envrn(char **result, const char *prefix, short *global);
-short mt_fsel_input(char *path, char *selection, short *button, short *global);
+short mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global);
+short mt_fsel_input(char *path, char *selection, short *button, AESGLOBAL *global);
 short fsel_exinput(char *path, char *selection, short *button, const char *title);
-short mt_fsel_exinput(char *path, char *selection, short *button, const char *title, short *global);
+short mt_fsel_exinput(char *path, char *selection, short *button, const char *title, AESGLOBAL *global);
 short wind_create(short kind, short x, short y, short w, short h);
-short mt_wind_create(short kind, short x, short y, short w, short h, short *global);
+short mt_wind_create(short kind, short x, short y, short w, short h, AESGLOBAL *global);
 short wind_open(short id, short x, short y, short w, short h);
-short mt_wind_open(short id, short x, short y, short w, short h, short *global);
+short mt_wind_open(short id, short x, short y, short w, short h, AESGLOBAL *global);
 short wind_close(short id);
-short mt_wind_close(short id, short *global);
+short mt_wind_close(short id, AESGLOBAL *global);
 short wind_delete(short id);
-short mt_wind_delete(short id, short *global);
-short mt_wind_new(short *global);
+short mt_wind_delete(short id, AESGLOBAL *global);
+short mt_wind_new(AESGLOBAL *global);
 short wind_new(void);
-short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, short *global);
+short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, AESGLOBAL *global);
 short wind_set_ptr_int(short id, short field, void *pointer, short value);
-short mt_wind_set_ptr(short id, short field, void *pointer, short *global);
+short mt_wind_set_ptr(short id, short field, void *pointer, AESGLOBAL *global);
 short wind_set_ptr(short id, short field, void *pointer);
-short mt_wind_get_ptr(short id, short field, void **pointer, short *global);
+short mt_wind_get_ptr(short id, short field, void **pointer, AESGLOBAL *global);
 short wind_get_ptr(short id, short field, void **pointer);
-short mt_wind_get_int(short id, short field, short *value, short *global);
+short mt_wind_get_int(short id, short field, short *value, AESGLOBAL *global);
 short wind_get_int(short id, short field, short *value);
-short mt_wind_set_int(short id, short field, short value, short *global);
+short mt_wind_set_int(short id, short field, short value, AESGLOBAL *global);
 short wind_set_int(short id, short field, short value);
-short mt_wind_get_grect(short id, short field, GRECT *rect, short *global);
+short mt_wind_get_grect(short id, short field, GRECT *rect, AESGLOBAL *global);
 short wind_get_grect(short id, short field, GRECT *rect);
-short mt_wind_set_grect(short id, short field, const GRECT *rect, short *global);
+short mt_wind_set_grect(short id, short field, const GRECT *rect, AESGLOBAL *global);
 short wind_set_grect(short id, short field, const GRECT *rect);
-short mt_wind_create_grect(short kind, const GRECT *rect, short *global);
+short mt_wind_create_grect(short kind, const GRECT *rect, AESGLOBAL *global);
 short wind_create_grect(short kind, const GRECT *rect);
-short mt_wind_open_grect(short id, const GRECT *rect, short *global);
+short mt_wind_open_grect(short id, const GRECT *rect, AESGLOBAL *global);
 short wind_open_grect(short id, const GRECT *rect);
-short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, short *global);
+short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, AESGLOBAL *global);
 short wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out);
 short wind_find(short x, short y);
-short mt_wind_find(short x, short y, short *global);
+short mt_wind_find(short x, short y, AESGLOBAL *global);
 short wind_get(short id, short field, short *a, short *b, short *c, short *d);
-short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, short *global);
+short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, AESGLOBAL *global);
 short wind_set(short id, short field, short a, short b, short c, short d);
-short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global);
+short mt_wind_set(short id, short field, short a, short b, short c, short d, AESGLOBAL *global);
 short wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh);
-short mt_wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh, short *global);
+short mt_wind_calc(short type, short kind, short x, short y, short w, short h, short *ox, short *oy, short *ow, short *oh, AESGLOBAL *global);
 #ifndef ED_START
 #define ED_START 0
 #define ED_INIT 1
@@ -531,21 +531,21 @@ short mt_wind_calc(short type, short kind, short x, short y, short w, short h, s
 #define FMD_FINISH 3
 #endif
 short objc_edit(OBJECT *tree, short object, short key, short *index, short kind);
-short mt_objc_edit(OBJECT *tree, short object, short key, short *index, short kind, short *global);
+short mt_objc_edit(OBJECT *tree, short object, short key, short *index, short kind, AESGLOBAL *global);
 short form_do(OBJECT *tree, short start);
-short mt_form_do(OBJECT *tree, short start, short *global);
+short mt_form_do(OBJECT *tree, short start, AESGLOBAL *global);
 short form_dial(short kind, short sx, short sy, short sw, short sh, short x, short y, short w, short h);
-short mt_form_dial(short kind, short sx, short sy, short sw, short sh, short x, short y, short w, short h, short *global);
+short mt_form_dial(short kind, short sx, short sy, short sw, short sh, short x, short y, short w, short h, AESGLOBAL *global);
 short form_alert(short default_button, const char *alert);
-short mt_form_alert(short default_button, const char *alert, short *global);
+short mt_form_alert(short default_button, const char *alert, AESGLOBAL *global);
 short form_error(short error);
-short mt_form_error(short error, short *global);
+short mt_form_error(short error, AESGLOBAL *global);
 short graf_watchbox(OBJECT *tree, short object, short in_state, short out_state);
-short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_state, short *global);
+short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_state, AESGLOBAL *global);
 short form_button(OBJECT *tree, short object, short clicks, short *next);
-short mt_form_button(OBJECT *tree, short object, short clicks, short *next, short *global);
+short mt_form_button(OBJECT *tree, short object, short clicks, short *next, AESGLOBAL *global);
 short form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining);
-short mt_form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining, short *global);
+short mt_form_keybd(OBJECT *tree, short object, short proposed, short key, short *next, short *remaining, AESGLOBAL *global);
 #ifndef R_TREE
 #define R_TREE 0
 #define R_OBJECT 1
@@ -566,21 +566,21 @@ short mt_form_keybd(OBJECT *tree, short object, short proposed, short key, short
 #define R_FRIMG 16
 #endif
 short rsrc_rcfix(void *header);
-short mt_rsrc_rcfix(void *header, short *global);
+short mt_rsrc_rcfix(void *header, AESGLOBAL *global);
 short rsrc_load(const char *name);
-short mt_rsrc_load(const char *name, short *global);
+short mt_rsrc_load(const char *name, AESGLOBAL *global);
 short rsrc_free(void);
-short mt_rsrc_free(short *global);
+short mt_rsrc_free(AESGLOBAL *global);
 short rsrc_gaddr(short type, short index, void *address);
-short mt_rsrc_gaddr(short type, short index, void *address, short *global);
+short mt_rsrc_gaddr(short type, short index, void *address, AESGLOBAL *global);
 short rsrc_saddr(short type, short index, void *address);
-short mt_rsrc_saddr(short type, short index, void *address, short *global);
+short mt_rsrc_saddr(short type, short index, void *address, AESGLOBAL *global);
 short rsrc_obfix(OBJECT *tree, short object);
-short mt_rsrc_obfix(OBJECT *tree, short object, short *global);
+short mt_rsrc_obfix(OBJECT *tree, short object, AESGLOBAL *global);
 short form_center(OBJECT *tree, short *x, short *y, short *w, short *h);
-short mt_form_center(OBJECT *tree, short *x, short *y, short *w, short *h, short *global);
+short mt_form_center(OBJECT *tree, short *x, short *y, short *w, short *h, AESGLOBAL *global);
 short form_center_grect(OBJECT *tree, GRECT *rect);
-short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global);
+short mt_form_center_grect(OBJECT *tree, GRECT *rect, AESGLOBAL *global);
 #define CHECK 1
 #define UNCHECK 0
 #define ENABLE 1
@@ -594,47 +594,47 @@ short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global);
 #define AC_CLOSE 41
 #define REG_NEWNAME -1
 short menu_register(short ap_id, const char *text);
-short mt_menu_register(short ap_id, const char *text, short *global);
+short mt_menu_register(short ap_id, const char *text, AESGLOBAL *global);
 short menu_bar(OBJECT *tree, short show);
-short mt_menu_bar(OBJECT *tree, short show, short *global);
+short mt_menu_bar(OBJECT *tree, short show, AESGLOBAL *global);
 short menu_popup(MENU *menu, short x, short y, MENU *result);
-short mt_menu_popup(MENU *menu, short x, short y, MENU *result, short *global);
+short mt_menu_popup(MENU *menu, short x, short y, MENU *result, AESGLOBAL *global);
 short menu_icheck(OBJECT *tree, short item, short check);
-short mt_menu_icheck(OBJECT *tree, short item, short check, short *global);
+short mt_menu_icheck(OBJECT *tree, short item, short check, AESGLOBAL *global);
 short menu_ienable(OBJECT *tree, short item, short enable);
-short mt_menu_ienable(OBJECT *tree, short item, short enable, short *global);
+short mt_menu_ienable(OBJECT *tree, short item, short enable, AESGLOBAL *global);
 short menu_tnormal(OBJECT *tree, short item, short normal);
-short mt_menu_tnormal(OBJECT *tree, short item, short normal, short *global);
+short mt_menu_tnormal(OBJECT *tree, short item, short normal, AESGLOBAL *global);
 short menu_text(OBJECT *tree, short item, const char *text);
-short mt_menu_text(OBJECT *tree, short item, const char *text, short *global);
+short mt_menu_text(OBJECT *tree, short item, const char *text, AESGLOBAL *global);
 short objc_sysvar(short mode, short which, short in1, short in2, short *out1, short *out2);
-short mt_objc_sysvar(short mode, short which, short in1, short in2, short *out1, short *out2, short *global);
+short mt_objc_sysvar(short mode, short which, short in1, short in2, short *out1, short *out2, AESGLOBAL *global);
 short objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h);
-short mt_objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h, short *global);
+short mt_objc_draw(OBJECT *tree, short start, short depth, short x, short y, short w, short h, AESGLOBAL *global);
 short objc_change(OBJECT *tree, short object, short reserved, short x, short y, short w, short h, short state, short redraw);
-short mt_objc_change(OBJECT *tree, short object, short reserved, short x, short y, short w, short h, short state, short redraw, short *global);
+short mt_objc_change(OBJECT *tree, short object, short reserved, short x, short y, short w, short h, short state, short redraw, AESGLOBAL *global);
 short objc_find(OBJECT *tree, short start, short depth, short mx, short my);
-short mt_objc_find(OBJECT *tree, short start, short depth, short mx, short my, short *global);
-short mt_objc_add(OBJECT *tree, short parent, short child, short *global);
-short mt_objc_delete(OBJECT *tree, short object, short *global);
-short mt_objc_order(OBJECT *tree, short object, short position, short *global);
-short mt_objc_offset(OBJECT *tree, short object, short *x, short *y, short *global);
+short mt_objc_find(OBJECT *tree, short start, short depth, short mx, short my, AESGLOBAL *global);
+short mt_objc_add(OBJECT *tree, short parent, short child, AESGLOBAL *global);
+short mt_objc_delete(OBJECT *tree, short object, AESGLOBAL *global);
+short mt_objc_order(OBJECT *tree, short object, short position, AESGLOBAL *global);
+short mt_objc_offset(OBJECT *tree, short object, short *x, short *y, AESGLOBAL *global);
 short graf_mbox(short w, short h, short sx, short sy, short dx, short dy);
-short mt_graf_mbox(short w, short h, short sx, short sy, short dx, short dy, short *global);
+short mt_graf_mbox(short w, short h, short sx, short sy, short dx, short dy, AESGLOBAL *global);
 short graf_growbox(short sx, short sy, short sw, short sh, short x, short y, short w, short h);
-short mt_graf_growbox(short sx, short sy, short sw, short sh, short x, short y, short w, short h, short *global);
+short mt_graf_growbox(short sx, short sy, short sw, short sh, short x, short y, short w, short h, AESGLOBAL *global);
 short graf_shrinkbox(short sx, short sy, short sw, short sh, short x, short y, short w, short h);
-short mt_graf_shrinkbox(short sx, short sy, short sw, short sh, short x, short y, short w, short h, short *global);
+short mt_graf_shrinkbox(short sx, short sy, short sw, short sh, short x, short y, short w, short h, AESGLOBAL *global);
 short graf_growbox_grect(const GRECT *small, const GRECT *large);
-short mt_graf_growbox_grect(const GRECT *small, const GRECT *large, short *global);
+short mt_graf_growbox_grect(const GRECT *small, const GRECT *large, AESGLOBAL *global);
 short graf_shrinkbox_grect(const GRECT *small, const GRECT *large);
-short mt_graf_shrinkbox_grect(const GRECT *small, const GRECT *large, short *global);
+short mt_graf_shrinkbox_grect(const GRECT *small, const GRECT *large, AESGLOBAL *global);
 short graf_rubberbox(short x, short y, short wmin, short hmin, short *w, short *h);
-short mt_graf_rubberbox(short x, short y, short wmin, short hmin, short *w, short *h, short *global);
+short mt_graf_rubberbox(short x, short y, short wmin, short hmin, short *w, short *h, AESGLOBAL *global);
 short graf_dragbox(short w, short h, short x, short y, short bx, short by, short bw, short bh, short *rx, short *ry);
-short mt_graf_dragbox(short w, short h, short x, short y, short bx, short by, short bw, short bh, short *rx, short *ry, short *global);
+short mt_graf_dragbox(short w, short h, short x, short y, short bx, short by, short bw, short bh, short *rx, short *ry, AESGLOBAL *global);
 short graf_slidebox(OBJECT *tree, short parent, short object, short vertical);
-short mt_graf_slidebox(OBJECT *tree, short parent, short object, short vertical, short *global);
+short mt_graf_slidebox(OBJECT *tree, short parent, short object, short vertical, AESGLOBAL *global);
 short objc_add(OBJECT *tree, short parent, short child);
 short objc_delete(OBJECT *tree, short object);
 short objc_order(OBJECT *tree, short object, short position);

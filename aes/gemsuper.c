@@ -97,7 +97,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         tree = rs_trees[DESKTOP];
         pglobal->ap_private = tree[ROOT].ob_spec.index;
         pglobal->ap_planes = gl_nplanes;
-        pglobal->ap_3resv = (intptr_t)&D;
+        pglobal->ap_3resv = &D;
         ret = ap_init();
         break;
     case APPL_READ:
@@ -443,7 +443,7 @@ static void xif(AESPB *pcrys_blk)
     if (AIN_LEN)
         memcpy(addr_in, pcrys_blk->addrin, min(AIN_LEN,AI_SIZE)*sizeof(intptr_t));
 
-    RET_CODE = crysbind(OP_CODE, (AESGLOBAL *)pcrys_blk->global, control, int_in, int_out,
+    RET_CODE = crysbind(OP_CODE, pcrys_blk->global, control, int_in, int_out,
                                 addr_in);
 
     if (OUT_LEN)

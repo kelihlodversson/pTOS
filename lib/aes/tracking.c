@@ -11,7 +11,7 @@ static BOOL rectangle(WORD x, WORD y, WORD w, WORD h)
 {
     return w > 0 && h > 0 && (LONG)x+w <= 32767 && (LONG)y+h <= 32767;
 }
-WORD mt_graf_rubberbox(WORD x, WORD y, WORD wmin, WORD hmin, WORD *w, WORD *h, WORD *global)
+WORD mt_graf_rubberbox(WORD x, WORD y, WORD wmin, WORD hmin, WORD *w, WORD *h, AESGLOBAL *global)
 {
     AES_TRACK t = { 0 };
     if (!w || !h || wmin < 0 || hmin < 0 || (LONG)x+wmin > 32767 || (LONG)y+hmin > 32767) return 0;
@@ -21,9 +21,9 @@ WORD mt_graf_rubberbox(WORD x, WORD y, WORD wmin, WORD hmin, WORD *w, WORD *h, W
     *w = t.result1; *h = t.result2; return 1;
 }
 WORD graf_rubberbox(WORD x, WORD y, WORD wmin, WORD hmin, WORD *w, WORD *h)
-{ return mt_graf_rubberbox(x,y,wmin,hmin,w,h,aes_global); }
+{ return mt_graf_rubberbox(x,y,wmin,hmin,w,h,&aes_global); }
 WORD mt_graf_dragbox(WORD w, WORD h, WORD x, WORD y, WORD bx, WORD by, WORD bw, WORD bh,
-                     WORD *rx, WORD *ry, WORD *global)
+                     WORD *rx, WORD *ry, AESGLOBAL *global)
 {
     AES_TRACK t = { 0 };
     if (!rx || !ry || !rectangle(x,y,w,h) || !rectangle(bx,by,bw,bh) || w > bw || h > bh) return 0;
@@ -34,9 +34,9 @@ WORD mt_graf_dragbox(WORD w, WORD h, WORD x, WORD y, WORD bx, WORD by, WORD bw, 
     *rx = t.result1; *ry = t.result2; return 1;
 }
 WORD graf_dragbox(WORD w, WORD h, WORD x, WORD y, WORD bx, WORD by, WORD bw, WORD bh, WORD *rx, WORD *ry)
-{ return mt_graf_dragbox(w,h,x,y,bx,by,bw,bh,rx,ry,aes_global); }
+{ return mt_graf_dragbox(w,h,x,y,bx,by,bw,bh,rx,ry,&aes_global); }
 
-WORD mt_graf_slidebox(OBJECT *tree, WORD parent, WORD object, WORD vertical, WORD *global)
+WORD mt_graf_slidebox(OBJECT *tree, WORD parent, WORD object, WORD vertical, AESGLOBAL *global)
 {
     AES_TRACK t = { 0 };
     LONG x = 0, y = 0, width, height;
@@ -93,4 +93,4 @@ done:
     return valid && aes_graphics_track(&t) ? t.result1 : 0;
 }
 WORD graf_slidebox(OBJECT *tree, WORD parent, WORD object, WORD vertical)
-{ return mt_graf_slidebox(tree,parent,object,vertical,aes_global); }
+{ return mt_graf_slidebox(tree,parent,object,vertical,&aes_global); }

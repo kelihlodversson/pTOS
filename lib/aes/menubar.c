@@ -27,7 +27,7 @@ static WORD workin[11] = { 1,1,1,1,1,1,1,0,1,1,2 };
 
 BOOL aes_menu_registered(void) { return bar.tree && !bar.busy; }
 BOOL aes_menu_listening(void) { return bar.tree && !bar.busy && !bar.pending; }
-static BOOL paint(WORD *global, WORD handle)
+static BOOL paint(AESGLOBAL *global, WORD handle)
 {
     WORD points[4] = { 0,0,0,0 };
     points[1] = points[3] = bar.height-1; points[2] = bar.metrics.width-1;
@@ -71,7 +71,7 @@ static BOOL restore_snapshot(VDI_SERVICE_WORKSTATION *ws, BOOL *opened, const GR
     }
     return aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws->handle,(uintptr_t)rect,(uintptr_t)buffer,1) == E_OK;
 }
-static BOOL change(WORD object, BOOL selected, WORD *global, const GRECT *clip)
+static BOOL change(WORD object, BOOL selected, AESGLOBAL *global, const GRECT *clip)
 {
     UWORD state = bar.tree[object].ob_state;
     if (selected) state |= SELECTED; else state &= ~SELECTED;
@@ -120,7 +120,7 @@ static BOOL refresh(void)
     bar.entries = entries; bar.pairs = pairs;
     return TRUE;
 }
-LONG aes_menu_flush(WORD *global)
+LONG aes_menu_flush(AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
     return !bar.tree || (session >= 0 && flush(session,FALSE)) ? E_OK : EACCDN;
@@ -131,7 +131,7 @@ void aes_menu_reset(void)
     memset(&bar,0,sizeof(bar));
 }
 
-WORD mt_menu_bar(OBJECT *tree, WORD show, WORD *global)
+WORD mt_menu_bar(OBJECT *tree, WORD show, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
     BAR next = { 0 }, old;
@@ -218,7 +218,7 @@ done:
     if (next.entries) (void)aes_resource_discard(next.entries);
     return ok;
 }
-WORD menu_bar(OBJECT *tree, WORD show) { return mt_menu_bar(tree,show,aes_global); }
+WORD menu_bar(OBJECT *tree, WORD show) { return mt_menu_bar(tree,show,&aes_global); }
 
 typedef struct {
     OBJECT *tree;
@@ -284,7 +284,7 @@ static BOOL desk_menu(LONG session, DESK_MENU *desk)
     return TRUE;
 }
 
-LONG aes_menu_dispatch(WORD *global)
+LONG aes_menu_dispatch(AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), flags;
     VDI_SERVICE_WORKSTATION ws;
@@ -366,7 +366,7 @@ LONG aes_menu_dispatch(WORD *global)
                 bar.message[5] = (uintptr_t)original >> 16; bar.message[6] = (uintptr_t)original;
                 bar.message[7] = bar.entries[current].menu;
                 if (current == 0 && desk.tree && item >= desk.first && item < desk.first+desk.count) {
-                    bar.message[0] = AC_OPEN; bar.message[1] = global[2];
+                    bar.message[0] = AC_OPEN; bar.message[1] = global->ap_id;
                     bar.message[3] = 0; bar.message[4] = desk.slots[item-desk.first];
                     bar.message[5] = bar.message[6] = bar.message[7] = 0;
                     bar.recipient = desk.owners[item-desk.first];

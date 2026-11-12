@@ -27,7 +27,7 @@ static uint32_t decode(const char *text)
     for (i = 0; i < 8; i++) value = (value << 4) | (text[i] <= '9' ? text[i]-'0' : text[i]-'a'+10);
     return value;
 }
-static short receive(short *message, unsigned long timeout, short *global)
+static short receive(short *message, unsigned long timeout, AESGLOBAL *global)
 {
     return mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
                          message,timeout,NULL,NULL,NULL,NULL,NULL,NULL,global);
@@ -44,7 +44,7 @@ static int equal(const char *a, const char *b)
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
 }
-int gem_launch_child(short *global, int argc, char **argv, char **envp)
+int gem_launch_child(AESGLOBAL *global, int argc, char **argv, char **envp)
 {
     char command[260], tail[128];
     short message[8] = { 0x7e10,0,0,0,0,0,0,0 }, parent;
@@ -56,13 +56,13 @@ int gem_launch_child(short *global, int argc, char **argv, char **envp)
     VERIFY((unsigned char)tail[0] == (argv[1][0] == 'm' ? 126 : 17));
     for (i = 0; i < 17; i++) VERIFY(tail[i+1] == argv[1][i]);
     for (i = 18; i <= (unsigned char)tail[0]; i++) VERIFY(tail[i] == ' ');
-    message[1] = global[2];
+    message[1] = global->ap_id;
     VERIFY(appl_write(parent,sizeof(message),message) == 1);
     /* The parent must keep running while the child is alive and waiting. */
     VERIFY(receive(message,2000,global) == MU_MESAG && message[0] == 0x7e11 && message[1] == parent);
     return 43;
 }
-int gem_launch_checks(short *global, char **envp)
+int gem_launch_checks(AESGLOBAL *global, char **envp)
 {
     char command[] = "APPS\\GEMSHELL.TOS", tail[128] = { 0 }, saved[128];
     char cwd[128], after[128];
@@ -84,19 +84,19 @@ int gem_launch_checks(short *global, char **envp)
         for (i = 0; i < sizeof(tail); i++) tail[i] = 0;
         tail[0] = pass ? 126 : 17;
         tail[1] = pass ? 'm' : 'l';
-        encode(tail+2,(uint32_t)global[2]); encode(tail+10,environment_hash(envp));
+        encode(tail+2,(uint32_t)global->ap_id); encode(tail+10,environment_hash(envp));
         for (i = 18; i <= (unsigned char)tail[0]; i++) tail[i] = ' ';
         for (i = 0; i < sizeof(tail); i++) saved[i] = tail[i];
         VERIFY(wind_update(BEG_UPDATE) == 1);
         pid = pass ? mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,command,tail,global) :
                      shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,command,tail);
-        VERIFY(pid > 0 && pid != global[2] && wind_update(END_UPDATE) == 1 && !wind_update(END_UPDATE));
+        VERIFY(pid > 0 && pid != global->ap_id && wind_update(END_UPDATE) == 1 && !wind_update(END_UPDATE));
         VERIFY(equal(command,"APPS\\GEMSHELL.TOS"));
         for (i = 0; i < sizeof(tail); i++) VERIFY(saved[i] == tail[i]);
         VERIFY(process_call(0x2f,0,0,0) == (uintptr_t)dta);
         for (i = 0; i < sizeof(dta); i++) VERIFY(saved_dta[i] == dta[i]);
         VERIFY(receive(message,2000,global) == MU_MESAG && message[0] == 0x7e10 && message[1] == pid);
-        message[0] = 0x7e11; message[1] = global[2];
+        message[0] = 0x7e11; message[1] = global->ap_id;
         VERIFY(mt_appl_write(pid,sizeof(message),message,global) == 1);
         VERIFY((int32_t)process_call(0x13a,pid,0,0) == (int32_t)(((uint32_t)pid << 16) | 43));
         /* Unlike SWM_LAUNCH, SHW_PARALLEL sends no death-of-child message. */

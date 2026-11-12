@@ -6,7 +6,7 @@
 #include "gemformkey.h"
 
 short aes_form_keybd_checked(OBJECT *tree, short object, short proposed, short key,
-                    short *next, short *remaining, short *global, BOOL *ok)
+                    short *next, short *remaining, AESGLOBAL *global, BOOL *ok)
 {
     WORD target = proposed, character = key;
     BOOL cont;
@@ -26,7 +26,7 @@ short aes_form_keybd_checked(OBJECT *tree, short object, short proposed, short k
     return cont;
 }
 short mt_form_keybd(OBJECT *tree, short object, short proposed, short key,
-                    short *next, short *remaining, short *global)
+                    short *next, short *remaining, AESGLOBAL *global)
 {
     BOOL ok;
     return aes_form_keybd_checked(tree,object,proposed,key,next,remaining,global,&ok);
@@ -34,5 +34,5 @@ short mt_form_keybd(OBJECT *tree, short object, short proposed, short key,
 short form_keybd(OBJECT *tree, short object, short proposed, short key,
                  short *next, short *remaining)
 {
-    return mt_form_keybd(tree,object,proposed,key,next,remaining,aes_global);
+    return mt_form_keybd(tree,object,proposed,key,next,remaining,&aes_global);
 }

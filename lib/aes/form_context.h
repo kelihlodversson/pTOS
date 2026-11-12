@@ -4,7 +4,7 @@
 #include "gem.h"
 #include "layout.h"
 typedef struct {
-    short *global;
+    AESGLOBAL *global;
     LONG session;
     BOOL ok, grabbed, overlay, have_metrics, full_screen, have_release, released_inside;
     LAYOUT_METRICS metrics;

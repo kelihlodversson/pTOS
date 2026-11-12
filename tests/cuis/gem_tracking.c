@@ -32,12 +32,12 @@ int gem_tracking_checks(void)
             TRACK_CHECK(graf_rubberbox(40,40,10,10,&rx,&ry) == 1 && rx == 61 && ry == 51);
         } else if (stage == 1) {
             TRACK_CHECK(wind_update(BEG_UPDATE) == 1 && wind_update(BEG_MCTRL) == 1);
-            TRACK_CHECK(mt_graf_dragbox(40,30,40,40,20,20,180,120,&rx,&ry,aes_global) == 1 && rx == 160 && ry == 110);
+            TRACK_CHECK(mt_graf_dragbox(40,30,40,40,20,20,180,120,&rx,&ry,&aes_global) == 1 && rx == 160 && ry == 110);
             TRACK_CHECK(wind_update(END_MCTRL) == 1 && wind_update(END_UPDATE) == 1);
         } else if (stage == 2) TRACK_CHECK(graf_slidebox(tree,0,1,0) == 833);
         else {
             tree[1].ob_flags |= OF_FL3DACT;
-            TRACK_CHECK(mt_graf_slidebox(tree,0,1,1,aes_global) == 893);
+            TRACK_CHECK(mt_graf_slidebox(tree,0,1,1,&aes_global) == 893);
         }
         TRACK_CHECK(tree[1].ob_x == 20 && tree[1].ob_y == 10);
         TRACK_CHECK(gem_probe_pixel(handle,40,40) == background);

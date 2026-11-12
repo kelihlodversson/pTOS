@@ -11,7 +11,7 @@ static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
-static short multi(short mask, unsigned long interval, short *message, short state[6], short *global)
+static short multi(short mask, unsigned long interval, short *message, short state[6], AESGLOBAL *global)
 {
     if (global)
         return mt_evnt_multi(mask, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, message, interval,
@@ -33,7 +33,8 @@ static LONG spawn(char role)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, parent, message[8], received[8], global[15], state[6];
+    short id, parent, message[8], received[8], state[6];
+    AESGLOBAL global = { 0 };
     UBYTE payload[80], excess[64];
     ULONG i;
     LONG pid, status;
@@ -41,7 +42,7 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 6; i++) state[i] = 99;
     VERIFY(multi(MU_TIMER, 0, NULL, state, NULL) == 0 && state[0] == 99);
     VERIFY(graf_mkstate(&state[0], &state[1], &state[2], &state[3]) == 0 && state[0] == 99);
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(global) == id);
+    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&global) == id);
     VERIFY(graf_mkstate(&state[0], &state[1], &state[2], &state[3]) == 1);
     if (argc > 1) {
         if (argv[1][0] == 'f') {
@@ -63,7 +64,7 @@ int main(int argc, char **argv, char **envp)
     message[1] = id; message[2] = 0;
     VERIFY(multi(MU_TIMER, 0, NULL, state, NULL) == MU_TIMER && state_valid(state));
     VERIFY(appl_write(id, 16, message) == 1);
-    VERIFY(multi(MU_TIMER, 1, (short *)(uintptr_t)1, state, global) == MU_TIMER && state_valid(state));
+    VERIFY(multi(MU_TIMER, 1, (short *)(uintptr_t)1, state, &global) == MU_TIMER && state_valid(state));
     VERIFY(appl_read(-1, 16, received) == 1);
     VERIFY(appl_write(id, 16, message) == 1);
     VERIFY(multi(MU_MESAG | MU_TIMER, 0, received, state, NULL) == (MU_MESAG | MU_TIMER) && state_valid(state));
@@ -73,7 +74,7 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 16; i++) payload[i] = ((UBYTE *)message)[i];
     for (i = 16; i < 80; i++) payload[i] = (UBYTE)i;
     VERIFY(appl_write(id, 80, payload) == 1);
-    VERIFY(multi(MU_MESAG | MU_TIMER, 1000, received, state, global) == MU_MESAG && received[2] == 64);
+    VERIFY(multi(MU_MESAG | MU_TIMER, 1000, received, state, &global) == MU_MESAG && received[2] == 64);
     VERIFY(appl_read(id, 64, excess) == 1);
     for (i = 0; i < 64; i++) VERIFY(excess[i] == payload[i + 16]);
     message[2] = 0;
@@ -99,8 +100,8 @@ int main(int argc, char **argv, char **envp)
     pid = spawn('t'); VERIFY(pid > 0);
     VERIFY(evnt_mesag(received) == 1 && received[0] == 900);
     received[0] = 123;
-    VERIFY(multi(MU_MESAG | MU_TIMER, 1, received, state, global) == MU_TIMER && received[0] == 123);
-    VERIFY(multi(MU_MESAG, ~0UL, received, state, global) == MU_MESAG && received[0] == 901 && received[1] == pid);
+    VERIFY(multi(MU_MESAG | MU_TIMER, 1, received, state, &global) == MU_TIMER && received[0] == 123);
+    VERIFY(multi(MU_MESAG, ~0UL, received, state, &global) == MU_MESAG && received[0] == 901 && received[1] == pid);
     VERIFY(process(0x13a, pid, 0, 0, 0) == (LONG)(((ULONG)pid << 16) | 37));
     pid = spawn('z'); VERIFY(pid > 0);
     VERIFY(multi(MU_MESAG | MU_TIMER, 0, received, state, NULL) == (MU_MESAG | MU_TIMER) && received[1] == pid);

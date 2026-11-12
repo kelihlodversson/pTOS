@@ -22,7 +22,7 @@ static int32_t native_ui(uint32_t function, uint64_t a, uint64_t b, uint64_t c, 
         : "rcx","r11","memory","cc");
     return (int32_t)ax;
 }
-static short receive(short *message, unsigned long timeout, short *global)
+static short receive(short *message, unsigned long timeout, AESGLOBAL *global)
 {
     return mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
                          message,timeout,NULL,NULL,NULL,NULL,NULL,NULL,global);
@@ -32,7 +32,7 @@ static int exit_message(short *message, short pid, short code)
     return message[0] == CH_EXIT && !message[1] && !message[2] && message[3] == pid &&
            message[4] == code && !message[5] && !message[6] && !message[7];
 }
-static int synchronous_exit_checks(short *global)
+static int synchronous_exit_checks(AESGLOBAL *global)
 {
     char tail[3] = { 1,'n',0 };
     int32_t session, token, image, result;
@@ -60,7 +60,7 @@ static int synchronous_exit_checks(short *global)
             result = native_ui(CUIS_CHILD_RESULT,session,0,0,0);
             VERIFY(result > 0 && (result & 0xffff) == (uint16_t)codes[variant]);
             pid = (short)((uint32_t)result >> 16);
-            VERIFY(pid > 0 && pid != global[2]);
+            VERIFY(pid > 0 && pid != global->ap_id);
             VERIFY(mt_appl_read(-1,sizeof(message),message,global) == 1 && exit_message(message,pid,codes[variant]));
             VERIFY(native_ui(CUIS_CHILD_RESULT,session,0,0,0) == 0);
             VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == -36);
@@ -70,7 +70,7 @@ static int synchronous_exit_checks(short *global)
     return 0;
 }
 
-int gem_exit_checks(short *global)
+int gem_exit_checks(AESGLOBAL *global)
 {
     char tail[3] = { 1,'n',0 };
     short message[8], pid, earlier, a, b, c, d;

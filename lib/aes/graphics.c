@@ -25,7 +25,7 @@ void aes_graphics_reset(void)
     graphics_handle = mouse_depth = 0; cursor_initialized = FALSE;
 }
 void aes_graphics_wind_new(void) { mouse_depth = 0; }
-short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, short *global)
+short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, AESGLOBAL *global)
 {
     VDI_SERVICE_WORKSTATION ws;
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 };
@@ -54,9 +54,9 @@ short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, short
 }
 short graf_handle(short *wchar, short *hchar, short *wbox, short *hbox)
 {
-    return mt_graf_handle(wchar,hchar,wbox,hbox,aes_global);
+    return mt_graf_handle(wchar,hchar,wbox,hbox,&aes_global);
 }
-short mt_graf_mouse(short mode, const MFORM *form, short *global)
+short mt_graf_mouse(short mode, const MFORM *form, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
     MFORM next;
@@ -85,4 +85,4 @@ short mt_graf_mouse(short mode, const MFORM *form, short *global)
     mouse_depth = depth;
     return 1;
 }
-short graf_mouse(short mode, const MFORM *form) { return mt_graf_mouse(mode,form,aes_global); }
+short graf_mouse(short mode, const MFORM *form) { return mt_graf_mouse(mode,form,&aes_global); }

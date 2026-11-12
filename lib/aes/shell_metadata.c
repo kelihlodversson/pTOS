@@ -58,7 +58,7 @@ static BOOL context_transfer(LONG session, ULONG slot, void *data, ULONG bytes, 
     return ok;
 }
 
-void mt_shel_rdef(char *command, char *directory, short *global)
+void mt_shel_rdef(char *command, char *directory, AESGLOBAL *global)
 {
     DEFAULT_DESKTOP staged = { { 0 }, { 0 } };
     if (!command || !directory ||
@@ -68,9 +68,9 @@ void mt_shel_rdef(char *command, char *directory, short *global)
     strcpy(command,staged.command);
     strcpy(directory,staged.directory);
 }
-void shel_rdef(char *command, char *directory) { mt_shel_rdef(command,directory,aes_global); }
+void shel_rdef(char *command, char *directory) { mt_shel_rdef(command,directory,&aes_global); }
 
-void mt_shel_wdef(const char *command, const char *directory, short *global)
+void mt_shel_wdef(const char *command, const char *directory, AESGLOBAL *global)
 {
     DEFAULT_DESKTOP staged = { { 0 }, { 0 } };
     LONG session = aes_application_session(global);
@@ -78,9 +78,9 @@ void mt_shel_wdef(const char *command, const char *directory, short *global)
         !copy_string(staged.directory,directory,sizeof(staged.directory))) return;
     (void)context_transfer(session,DEFAULT_CONTEXT_SLOT,&staged,sizeof(staged),TRUE);
 }
-void shel_wdef(const char *command, const char *directory) { mt_shel_wdef(command,directory,aes_global); }
+void shel_wdef(const char *command, const char *directory) { mt_shel_wdef(command,directory,&aes_global); }
 
-short mt_scrp_read(char *path, short *global)
+short mt_scrp_read(char *path, AESGLOBAL *global)
 {
     char staged[SCRAP_PATH_BYTES] = { 0 };
     if (!path || !context_transfer(aes_application_session(global),SCRAP_CONTEXT_SLOT,staged,sizeof(staged),FALSE) ||
@@ -89,13 +89,13 @@ short mt_scrp_read(char *path, short *global)
     /* Atari TOS succeeds even for an empty path and never probes the disk. */
     return 1;
 }
-short scrp_read(char *path) { return mt_scrp_read(path,aes_global); }
+short scrp_read(char *path) { return mt_scrp_read(path,&aes_global); }
 
-short mt_scrp_write(const char *path, short *global)
+short mt_scrp_write(const char *path, AESGLOBAL *global)
 {
     char staged[SCRAP_PATH_BYTES] = { 0 };
     LONG session = aes_application_session(global);
     if (session < 0 || !copy_string(staged,path,sizeof(staged))) return 0;
     return context_transfer(session,SCRAP_CONTEXT_SLOT,staged,sizeof(staged),TRUE) ? 1 : 0;
 }
-short scrp_write(const char *path) { return mt_scrp_write(path,aes_global); }
+short scrp_write(const char *path) { return mt_scrp_write(path,&aes_global); }

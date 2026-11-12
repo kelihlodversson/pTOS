@@ -16,7 +16,7 @@ static BOOL release_context(LONG session)
     (void)cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0);
     return FALSE;
 }
-short mt_shel_get(char *buffer, short length, short *global)
+short mt_shel_get(char *buffer, short length, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), size, bytes, result;
     void *staged = NULL;
@@ -43,8 +43,8 @@ short mt_shel_get(char *buffer, short length, short *global)
     if (staged) (void)aes_resource_discard(staged);
     return result;
 }
-short shel_get(char *buffer, short length) { return mt_shel_get(buffer,length,aes_global); }
-short mt_shel_put(const char *buffer, short length, short *global)
+short shel_get(char *buffer, short length) { return mt_shel_get(buffer,length,&aes_global); }
+short mt_shel_put(const char *buffer, short length, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
     BOOL ok;
@@ -55,4 +55,4 @@ short mt_shel_put(const char *buffer, short length, short *global)
     if (!release_context(session)) ok = FALSE;
     return ok ? 1 : 0;
 }
-short shel_put(const char *buffer, short length) { return mt_shel_put(buffer,length,aes_global); }
+short shel_put(const char *buffer, short length) { return mt_shel_put(buffer,length,&aes_global); }

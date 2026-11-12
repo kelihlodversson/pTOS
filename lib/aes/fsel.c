@@ -138,7 +138,7 @@ void aes_fsel_copy_screen(WORD sx, WORD sy, WORD dx, WORD dy, WORD width, WORD h
     if (aes_graphics_call(VDI_SERVICE_CLIP,c->handle,0,(uintptr_t)clip,0) != E_OK) c->ok = FALSE;
 }
 
-WORD mt_fsel_exinput(char *path, char *selection, WORD *button, const char *title, WORD *global)
+WORD mt_fsel_exinput(char *path, char *selection, WORD *button, const char *title, AESGLOBAL *global)
 {
     FSEL_CONTEXT c = { 0 }, *saved = aes_fsel;
     VDI_SERVICE_WORKSTATION ws;
@@ -202,8 +202,8 @@ done:
     return 1;
 }
 WORD fsel_exinput(char *path, char *selection, WORD *button, const char *title)
-{ return mt_fsel_exinput(path,selection,button,title,aes_global); }
-WORD mt_fsel_input(char *path, char *selection, WORD *button, WORD *global)
+{ return mt_fsel_exinput(path,selection,button,title,&aes_global); }
+WORD mt_fsel_input(char *path, char *selection, WORD *button, AESGLOBAL *global)
 { return mt_fsel_exinput(path,selection,button,NULL,global); }
 WORD fsel_input(char *path, char *selection, WORD *button)
-{ return mt_fsel_input(path,selection,button,aes_global); }
+{ return mt_fsel_input(path,selection,button,&aes_global); }

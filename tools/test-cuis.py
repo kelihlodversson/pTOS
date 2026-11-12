@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     for order in (0, 1):
         command = shlex.split(os.environ.get("HOSTCC", "cc"))
         command += ["-std=gnu90", "-Wall", "-Wextra", "-Werror", "-I" + temp, "-Iinclude",
-                    "-DVDI_HEADER_FIRST=" + str(order), "tests/cuis/header_compat.c", "-o", str(work / "headers")]
+                    "-Iaes/shared", "-DVDI_HEADER_FIRST=" + str(order), "tests/cuis/header_compat.c", "-o", str(work / "headers")]
         subprocess.run(command, check=True)
         subprocess.run([str(work / "headers")], check=True)
     subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) + ["-DMFORM_RSC", "tools/erd.c", "-o", str(work / "mrd")], check=True)

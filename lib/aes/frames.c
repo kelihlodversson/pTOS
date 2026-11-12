@@ -11,7 +11,7 @@
 #include "frame_colours.h"
 
 BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
-                       char *name, char *info, WORD *global)
+                       char *name, char *info, AESGLOBAL *global)
 {
     WORD width, height;
     WM_FRAME_LIMITS limits;
@@ -57,7 +57,7 @@ BOOL aes_frame_control_inside(const WM_FRAME_STATE *state, WORD object, LONG x, 
     ob_3d_bounds(&frame.tree[object],1,FALSE,&left,&top,&width,&height);
     return x >= left && y >= top && x < left+width && y < top+height;
 }
-BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, WORD *global)
+BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, AESGLOBAL *global)
 {
     WM_FRAME frame;
     WM_FRAME_STATE drawing = *state;
@@ -91,7 +91,7 @@ done:
     return ok;
 }
 
-BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
+BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, AESGLOBAL *global)
 {
     return aes_frame_paint_control(native,state,0,FALSE,global);
 }

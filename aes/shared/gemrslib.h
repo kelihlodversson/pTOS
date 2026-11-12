@@ -14,19 +14,7 @@
 #include "obdefs.h"                 /* for OBJECT */
 #include "rsdefs.h"                 /* for RSHDR */
 
-typedef struct aesglobal {
-    WORD ap_version;                /* AES version */
-    WORD ap_count;                  /* max # of concurrent applications */
-    WORD ap_id;                     /* application id */
-    LONG ap_private;                /* for use by application */
-    OBJECT **ap_ptree;              /* pointer to array of tree addresses */
-                                /* the following are not advertised to applications */
-    RSHDR *ap_rscmem;               /* native materialized resource image */
-    UWORD ap_rsclen;                /* length of rsc file */
-    WORD ap_planes;                 /* # of colour planes on screen */
-    intptr_t ap_3resv;              /* ptr to AES global area D (struct THEGLO) */
-    LONG ap_4resv;                  /* reserved for use in AES 4.00 */
-} AESGLOBAL;
+#include "aesglobal.h"
 
 void rs_obfix(OBJECT *tree, WORD curob);
 char *rs_str(UWORD stnum);

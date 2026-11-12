@@ -15,7 +15,7 @@ static void report(unsigned line)
 static short launch(char role, int acc)
 {
     char tail[128] = { 0 }, reverse[12];
-    unsigned pid = aes_global[2], used = 3, n = 0;
+    unsigned pid = aes_global.ap_id, used = 3, n = 0;
     tail[1] = role; tail[2] = ' ';
     do { reverse[n++] = '0'+pid%10; pid /= 10; } while (pid);
     while (n) tail[used++] = reverse[--n];

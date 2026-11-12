@@ -60,7 +60,7 @@ WORD aes_modal_button(OBJECT *tree, WORD object, WORD clicks, WORD *next)
     if (!ok) aes_modal->ok = FALSE;
     return result;
 }
-WORD mt_form_do(OBJECT *tree, WORD start, WORD *global)
+WORD mt_form_do(OBJECT *tree, WORD start, AESGLOBAL *global)
 {
     MODAL_CONTEXT c = { 0 }, *saved = aes_modal;
     WORD result;
@@ -75,10 +75,10 @@ WORD mt_form_do(OBJECT *tree, WORD start, WORD *global)
     aes_frames_resume();
     return c.ok ? result : 0;
 }
-WORD form_do(OBJECT *tree, WORD start) { return mt_form_do(tree,start,aes_global); }
+WORD form_do(OBJECT *tree, WORD start) { return mt_form_do(tree,start,&aes_global); }
 
 WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
-                   WORD x, WORD y, WORD w, WORD h, WORD *global)
+                   WORD x, WORD y, WORD w, WORD h, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
     GRECT small, large;
@@ -104,5 +104,5 @@ WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
 }
 WORD form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh, WORD x, WORD y, WORD w, WORD h)
 {
-    return mt_form_dial(kind,sx,sy,sw,sh,x,y,w,h,aes_global);
+    return mt_form_dial(kind,sx,sy,sw,sh,x,y,w,h,&aes_global);
 }

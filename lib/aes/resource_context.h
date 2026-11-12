@@ -6,7 +6,9 @@
 #include "layout.h"
 typedef struct resource_context {
     struct resource_context *next;
-    AESGLOBAL native;
+    RSHDR *image;
+    OBJECT **trees;
+    UWORD length;
     RSHDR header;
     LAYOUT_METRICS metrics;
     BOOL caller_owned;

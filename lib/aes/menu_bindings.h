@@ -2,7 +2,7 @@
 #ifndef LIBAES_MENU_BINDINGS_H
 #define LIBAES_MENU_BINDINGS_H
 #include "gem.h"
-extern WORD *aes_menu_global;
+extern AESGLOBAL *aes_menu_global;
 #define do_chg aes_menu_change_core
 /* The public draw adapter supplies the full screen clip itself. */
 #define gsx_sclip(rect) ((void)0)

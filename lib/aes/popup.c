@@ -12,7 +12,7 @@
 #include "string.h"
 #define POPUP_ITEMS 4096
 
-typedef struct { WORD *global; GRECT clip; } POPUP_CONTEXT;
+typedef struct { AESGLOBAL *global; GRECT clip; } POPUP_CONTEXT;
 static BOOL popup_draw(void *context, OBJECT *tree, WORD root)
 {
     POPUP_CONTEXT *c = context;
@@ -63,7 +63,7 @@ static BOOL string_item(OBJECT *object)
     for (n = 0; n <= 127; n++) if (!spec.free_string[n]) return TRUE;
     return FALSE;
 }
-WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, WORD *global)
+WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, AESGLOBAL *global)
 {
     MENU input, output;
     POPUP_CONTEXT c;
@@ -168,4 +168,4 @@ done:
     return 0;
 }
 WORD menu_popup(MENU *menu, WORD x, WORD y, MENU *result)
-{ return mt_menu_popup(menu,x,y,result,aes_global); }
+{ return mt_menu_popup(menu,x,y,result,&aes_global); }
