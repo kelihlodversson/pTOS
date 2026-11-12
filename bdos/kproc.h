@@ -349,6 +349,8 @@ BOOL kproc_borrow(PD *launcher, void *block);
 void kproc_set_creator(PD *pd, PD *creator);
 void kproc_hand_over(PD *caller, PD *child);
 LONG kproc_check_launch(PD *pd, PD *caller);
+/* Pure allocation/borrow/staged-image mutation check, before any disposal. */
+BOOL kproc_allocation_disposal_allowed(const void *base);
 /* CUIS-only: identify a live unlaunched image belonging to this caller. */
 LONG kproc_child_image_pid(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
@@ -427,6 +429,9 @@ typedef struct { PROCMEM_HOLD token; } KPROC_ALLOCATION_HOLD;
 LONG kproc_allocation_hold(PD *owner, const void *base, UQUAD generation,
         VADDR offset, VADDR bytes, UWORD rights, KPROC_ALLOCATION_HOLD *result);
 BOOL kproc_allocation_release(KPROC_ALLOCATION_HOLD *hold);
+/* A non-owning snapshot; acquisition always revalidates its birth and rights. */
+LONG kproc_reservation_info(PD *owner, VADDR address, VADDR bytes,
+                            KASPACE_RESERVATION_INFO *result);
 LONG kproc_reservation_hold(PD *owner, VADDR address, VADDR bytes,
         UQUAD reservation, UWORD rights, KASPACE_RESERVATION_HOLD *result);
 LONG kproc_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,

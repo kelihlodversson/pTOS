@@ -36,7 +36,7 @@ KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold); /* borrowed */
  * TRUE revokes overlapping preparation leases even if the mutation later fails.
  * Inputs are rounded out to pages. Backend lifetime is retained by each lease. */
 /* Pure admission check for a whole multi-root mutation; never revokes. */
-BOOL kaspace_mapping_can_change(struct aspace *backend, VADDR address, VADDR bytes);
+BOOL kaspace_mapping_can_change(const struct aspace *backend, VADDR address, VADDR bytes);
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
 /* Logical reservation-preserving lazy/file backing only. This cannot authorize
  * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */
@@ -97,14 +97,24 @@ typedef struct { UQUAD ticket; } KASPACE_RESERVATION_HOLD;
 typedef struct {
     VADDR address, bytes;
     UQUAD identity;
-    UWORD rights;
+    UWORD rights, flags;
 } KASPACE_RESERVATION_INFO;
+#define KASPACE_RESERVATION_LAZY 1
+#define KASPACE_RESERVATION_CAPTURED 2
 UQUAD kaspace_reservation_next(void); /* 0 on permanent exhaustion */
 BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
                              KASPACE_RESERVATION_INFO *result);
 LONG kaspace_reservation_hold(KASPACE *space, UQUAD identity,
         VADDR address, VADDR bytes, UWORD rights, UQUAD owner_number,
         void *owner_identity, KASPACE_RESERVATION_HOLD *result);
+/* Trusted KPROC capture only: descriptor is freshly authenticated against
+ * its live image/basepage/environment/stack/staging owner before this call.
+ * A copied descriptor is NOT authority; the upper owner revalidates it. */
+LONG kaspace_reservation_hold_captured(KASPACE *space,
+        const KASPACE_RESERVATION_INFO *description, VADDR address, VADDR bytes,
+        UWORD rights, UQUAD owner_number, void *owner_identity,
+        KASPACE_RESERVATION_HOLD *result);
+BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *rights);
 /* Borrowed canonical owner; source ticket must stay owned across duplication. */
 void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold);
 LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,

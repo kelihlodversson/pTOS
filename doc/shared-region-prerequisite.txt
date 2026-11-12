@@ -24,10 +24,30 @@ births are not merged. Logical materialization/COW does not bypass sealed
 physical aliases. Move-only reservation tickets retain the root and canonical
 metadata independently of PD lifetime, without eagerly backing pages.
 
-NOT COMPLETE: captured image/staged-loader/basepage/environment/initial-stack
-reservation ownership; full R3 owner-transfer/callback/multi-region mutation
-audit; final independent owner acceptance. The integrated #942 tests remain
-historical mapping-lease evidence, not proof of these missing contracts.
+Captured reservations now authenticate live image/staged-loader/basepage/env/
+initial-stack metadata through KPROC before installing immutable descriptions
+in the existing owning lease list. A description or numeric ID alone grants
+no authority. These leases protect page-rounded mutation extents but retain
+exact requested bytes and rights, the root, and canonical metadata; neither a
+retired PD nor its heap/layout arrays is needed later. Captured lazy stack
+witnesses authorize reservation-preserving backing after owner retirement;
+nonlazy images never authorize zero-filled replacement data. Known image
+metadata cannot turn a borrowed device/ROM-window leaf into owned RAM.
+
+R3 preflights all affected mmap regions and TPA roots before the first leaf,
+metadata or borrowed-size change. Explicit allocation disposal and isolated
+launch preflight include staged images before KPROC destruction/image transfer.
+Held stack-limit shrink is refused before changing reservation metadata.
+Allocation generation MAX is reserved for the existing teardown cursor; the
+last allocatable generation is MAX-1, then allocation fails without wrapping.
+
+NOT COMPLETE: final mutation/callback audit, full native/compatibility matrix
+and independent memory-owner acceptance. The integrated #942 tests remain
+historical mapping-lease evidence. No public Pexec4/104 implementation or
+activation, retained allocation-set consumer, preemption or SMP is claimed.
+The existing built-in file-backing path remains cooperatively serialized;
+arbitrary yielding/nonlocal driver callbacks require a separate mapping/
+materialization ownership contract, not an IRQ-masking claim.
 Actual x32 kernel tests now cover allocator/KPROC retirement, lazy reservation
 OOM/orphan/materialization/COW and held real FAT backing. They are kernel
 self-tests, NOT public Pexec4 execution. No new public API is exposed.
@@ -128,3 +148,18 @@ retain its checked acquire/close accounting. Never translate an internal
 FAT/PFS cookie twice or add a fork-only descriptor table. The published
 inheritance inventory/regression specification remains the migration input;
 no filesystem implementation or reference counters change in this increment.
+
+Current executable proof boundaries
+---------------------------------
+The x32 MEMTEST uses actual allocator, KPROC and MMU code for allocation and
+lazy/file/image/stack retention, partial acquisition, orphaned materialization,
+COW, failed FAT backing and late-range rejection with final resource snapshots.
+Under the existing EXIT_HANDOFF_TEST gate, a managed user Syield also invokes
+a bounded architecture-neutral kernel ownership probe on all MMU backends.
+It creates an unstarted PROCESS through the trusted factory, stages but NEVER
+executes zero loader pages, rejects held image transfer, and checks canonical
+retirement, independent duplicates and final allocation/KPROC baselines. The
+regression driver requires its marker. This is native kernel ownership proof
+entered from real user execution; it is not public shared-Pexec execution.
+Hosted allocation, reservation, COW and scheduler fixture providers model
+physical/CPU operations and are reported separately from native execution.

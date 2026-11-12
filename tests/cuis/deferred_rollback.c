@@ -78,6 +78,8 @@ BOOL procmem_mutation_allowed(const void *p, UQUAD generation, VADDR offset, VAD
 }
 const void *procmem_owner(const void *p) { return owners[p == &image ? 1 : 0]; }
 ULONG procmem_pins(const void *p) { return 0; }
+BOOL kproc_allocation_disposal_allowed(const void *base)
+{ CHECK(procmem_contains(base)); return TRUE; }
 void set_owner(void *p, PD *owner) { CHECK(procmem_contains(p)); owners[p == &image ? 1 : 0] = owner; }
 void procmem_free_owned(const void *owner, void (*before)(void *))
 {

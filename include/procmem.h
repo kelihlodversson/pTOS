@@ -387,6 +387,8 @@ BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
  * that is there is not one of its private pages.
  */
 BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot);
+/* Pure whole-range ownership/barrier check; no leaf or metadata mutation. */
+BOOL aspace_release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes);
 BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes);
 #endif
 

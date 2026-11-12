@@ -34,6 +34,25 @@ int main(void)
     CHECK(!walks && space->refs==2); /* absent physical leaves were not consulted */
     stale=heap;
     {
+        KASPACE_RESERVATION_INFO captured;
+        KASPACE_RESERVATION_HOLD one={0}, two={0};
+        UWORD rights=0;
+        captured.address=0x20000; captured.bytes=4096;
+        captured.identity=kaspace_reservation_next();
+        captured.rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+        captured.flags=KASPACE_RESERVATION_LAZY;
+        CHECK(kaspace_reservation_hold_captured(space,&captured,0x20008,8,captured.rights,7,&canonical,&one)==E_OK);
+        captured.identity=kaspace_reservation_next();
+        CHECK(kaspace_reservation_hold_captured(space,&captured,0x20010,8,captured.rights,7,&canonical,&two)==E_OK);
+        captured.identity=0; captured.rights=0; /* source descriptor is transient */
+        CHECK(kaspace_retained_lazy_protection(space,0x20000,&rights) && rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+        CHECK(kaspace_materialization_change(&backend,0x20000,4096,rights));
+        CHECK(!kaspace_mapping_can_change(&backend,0x20000,4096));
+        CHECK(kaspace_reservation_release(&one,&owner));owner=NULL;
+        CHECK(kaspace_reservation_release(&two,&owner));owner=NULL;
+        CHECK(!kaspace_retained_lazy_protection(space,0x20000,&rights));
+    }
+    {
         KASPACE_RESERVATION_HOLD child = {0};
         CHECK(kaspace_reservation_duplicate(&heap,&canonical,&child)==E_OK && child.ticket!=heap.ticket);
         CHECK(kaspace_reservation_owner(&child)==&canonical);

@@ -748,11 +748,11 @@ BOOL aspace_fault_in(ASPACE *as, UQUAD va, UWORD prot)
     return TRUE;
 }
 
-BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
+BOOL aspace_release_lazy_allowed(const ASPACE *as, UQUAD va, UQUAD bytes)
 {
     UQUAD pages, i;
 
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
+    if (!kaspace_mapping_can_change(as, va, bytes)) return FALSE;
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -765,6 +765,15 @@ BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
         if (pte && (*pte & PTE_PRESENT) && !(*pte & X86_64_PTE_OWNED))
             return FALSE;
     }
+    return TRUE;
+}
+
+BOOL aspace_release_lazy(ASPACE *as, UQUAD va, UQUAD bytes)
+{
+    VADDR pages, i;
+    if (!aspace_release_lazy_allowed(as,va,bytes)) return FALSE;
+    if (!kaspace_mapping_change(as,va,bytes)) return FALSE;
+    pages = (bytes+X86_64_PAGE_SIZE-1)/X86_64_PAGE_SIZE;
     for (i = 0; i < pages; i++) {
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
 

@@ -26,6 +26,8 @@ struct kaspace_lease {
     UQUAD reservation_ticket, reservation_id, owner_number;
     VADDR exact_address, exact_bytes;
     void *owner_identity;
+    UWORD reservation_rights, reservation_flags;
+    BOOL captured;
     KASPACE_LEASE *next;
 };
 
@@ -39,6 +41,7 @@ BOOL kaspace_lease_valid(const KASPACE_LEASE *lease)
     if (!lease || lease->revoked) return FALSE;
     if (lease->reservation_ticket) {
         KASPACE_RESERVATION_INFO info;
+        if (lease->captured) return lease->held;
         return kaspace_reservation_info(lease->space,lease->exact_address,lease->exact_bytes,&info) &&
                info.identity == lease->reservation_id && (info.rights & lease->access) == lease->access;
     }
@@ -70,6 +73,7 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     if (!lease) return ENSMEM;
     lease->reservation_ticket = lease->reservation_id = lease->owner_number = 0;
     lease->owner_identity = NULL; lease->exact_address = lease->exact_bytes = 0;
+    lease->reservation_rights = lease->reservation_flags = 0; lease->captured = FALSE;
     lease->space = space;
     lease->first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
     lease->last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
@@ -147,7 +151,7 @@ void kaspace_lease_release(KASPACE_LEASE **handle)
     kaspace_put(space);
 }
 
-BOOL kaspace_mapping_can_change(ASPACE *backend, VADDR address, VADDR bytes)
+BOOL kaspace_mapping_can_change(const ASPACE *backend, VADDR address, VADDR bytes)
 {
     KASPACE *space;
     KASPACE_LEASE *lease;
@@ -190,9 +194,14 @@ BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
         if (first > lease->last || lease->first > last) continue;
         if (lease->reservation_ticket) {
             KASPACE_RESERVATION_INFO info;
-            if (!kaspace_lease_valid(lease) ||
-                !kaspace_reservation_info(space,address,bytes,&info) ||
-                info.identity != lease->reservation_id || rights != info.rights) return FALSE;
+            if (!kaspace_lease_valid(lease)) return FALSE;
+            if (lease->captured) {
+                /* Different authenticated owner views can cover the same
+                 * stack page. Validate each immutable witness independently. */
+                if (!(lease->reservation_flags&KASPACE_RESERVATION_LAZY) ||
+                    rights!=lease->reservation_rights) return FALSE;
+            } else if (!kaspace_reservation_info(space,address,bytes,&info) ||
+                       info.identity!=lease->reservation_id || rights!=info.rights) return FALSE;
         } else if (lease->sealed || lease->held) return FALSE;
     }
     /* Physical translations can change; unsealed alias snapshots are revoked.
@@ -242,6 +251,7 @@ BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
             result->address = block->va; result->bytes = length;
             result->identity = block->reservation;
             result->rights = ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+            result->flags = KASPACE_RESERVATION_LAZY;
             return TRUE;
         }
     }
@@ -254,25 +264,46 @@ BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
                 bytes <= region->length-(address-region->address)) {
                 result->address = region->address; result->bytes = region->length;
                 result->identity = region->reservation; result->rights = region->prot;
+                result->flags = region->backing ? 0 : KASPACE_RESERVATION_LAZY;
                 return TRUE;
             }
     }
 #endif
+    {
+        KASPACE_LEASE *lease;
+        for (lease=space->leases;lease;lease=lease->next)
+            if (lease->captured && lease->held && !lease->revoked &&
+                address >= lease->first && address-lease->first <= lease->last-lease->first+USER_PAGE_SIZE &&
+                bytes <= lease->last-lease->first+USER_PAGE_SIZE-(address-lease->first)) {
+                result->address = lease->first;
+                result->bytes = lease->last-lease->first+USER_PAGE_SIZE;
+                result->identity = lease->reservation_id;
+                result->rights = lease->reservation_rights;
+                result->flags = lease->reservation_flags|KASPACE_RESERVATION_CAPTURED;
+                return TRUE;
+            }
+    }
     return FALSE;
 }
 
-LONG kaspace_reservation_hold(KASPACE *space, UQUAD identity,
+static LONG reservation_install(KASPACE *space, const KASPACE_RESERVATION_INFO *info,
         VADDR address, VADDR bytes, UWORD rights, UQUAD owner_number,
         void *owner_identity, KASPACE_RESERVATION_HOLD *result)
 {
-    KASPACE_RESERVATION_INFO info;
     KASPACE_LEASE *lease;
-    if (!result || result->ticket || !identity || !owner_number || !owner_identity ||
+    if (!result || result->ticket || !space || !info || !info->identity ||
+        !owner_number || !owner_identity || !bytes ||
+        info->address >= USER_VA_LIMIT || info->bytes > USER_VA_LIMIT-info->address ||
+        address < info->address || address-info->address >= info->bytes ||
+        bytes > info->bytes-(address-info->address) ||
         !(rights & ASPACE_PROT_USER) ||
-        (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))) return EINVAL;
-    if (!kaspace_reservation_info(space,address,bytes,&info) ||
-        info.identity != identity || (info.rights & rights) != rights) return EACCDN;
+        (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC)) ||
+        (info->flags & ~(KASPACE_RESERVATION_LAZY|KASPACE_RESERVATION_CAPTURED))) return EINVAL;
+    if ((info->rights & rights) != rights) return EACCDN;
     if (reservation_tickets == ~(UQUAD)0) return ENSMEM;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_lease_after && !--fail_lease_after) return ENSMEM;
+#endif
     lease = kalloc(sizeof(*lease));
     if (!lease) return ENSMEM;
     if (!kaspace_share(space)) { kfree(lease); return ENSMEM; }
@@ -281,12 +312,45 @@ LONG kaspace_reservation_hold(KASPACE *space, UQUAD identity,
     lease->last = (address+bytes-1) & ~(VADDR)(USER_PAGE_SIZE-1);
     lease->access = rights; lease->held = TRUE;
     lease->exact_address = address; lease->exact_bytes = bytes;
-    lease->reservation_id = identity; lease->owner_number = owner_number;
+    lease->reservation_id = info->identity; lease->owner_number = owner_number;
+    lease->reservation_rights = info->rights; lease->reservation_flags = info->flags;
+    lease->captured = (info->flags & KASPACE_RESERVATION_CAPTURED) != 0;
     lease->owner_identity = owner_identity; lease->reservation_ticket = ++reservation_tickets;
-    /* All fallible work is complete. The existing lease list owns publication. */
     lease->next = space->leases; space->leases = lease;
     result->ticket = lease->reservation_ticket;
     return E_OK;
+}
+
+LONG kaspace_reservation_hold(KASPACE *space, UQUAD identity,
+        VADDR address, VADDR bytes, UWORD rights, UQUAD owner_number,
+        void *owner_identity, KASPACE_RESERVATION_HOLD *result)
+{
+    KASPACE_RESERVATION_INFO info;
+    if (!result || result->ticket || !identity || !owner_number || !owner_identity ||
+        !(rights & ASPACE_PROT_USER) ||
+        (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))) return EINVAL;
+    if (!kaspace_reservation_info(space,address,bytes,&info) || info.identity!=identity) return EACCDN;
+    return reservation_install(space,&info,address,bytes,rights,owner_number,owner_identity,result);
+}
+
+LONG kaspace_reservation_hold_captured(KASPACE *space,
+        const KASPACE_RESERVATION_INFO *description, VADDR address, VADDR bytes,
+        UWORD rights, UQUAD owner_number, void *owner_identity, KASPACE_RESERVATION_HOLD *result)
+{
+    KASPACE_RESERVATION_INFO info;
+    if (!description) return EINVAL;
+    info = *description; info.flags |= KASPACE_RESERVATION_CAPTURED;
+    return reservation_install(space,&info,address,bytes,rights,owner_number,owner_identity,result);
+}
+
+BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *rights)
+{
+    KASPACE_RESERVATION_INFO info;
+    if (!rights || !kaspace_reservation_info(space,address,1,&info) ||
+        (info.flags & (KASPACE_RESERVATION_CAPTURED|KASPACE_RESERVATION_LAZY)) !=
+        (KASPACE_RESERVATION_CAPTURED|KASPACE_RESERVATION_LAZY)) return FALSE;
+    *rights = info.rights;
+    return TRUE;
 }
 
 static KASPACE_LEASE *reservation_find(const KASPACE_RESERVATION_HOLD *hold)
@@ -314,6 +378,9 @@ LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
     if (!lease || !owner_identity || lease->owner_identity != owner_identity ||
         !kaspace_lease_valid(lease)) return EACCDN;
     if (reservation_tickets == ~(UQUAD)0) return ENSMEM;
+#if CONF_WITH_X86_64_MEMTEST
+    if (fail_lease_after && !--fail_lease_after) return ENSMEM;
+#endif
     copy = kalloc(sizeof(*copy));
     if (!copy) return ENSMEM;
     if (!kaspace_share(lease->space)) { kfree(copy); return ENSMEM; }

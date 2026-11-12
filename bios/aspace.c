@@ -622,11 +622,11 @@ BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot)
     return TRUE;
 }
 
-BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
+BOOL aspace_release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes)
 {
     VADDR pages, i;
 
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
+    if (!kaspace_mapping_can_change(as, va, bytes)) return FALSE;
     if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -641,6 +641,15 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
             !(fl & ASPACE_LEAF_OWNED))
             return FALSE;
     }
+    return TRUE;
+}
+
+BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
+{
+    VADDR pages, i;
+    if (!aspace_release_lazy_allowed(as,va,bytes)) return FALSE;
+    if (!kaspace_mapping_change(as,va,bytes)) return FALSE;
+    pages = (bytes+PAGE-1)/PAGE;
     for (i = 0; i < pages; i++) {
         PADDR phys;
         UWORD pr, fl;

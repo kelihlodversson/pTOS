@@ -1332,6 +1332,18 @@ static void test_reservation_holds(void)
         }
     }
 #endif
+    {
+        LONG c=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        LONG d=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        CHECK(c>0 && d==c+PAGE && kproc_demand_page(pd,c,ASPACE_PROT_WRITE)==1 &&
+              aspace_copy_to_user(backend,c,&value,sizeof(value)) &&
+              aspace_map_page(backend,d,0xfee00000UL,ASPACE_PROT_USER|ASPACE_PROT_WRITE),
+              "install late borrowed device leaf without accessing device memory");
+        CHECK(kproc_munmap(pd,c,2*PAGE)==EINTRN &&
+              aspace_copy_from_user(backend,&readback,c,sizeof(readback)) && readback==value &&
+              kaspace_reservation_info(space,c,PAGE,&first) && kaspace_reservation_info(space,d,PAGE,&last),
+              "whole-range ownership preflight rejects late foreign leaf before changing earlier range");
+    }
     proc_free_owned(pd);
     CHECK(kproc_reservation_duplicate(&held,&orphan)==E_OK && kproc_reservation_release(&held),
           "orphan holder duplicates/releases independently of retired PD");
@@ -1347,6 +1359,84 @@ static void test_reservation_holds(void)
     kcprintf("native authenticated lazy reservation/mutation/orphan: PASS\n");
 }
 #endif
+
+static void test_captured_reservations(void)
+{
+    SNAP baseline;
+    PD *pd;
+    void *env;
+    KPROC *identity;
+    KASPACE *space;
+    ASPACE *backend;
+    PROG_LAYOUT layout;
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_RESERVATION_HOLD holds[4] = {{0}}, stale;
+    KPROC_ALLOCATION_HOLD allocation = {{0}};
+    VADDR entry, page;
+    ULONG i, value=0x8945678UL;
+    snap(&baseline);
+    pd=new_basepage(); if (!pd) return;
+    env=USERPTR_TO_PTR(pd->p_env); set_owner(pd,pd); set_owner(env,pd);
+    if (!image_layout(testprobe_image(),&layout) || !kproc_set_image(pd,testprobe_image()) ||
+        !kproc_prepare_user(pd,run)) {
+        CHECK(FALSE,"prepare actual loaded image for reservation capture");
+        proc_free_owned(pd); return;
+    }
+    identity=kproc_retain(pd); space=kproc_active_space(identity);
+    backend=kaspace_backend(space); kproc_release(identity);
+    entry=kproc_user_entry(pd);
+    CHECK(kproc_reservation_info(pd,(VADDR)(uintptr_t)pd,sizeof(PD),&info)==E_OK &&
+          kproc_reservation_hold(pd,(VADDR)(uintptr_t)pd,sizeof(PD),info.identity,ASPACE_PROT_USER,&holds[0])==E_OK,
+          "capture actual basepage reservation from trusted metadata");
+    CHECK(kproc_reservation_info(pd,(VADDR)(uintptr_t)env,2,&info)==E_OK,"authenticate environment before failed acquisition");
+    kaspace_test_fail_lease_after(1);
+    CHECK(kproc_reservation_hold(pd,(VADDR)(uintptr_t)env,2,info.identity,ASPACE_PROT_USER,&holds[1])==ENSMEM &&
+          !holds[1].ticket,"partial capture failure leaves existing basepage hold and output unchanged");
+    CHECK(kproc_reservation_info(pd,(VADDR)(uintptr_t)env,2,&info)==E_OK &&
+          kproc_reservation_hold(pd,(VADDR)(uintptr_t)env,2,info.identity,ASPACE_PROT_USER,&holds[1])==E_OK &&
+          kproc_allocation_hold(pd,env,procmem_gen(env),0,2,ASPACE_PROT_USER,&allocation)==E_OK,
+          "independent environment mapping and allocation owners");
+    CHECK(kproc_reservation_info(pd,entry,1,&info)==E_OK &&
+          kproc_reservation_hold(pd,entry,1,info.identity,ASPACE_PROT_USER|ASPACE_PROT_EXEC,&holds[2])==E_OK,
+          "capture immutable loaded-image EXEC reservation");
+    CHECK(!kaspace_mapping_can_change(backend,entry,1),"held image cannot be unmapped or reprotected");
+#if CONF_WITH_DEMAND_PAGING
+    for (page=USER_STACK_TOP-PAGE;page>=USER_STACK_TOP-USER_STACK_SIZE;page-=PAGE)
+        if (kproc_reservation_info(pd,page,PAGE,&info)==E_OK && !aspace_translate(backend,page,NULL,NULL)) break;
+    CHECK(page>=USER_STACK_TOP-USER_STACK_SIZE &&
+          kproc_reservation_hold(pd,page+8,16,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&holds[3])==E_OK &&
+          !aspace_translate(backend,page,NULL,NULL),"capture exact partial lazy-stack extent without materializing it");
+#else
+    page=USER_STACK_TOP-PAGE;
+    CHECK(kproc_reservation_info(pd,page,PAGE,&info)==E_OK &&
+          kproc_reservation_hold(pd,page,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&holds[3])==E_OK,
+          "capture eager-stack reservation");
+#endif
+    /* A borrowed device leaf inside a known segment still has no RAM owner. */
+    for (i=0;i<layout.nseg;i++) if ((layout.seg[i].flags&2) && !(layout.seg[i].flags&1)) {
+        VADDR data=layout.seg[i].vaddr&~(VADDR)(PAGE-1);
+        CHECK(aspace_unmap_private(backend,data,PAGE) &&
+              aspace_map_page(backend,data,0xfee00000UL,ASPACE_PROT_USER|ASPACE_PROT_WRITE) &&
+              kproc_reservation_info(pd,data,1,&info)==EACCDN,
+              "image metadata cannot authorize a borrowed device/ROM-window leaf");
+        break;
+    }
+    CHECK(i<layout.nseg,"native image includes a separate non-executable data fixture");
+    proc_free_owned(pd);
+#if CONF_WITH_DEMAND_PAGING
+    CHECK(aspace_fault_in(backend,page,ASPACE_PROT_USER|ASPACE_PROT_WRITE) &&
+          aspace_copy_to_user(backend,page+8,&value,sizeof(value)),
+          "captured lazy stack materializes after original PROCESS metadata is retired");
+#else
+    CHECK(aspace_copy_to_user(backend,page+8,&value,sizeof(value)),"captured eager stack remains writable after owner retirement");
+#endif
+    CHECK(kproc_allocation_release(&allocation) && procmem_size(env),"mapping owner remains after allocation token release");
+    stale=holds[2];
+    for (i=0;i<4;i++) CHECK(kproc_reservation_release(&holds[i]),"release each captured region once");
+    CHECK(!kproc_reservation_release(&stale),"captured-image ticket cannot resurrect retired storage");
+    same(&baseline,"captured image/basepage/environment/stack lifetime and final reclamation");
+    kcprintf("native captured image/basepage/environment/stack ownership: PASS\n");
+}
 
 /* The user-pointer checks the system calls use are made against the
  * current process's own page tables. */
@@ -6773,6 +6863,7 @@ void x86_64_memtest_run(void)
     test_isolation();
     test_process_validation();
     test_allocation_holds();
+    test_captured_reservations();
 #if CONF_WITH_MMAP
     test_reservation_holds();
 #endif
