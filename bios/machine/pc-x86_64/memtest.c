@@ -64,6 +64,7 @@
 #include "../../../bdos/ssystem.h"
 #endif
 #if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
 #include "../../../bdos/arch/x86_64/thread_return_x32.h"
 #include "../../../bdos/thread_startup_backend.h"
@@ -71,7 +72,6 @@
 #include "../../../bdos/proc.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
-#include "ksched.h"
 #include "process.h"
 #include "ikbd.h"
 #include "iorec.h"

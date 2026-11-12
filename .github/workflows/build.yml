@@ -175,6 +175,24 @@ jobs:
           make CROSS_COMPILE= -j2
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
+      - name: Boot-test ownership with eager managed scheduling
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make pc-x86_64-eager_defconfig
+          CONFIG_= python - <<'PYCONFIG'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_NATIVE_SCHED", "CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP"):
+              config.syms[name].set_value(2)
+              assert config.syms[name].str_value == "y"
+          assert config.syms["CONF_WITH_DEMAND_PAGING"].str_value == "n"
+          assert config.syms["CONF_WITH_MMAP"].str_value == "n"
+          config.write_config()
+          PYCONFIG
+          make CROSS_COMPILE= -j2 all x32test
+          sh tools/test-mmap-boot.sh --disabled
+
       - name: Exercise shared desktop and console consumers
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH

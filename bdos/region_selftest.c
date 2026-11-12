@@ -76,8 +76,17 @@ static void held_staging_discard(KPROC *source)
     REQUIRE(kproc_reservation_release(&env_view) && !procmem_size(environment));
     independent=kproc_uheap_alloc(run,2*PAGE);
     REQUIRE(independent && (independent+2*PAGE<=va || independent>=va+2*PAGE));
-    REQUIRE(kproc_demand_page(run,independent,ASPACE_PROT_WRITE)==1 &&
-            aspace_copy_to_user(backend,independent,&sentinel,sizeof(sentinel)));
+#if CONF_WITH_DEMAND_PAGING
+    REQUIRE(kproc_demand_page(run,independent,ASPACE_PROT_WRITE)==1);
+#else
+    {
+        UWORD protection;
+        REQUIRE(kproc_demand_page(run,independent,ASPACE_PROT_WRITE)==0 &&
+                aspace_translate(backend,independent,NULL,&protection) &&
+                (protection&(ASPACE_PROT_USER|ASPACE_PROT_WRITE))==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    }
+#endif
+    REQUIRE(aspace_copy_to_user(backend,independent,&sentinel,sizeof(sentinel)));
     REQUIRE(!kproc_ref_has_basepage(child));
     REQUIRE(kproc_reservation_release(&first) && aspace_translate(backend,va,NULL,NULL));
     REQUIRE(kproc_reservation_release(&last) && !aspace_translate(backend,va,NULL,NULL) &&

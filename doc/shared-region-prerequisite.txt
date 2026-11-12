@@ -78,8 +78,9 @@ Actual x32 kernel tests now cover allocator/KPROC retirement, lazy reservation
 OOM/orphan/materialization/COW and held real FAT backing. They are kernel
 self-tests, NOT public Pexec4 execution. No new public API is exposed.
 
-Public modes4/104/200, Pfork/Pvfork, PRIVATE_VM, TLS, preemption and SMP remain
-disabled. No Pexec consumer is started before prerequisite owner acceptance.
+New MMU shared-VM modes4/104, public mode200/Pfork/Pvfork/PRIVATE_VM, TLS,
+preemption and SMP remain disabled. Existing kernel/ROM/non-MMU mode4 behavior
+is unchanged. No new Pexec consumer is started before prerequisite acceptance.
 
 Original #942 observations (before this implementation)
 -----------------------------------------------------
@@ -244,3 +245,11 @@ staging-discard tests allocate and write an independent nonoverlapping range
 while the old image is held, release that image, verify the independent bytes
 survived, then reclaim/reuse the old address. False exhaustion is not used as a
 substitute for correct reservation-aware allocation.
+
+Eager self-test compatibility
+-----------------------------
+The native held-staging gap test distinguishes an actually materialized lazy
+page (demand result 1) from an eagerly allocated USER/WRITE leaf (demand result
+0 with explicit resident permission validation). Both paths require the same
+actual write, retained contents, disjoint allocation and exact reclamation.
+It does not manufacture a fault to prove ownership on an eager backend.
