@@ -3696,7 +3696,7 @@ LONG kproc_allocation_hold(PD *pd, const void *base, UQUAD generation,
     VADDR address = (VADDR)(uintptr_t)base, page, last;
     if (!result || result->token.base || result->token.allocation || result->token.ticket ||
         !bytes || address >= USER_VA_LIMIT || offset >= USER_VA_LIMIT-address ||
-        bytes > USER_VA_LIMIT-address-offset || bytes > (ULONG)~0UL ||
+        bytes > USER_VA_LIMIT-address-offset ||
         !(rights & ASPACE_PROT_USER) ||
         (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))) return EINVAL;
     if (!generation || procmem_gen(base) != generation) return EIMBA;
