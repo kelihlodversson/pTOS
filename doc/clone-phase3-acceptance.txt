@@ -36,7 +36,11 @@ Remaining root bypass         FIXED in candidate: attach_task_thread delegates
                               task PROCESS's selected KASPACE. Scheduler retains
                               dispatch/stack adoption. Production deferred_spawn
                               fixture tests refusal/success while RESERVED,
-                              exact execution transfer and cleanup. Negative
+                              exact execution transfer and cleanup.
+                              Function-entry fault injection is not consumed by
+                              LOADED bootstrap. Loaded allocator failures and
+                              the preserved intended-stage failure are tested
+                              independently, with MEMTEST guards enabled. Negative
                               mutations (old bypass, early TASK_NEW and omitted
                               execution adoption) must each fail the fixture.
 

@@ -65,8 +65,9 @@ typedef struct {
 /* Prepare only: *transaction must be NULL. A nonempty handle returns EINVAL
  * without acquisitions or replacement. Success owns a transaction, retaining identities, shared VM
  * and an unpublished THREAD. Failure leaves *transaction unchanged. Unknown
- * policies and same-PROCESS/private-VM fail EINVAL; independent private VM
- * fails EINVFN. No outputs or scheduler publication.
+ * policies and same-PROCESS/private-VM fail EINVAL. Independent PRIVATE_VM
+ * requires the experimental backend and its CPU/mapping runtime eligibility;
+ * an unavailable backend fails EINVFN. This does not enable public fork. No outputs or scheduler publication.
  * All stages require cooperative, serialized process context without yields
  * or user code. Teardown callbacks obey the existing no-unwind/bounded-close
  * contract. Commit revalidates live state. */
