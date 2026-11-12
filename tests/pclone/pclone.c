@@ -608,6 +608,7 @@ static struct {
     int32_t target, a, b, leader, survivor;
     volatile long gate, done, entered, result_a, result_b, status_a, error, spawned;
     void *output;
+    long file;
 } joins;
 static long join_tid(long tid, int32_t *status)
 {
@@ -644,9 +645,14 @@ static void join_after_leader(void *argument)
 static void join_survivor(void *argument)
 {
     int32_t status = -1, pid = -1, tid = -1;
+    char cwd[128], contents[2];
     long original_pid = Pgetpid();
     (void)argument;
     if (join_tid(joins.leader,&status) || status != 37) joins.error = 1;
+    if (Dgetpath(cwd,3) || strcmp(cwd,"\\TESTS") ||
+        Fread(joins.file,2,contents) != 2 || contents[0] != 'O' || contents[1] != 'K')
+        joins.error = 1;
+    if (Fclose(joins.file)) joins.error = 1;
     /* The stopped leader is joined before creating another live member. */
     if (launch_entry(join_after_leader,CLONE_VM|CLONE_SAME_PROCESS,
                      runnable_stacks[1],&pid,&tid) <= 0 || pid != original_pid)
@@ -660,6 +666,13 @@ static void join_leader(void *argument)
 {
     int32_t pid;
     (void)argument;
+    joins.file = Fcreate("C:\\PH4JOIN.TMP",0);
+    (void)Dcreate("C:\\TESTS");
+    if (joins.file < 6 || Fwrite(joins.file,2,"OK") != 2 ||
+        Fseek(0,joins.file,0) != 0 || Dsetpath("C:\\TESTS")) {
+        joins.error = 1;
+        return;
+    }
     if (launch_entry(join_survivor,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&joins.survivor) <= 0)
         joins.error = 1;
     Pterm(37);
@@ -739,7 +752,8 @@ static void test_joins(void)
     ptest_assert_msg(join_tid(joins.leader,0)==-20L,"TID join does not substitute for a different PROCESS wait");
     result=Pwaitpid(pid,0,0);
     ptest_assert_msg((result>>16)==pid && (result&65535)==53 && !joins.error,"survivor joins leader, creates and joins new THREAD before final PROCESS completion");
-    ptest_assert_msg(joins.spawned == 1,"leader retirement permits new same-PROCESS membership");
+    ptest_assert_msg(joins.spawned == 1,"leader retirement preserves CWD/file resources and new same-PROCESS membership");
+    ptest_assert_msg(Fdelete("C:\\PH4JOIN.TMP") == 0,"final THREAD leaves no open leader file");
     conws("native Pthjoin execution: tested\r\n");
 }
 #endif
