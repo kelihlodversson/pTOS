@@ -641,13 +641,6 @@ case "$machine" in
             if ! grep -aq 'pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS' "$suite_log"; then
                 record "native managed clone execution" FAIL "native clone worker did not execute"
             fi
-            case $machine in
-            virt-arm|virt-m68k-aspace|virt-m68k-mmu|raspi2b-aspace)
-                if ! grep -aq 'native clone first-instruction state: PASS' "$suite_log"; then
-                    record "native clone initial register state" FAIL "first-instruction probe did not pass"
-                fi
-                ;;
-            esac
             if ! grep -aq 'native Pclone ABI prefix/flags/pointers/atomic outputs: PASS' "$suite_log"; then
                 record "native Pclone ABI contract" FAIL "public trap matrix did not execute successfully"
             fi
@@ -660,6 +653,20 @@ case "$machine" in
         fi
         ;;
 esac
+
+# Native initial-entry marker: independent of the older machine-case matrix.
+case $machine in
+virt-arm|virt-m68k-aspace|virt-m68k-mmu|raspi2b-aspace)
+    if grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h"; then
+        if ! grep -aq 'native clone first-instruction state: PASS' "$suite_log"; then
+            record "native clone initial register state" FAIL "first-instruction probe did not pass"
+        fi
+    fi
+    ;;
+esac
+# End native initial-entry marker.
+
 
 if [ "$machine" = pc-x86_64 ] &&
    grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
