@@ -1,3 +1,17 @@
+Current interpretation (Phase 3 completion audit)
+=================================================
+This file is the source-qualified historical x32 migration audit, not the
+current capability table. Its original sole-thread, borrowed-root, bounded
+arena, unpublished public-Pclone and orphaned-SFT limitations below are
+superseded by the integrated generic scheduler, native MMU backends, group
+lifetimes, retained observers and fsclose service. Current construction, root
+admission, stack owners and no-fail publication are in thread-startup.txt;
+criterion evidence is in clone-phase3-acceptance.txt. The old audits are kept
+to explain why the present ownership checks exist, not to reopen Phase 1/2.
+
+Historical audit follows
+-------------------------
+
 Runnable clone audit after 6a26c3cd9 (#892)
 ========================================
 

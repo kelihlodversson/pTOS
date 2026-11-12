@@ -13,6 +13,47 @@ C_SYM(clone_abi_entry):
         .text
         .arm
         .align 2
+        .globl C_SYM(clone_initial_entry)
+C_SYM(clone_initial_entry):
+        /* First user instructions: no C prologue may hide entry state. */
+        orr r1,r1,r2
+        orr r1,r1,r3
+        orr r1,r1,r4
+        orr r1,r1,r5
+        orr r1,r1,r6
+        orr r1,r1,r7
+        orr r1,r1,r8
+        orr r1,r1,r9
+        orr r1,r1,r10
+        orr r1,r1,r11
+        orr r1,r1,r12
+        cmp r1,#0
+        bne 9f
+        tst sp,#7
+        bne 9f
+        cmp lr,#0
+        beq 9f
+        mrs r1,cpsr
+        and r1,r1,#0x1f
+        cmp r1,#0x10
+        bne 9f
+#ifdef __ARM_NEON
+        vmrs r1,fpscr
+        cmp r1,#0
+        bne 9f
+        .irp reg,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+        vmov r1,r2,d\reg
+        orrs r1,r1,r2
+        bne 9f
+        .endr
+#endif
+        str sp,[r0,#4]
+        mov r1,#1
+        str r1,[r0]
+        bx lr
+9:      mov r1,#2
+        str r1,[r0]
+        bx lr
         .globl C_SYM(clone_registers)
 C_SYM(clone_registers):
         push {r4-r11,r12,lr}
@@ -290,6 +331,41 @@ clone_registers_bad:
         moveq #1,%d0
 clone_registers_done:
         movem.l (%sp)+,%d2-%d7/%a2-%a6
+        rts
+        .globl C_SYM(clone_initial_entry)
+C_SYM(clone_initial_entry):
+        or.l %d1,%d0
+        or.l %d2,%d0
+        or.l %d3,%d0
+        or.l %d4,%d0
+        or.l %d5,%d0
+        or.l %d6,%d0
+        or.l %d7,%d0
+        bne 9f
+        .irp reg,1,2,3,4,5,6
+        cmpa.w #0,%a\reg
+        bne 9f
+        .endr
+#ifdef TEST_WITH_KERNEL_MFASTCALL
+        cmpa.l 4(%sp),%a0
+        bne 9f
+#else
+        move.l %a0,%d0
+        bne 9f
+#endif
+        move.l 4(%sp),%a0
+        move.l %sp,4(%a0)
+        tst.l 8(%a0)
+        beq 8f
+        bsr C_SYM(clone_fpu_initial)
+        tst.l %d0
+        bne 7f
+8:      moveq #1,%d0
+        move.l %d0,(%a0)
+        rts
+9:      move.l 4(%sp),%a0
+7:      moveq #2,%d0
+        move.l %d0,(%a0)
         rts
         .globl C_SYM(clone_fpu_initial)
 C_SYM(clone_fpu_initial):

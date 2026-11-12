@@ -15,7 +15,8 @@ static BOOL prepare_ok, identity_ok, owner_ok;
 static void *execution;
 static void (*reclaimer)(void *);
 static BOOL stopped, inject_retirement, legacy_call;
-static BOOL committing;
+static BOOL committing, root_factory_ok;
+static unsigned root_factory_calls;
 BOOL kproc_exec_commit_begin(KPROC *p)
 { CHECK(p==(KPROC *)&owner); if(committing)return FALSE; committing=TRUE; return TRUE; }
 void kproc_exec_commit_end(KPROC *p)
@@ -47,6 +48,16 @@ BOOL kproc_prepare_async_thread(PD *p, PD *parent, PD *controller, KTHREAD **thr
     if (!prepare_ok) return FALSE;
     *thread = kthread_create(p);
     return *thread != NULL;
+}
+struct kaspace *kproc_active_space(const KPROC *p)
+{ CHECK(p == (KPROC *)&child); return (struct kaspace *)&child; }
+KTHREAD *proc_clone_prepare_loaded_thread(PD *p, struct kaspace *space)
+{
+    CHECK(p == &child && space == (struct kaspace *)&child);
+    CHECK(tasks[1].state == TASK_RESERVED && tasks[1].program == &child);
+    CHECK(!tasks[1].thread && !execution);
+    root_factory_calls++;
+    return root_factory_ok ? kthread_create(p) : NULL;
 }
 void kproc_commit_async(PD *p) { CHECK(p == &child); commits++; }
 WORD kproc_pid(PD *p) { if (p == &owner) return 7; CHECK(p == &child); return 42; }
@@ -173,6 +184,24 @@ int main(void)
         tasks[1].state = TASK_DONE; execution_cpu.current = NULL;
         CHECK(reap_finished_on_root(&tasks[1]) && !references && !stacks && !identities);
     }
+    /* Actual root-group attachment must enter the common loaded constructor.
+     * A refused constructor cannot adopt execution or publish a task. */
+    tasks[1].state = TASK_RESERVED;
+    tasks[1].program = &child;
+    tasks[1].process = (KPROC *)&child;
+    CHECK(kthread_stack_allocate(&tasks[1].execution.stack));
+    CHECK(!attach_task_thread(&tasks[1]) && root_factory_calls == 1);
+    CHECK(!tasks[1].thread && !identities && !execution && stacks == 1 &&
+          tasks[1].state == TASK_RESERVED);
+    root_factory_ok = TRUE;
+    CHECK(attach_task_thread(&tasks[1]) && root_factory_calls == 2);
+    CHECK(identities == 1 && stacks == 1 && execution == &tasks[1].execution &&
+          reclaimer == reclaim_task_execution && tasks[1].state == TASK_RESERVED);
+    discard_task_execution(&tasks[1]);
+    CHECK(!tasks[1].thread && !identities && !execution && !stacks);
+    tasks[1].process = NULL;
+    clear_task(&tasks[1]);
+    puts("Prepared root-group THREAD uses common loaded factory; failure stays unpublished: PASS (host)");
     puts("Deferred scheduler construction, rollback and identity handoff: PASS");
     return 0;
 }
