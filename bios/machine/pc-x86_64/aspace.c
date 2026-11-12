@@ -44,6 +44,9 @@
 #include "aspace_cow_types.h"
 struct aspace {
     UQUAD magic;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    LONG test_borrow_failure;
+#endif
 #if CONF_WITH_PRIVATE_CLONE
     struct cow_mapping *cow;
     struct cow_index *cow_root;
@@ -188,6 +191,9 @@ ASPACE *aspace_create(void)
         return NULL;
     }
     as->magic = ASPACE_MAGIC;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    as->test_borrow_failure=-1;
+#endif
     as->pml4_phys = pml4;
     if (!record_page(as, pml4)) {
         x86_64_pmem_free_pages(pml4, 1);
@@ -320,50 +326,24 @@ BOOL aspace_map_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot)
     return map_user_page(as,va,phys,prot,FALSE,0);
 }
 
-BOOL aspace_map_procmem(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
-{
-    UQUAD page, end;
-
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
-    if (!bytes || va + bytes < va || !procmem_range_live(va, bytes))
-        return FALSE;
+#define BORROW_ROOT_PAGES(as) 0UL /* PML4 is already in pages[] */
+#define BORROW_ROOT(as) ((as)->pml4_phys)
+#define BORROW_ALIAS(p) ((void *)(uintptr_t)(X86_64_PHYS_MAP_BASE+(p)))
+#define BORROW_FREE(p) x86_64_pmem_free_pages(p,1)
+#define BORROW_MAP(as,va,p,prot) (x86_64_map_user_page((as)->pml4_phys,va,p,!!((prot)&ASPACE_PROT_WRITE),!!((prot)&ASPACE_PROT_EXEC),!!((prot)&ASPACE_PROT_USER),alloc_table_page,as)==0)
+#define BORROW_OWNED(as,va) borrow_owned(as,va)
+#define BORROW_FLUSH(as) do { if(x86_64_read_cr3()==(as)->pml4_phys) x86_64_write_cr3((as)->pml4_phys); } while (0)
+#define BORROW_RESTORED(as) BORROW_FLUSH(as)
 #if CONF_WITH_PRIVATE_CLONE
-    /* A fork snapshot may occupy a VA whose old procmem owner has exited.
-     * A new global procmem allocation must not overwrite that private copy. */
-    for (page = va & ~(VADDR)(USER_PAGE_SIZE - 1);
-         page < va + bytes; page += USER_PAGE_SIZE) {
-        UQUAD *pte = x86_64_user_pte(as->pml4_phys, page);
-        if (pte && (*pte & PTE_PRESENT) && (*pte & X86_64_PTE_OWNED)) return FALSE;
-    }
-#endif
-    /* Pin before mapping, and remember it before pinning, so every pin has
-     * a record that destroy undoes; a half-finished mapping is covered too. */
-    if (as->npins == as->pin_capacity) {
-        ULONG cap = as->pin_capacity ? as->pin_capacity * 2 : 4;
-        struct pin *grown = kalloc(cap * sizeof(*grown));
-
-        if (!grown)
-            return FALSE;
-        if (as->pins) {
-            memcpy(grown, as->pins, as->npins * sizeof(*grown));
-            kfree(as->pins);
-        }
-        as->pins = grown;
-        as->pin_capacity = cap;
-    }
-    as->pins[as->npins].va = va;
-    as->pins[as->npins].bytes = bytes;
-    as->pins[as->npins].retired = FALSE;
-    as->npins++;
-    procmem_pin(va, bytes, +1);
-
-    page = va & ~(X86_64_PAGE_SIZE - 1);
-    end = (va + bytes + X86_64_PAGE_SIZE - 1) & ~(X86_64_PAGE_SIZE - 1);
-    for (; page < end; page += X86_64_PAGE_SIZE)
-        if (!aspace_map_page(as, page, procmem_phys_of(page), prot))
-            return FALSE;
-    return TRUE;
+static BOOL borrow_owned(ASPACE *as,VADDR va)
+{
+    UQUAD *pte=x86_64_user_pte(as->pml4_phys,va);
+    return pte && (*pte&PTE_PRESENT) && (*pte&X86_64_PTE_OWNED);
 }
+#endif
+#define BORROW_HASH_COUNT(as) ((as)->count)
+#define BORROW_HASH_PAGE(as,i) ((const UBYTE *)(uintptr_t)(X86_64_PHYS_MAP_BASE+(as)->pages[i]))
+#include "aspace_procmem.h"
 
 /* ---- walking, validation and private memory ------------------------- */
 
@@ -1025,13 +1005,9 @@ UQUAD x86_64_memtest_kstack_bytes(void)
  * mapping) when it is allocated and returned when it is freed.  Nothing else
  * in the window is reachable.
  */
-BOOL aspace_borrow(ASPACE *as, UQUAD va, UQUAD bytes)
+BOOL aspace_borrow(ASPACE *as,UQUAD va,UQUAD bytes)
 {
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
-    if (aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
-        return TRUE;
-    aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
-    return FALSE;
+    return aspace_map_procmem(as,va,bytes,ASPACE_PROT_WRITE);
 }
 
 static void drop_borrow_pin(ASPACE *as, UQUAD va, UQUAD bytes, BOOL retired)

@@ -17,6 +17,14 @@
 #include "gemerror.h"
 #include "string.h"
 #include "progimage.h"
+#include "kheap.h"
+#if defined(MACHINE_PC_X86_64)
+#include "../bios/machine/pc-x86_64/pmem.h"
+#define REGION_FREE_RAM() pmem_free_bytes()
+#else
+#include "pmem32.h"
+#define REGION_FREE_RAM() pmem32_free_bytes()
+#endif
 extern PD *run;
 #define REQUIRE(c) do { if (!(c)) panic("native region ownership: %s",#c); } while (0)
 #define PAGE USER_PAGE_SIZE
@@ -32,6 +40,108 @@ static UQUAD file_reference_count(void)
 }
 #endif
 
+
+/* Real current-root descriptor/pin rollback, plus the actual loader's
+ * ownerless environment/TPA failure paths. No new syscall or CPU model. */
+static void borrow_rollback(void)
+{
+    static const char empty[2]={0,0};
+    ASPACE *backend=kproc_user_aspace(run),*fresh;
+    KASPACE_LEASE *snapshot=NULL;
+    KHEAP_STATS meta,after_meta;
+    PROCMEM_STATS before,after;
+    void *block,*alias;
+    VADDR va;
+    PADDR physical,old_physical;
+    UWORD rights;
+    LONG mode;
+    ULONG tables,count,records=kproc_count(),value=0x952abcd,readback;
+    UQUAD free_ram,hash;
+    procmem_stats(&before);
+    block=procmem_alloc(3*PAGE,PROCMEM_ZERO);alias=procmem_alloc(PAGE,PROCMEM_ZERO);
+    REQUIRE(block && alias && kproc_borrow(run,block) && kproc_borrow(run,alias));
+    va=(VADDR)(uintptr_t)block;
+    REQUIRE(aspace_regrant(backend,(VADDR)(uintptr_t)alias,PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    REQUIRE(aspace_copy_to_user(backend,(VADDR)(uintptr_t)alias,&value,sizeof(value)));
+    for(count=0;count<3;count++)
+        REQUIRE(aspace_map_page(backend,va+count*PAGE,
+                procmem_phys_of(count ? va+count*PAGE : (VADDR)(uintptr_t)alias),ASPACE_PROT_USER));
+    /* regrant is deliberately not used for the alias: on x32 it rebinds the
+     * allocation's own physical page, rather than preserving a foreign alias. */
+    aspace_leave(aspace_enter(backend));
+    REQUIRE(aspace_is_current(backend) && aspace_copy_from_user(backend,&readback,va,sizeof(readback)) && readback==value);
+    REQUIRE(aspace_translate(backend,va,&old_physical,&rights) && rights==ASPACE_PROT_USER);
+    {
+        KPROC *identity=kproc_retain(run);REQUIRE(identity);
+        REQUIRE(kaspace_lease_acquire(kproc_active_space(identity),va,3*PAGE,ASPACE_PROT_USER,&snapshot)==E_OK);
+        kproc_release(identity);
+    }
+    count=procmem_pins(block);tables=aspace_table_pages(backend);
+    for(mode=-2;mode<=2;mode++) {
+        if(mode==-1) continue;
+        kheap_stats(&meta);free_ram=REGION_FREE_RAM();
+        aspace_test_borrow_failure(backend,mode);
+        REQUIRE(!kproc_borrow(run,block));
+        REQUIRE(aspace_test_borrow_pending(backend)==-1);
+        aspace_test_borrow_failure(backend,-1);
+        kheap_stats(&after_meta);
+        REQUIRE(procmem_pins(block)==count && kproc_borrow_count(run,block)==1 &&
+                aspace_table_pages(backend)==tables && REGION_FREE_RAM()==free_ram &&
+                meta.live_blocks==after_meta.live_blocks && meta.pages==after_meta.pages && meta.bad_frees==after_meta.bad_frees);
+        REQUIRE(kaspace_lease_valid(snapshot));
+        REQUIRE(aspace_translate(backend,va,&physical,&rights));
+        REQUIRE(physical==old_physical && rights==ASPACE_PROT_USER);
+        REQUIRE(aspace_copy_from_user(backend,&readback,va,sizeof(readback)));
+        if(readback!=value) kcprintf("native borrow alias mode=%ld read=%lx expected=%lx\n",(long)mode,(unsigned long)readback,(unsigned long)value);
+        REQUIRE(readback==value && *(volatile ULONG *)block==value);
+        REQUIRE(procmem_pins(alias)==1 && kproc_borrow_count(run,alias)==1 &&
+                aspace_translate(backend,(VADDR)(uintptr_t)alias,&physical,&rights) && physical==old_physical &&
+                rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE) && *(volatile ULONG *)alias==value);
+    }
+    REQUIRE(aspace_map_procmem(backend,va,13,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    REQUIRE(!kaspace_lease_valid(snapshot));kaspace_lease_release(&snapshot);
+    aspace_unborrow(backend,va,13);
+    REQUIRE(procmem_pins(block)==count && aspace_translate(backend,va,NULL,NULL));
+    kproc_unborrow(block);
+    REQUIRE(!procmem_pins(block) && !aspace_translate(backend,va,NULL,NULL) && *(volatile ULONG *)alias==value);
+    kproc_unborrow(alias);
+    REQUIRE(!procmem_pins(alias) && procmem_free(block) && procmem_free(alias));
+    fresh=aspace_create();block=procmem_alloc(3*PAGE,PROCMEM_ZERO);REQUIRE(fresh && block);
+    tables=aspace_table_pages(fresh);hash=aspace_test_table_hash(fresh);
+    for(mode=0;mode<3;mode++) {
+        kheap_stats(&meta);free_ram=REGION_FREE_RAM();
+        aspace_test_borrow_failure(fresh,mode);
+        REQUIRE(!aspace_map_procmem(fresh,(VADDR)(uintptr_t)block,3*PAGE,ASPACE_PROT_WRITE));
+        kheap_stats(&after_meta);
+        REQUIRE(!procmem_pins(block) && !procmem_owner(block) &&
+                aspace_table_pages(fresh)==tables && aspace_test_table_hash(fresh)==hash &&
+                REGION_FREE_RAM()==free_ram && meta.live_blocks==after_meta.live_blocks &&
+                meta.pages==after_meta.pages && meta.bad_frees==after_meta.bad_frees);
+    }
+    REQUIRE(procmem_free(block));aspace_destroy(fresh);
+    /* An environment success warms the same table/vector capacity used by
+     * subsequent failed TPA construction. It is reclaimed through the normal
+     * canonical discard path before measuring failed loader transactions. */
+    {
+        LONG pd=xexec(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty);
+        REQUIRE(pd>0);proc_discard_scheduled((PD *)(uintptr_t)pd);
+    }
+    for(mode=0;mode<2;mode++) {
+        PROCMEM_STATS start,finish;
+        procmem_stats(&start);kheap_stats(&meta);free_ram=REGION_FREE_RAM();tables=aspace_table_pages(backend);
+        aspace_test_borrow_failure(backend,mode);
+        REQUIRE(xexec(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty)==ENSMEM);
+        REQUIRE(aspace_test_borrow_pending(backend)==-1);
+        aspace_test_borrow_failure(backend,-1);
+        procmem_stats(&finish);kheap_stats(&after_meta);
+        REQUIRE(start.live_allocs==finish.live_allocs && start.free_pages==finish.free_pages && start.bad_frees==finish.bad_frees &&
+                meta.live_blocks==after_meta.live_blocks && meta.pages==after_meta.pages && meta.bad_frees==after_meta.bad_frees &&
+                REGION_FREE_RAM()==free_ram && aspace_table_pages(backend)==tables && kproc_count()==records);
+    }
+    procmem_stats(&after);
+    REQUIRE(before.live_allocs==after.live_allocs && before.free_pages==after.free_pages && before.bad_frees==after.bad_frees);
+    kcprintf("native live-root borrow rollback and loader allocation failure: PASS\n");
+}
 
 static void held_staging_discard(KPROC *source)
 {
@@ -214,6 +324,7 @@ void kproc_region_selftest(void)
 #endif
     procmem_stats(&before); records=kproc_count();
     source=kproc_retain(run); REQUIRE(source);
+    borrow_rollback();
     held_staging_discard(source);
     held_clone_compat_retirement(source);
     REQUIRE(proc_create_clone_process(source,0,&owner)==E_OK && owner);

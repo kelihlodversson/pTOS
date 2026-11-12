@@ -53,6 +53,9 @@
 #include "aspace_cow_types.h"
 struct aspace {
     ULONG magic;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    LONG test_borrow_failure;
+#endif
 #if CONF_WITH_PRIVATE_CLONE
     struct cow_mapping *cow;
     struct cow_index *cow_root;
@@ -130,6 +133,9 @@ ASPACE *aspace_create(void)
     memset(pmem32_virt(root), 0, pages * PAGE);
     aspace_hw_init_root(root);
     as->magic = ASPACE_MAGIC;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+    as->test_borrow_failure=-1;
+#endif
     as->root = root;
     as->root_pages = pages;
     return as;
@@ -285,52 +291,25 @@ BOOL aspace_map_page(ASPACE *as, VADDR va, PADDR phys, UWORD prot)
     return aspace_hw_map(as->root, va, phys, prot, 0, alloc_table_page, as);
 }
 
-BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
-{
-    VADDR page, end;
-
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
-    if (!bytes || va + bytes < va || !procmem_range_live(va, bytes))
-        return FALSE;
+/* All descriptors, table allocations and exact pins roll back together. */
+#define BORROW_ROOT_PAGES(as) ((as)->root_pages)
+#define BORROW_ROOT(as) ((as)->root)
+#define BORROW_ALIAS(p) pmem32_virt(p)
+#define BORROW_FREE(p) pmem32_free(p,1)
+#define BORROW_MAP(as,va,p,prot) aspace_hw_map((as)->root,va,p,prot,0,alloc_table_page,as)
+#define BORROW_OWNED(as,va) borrow_owned(as,va)
+#define BORROW_FLUSH(as) flush_if_current(as)
+#define BORROW_RESTORED(as) do { aspace_hw_code_changed();flush_if_current(as); } while (0)
 #if CONF_WITH_PRIVATE_CLONE
-    /* A fork snapshot may occupy a VA whose old procmem owner has exited.
-     * A new global procmem allocation must not overwrite that private copy. */
-    for (page = va & ~(VADDR)(USER_PAGE_SIZE - 1);
-         page < va + bytes; page += USER_PAGE_SIZE) {
-        PADDR physical; UWORD protection, flags;
-        if (aspace_hw_lookup(as->root, page, &physical, &protection, &flags) &&
-            (flags & ASPACE_LEAF_OWNED)) return FALSE;
-    }
-#endif
-    /* Pin before mapping, and remember it before pinning, so every pin has
-     * a record that destroy undoes; a half-finished mapping is covered too. */
-    if (as->npins == as->pin_capacity) {
-        ULONG cap = as->pin_capacity ? as->pin_capacity * 2 : 4;
-        struct pin *grown = kalloc(cap * sizeof(*grown));
-
-        if (!grown)
-            return FALSE;
-        if (as->pins) {
-            memcpy(grown, as->pins, as->npins * sizeof(*grown));
-            kfree(as->pins);
-        }
-        as->pins = grown;
-        as->pin_capacity = cap;
-    }
-    as->pins[as->npins].va = va;
-    as->pins[as->npins].bytes = bytes;
-    as->pins[as->npins].retired = FALSE;
-    as->npins++;
-    procmem_pin(va, bytes, +1);
-
-    page = va & ~(PAGE - 1);
-    end = (va + bytes + PAGE - 1) & ~(PAGE - 1);
-    for (; page < end; page += PAGE)
-        if (!aspace_map_page(as, page, procmem_phys_of(page), prot))
-            return FALSE;
-    flush_if_current(as);
-    return TRUE;
+static BOOL borrow_owned(ASPACE *as,VADDR va)
+{
+    PADDR physical;UWORD protection,flags;
+    return aspace_hw_lookup(as->root,va,&physical,&protection,&flags) && (flags&ASPACE_LEAF_OWNED);
 }
+#endif
+#define BORROW_HASH_COUNT(as) ((as)->root_pages+(as)->count)
+#define BORROW_HASH_PAGE(as,i) ((i)<(as)->root_pages ? (const UBYTE *)pmem32_virt((as)->root)+(i)*USER_PAGE_SIZE : (const UBYTE *)pmem32_virt((as)->pages[(i)-(as)->root_pages]))
+#include "aspace_procmem.h"
 
 #if defined(__m68k__) && CONF_WITH_PRG_LOADER
 #include "aspace_procmem_text.h"
@@ -983,13 +962,11 @@ BOOL kstack_contains(PADDR phys, uintptr_t address)
  * mapping) when it is allocated and returned when it is freed.  Nothing else
  * in the window is reachable.
  */
-BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes)
+BOOL aspace_borrow(ASPACE *as,VADDR va,VADDR bytes)
 {
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
-    if (aspace_map_procmem(as, va, bytes, ASPACE_PROT_WRITE))
-        return TRUE;
-    aspace_unborrow(as, va, bytes);      /* a half-finished borrow */
-    return FALSE;
+    /* A failed transaction owns its own rollback. Blind unborrow by address
+     * could consume a pre-existing matching pin if preparation failed. */
+    return aspace_map_procmem(as,va,bytes,ASPACE_PROT_WRITE);
 }
 
 static void drop_borrow_pin(ASPACE *as, VADDR va, VADDR bytes, BOOL retired)

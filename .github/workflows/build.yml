@@ -96,6 +96,11 @@ jobs:
         run: python3 tools/test-testlib-log.py
       - name: Test clone ABI layout and pointer decoding
         run: sh tools/test-clone-abi.sh
+      - name: Test transactional live-root procmem borrow rollback
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py
       - name: Test address-space ownership
         run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
       - name: Test independent VM COW ownership and rollback

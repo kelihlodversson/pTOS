@@ -134,6 +134,8 @@ BOOL procmem_range_live(VADDR va, VADDR bytes);
  */
 BOOL procmem_pinned(const void *p);
 ULONG procmem_pins(const void *p);      /* the pin count itself */
+/* Acquire only if every overlapping live reference count can increment. */
+BOOL procmem_try_pin(VADDR va,VADDR bytes);
 void procmem_pin(VADDR va, VADDR bytes, int delta);   /* +1 / -1 */
 
 /* Physical address backing window address va (which must be inside it). */
@@ -339,6 +341,11 @@ void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes);
  * takes it away again (and unpins), exactly once per borrow.  See aspace.c.
  */
 BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+void aspace_test_borrow_failure(ASPACE *as,LONG after);
+LONG aspace_test_borrow_pending(const ASPACE *as);
+UQUAD aspace_test_table_hash(const ASPACE *as);
+#endif
 void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes);
 /* Mark an existing exact pin; no allocation/refcount change or callback. */
 BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes);

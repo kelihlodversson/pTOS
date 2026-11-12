@@ -1169,7 +1169,7 @@ static char *alloc_env(ULONG flags, char *env)
     /* built below under the launcher's page tables: lend it to a launcher
      * with an address space of its own */
     if (new_env && !kproc_borrow(run, new_env)) {
-        procmem_free(new_env);
+        if (!procmem_free(new_env)) panic("failed environment borrow retained allocation");
         new_env = NULL;
     }
 #endif
@@ -1242,7 +1242,7 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
 
 #if CONF_WITH_USER_ASPACE
         if (low && !kproc_borrow(run, low)) {   /* see alloc_env() */
-            procmem_free(low);
+            if (!procmem_free(low)) panic("failed TPA borrow retained allocation");
             low = NULL;
         }
 #endif

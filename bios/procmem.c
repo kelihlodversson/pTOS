@@ -217,6 +217,7 @@ static void release(struct alloc **link)
 
 #define HOLD_PAGE PAGE
 #define HOLD_WINDOW PROCMEM_WINDOW_BASE
+#define HOLD_PIN_PAGE PAGE
 #include "procmem_hold.h"
 
 /* A deferred decision belongs to this allocation record, not its former

@@ -157,3 +157,16 @@ BOOL procmem_cleanup_transfer(const void *base,UQUAD generation,
     (*at)->cleanup_owned=TRUE; (*at)->owner=cleanup_owner;
     return TRUE;
 }
+
+/* Checked acquisition of the existing backend mapping reference. Preserve
+ * the legacy pin/unpin and free contract; a refused acquisition owns nothing. */
+BOOL procmem_try_pin(VADDR va,VADDR bytes)
+{
+    struct alloc *a;
+    if (!procmem_range_live(va,bytes)) return FALSE;
+    for (a=allocs;a;a=a->next)
+        if (a->va<va+bytes && va<a->va+(VADDR)a->pages*HOLD_PIN_PAGE && a->pins==(ULONG)~0UL) return FALSE;
+    procmem_pin(va,bytes,1);
+    return TRUE;
+}
+#undef HOLD_PIN_PAGE
