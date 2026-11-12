@@ -1561,8 +1561,8 @@ void kproc_commit_async(PD *pd)
      * loader's mappings before it can run alongside the child or rewrite
      * the child's basepage/environment after ownership is transferred. */
     kproc->creator = NULL;
-    procmem_set_owner(kproc->env_start, pd);
-    procmem_set_owner(kproc->user_start, pd);
+    if (!procmem_set_owner(kproc->env_start, pd) || !procmem_set_owner(kproc->user_start, pd))
+        panic("preflighted async allocation ownership changed");
     kproc_unborrow(kproc->env_start);
     kproc_unborrow(kproc->user_start);
 }
@@ -1625,6 +1625,11 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         }
         return TRUE;
     }
+    /* Isolated launch may transfer/revoke both compatibility allocations.
+     * Reject the whole set before adopting a root or moving any image. */
+    if (!procmem_mutation_allowed(kproc->env_start,kproc->env_gen,0,procmem_size(kproc->env_start)) ||
+        !procmem_mutation_allowed(kproc->user_start,kproc->tpa_gen,0,procmem_size(kproc->user_start)))
+        return FALSE;
     env = (VADDR)(uintptr_t)kproc->env_start;
     tpa = (VADDR)(uintptr_t)kproc->user_start;
     hitpa = (VADDR)(uintptr_t)kproc->user_end;
@@ -2212,6 +2217,8 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     if (procmem_gen(kproc->user_start) != kproc->tpa_gen ||
         procmem_gen(kproc->env_start) != kproc->env_gen)
         return EIMBA;
+    if (!procmem_mutation_allowed(kproc->user_start,kproc->tpa_gen,0,procmem_size(kproc->user_start)) ||
+        !procmem_mutation_allowed(kproc->env_start,kproc->env_gen,0,procmem_size(kproc->env_start))) return EACCDN;
     /* each field is read once into a local: that is the value validated */
     lowtpa = (VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_lowtpa);
     hitpa = (((VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_hitpa) + 8UL) & ~15UL) - 8;   /* RSP + 8 divisible by 16 */

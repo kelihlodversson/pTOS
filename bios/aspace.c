@@ -783,6 +783,8 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD 
     if (from == to || (va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
+    if (!kaspace_mapping_can_change(from,va,bytes) ||
+        !kaspace_mapping_can_change(to,va,bytes)) return FALSE;
     if (!kaspace_mapping_change(from, va, bytes) ||
         !kaspace_mapping_change(to, va, bytes)) return FALSE;
     pages = (bytes + PAGE - 1) / PAGE;

@@ -813,6 +813,8 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
     if (from == to || (va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
+    if (!kaspace_mapping_can_change(from,va,bytes) ||
+        !kaspace_mapping_can_change(to,va,bytes)) return FALSE;
     if (!kaspace_mapping_change(from, va, bytes) ||
         !kaspace_mapping_change(to, va, bytes)) return FALSE;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;

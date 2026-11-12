@@ -37,7 +37,7 @@ static unsigned allocations, records, disposals, attempts, interrupted;
 static unsigned references[2], invalidations, directory_releases;
 static unsigned inject_errors;
 static BOOL return_close_error;
-static BOOL fake_completion;
+static BOOL fake_completion, deny_mutation;
 static unsigned completion_stage;
 static PD *pending_request;
 static LONG rejection;
@@ -67,6 +67,15 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
 }
 BOOL procmem_contains(const void *p) { return p == &image || p == environment; }
 BOOL procmem_free(void *p) { CHECK(procmem_contains(p) && allocations); allocations--; return TRUE; }
+ULONG procmem_size(const void *p)
+{ return p==&image ? sizeof(image_area) : p==environment ? sizeof(environment) : 0; }
+UQUAD procmem_gen(const void *p) { return procmem_contains(p) ? 1 : 0; }
+BOOL procmem_mutation_allowed(const void *p, UQUAD generation, VADDR offset, VADDR bytes)
+{
+    CHECK(procmem_contains(p) && generation==1 && !offset);
+    CHECK(bytes==procmem_size(p));
+    return !deny_mutation; /* modeled hold; real allocator tickets tested separately */
+}
 const void *procmem_owner(const void *p) { return owners[p == &image ? 1 : 0]; }
 ULONG procmem_pins(const void *p) { return 0; }
 void set_owner(void *p, PD *owner) { CHECK(procmem_contains(p)); owners[p == &image ? 1 : 0] = owner; }
@@ -225,7 +234,7 @@ LONG ksched_process_prepare(PD *p, BOOL deferred, void **slot)
 }
 LONG ksched_exec(PD *p, BOOL take, LONG *result) { abort(); }
 BOOL kproc_check_launch(PD *p, PD *caller) { abort(); }
-ASPACE *kproc_user_aspace(PD *p) { abort(); }
+ASPACE *kproc_user_aspace(PD *p) { CHECK(deny_mutation && p==&parent); return NULL; }
 UQUAD kproc_user_root(PD *p) { abort(); }
 BOOL kproc_prepare_user(PD *p, PD *caller) { abort(); }
 void kproc_set_creator(PD *p, PD *caller) { abort(); }
@@ -326,6 +335,9 @@ int main(void)
             if (stage<6) CHECK(!prepared && !out && !observer_refs && !allocations && !records);
             else {
                 CHECK(out==(KPROC *)&image && observer_refs==1 && !publications && prepared==&image);
+                deny_mutation=TRUE;
+                CHECK(procmem_mfree(&image)==EACCDN && allocations==2 && records==1 && observer_refs==1);
+                deny_mutation=FALSE;
                 proc_discard_scheduled(&image); /* abandon unstarted image, not an invented exit */
                 CHECK(!allocations && !records && observer_refs==1);
                 kproc_release(out); out=NULL;
