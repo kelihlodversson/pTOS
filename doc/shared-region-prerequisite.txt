@@ -49,7 +49,11 @@ commit and reentry so ordinary allocation/mutation cannot steal the extent.
 The backend checks the in-flight range/kind and all LIVE holders; it never
 uses a global bypass flag. Other remaining borrow pins preserve a shared leaf.
 The cleanup owner is unlinked only after that bounded commit/callback returns.
-Original exact borrow-pin dimensions survive page rounding. An exiting loader
+Original exact borrow-pin dimensions survive page rounding in the existing
+backend pin records. Multiple overlapping retirements mark those records and
+coalesce a cleanup fence, so one surviving view can protect any number of
+existing pins without allocating a job per pin or exhausting holder records.
+The backend authenticates each consumed fence once; replay is rejected. An exiting loader
 transfers unstarted staging before wiping its heap metadata, so parent-first
 exit leaves no stale PD in a deferred block. Running UH_IMAGE ownership retains
 the existing shared-root contract and is not mistaken for unused staging.
@@ -222,3 +226,21 @@ resource queue, owner PD retention or USER capability is created. The one-way
 cleanup-owned tag rejects ordinary reassignment/shrink/free or stale replay.
 The native probe includes held loader-owned PD/env, modified user p_env,
 failed pair preflight with unchanged ownership, and exactly-once final release.
+
+PE_LOAD caller views use the existing borrowed-view records, now carrying the
+allocation generation captured when the pin was registered and a separate
+non-recycled reservation birth. Fresh capture checks the canonical current
+owner, exact view bounds, original generation and actual logical USER/PTE
+rights; a supervisor-only construction borrow is not a USER reservation grant.
+This covers caller-owned staged PD/environment mappings without creating a
+parallel allocation registry. Native and hosted tests reject supervisor-only,
+foreign-owner and stale-generation views and retain PD/env mappings separately
+from their allocation holds through actual scheduled discard.
+
+Heap gap selection subtracts durable/sealed views and pending cleanup fences
+from the existing KASPACE lease list. Malloc(-1) and ordinary allocation see the
+same remaining gaps; the final publication check remains mandatory. Native
+staging-discard tests allocate and write an independent nonoverlapping range
+while the old image is held, release that image, verify the independent bytes
+survived, then reclaim/reuse the old address. False exhaustion is not used as a
+substitute for correct reservation-aware allocation.

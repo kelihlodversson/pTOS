@@ -11,6 +11,7 @@
 #include "mman.h"
 #include "fs.h"
 #include "proc.h"
+#include "bdosstub.h"
 #include "region_selftest.h"
 #include "kprint.h"
 #include "gemerror.h"
@@ -19,6 +20,18 @@
 extern PD *run;
 #define REQUIRE(c) do { if (!(c)) panic("native region ownership: %s",#c); } while (0)
 #define PAGE USER_PAGE_SIZE
+#define REGION_FILE_TEST (CONF_WITH_MMAP && !CONF_WITH_PLUGGABLE_FS && \
+    (CONF_WITH_KCALL || CONF_WITH_VDI_SCALABLE_FONTS || CONF_WITH_ELF_SHARED))
+#if REGION_FILE_TEST
+static UQUAD file_reference_count(void)
+{
+    UQUAD count=0;
+    ULONG i;
+    for (i=0;i<OPNFILES;i++) count+=sft[i].f_use;
+    return count;
+}
+#endif
+
 
 static void held_staging_discard(KPROC *source)
 {
@@ -27,17 +40,24 @@ static void held_staging_discard(KPROC *source)
     void *environment;
     KPROC_ALLOCATION_HOLD bp_hold={{0}},env_hold={{0}};
     KASPACE_RESERVATION_INFO info;
-    KASPACE_RESERVATION_HOLD first={0},last={0};
+    KASPACE_RESERVATION_HOLD first={0},last={0},bp_view={0},env_view={0};
     ASPACE *backend=kaspace_backend(kproc_active_space(source));
-    VADDR va;
+    VADDR va,independent;
+    ULONG sentinel=0x894beefUL,readback=0;
     REQUIRE(proc_create_clone_process(source,0,&child)==E_OK && child);
     pd=kproc_live_pd(child); REQUIRE(pd);
     REQUIRE(kproc_borrow(run,pd));
     environment=USERPTR_TO_PTR(pd->p_env); REQUIRE(kproc_borrow(run,environment));
-    set_owner(pd,run); set_owner(environment,run); kproc_hand_over(run,pd);
+    set_owner(pd,run); set_owner(environment,run);
     set_owner(environment,NULL);
     REQUIRE(!kproc_prepare_discard(child) && procmem_owner(pd)==run);
     set_owner(environment,run); /* failed pair preflight changed neither owner */
+    REQUIRE(kproc_reservation_info(run,(VADDR)(uintptr_t)pd,sizeof(PD),&info)==EACCDN);
+    kproc_hand_over(run,pd);
+    REQUIRE(kproc_reservation_info(run,(VADDR)(uintptr_t)pd,sizeof(PD),&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(run,(VADDR)(uintptr_t)pd,sizeof(PD),info.identity,ASPACE_PROT_USER,&bp_view)==E_OK);
+    REQUIRE(kproc_reservation_info(run,(VADDR)(uintptr_t)environment,2,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(run,(VADDR)(uintptr_t)environment,2,info.identity,ASPACE_PROT_USER,&env_view)==E_OK);
     REQUIRE(kproc_allocation_hold(run,pd,procmem_gen(pd),0,sizeof(PD),ASPACE_PROT_USER,&bp_hold)==E_OK);
     REQUIRE(kproc_allocation_hold(run,environment,procmem_gen(environment),0,2,ASPACE_PROT_USER,&env_hold)==E_OK);
     va=kproc_load_alloc(run,pd,2*PAGE); REQUIRE(va);
@@ -50,14 +70,21 @@ static void held_staging_discard(KPROC *source)
     REQUIRE(!kproc_live_pd(child) && aspace_translate(backend,va,NULL,NULL));
     REQUIRE(procmem_size(pd) && procmem_size(environment) && !procmem_owner(pd) && !procmem_owner(environment));
     REQUIRE(!procmem_set_owner(pd,run));
-    REQUIRE(kproc_allocation_release(&bp_hold) && !procmem_size(pd));
-    REQUIRE(kproc_allocation_release(&env_hold) && !procmem_size(environment));
-    REQUIRE(!kproc_uheap_alloc(run,2*PAGE)); /* lazy publication cannot overlap the retired owner */
+    REQUIRE(kproc_allocation_release(&bp_hold) && procmem_size(pd));
+    REQUIRE(kproc_allocation_release(&env_hold) && procmem_size(environment));
+    REQUIRE(kproc_reservation_release(&bp_view) && !procmem_size(pd));
+    REQUIRE(kproc_reservation_release(&env_view) && !procmem_size(environment));
+    independent=kproc_uheap_alloc(run,2*PAGE);
+    REQUIRE(independent && (independent+2*PAGE<=va || independent>=va+2*PAGE));
+    REQUIRE(kproc_demand_page(run,independent,ASPACE_PROT_WRITE)==1 &&
+            aspace_copy_to_user(backend,independent,&sentinel,sizeof(sentinel)));
     REQUIRE(!kproc_ref_has_basepage(child));
     REQUIRE(kproc_reservation_release(&first) && aspace_translate(backend,va,NULL,NULL));
     REQUIRE(kproc_reservation_release(&last) && !aspace_translate(backend,va,NULL,NULL) &&
             !aspace_translate(backend,va+PAGE,NULL,NULL));
-    REQUIRE(kproc_uheap_alloc(run,2*PAGE)==va && kproc_uheap_free(run,va)==E_OK);
+    REQUIRE(aspace_copy_from_user(backend,&readback,independent,sizeof(readback)) && readback==sentinel);
+    REQUIRE(kproc_uheap_alloc(run,2*PAGE)==va && kproc_uheap_free(run,va)==E_OK &&
+            kproc_uheap_free(run,independent)==E_OK);
     kproc_release(child);
 }
 
@@ -80,7 +107,8 @@ static void held_clone_compat_retirement(KPROC *source)
     REQUIRE(kproc_clone_adopt_space(child,thread,adopted));
     REQUIRE(kproc_reservation_info(pd,address,sizeof(PD),&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,address,sizeof(PD),info.identity,ASPACE_PROT_USER,&hold)==E_OK);
-    proc_dispose_process(child); /* association keeps the unstarted child until reap */
+    proc_discard_scheduled(pd); /* canonical finalizer survives pending membership */
+    REQUIRE(kproc_ref_has_basepage(child) && procmem_owner(pd)==child);
     REQUIRE(kthread_stop(thread) && kthread_reap(thread));
     REQUIRE(!kproc_ref_has_basepage(child) && aspace_translate(backend,address,NULL,NULL));
     REQUIRE(kproc_reservation_release(&hold) && !aspace_translate(backend,address,NULL,NULL));
@@ -106,15 +134,27 @@ void kproc_region_selftest(void)
     VADDR image_address,orphan_address;
     ULONG records, value=0x8941234UL;
     VADDR stack_page=USER_STACK_TOP-PAGE;
+#if CONF_WITH_PRIVATE_CLONE
+    ULONG cow_frames=aspace_cow_frames(),cow_references=aspace_cow_references();
+#endif
 #if CONF_WITH_MMAP
     LONG a,b;
     ULONG actual=0;
     KASPACE_RESERVATION_HOLD mapping={0};
 #endif
+#if REGION_FILE_TEST
+    LONG file,descriptor;
+    UWORD file_magic=0;
+    UQUAD file_references;
+    KASPACE_RESERVATION_HOLD file_hold={0};
+#endif
     if (tested || !ksched_exit_thread(run) || ksched_cleanup_active() || ksched_cancellation_pending()) return;
     tested=TRUE; /* prevent reentry from any future teardown callback */
     error=*fs_error_current();
     ksched_cleanup_begin(&scope);
+#if REGION_FILE_TEST
+    fileback_reap();file_references=file_reference_count();
+#endif
     procmem_stats(&before); records=kproc_count();
     source=kproc_retain(run); REQUIRE(source);
     held_staging_discard(source);
@@ -144,6 +184,7 @@ void kproc_region_selftest(void)
     kproc_unborrow(env); kproc_unborrow(pd);
     space=kproc_active_space(owner); backend=kaspace_backend(space);
     REQUIRE(aspace_map_procmem(backend,(VADDR)(uintptr_t)env,2,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    REQUIRE(aspace_map_procmem(backend,(VADDR)(uintptr_t)env,8,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
     REQUIRE(kproc_reservation_info(pd,(VADDR)(uintptr_t)pd,sizeof(PD),&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,(VADDR)(uintptr_t)pd,sizeof(PD),info.identity,ASPACE_PROT_USER,&base)==E_OK);
     REQUIRE(kproc_reservation_info(pd,(VADDR)(uintptr_t)env,2,&info)==E_OK);
@@ -177,6 +218,46 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_munmap(pd,a,2*PAGE)==EACCDN && kproc_mprot(pd,a,2*PAGE,PROT_READ)==EACCDN);
     REQUIRE(aspace_copy_from_user(backend,&actual,a,sizeof(actual)) && actual==value);
 #endif
+#if REGION_FILE_TEST
+    descriptor=kdos_fopen((long)(uintptr_t)
+#if CONF_WITH_X86_64_MEMTEST
+                         "C:\\X32HELLO.TOS",
+#else
+                         "C:\\RUNTESTS.TOS",
+#endif
+                         0);
+#if CONF_WITH_X86_64_MEMTEST
+    if (descriptor==EFILNF) descriptor=kdos_fopen((long)(uintptr_t)"C:\\RUNTESTS.TOS",0);
+#endif
+    REQUIRE(descriptor>=NUMSTD);
+    file=kproc_mmap(pd,0,PAGE,PROT_READ,MAP_PRIVATE,descriptor,0);REQUIRE(file>0);
+    REQUIRE(kproc_reservation_info(pd,file,PAGE,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(pd,file,PAGE,info.identity,ASPACE_PROT_USER,&file_hold)==E_OK);
+    REQUIRE(!aspace_translate(backend,file,NULL,NULL) && kdos_fclose(descriptor)==E_OK);
+#endif
+#if CONF_WITH_MMAP && CONF_WITH_PRIVATE_CLONE_TEST && (defined(MACHINE_PC_X86_64) || defined(MACHINE_VIRT_ARM) || defined(MACHINE_VIRT_M68K))
+    {
+        KASPACE *child_space=NULL;
+        ULONG changed=0x98765432UL;
+        REQUIRE(kaspace_clone(space,&child_space)==E_OK && child_space);
+        aspace_cow_test_fail_allocation(TRUE);
+        REQUIRE(aspace_cow_fault(kaspace_backend(child_space),a,ASPACE_PROT_WRITE)==2);
+        aspace_cow_test_fail_allocation(FALSE);
+        REQUIRE(aspace_cow_fault(kaspace_backend(child_space),a,ASPACE_PROT_WRITE)==1 &&
+                aspace_copy_to_user(kaspace_backend(child_space),a,&changed,sizeof(changed)) &&
+                aspace_copy_from_user(backend,&actual,a,sizeof(actual)) && actual==value);
+        kaspace_put(child_space);
+        {
+            PADDR before_promotion,after_promotion;
+            UWORD protection;
+            int promoted;
+            REQUIRE(aspace_translate(backend,a,&before_promotion,NULL));
+            promoted=aspace_cow_fault(backend,a,ASPACE_PROT_WRITE);
+            REQUIRE((promoted==0 || promoted==1) && aspace_translate(backend,a,&after_promotion,&protection) &&
+                    (protection&ASPACE_PROT_WRITE) && before_promotion==after_promotion);
+        }
+    }
+#endif
     REQUIRE(proc_create_clone_process(source,0,&orphan_stage)==E_OK && orphan_stage);
     orphan_address=kproc_load_alloc(pd,kproc_live_pd(orphan_stage),2*PAGE); REQUIRE(orphan_address);
     kproc_set_creator(kproc_live_pd(orphan_stage),pd);
@@ -184,6 +265,7 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_reservation_hold(pd,orphan_address,16,info.identity,ASPACE_PROT_USER,&orphan_hold)==E_OK);
     REQUIRE(kaspace_retire_borrow(space,(VADDR)(uintptr_t)env,procmem_size(env)));
     REQUIRE(kaspace_retire_borrow(space,(VADDR)(uintptr_t)env,2));
+    REQUIRE(kaspace_retire_borrow(space,(VADDR)(uintptr_t)env,8));
     proc_dispose_process(owner);
     REQUIRE(!kproc_live_pd(owner));
     REQUIRE(aspace_translate(backend,orphan_address,NULL,NULL));
@@ -204,6 +286,11 @@ void kproc_region_selftest(void)
     REQUIRE(kaspace_mmap_demand_page(space,b,ASPACE_PROT_WRITE)==1);
     REQUIRE(kproc_reservation_release(&mapping));
 #endif
+#if REGION_FILE_TEST
+    REQUIRE(kaspace_mmap_demand_page(space,file,ASPACE_PROT_USER)==1 &&
+            aspace_copy_from_user(backend,&file_magic,file,sizeof(file_magic)) && file_magic);
+    REQUIRE(kproc_reservation_release(&file_hold));
+#endif
     REQUIRE(kproc_allocation_release(&raw_copy));
     REQUIRE(procmem_size(env)); /* mapping pin still owns the retired allocation */
     REQUIRE(kproc_reservation_release(&base));
@@ -214,6 +301,12 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_reservation_release(&image));
     REQUIRE(kproc_reservation_release(&data));
     kproc_release(owner); kproc_release(source);
+#if REGION_FILE_TEST
+    fileback_reap();REQUIRE(file_reference_count()==file_references);
+#endif
+#if CONF_WITH_PRIVATE_CLONE
+    REQUIRE(aspace_cow_frames()==cow_frames && aspace_cow_references()==cow_references);
+#endif
     procmem_stats(&after);
     REQUIRE(after.live_allocs==before.live_allocs && after.free_pages==before.free_pages &&
             after.bad_frees==before.bad_frees && kproc_count()==records);

@@ -7,7 +7,9 @@
 static PD pd;
 static KPROC process;
 static struct uheap_block image;
-static BOOL captured;
+static BOOL captured,grant_user=TRUE;
+static UQUAD allocation_generation;
+static const void *allocation_owner;
 static KASPACE_HEAP ordinary;
 #if CONF_WITH_MMAP
 static KASPACE_MMAP mappings;
@@ -16,6 +18,8 @@ KASPACE_MMAP *kaspace_mmap(KASPACE *space) { (void)space; return &mappings; }
 void *kalloc(ULONG bytes) { return malloc(bytes); }
 void kfree(void *p) { free(p); }
 KASPACE_HEAP *kaspace_heap(KASPACE *space) { (void)space; return &ordinary; }
+BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end)
+{ (void)space;(void)from;(void)to;(void)first;(void)end;return FALSE; }
 BOOL kaspace_mapping_can_change(const ASPACE *space,VADDR address,VADDR bytes)
 { (void)space;(void)address;(void)bytes;return FALSE; }
 BOOL kaspace_mapping_change(ASPACE *space,VADDR address,VADDR bytes)
@@ -24,8 +28,9 @@ BOOL aspace_map_private(ASPACE *space,VADDR address,VADDR bytes,UWORD rights)
 { (void)space;(void)address;(void)bytes;(void)rights;assert(0);return FALSE; }
 static VADDR captured_address=0x10000000UL, captured_bytes=2*USER_PAGE_SIZE;
 PD *run=&pd;
-PADDR procmem_phys_of(VADDR address) { (void)address; assert(0); return 0; }
-UQUAD procmem_gen(const void *base) { (void)base; return 0; }
+PADDR procmem_phys_of(VADDR address) { (void)address;assert(allocation_generation);return 0x1000; }
+const void *procmem_owner(const void *base) { (void)base;return allocation_owner; }
+UQUAD procmem_gen(const void *base) { (void)base;return allocation_generation; }
 UQUAD kaspace_reservation_next(void) { assert(0); return 0; }
 BOOL kaspace_reservation_info(KASPACE *space,VADDR address,VADDR bytes,KASPACE_RESERVATION_INFO *info)
 {
@@ -41,7 +46,7 @@ BOOL aspace_translate(const ASPACE *space,VADDR address,PADDR *physical,UWORD *p
     (void)space;
     if (address<0x10000000UL || address>=0x10000000UL+2*USER_PAGE_SIZE) return FALSE;
     if (physical) *physical=0x1000;
-    if (prot) *prot=ASPACE_PROT_USER|(address<0x10000000UL+USER_PAGE_SIZE?ASPACE_PROT_EXEC:ASPACE_PROT_WRITE);
+    if (prot) *prot=(grant_user?ASPACE_PROT_USER:0)|(address<0x10000000UL+USER_PAGE_SIZE?ASPACE_PROT_EXEC:ASPACE_PROT_WRITE);
     return TRUE;
 }
 #if CONF_WITH_PRIVATE_CLONE
@@ -78,5 +83,18 @@ int main(void)
     captured_address=0x10000008UL;captured_bytes=16;
     memset(&info,0x5a,sizeof(info));unchanged=info;
     assert(kproc_reservation_info(&pd,0x10000ff0UL,16,&info)==EACCDN && !memcmp(&info,&unchanged,sizeof(info)));
+    captured=FALSE;allocation_generation=9;allocation_owner=&pd;
+    process.borrowed[0].va=0x10000000UL;process.borrowed[0].bytes=2*USER_PAGE_SIZE;
+    process.borrowed[0].generation=9;process.borrowed[0].reservation=7;
+    grant_user=FALSE;
+    assert(kproc_reservation_info(&pd,0x10000008UL,16,&info)==EACCDN && !memcmp(&info,&unchanged,sizeof(info)));
+    grant_user=TRUE;
+    assert(kproc_reservation_info(&pd,0x10000008UL,16,&info)==E_OK && info.identity==7);
+    unchanged=info;allocation_generation=10;
+    assert(kproc_reservation_info(&pd,0x10000008UL,16,&info)==EACCDN && !memcmp(&info,&unchanged,sizeof(info)));
+    allocation_generation=9;allocation_owner=(const void *)2;
+    assert(kproc_reservation_info(&pd,0x10000008UL,16,&info)==EACCDN && !memcmp(&info,&unchanged,sizeof(info)));
+    allocation_owner=&pd;
+    assert(kproc_reservation_info(&pd,0x10000008UL,16,&info)==E_OK);
     return 0;
 }

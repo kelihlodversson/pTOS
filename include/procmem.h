@@ -340,6 +340,8 @@ void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes);
  */
 BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes);
 void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes);
+/* Mark an existing exact pin; no allocation/refcount change or callback. */
+BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes);
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes);
 /* Re-maps an already borrowed block with other permissions (the user bit
  * included): the block a ring-3 caller is handed. Still released by unborrow. */

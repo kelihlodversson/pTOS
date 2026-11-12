@@ -65,6 +65,7 @@ struct aspace {
     ULONG capacity;
     struct pin {                /* procmem ranges mapped (and so pinned) */
         VADDR va, bytes;
+        BOOL retired;           /* exact pin remains owned until deferred unborrow */
     } *pins;
     ULONG npins, pin_capacity;
     ULONG nowned;               /* private backing pages: ours alone, freed with us */
@@ -318,6 +319,7 @@ BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
     }
     as->pins[as->npins].va = va;
     as->pins[as->npins].bytes = bytes;
+    as->pins[as->npins].retired = FALSE;
     as->npins++;
     procmem_pin(va, bytes, +1);
 
@@ -990,17 +992,13 @@ BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes)
     return FALSE;
 }
 
-static void unborrow_pages(ASPACE *as, VADDR va, VADDR bytes, BOOL retired)
+static void drop_borrow_pin(ASPACE *as, VADDR va, VADDR bytes, BOOL retired)
 {
     VADDR page, end;
-    ULONG i, j;
-    BOOL pinned = FALSE;
-
-    if (retired ? !kaspace_retirement_change(as,va,bytes,FALSE) :
-                  !kaspace_mapping_change(as,va,bytes))
-        panic("unborrow without mutable/retirement ownership");
+    ULONG i,j;
+    BOOL pinned=FALSE;
     for (i = as->npins; i-- > 0; )
-        if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
+        if (as->pins[i].va == va && as->pins[i].bytes == bytes && as->pins[i].retired == retired) {
             as->pins[i] = as->pins[--as->npins];
             pinned = TRUE;
             break;
@@ -1020,10 +1018,43 @@ static void unborrow_pages(ASPACE *as, VADDR va, VADDR bytes, BOOL retired)
     if (pinned) procmem_pin(va, bytes, -1);
 }
 
+BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes)
+{
+    ULONG i;
+    for (i=as->npins;i-- >0;)
+        if (as->pins[i].va==va && as->pins[i].bytes==bytes && !as->pins[i].retired) {
+            as->pins[i].retired=TRUE;return TRUE;
+        }
+    /* A PRIVATE_VM snapshot can have copied a former borrow into owned RAM. */
+#if CONF_WITH_PRIVATE_CLONE
+    return TRUE;
+#else
+    return FALSE;
+#endif
+}
+
 void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes)
-{ unborrow_pages(as,va,bytes,FALSE); }
+{
+    if (!kaspace_mapping_change(as,va,bytes)) panic("unborrow without mutable ownership");
+    drop_borrow_pin(as,va,bytes,FALSE);
+}
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes)
-{ unborrow_pages(as,va,bytes,TRUE); }
+{
+    ULONG i;
+    if (!kaspace_retirement_change(as,va,bytes,FALSE)) panic("unborrow without retirement ownership");
+    /* The fence is a page union; each existing pin keeps its exact dimensions.
+     * Detach each pin once, before procmem notification can reenter teardown. */
+    for (;;) {
+        VADDR address=0,length=0;
+        for (i=0;i<as->npins;i++)
+            if (as->pins[i].retired && as->pins[i].va>=va &&
+                as->pins[i].va-va<bytes && as->pins[i].bytes<=bytes-(as->pins[i].va-va)) {
+                address=as->pins[i].va;length=as->pins[i].bytes;break;
+            }
+        if (!length) break;
+        drop_borrow_pin(as,address,length,TRUE);
+    }
+}
 
 /*
  * Gives the caller access to a block it borrowed: the same pages, now with

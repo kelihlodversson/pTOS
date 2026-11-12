@@ -37,6 +37,10 @@ KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold); /* borrowed */
  * Inputs are rounded out to pages. Backend lifetime is retained by each lease. */
 /* Pure admission check for a whole multi-root mutation; never revokes. */
 BOOL kaspace_mapping_can_change(const struct aspace *backend, VADDR address, VADDR bytes);
+/* Pure first busy interval within [from,to), clipped to that gap. Includes
+ * durable/sealed views and pending retirement fences in the existing ledger. */
+BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end);
+
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
 /* Logical reservation-preserving lazy/file backing only. This cannot authorize
  * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */

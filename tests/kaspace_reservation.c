@@ -6,7 +6,7 @@
 #include "../bdos/kaspace.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"reservation hold:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 struct aspace { unsigned destroyed; };
-static unsigned allocations, frees, fail_alloc, walks, backing_puts, retired_private, retired_borrows;
+static unsigned allocations, frees, fail_alloc, walks, backing_puts, retired_private, retired_borrows, deferred_pins;
 void *kalloc(ULONG bytes) { void *p; if(fail_alloc) return NULL; p=calloc(1,bytes); if(p) allocations++; return p; }
 void kfree(void *p) { if(p) { frees++; free(p); } }
 void aspace_destroy(ASPACE *as) { CHECK(!as->destroyed); as->destroyed++; }
@@ -62,6 +62,11 @@ int main(void)
         CHECK(kaspace_reservation_duplicate(&one,&canonical,&two)==E_OK);
         CHECK(kaspace_retire_private(space,0x30000,8192));
         CHECK(!kaspace_mapping_can_change(&backend,0x31000,4096));
+        {
+            VADDR first=0,end=0;
+            CHECK(kaspace_next_held(space,0x30000,0x40000,&first,&end) && first==0x30000 && end==0x32000);
+            CHECK(!kaspace_next_held(space,0x32000,0x40000,&first,&end));
+        }
         spent=one;
         CHECK(kaspace_reservation_release(&one,&owner) && !retired_private);owner=NULL;
         CHECK(!kaspace_reservation_release(&spent,&owner));
@@ -71,11 +76,10 @@ int main(void)
         CHECK(kaspace_mapping_can_change(&backend,0x30000,8192));
         captured.address=0x40000;captured.bytes=13;captured.identity=kaspace_reservation_next();
         CHECK(kaspace_reservation_hold_captured(space,&captured,0x40000,2,ASPACE_PROT_USER,7,&canonical,&one)==E_OK);
-        CHECK(kaspace_reservation_duplicate(&one,&canonical,&two)==E_OK);
         CHECK(kaspace_retire_borrow(space,0x40000,13));
         CHECK(kaspace_retire_borrow(space,0x40000,4096));
-        CHECK(kaspace_reservation_release(&one,&owner) && !retired_borrows);owner=NULL;
-        CHECK(kaspace_reservation_release(&two,&owner) && retired_borrows==2);owner=NULL;
+        CHECK(kaspace_retire_borrow(space,0x40000,8));
+        CHECK(kaspace_reservation_release(&one,&owner) && retired_borrows==3);owner=NULL;
         CHECK(kaspace_mapping_can_change(&backend,0x40000,4096));
     }
     {
@@ -145,6 +149,8 @@ void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes)
 { CHECK(va==0x40000 && bytes==13 && kaspace_mapping_can_change(as,va,bytes));retired_borrows++; }
 
 BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
-{ CHECK(kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_private++;return TRUE; }
+{ CHECK(kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_private++;return TRUE; }
+BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;CHECK(va==0x40000 && (bytes==13 || bytes==4096 || bytes==8));deferred_pins++;return TRUE; }
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes)
-{ CHECK(kaspace_retirement_change(as,va,bytes,FALSE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_borrows++; }
+{ CHECK(va==0x40000 && bytes==4096); CHECK(kaspace_retirement_change(as,va,bytes,FALSE));CHECK(!kaspace_retirement_change(as,va,bytes,FALSE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_borrows+=deferred_pins;deferred_pins=0; }

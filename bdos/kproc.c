@@ -189,6 +189,7 @@ struct kproc {
     ULONG dta_clock;            /* counts the searches, to find the oldest */
     struct {                    /* blocks of a child being launched from this */
         VADDR va, bytes;        /* process, mapped supervisor-only into its */
+        UQUAD generation, reservation; /* authenticated incarnation and view birth */
     } borrowed[KPROC_BORROWS];  /* address space until they are freed */
 #endif
     KPROC *next;
@@ -1371,6 +1372,7 @@ static void retire_discard_borrow(void *block)
         for (i=0;i<KPROC_BORROWS;i++)
             if (owner->borrowed[i].bytes && owner->borrowed[i].va==(VADDR)(uintptr_t)block) {
                 VADDR bytes=owner->borrowed[i].bytes;
+                if (owner->borrowed[i].generation!=procmem_gen(block)) panic("discard borrow incarnation changed");
                 if (owner->active_space && !kaspace_retire_borrow(owner->active_space,(VADDR)(uintptr_t)block,bytes))
                     panic("discarded allocation borrow has no cleanup owner");
                 owner->borrowed[i].bytes=0;
@@ -2396,11 +2398,12 @@ BOOL kproc_borrow(PD *launcher, void *block)
     KPROC *kproc = kproc_find(launcher);
     VADDR va = (VADDR)(uintptr_t)block;
     VADDR bytes = procmem_size(block);
+    UQUAD generation=procmem_gen(block);
     int i;
 
     if (!kproc || !kproc->aspace)
         return TRUE;                /* a ring-0 launcher reaches all of it */
-    if (!bytes)
+    if (!bytes || !generation)
         return FALSE;
     for (i = 0; i < KPROC_BORROWS; i++)
         if (!kproc->borrowed[i].bytes) {
@@ -2408,6 +2411,8 @@ BOOL kproc_borrow(PD *launcher, void *block)
                 return FALSE;
             kproc->borrowed[i].va = va;
             kproc->borrowed[i].bytes = bytes;
+            kproc->borrowed[i].generation=generation;
+            kproc->borrowed[i].reservation=0;
             return TRUE;
         }
     return FALSE;
@@ -2440,6 +2445,7 @@ void kproc_unborrow(void *block)
     for (kproc = kproc_list; kproc; kproc = kproc->next)
         for (i = 0; i < KPROC_BORROWS; i++)
             if (kproc->borrowed[i].bytes && kproc->borrowed[i].va == va) {
+                if (kproc->borrowed[i].generation!=procmem_gen(block)) panic("borrow incarnation changed");
                 if (kproc->aspace)
                     aspace_unborrow(kproc->aspace, va, kproc->borrowed[i].bytes);
                 kproc->borrowed[i].bytes = 0;
@@ -2970,6 +2976,25 @@ static BOOL ordinary_heap_room(KPROC *kproc)
     return TRUE;
 }
 
+/* Captured views and deferred staging are already recorded in the owning
+ * KASPACE lease list. Subtract them from gaps without a second mapping table. */
+static VADDR held_heap_gap(const KPROC *owner,VADDR at,VADDR end,VADDR bytes,VADDR *largest)
+{
+    VADDR found=0;
+    while (at<end) {
+        VADDR first,limit;
+        BOOL held=kaspace_next_held(owner->active_space,at,end,&first,&limit);
+        VADDR free_end=held?first:end;
+        if (free_end>at) {
+            if (free_end-at>*largest) *largest=free_end-at;
+            if (!found && bytes && free_end-at>=bytes) found=at;
+        }
+        if (!held) break;
+        at=limit;
+    }
+    return found;
+}
+
 /* Merge ordinary and loader reservations into one address-order search.
  * For a new staged image, index is its insertion point in the loader table. */
 static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *largest)
@@ -2986,12 +3011,8 @@ static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *larg
         VADDR end = staged ? kproc->heap[i].va :
                     ordinary ? heap->blocks[j].va : heap_limit(kproc);
 
-        if (end - at > *largest)
-            *largest = end - at;
-        if (!found && bytes && end - at >= bytes) {
-            found = at;
-            *index = i;
-        }
+        VADDR gap=held_heap_gap(kproc,at,end,bytes,largest);
+        if (!found && gap) { found=gap;*index=i; }
         if (staged)
             at = end + (VADDR)kproc->heap[i++].pages * USER_PAGE_SIZE;
         else if (ordinary)
@@ -3859,7 +3880,7 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
                             KASPACE_RESERVATION_INFO *result)
 {
     KPROC *owner = kproc_find(pd);
-    KASPACE_RESERVATION_INFO info;
+    KASPACE_RESERVATION_INFO info={0};
     UQUAD *birth = NULL;
     VADDR page, last;
     UWORD rights = ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC;
@@ -3894,6 +3915,18 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
     } else if (address >= USER_STACK_TOP-stack_bytes(owner) &&
                address < USER_STACK_TOP && bytes <= USER_STACK_TOP-address) {
         birth=&owner->reservation_birth[2]; lazy=CONF_WITH_DEMAND_PAGING;
+    }
+    /* PE_LOAD's caller owns the child compatibility allocations, while
+     * their grants live in this existing borrowed-view ledger. Authenticate
+     * the original allocation generation, canonical owner and current PTEs;
+     * never infer USER rights from a supervisor-only construction mapping. */
+    for (i=0;!birth && i<KPROC_BORROWS;i++) {
+        VADDR start=owner->borrowed[i].va, length=owner->borrowed[i].bytes;
+        void *base=(void *)(uintptr_t)start;
+        if (length && address>=start && address-start<length && bytes<=length-(address-start) &&
+            owner->borrowed[i].generation==procmem_gen(base) && procmem_owner(base)==pd) {
+            birth=&owner->borrowed[i].reservation;raw=TRUE;
+        }
     }
     for (i=0;!birth && i<owner->nheap;i++) {
         struct uheap_block *block=&owner->heap[i];

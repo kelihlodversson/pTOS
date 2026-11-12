@@ -28,7 +28,7 @@ struct kaspace_lease {
     VADDR exact_address, exact_bytes;
     void *owner_identity;
     UWORD reservation_rights, reservation_flags;
-    BOOL captured, retire_private, retire_running;
+    BOOL captured, retire_private, retire_running, retire_committed;
     VADDR retire_address, retire_bytes;
     KASPACE_LEASE *next;
 };
@@ -76,7 +76,7 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     lease->reservation_ticket = lease->reservation_id = lease->owner_number = 0;
     lease->owner_identity = NULL; lease->exact_address = lease->exact_bytes = 0;
     lease->reservation_rights = lease->reservation_flags = 0; lease->captured = FALSE;
-    lease->retire_address=lease->retire_bytes=0; lease->retire_private=lease->retire_running=FALSE;
+    lease->retire_address=lease->retire_bytes=0; lease->retire_private=lease->retire_running=lease->retire_committed=FALSE;
     lease->space = space;
     lease->first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
     lease->last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
@@ -155,6 +155,23 @@ void kaspace_lease_release(KASPACE_LEASE **handle)
     kfree(lease);
     reap_retired(space); /* this detached lease still owns its root reference */
     kaspace_put(space);
+}
+
+BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end)
+{
+    const KASPACE_LEASE *lease;
+    VADDR begin=to,limit=from;
+    if (!space || !first || !end || from>=to || to>USER_VA_LIMIT) return FALSE;
+    for (lease=space->leases;lease;lease=lease->next) {
+        VADDR lo,hi;
+        if (!lease->held && !lease->sealed) continue;
+        lo=lease->first>from?lease->first:from;
+        hi=lease->last+USER_PAGE_SIZE<to?lease->last+USER_PAGE_SIZE:to;
+        if (lo>=hi) continue;
+        if (lo<begin || (lo==begin && hi>limit)) { begin=lo;limit=hi; }
+    }
+    if (begin>=limit) return FALSE;
+    *first=begin;*end=limit;return TRUE;
 }
 
 BOOL kaspace_mapping_can_change(const ASPACE *backend, VADDR address, VADDR bytes)
@@ -395,7 +412,7 @@ LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
     if (!copy) return ENSMEM;
     if (!kaspace_share(lease->space)) { kfree(copy); return ENSMEM; }
     *copy = *lease; copy->reservation_ticket = ++reservation_tickets;
-    copy->retire_address=copy->retire_bytes=0; copy->retire_private=copy->retire_running=FALSE;
+    copy->retire_address=copy->retire_bytes=0; copy->retire_private=copy->retire_running=copy->retire_committed=FALSE;
     copy->first=copy->exact_address&~(VADDR)(USER_PAGE_SIZE-1);
     copy->last=(copy->exact_address+copy->exact_bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
     copy->next = lease->space->leases; lease->space->leases = copy;
@@ -441,15 +458,29 @@ BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes)
         aspace_unborrow(space->backend,address,bytes); return TRUE;
     }
     {
-        KASPACE_LEASE *lease;
-        for (lease=space->leases;lease;lease=lease->next)
-            if (lease->reservation_ticket && lease->held && !lease->revoked &&
-                first<=lease->last && lease->first<end && !lease->retire_bytes) {
-                lease->retire_address=address; lease->retire_bytes=bytes; lease->retire_private=FALSE;
-                if (first<lease->first) lease->first=first;
-                if (end-USER_PAGE_SIZE>lease->last) lease->last=end-USER_PAGE_SIZE;
-                return TRUE;
+        KASPACE_LEASE *lease,*candidate=NULL;
+        for (lease=space->leases;lease;lease=lease->next) {
+            /* One held view can outlive arbitrarily many overlapping exact
+             * borrow pins. Keep their ownership in the existing backend pin
+             * records, and coalesce ONLY the cleanup fence, not pin extents. */
+            if (lease->retire_bytes && !lease->retire_private && !lease->retire_running &&
+                first<=lease->last && lease->first<end) { candidate=lease;break; }
+            if (!candidate && lease->reservation_ticket && lease->held && !lease->revoked &&
+                first<=lease->last && lease->first<end && !lease->retire_bytes) candidate=lease;
+        }
+        if (candidate) {
+            if (!aspace_defer_unborrow(space->backend,address,bytes)) return FALSE;
+            if (candidate->retire_bytes) {
+                VADDR old_end=candidate->retire_address+candidate->retire_bytes;
+                if (old_end>end) end=old_end;
+                if (candidate->retire_address<first) first=candidate->retire_address;
             }
+            candidate->retire_address=first;candidate->retire_bytes=end-first;
+            candidate->retire_private=FALSE;
+            if (first<candidate->first) candidate->first=first;
+            if (end-USER_PAGE_SIZE>candidate->last) candidate->last=end-USER_PAGE_SIZE;
+            return TRUE;
+        }
     }
     return FALSE;
 }
@@ -472,9 +503,10 @@ BOOL kaspace_retirement_change(ASPACE *backend,VADDR address,VADDR bytes,BOOL pr
     for (space=spaces;space && space->backend!=backend;space=space->next) { }
     if (!space) return FALSE;
     for (lease=space->leases;lease;lease=lease->next)
-        if (lease->retire_running && !lease->reservation_ticket && lease->retire_bytes==bytes &&
+        if (lease->retire_running && !lease->retire_committed && !lease->reservation_ticket && lease->retire_bytes==bytes &&
             lease->retire_address==address && lease->retire_private==private) { authority=lease; break; }
     if (!authority || !retirement_unblocked(space,address,bytes)) return FALSE;
+    authority->retire_committed=TRUE; /* this exact backend commit cannot be replayed */
     first=address&~(VADDR)(USER_PAGE_SIZE-1); last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
     for (lease=space->leases;lease;lease=lease->next)
         if (!lease->held && !lease->sealed && !lease->retire_bytes && first<=lease->last && lease->first<=last)
@@ -498,6 +530,7 @@ static void reap_retired(KASPACE *space)
             if (!aspace_release_lazy_retired(space->backend,lease->retire_address,lease->retire_bytes))
                 panic("retired reservation lost private ownership");
         } else aspace_unborrow_retired(space->backend,lease->retire_address,lease->retire_bytes);
+        if (!lease->retire_committed) panic("retirement backend skipped its ownership commit");
         for (at=&space->leases;*at && *at!=lease;at=&(*at)->next) { }
         if (!*at) panic("retirement cleanup owner lost during reentry");
         *at=lease->next; kfree(lease); roots++;
