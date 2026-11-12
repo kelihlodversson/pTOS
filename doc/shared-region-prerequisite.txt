@@ -187,3 +187,17 @@ They end without checkpointing: an enclosing batch must retain its own scope
 until every resource/output/IRQ state is settled. Low-level KASPACE/procmem
 callers likewise own their complete cleanup envelope; no arbitrary exception
 or disk-error longjmp guarantee is inferred from cancellation deferral.
+
+Review corrections (PR952)
+--------------------------
+4550288613: exact captured bounds authenticate new reservations; rounded
+lookup is separate and only permits backing/exclusion.
+4550288679: fresh per-page rights precede conservative broad witnesses;
+production KPROC host and native probes cover both acquisition orders.
+4550288724: held staging cleanup is transferred to the existing lease list;
+child-first and loader-first retirement reclaim after the final overlap.
+4550382837: even lazy heap publication preflights the chosen range before
+allocating its birth ID or publishing metadata; revocable aliases are invalidated
+at publication. A rejected lazy reservation cannot overlap a foreign held image.
+Native probes require rejection while a retired staging extent is held, then
+successful same-address allocation/release after its final hold is settled.

@@ -3,10 +3,25 @@
 #include "../../bdos/kproc.c"
 #undef assert
 #include <assert.h>
+#include <stdlib.h>
 static PD pd;
 static KPROC process;
 static struct uheap_block image;
 static BOOL captured;
+static KASPACE_HEAP ordinary;
+#if CONF_WITH_MMAP
+static KASPACE_MMAP mappings;
+KASPACE_MMAP *kaspace_mmap(KASPACE *space) { (void)space; return &mappings; }
+#endif
+void *kalloc(ULONG bytes) { return malloc(bytes); }
+void kfree(void *p) { free(p); }
+KASPACE_HEAP *kaspace_heap(KASPACE *space) { (void)space; return &ordinary; }
+BOOL kaspace_mapping_can_change(const ASPACE *space,VADDR address,VADDR bytes)
+{ (void)space;(void)address;(void)bytes;return FALSE; }
+BOOL kaspace_mapping_change(ASPACE *space,VADDR address,VADDR bytes)
+{ (void)space;(void)address;(void)bytes;assert(0);return FALSE; }
+BOOL aspace_map_private(ASPACE *space,VADDR address,VADDR bytes,UWORD rights)
+{ (void)space;(void)address;(void)bytes;(void)rights;assert(0);return FALSE; }
 static VADDR captured_address=0x10000000UL, captured_bytes=2*USER_PAGE_SIZE;
 PD *run=&pd;
 PADDR procmem_phys_of(VADDR address) { (void)address; assert(0); return 0; }
@@ -56,6 +71,8 @@ int main(void)
     process.heap=&image;process.nheap=1; kproc_list=&process;
     image.va=0x10000000UL;image.pages=2;image.kind=UH_IMAGE;image.reservation=7;
     check_rights(); /* no earlier broad witness */
+    assert(!kproc_uheap_alloc(&pd,USER_PAGE_SIZE) && !ordinary.count);
+    kfree(ordinary.blocks);memset(&ordinary,0,sizeof(ordinary));
     captured=TRUE;check_rights(); /* conservative earlier broad capture */
     process.heap=NULL;process.nheap=0;check_rights(); /* immutable bounds after metadata is gone */
     captured_address=0x10000008UL;captured_bytes=16;

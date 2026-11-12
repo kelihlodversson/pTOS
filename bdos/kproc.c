@@ -2979,13 +2979,17 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
     if (!(kind == UH_MALLOC ? ordinary_heap_room(kproc) : heap_room(kproc)))
         return 0;
     va = heap_gap(kproc, size, &index, &largest);
+    /* A different PROCESS can own a captured image in this shared root.
+     * Lazy publication must obey the same barrier as an eager leaf mutation. */
+    if (!va || !kaspace_mapping_can_change(kproc->aspace,va,size)) return 0;
     /* (Malloc() memory is lazy with CONF_WITH_DEMAND_PAGING; a program image
      * is filled in by the kernel and moved page by page, so it is backed at
      * once) */
     if (!CONF_WITH_DEMAND_PAGING)
         eager = TRUE;
     if (!(reservation=kaspace_reservation_next())) return 0;
-    if (!va || (eager && !aspace_map_private(kproc->aspace, va, size,
+    if (!kaspace_mapping_change(kproc->aspace,va,size) ||
+        (eager && !aspace_map_private(kproc->aspace, va, size,
                                                     ASPACE_PROT_WRITE | ASPACE_PROT_USER)))
         return 0;
     if (kind == UH_MALLOC) {

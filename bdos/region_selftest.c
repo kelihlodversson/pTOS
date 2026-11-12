@@ -37,10 +37,12 @@ static void held_staging_discard(KPROC *source)
     REQUIRE(kproc_reservation_duplicate(&first,&last)==E_OK);
     proc_dispose_process(child);
     REQUIRE(!kproc_live_pd(child) && aspace_translate(backend,va,NULL,NULL));
+    REQUIRE(!kproc_uheap_alloc(run,2*PAGE)); /* lazy publication cannot overlap the retired owner */
     REQUIRE(!kproc_ref_has_basepage(child));
     REQUIRE(kproc_reservation_release(&first) && aspace_translate(backend,va,NULL,NULL));
     REQUIRE(kproc_reservation_release(&last) && !aspace_translate(backend,va,NULL,NULL) &&
             !aspace_translate(backend,va+PAGE,NULL,NULL));
+    REQUIRE(kproc_uheap_alloc(run,2*PAGE)==va && kproc_uheap_free(run,va)==E_OK);
     kproc_release(child);
 }
 
