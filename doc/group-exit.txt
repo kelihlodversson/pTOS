@@ -99,15 +99,15 @@ checkpoint. A nested child that never returns likewise delays its parent's
 cancellation indefinitely. These are explicit progress constraints, not a
 claim of preemptive or universal asynchronous cancellation. Adding safe
 interruption adapters belongs to #893/#713; never bypass operation-local cleanup.
-#909 remains the PROCESS wait consumer. libcmini #25 must implement one-time
-atexit plus Ptermgrp with EINVFN/EINVAL fallback before libc exit is advertised
-as group-wide. TLS and the QEMU 68060 limitation (#913) remain separate.
+#909 remains the PROCESS wait consumer. TLS and the QEMU 68060 limitation
+(#913) remain separate.
 
-The next integration adds cancellation-aware display/mouse admission and CUIS
-delay, with the caller retaining cleanup control; see cancellation-waits.txt.
-libcmini PR #26 implements the 0x192 binding and exit/atexit/fallback contract.
-The kernel integration pins that reviewed branch commit while both PRs remain
-draft. Native tests execute libc exit with surviving siblings and a separate
+Cancellation-aware display/mouse admission, CUIS delay and transactional
+combined input waits retain caller-owned cleanup; see cancellation-waits.txt.
+Stream cancellation remains disabled pending its own ownership/commit proof.
+The pinned libcmini PR #26 implementation supplies the 0x192 binding and
+exit/atexit/fallback contract; its PR status is independent of kernel runtime
+support. Native tests execute libc exit with surviving siblings and a separate
 shared-ASPACE PROCESS, then check callback count and mapping baselines. The
 callback array is freed explicitly because CLONE_VM peers can keep KASPACE
 alive after the exiting PROCESS is gone. C globals remain shared under

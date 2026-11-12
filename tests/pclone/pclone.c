@@ -407,7 +407,14 @@ static void runnable_entry(void *argument)
         }
 #endif
     }
-    if (p->mode == 1) Pterm(23);
+    if (p->mode == 1) {
+        Pterm(23);
+        p->error |= 8; /* A successful THREAD termination cannot return. */
+    }
+    if (p->mode == 3) {
+        Pterm0();
+        p->error |= 8;
+    }
     if (p->mode == 2) *(volatile unsigned long *)0x80001000UL = 1;
 }
 static long launch_entry(void (*entry)(void *), unsigned flags, unsigned char *stack, int32_t *pid, int32_t *tid)
@@ -599,7 +606,7 @@ static void test_lifecycle(void)
 #if defined(TEST_WITH_PTHJOIN)
 static struct {
     int32_t target, a, b, leader, survivor;
-    volatile long gate, done, entered, result_a, result_b, status_a, error;
+    volatile long gate, done, entered, result_a, result_b, status_a, error, spawned;
     void *output;
 } joins;
 static long join_tid(long tid, int32_t *status)
@@ -627,12 +634,27 @@ static void join_b(void *argument)
     joins.result_b = join_tid(joins.target,0);
     joins.done = 1;
 }
+static void join_after_leader(void *argument)
+{
+    (void)argument;
+    joins.spawned++;
+    Pterm0();
+    joins.error = 1;
+}
 static void join_survivor(void *argument)
 {
-    int32_t status = -1;
+    int32_t status = -1, pid = -1, tid = -1;
+    long original_pid = Pgetpid();
     (void)argument;
     if (join_tid(joins.leader,&status) || status != 37) joins.error = 1;
+    /* The stopped leader is joined before creating another live member. */
+    if (launch_entry(join_after_leader,CLONE_VM|CLONE_SAME_PROCESS,
+                     runnable_stacks[1],&pid,&tid) <= 0 || pid != original_pid)
+        joins.error = 1;
+    else if (join_tid(tid,&status) || status || joins.spawned != 1 ||
+             Pgetpid() != original_pid) joins.error = 1;
     Pterm(53);
+    joins.error = 1;
 }
 static void join_leader(void *argument)
 {
@@ -666,19 +688,23 @@ static void test_joins(void)
     long result;
     ptest_assert_msg(join_tid(0,0) == -20L && join_tid(-1,0) == -20L &&
                      join_tid(0x7fffffffL,0) == -20L,"invalid/dead TIDs return ESRCH");
-    for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 3; mode++) {
+    for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 4; mode++) {
         probe.mode = mode; probe.steps = probe.error = 0;
         result = launch_probe(CLONE_VM|CLONE_SAME_PROCESS,0,&pid,&tid);
         ptest_assert_msg(result > 0,"joinable sibling created");
         if (result <= 0) return;
         status = -99;
+        ptest_assert_msg(join_tid(tid,(int32_t *)((unsigned char *)&status+1)) == -40L && status == -99,
+                         "unaligned join output is unchanged and keeps target joinable");
+        ptest_assert_msg(join_tid(tid,(int32_t *)runnable_entry) == -40L,
+                         "executable text cannot receive a join status");
         ptest_assert_msg(join_tid(tid,(int32_t *)0x80001000UL) == -40L,"bad join output keeps target joinable");
         if (cycle == 1) {
             for (spin=0; spin<128 && probe.steps<12; spin++) (void)Syield();
             (void)Syield(); (void)Syield(); /* join after execution-stack reap */
         }
         ptest_assert_msg(join_tid(tid,&status) == 0 && status == (mode==1 ? 23 : mode==2 ? 65535L : 0),
-                         "join return/Pterm/fault status after safe reap");
+                         "join return/Pterm/Pterm0/fault status after safe reap");
         ptest_assert_msg(!probe.error && probe.steps == 12,"joining preserves actual execution context");
         ptest_assert_msg(join_tid(tid,0) == -20L,"one successful TID reaper");
     }
@@ -708,11 +734,12 @@ static void test_joins(void)
         ptest_assert_msg(join_tid(tid,joins.output)==-40L && !joins.error,"copyout revalidated after blocked wait");
         ptest_assert_msg(join_tid(tid,&status)==0 && status==41,"failed copyout releases claim without consuming status");
     }
-    joins.error=0;
+    joins.error=joins.spawned=0;
     ptest_assert_msg(launch_entry(join_leader,CLONE_VM,runnable_stacks[0],&pid,&joins.leader)>0,"joinable leader PROCESS created");
     ptest_assert_msg(join_tid(joins.leader,0)==-20L,"TID join does not substitute for a different PROCESS wait");
     result=Pwaitpid(pid,0,0);
-    ptest_assert_msg((result>>16)==pid && (result&65535)==53 && !joins.error,"survivor joins stopped leader before final PROCESS completion");
+    ptest_assert_msg((result>>16)==pid && (result&65535)==53 && !joins.error,"survivor joins leader, creates and joins new THREAD before final PROCESS completion");
+    ptest_assert_msg(joins.spawned == 1,"leader retirement permits new same-PROCESS membership");
     conws("native Pthjoin execution: tested\r\n");
 }
 #endif
@@ -1468,7 +1495,7 @@ static void test_runnable(void)
     }
 #endif
     test_public_contract(runnable_stacks[0]);
-    for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 3; mode++) {
+    for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 4; mode++) {
         probe.steps = probe.error = 0; probe.mode = mode;
         pid = tid = -99;
 #if defined(__mc68000__)
