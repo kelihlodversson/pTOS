@@ -593,11 +593,7 @@ static WORD setup_mono_icons(void)
     ICONBLK *ibptr, *ib;
     WORD i, n, rc, w, h;
 
-#if ARCH_X86_64
     hdr = global.ap_rscmem;
-#else
-    hdr = (RSHDR *)(AP_1RESV);
-#endif
     if (hdr->rsh_nib < NUM_GEM_IBLKS)   /* must have at least the minimum set */
     {
         KDEBUG(("too few user desktop mono icons (%d)\n",hdr->rsh_nib));
