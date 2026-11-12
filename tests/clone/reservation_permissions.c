@@ -7,7 +7,8 @@
 static PD pd;
 static KPROC process;
 static struct uheap_block image;
-static BOOL captured,grant_user=TRUE;
+static BOOL captured,grant_user=TRUE,mutation_permitted;
+static VADDR mutation_address,mutation_bytes;
 static UQUAD allocation_generation;
 static const void *allocation_owner;
 static KASPACE_HEAP ordinary;
@@ -21,7 +22,7 @@ KASPACE_HEAP *kaspace_heap(KASPACE *space) { (void)space; return &ordinary; }
 BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end)
 { (void)space;(void)from;(void)to;(void)first;(void)end;return FALSE; }
 BOOL kaspace_mapping_can_change(const ASPACE *space,VADDR address,VADDR bytes)
-{ (void)space;(void)address;(void)bytes;return FALSE; }
+{ (void)space;mutation_address=address;mutation_bytes=bytes;return mutation_permitted; }
 BOOL kaspace_mapping_change(ASPACE *space,VADDR address,VADDR bytes)
 { (void)space;(void)address;(void)bytes;assert(0);return FALSE; }
 BOOL aspace_map_private(ASPACE *space,VADDR address,VADDR bytes,UWORD rights)
@@ -96,5 +97,28 @@ int main(void)
     assert(kproc_reservation_info(&pd,0x10000008UL,16,&info)==EACCDN && !memcmp(&info,&unchanged,sizeof(info)));
     allocation_owner=&pd;
     assert(kproc_reservation_info(&pd,0x10000008UL,16,&info)==E_OK);
+    {
+        LONG old=kproc_psetlimit(&pd,PSETLIMIT_STACK,-1);
+        LONG grown=old+2*USER_PAGE_SIZE;
+        assert(old==(LONG)USER_STACK_SIZE);
+        assert(kproc_psetlimit(&pd,PSETLIMIT_STACK,grown)==EACCDN &&
+               kproc_psetlimit(&pd,PSETLIMIT_STACK,-1)==old && !process.stack_size);
+        assert(mutation_address==USER_STACK_TOP-grown-USER_PAGE_SIZE &&
+               mutation_bytes==3*USER_PAGE_SIZE); /* includes new and former guard */
+        mutation_permitted=TRUE;
+#if CONF_WITH_MMAP
+        {
+            MMAP_REGION occupied;
+            memset(&occupied,0,sizeof(occupied));
+            occupied.address=USER_STACK_TOP-grown;occupied.length=USER_PAGE_SIZE;
+            mappings.regions=&occupied;
+            assert(kproc_psetlimit(&pd,PSETLIMIT_STACK,grown)==ENSMEM &&
+                   kproc_psetlimit(&pd,PSETLIMIT_STACK,-1)==old);
+            mappings.regions=NULL;
+        }
+#endif
+        assert(kproc_psetlimit(&pd,PSETLIMIT_STACK,grown)==old &&
+               kproc_psetlimit(&pd,PSETLIMIT_STACK,-1)==grown);
+    }
     return 0;
 }

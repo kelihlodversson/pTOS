@@ -253,3 +253,18 @@ page (demand result 1) from an eagerly allocated USER/WRITE leaf (demand result
 0 with explicit resident permission validation). Both paths require the same
 actual write, retained contents, disjoint allocation and exact reclamation.
 It does not manufacture a fault to prove ownership on an eager backend.
+
+Stack growth versus pending retirement
+--------------------------------------
+Psetlimit stack growth preflights the complete newly claimed stack/guard
+interval against the same live and pending KASPACE fences BEFORE metadata
+publication, including the former guard becoming stack. A lazy reservation is
+a mutation even when no physical page is allocated yet. Native tests discard
+a two-page staged child, then reject both stack-body and guard-only collisions
+with unchanged limits; release/reclamation permits the same lazy growth and
+restoration without backing a replacement page. Hosted production KPROC tests
+check exact admission bounds and unchanged metadata on refusal.
+The same growth preflight checks live mmap intervals in their authoritative
+existing ledger, so unheld mappings also cannot be claimed as stack/guard
+space. Native and hosted tests require ENSMEM with unchanged stack limits for
+that collision. No separate reservation registry or allocation is involved.

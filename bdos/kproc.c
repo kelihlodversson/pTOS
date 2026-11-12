@@ -3347,8 +3347,21 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
             return ENSMEM;
         if (kproc->stack_low && USER_STACK_TOP - size > kproc->stack_low)
             return ERANGE;
+#if CONF_WITH_MMAP
+        if (size>old) {
+            const MMAP_REGION *region;
+            VADDR first=USER_STACK_TOP-size-USER_PAGE_SIZE,end=USER_STACK_TOP-old;
+            for (region=kaspace_mmap(kproc->active_space)->regions;region;region=region->next)
+                if (first<region->address+region->length && region->address<end) return ENSMEM;
+        }
+#endif
         if (size < old && !kaspace_mapping_can_change(kproc->aspace,
                 USER_STACK_TOP-old,old-size)) return EACCDN;
+        /* Lazy growth publishes a new reservation even before any fault.
+         * Include the new guard page and the former guard becoming stack;
+         * retired staging/foreign views can outlive the heap metadata above. */
+        if (size > old && !kaspace_mapping_can_change(kproc->aspace,
+                USER_STACK_TOP-size-USER_PAGE_SIZE,size-old+USER_PAGE_SIZE)) return EACCDN;
 #if !CONF_WITH_DEMAND_PAGING
         /* the stack is mapped, all of it: a bigger one gets its pages now (and
          * a smaller one was refused above, every page counting as touched) */

@@ -124,6 +124,54 @@ static void held_clone_compat_retirement(KPROC *source)
     kproc_release(child);
 }
 
+#if CONF_WITH_DEMAND_PAGING
+/* A discarded staged image has lost its live heap entry, but its exact
+ * retirement fence must still exclude a new stack reservation and guard. */
+static void held_stack_growth(KPROC *source,PD *pd,VADDR image_address)
+{
+    KPROC *staging=NULL;
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_RESERVATION_HOLD hold={0};
+    ASPACE *backend=kproc_user_aspace(pd);
+    VADDR va,prefix=0;
+    LONG old,grown,guard_only;
+    /* First-fit staging must lie ABOVE the existing image; otherwise its
+     * live image metadata correctly refuses growth before the fence test. */
+    if (image_address>USER_HEAP_BASE) {
+        prefix=kproc_uheap_alloc(pd,(LONG)(image_address-USER_HEAP_BASE));
+        REQUIRE(prefix==USER_HEAP_BASE);
+    }
+    REQUIRE(proc_create_clone_process(source,0,&staging)==E_OK && staging);
+    va=kproc_load_alloc(pd,kproc_live_pd(staging),2*PAGE);REQUIRE(va>=image_address+2*PAGE);
+    kproc_set_creator(kproc_live_pd(staging),pd);
+    REQUIRE(kproc_reservation_info(pd,va,2*PAGE,&info)==E_OK);
+    REQUIRE(kproc_reservation_hold(pd,va,2*PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&hold)==E_OK);
+    proc_dispose_process(staging);kproc_release(staging);
+    old=kproc_psetlimit(pd,PSETLIMIT_STACK,-1);
+    grown=(LONG)(USER_STACK_TOP-va-PAGE);
+    guard_only=(LONG)(USER_STACK_TOP-va-2*PAGE);
+    REQUIRE(old>0 && guard_only>old && grown>guard_only);
+    {
+        LONG result=kproc_psetlimit(pd,PSETLIMIT_STACK,grown);
+        if (result!=EACCDN) kcprintf("held stack growth va=%lx old=%lx grown=%lx result=%ld\n",
+                (unsigned long)va,(unsigned long)old,(unsigned long)grown,(long)result);
+        REQUIRE(result==EACCDN && kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==old);
+    }
+    REQUIRE(kproc_psetlimit(pd,PSETLIMIT_STACK,guard_only)==EACCDN &&
+            kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==old);
+    REQUIRE(aspace_translate(backend,va+PAGE,NULL,NULL));
+    REQUIRE(kproc_reservation_release(&hold) && !aspace_translate(backend,va+PAGE,NULL,NULL));
+    /* Successful growth after release proves this was the retired fence,
+     * rather than a live heap/stack collision. No page is materialized. */
+    REQUIRE(kproc_psetlimit(pd,PSETLIMIT_STACK,grown)==old &&
+            kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==grown &&
+            !aspace_translate(backend,va+PAGE,NULL,NULL));
+    REQUIRE(kproc_psetlimit(pd,PSETLIMIT_STACK,old)==grown &&
+            kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==old);
+    if (prefix) REQUIRE(kproc_uheap_free(pd,prefix)==E_OK);
+}
+#endif
+
 void kproc_region_selftest(void)
 {
     static BOOL tested;
@@ -215,10 +263,19 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_reservation_release(&broad));
     REQUIRE(kproc_reservation_info(pd,stack_page,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,stack_page,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&stack)==E_OK);
+#if CONF_WITH_DEMAND_PAGING
+    held_stack_growth(source,pd,image_address);
+#endif
 #if CONF_WITH_MMAP
     a=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     b=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     REQUIRE(a>0 && b==a+PAGE);
+    {
+        LONG old=kproc_psetlimit(pd,PSETLIMIT_STACK,-1);
+        LONG overlap=(LONG)(USER_STACK_TOP-(VADDR)b);
+        REQUIRE(overlap>old && kproc_psetlimit(pd,PSETLIMIT_STACK,overlap)==ENSMEM &&
+                kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==old);
+    }
     REQUIRE(kproc_demand_page(pd,a,ASPACE_PROT_WRITE)==1);
     REQUIRE(aspace_copy_to_user(backend,a,&value,sizeof(value)));
     REQUIRE(kproc_reservation_info(pd,b,PAGE,&info)==E_OK);
