@@ -1430,7 +1430,11 @@ static void test_runnable(void)
         struct { volatile unsigned long passed, sp, fpu; } initial;
         struct ptos_clone_args args = {0};
         unsigned policy, policies = 1;
+        unsigned long expected_sp = (unsigned long)(runnable_stacks[0]+RUNNABLE_STACK_SIZE);
         int initial_ok = 1;
+#if defined(__mc68000__)
+        expected_sp -= 8; /* native return PC and argument; ARM has an empty SP */
+#endif
 #if defined(TEST_WITH_PTHJOIN)
         policies = 2;
 #endif
@@ -1447,17 +1451,15 @@ static void test_runnable(void)
                 waited = policy ? trap_1_wll(GEMDOS_PTHJOIN,tid,0) : Pwaitpid(pid,0,0);
                 ptest_assert_msg(policy ? waited == 0 : ((waited >> 16) == pid && !(waited & 65535)),
                                  "initial register probe returned normally");
-                if (initial.passed != 1) {
+                if (initial.passed != 1 || initial.sp != expected_sp) {
                     char diagnostic[96];
-                    sprintf(diagnostic,"native initial-state policy=%u stage=%lu sp=%lx\r\n",policy,initial.passed,initial.sp);
+                    sprintf(diagnostic,"native initial-state policy=%u stage=%lu sp=%lx expected=%lx\r\n",policy,initial.passed,initial.sp,expected_sp);
                     conws(diagnostic);
                 }
-                ptest_assert_msg(initial.passed == 1 && initial.sp >= (unsigned long)runnable_stacks[0] &&
-                                 initial.sp < (unsigned long)(runnable_stacks[0]+RUNNABLE_STACK_SIZE),
+                ptest_assert_msg(initial.passed == 1 && initial.sp == expected_sp,
                                  "first user instructions verify initialized GPR/FPU and owned stack");
                 if ((policy ? waited != 0 : ((waited >> 16) != pid || (waited & 65535))) ||
-                    initial.passed != 1 || initial.sp < (unsigned long)runnable_stacks[0] ||
-                    initial.sp >= (unsigned long)(runnable_stacks[0]+RUNNABLE_STACK_SIZE)) initial_ok = 0;
+                    initial.passed != 1 || initial.sp != expected_sp) initial_ok = 0;
                 (void)Syield(); (void)Syield(); /* root-only stopped-stack release */
             }
         }
