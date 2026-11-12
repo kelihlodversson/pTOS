@@ -80,6 +80,14 @@ int main(void)
     CHECK(procmem_hold_release(&a,&identity)); identity=NULL;
     CHECK(procmem_free(q));
 #if defined(ALLOCATION_HOLD_GENERIC)
+    gens=0xfffffffeULL;
+#else
+    next_gen=0xffffffffULL;
+#endif
+    p=procmem_alloc(4096,0); q=procmem_alloc(4096,0);
+    CHECK(p && q && procmem_gen(p)==0xffffffffULL && procmem_gen(q)==0x100000000ULL);
+    CHECK(procmem_free(p) && procmem_free(q));
+#if defined(ALLOCATION_HOLD_GENERIC)
     gens=~(UQUAD)0-2;
 #else
     next_gen=~(UQUAD)0-1;

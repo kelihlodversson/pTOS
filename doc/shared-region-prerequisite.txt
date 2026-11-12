@@ -17,12 +17,20 @@ and final identity release, in serialized process context outside leaf locks.
 Pure KASPACE mutation preflight permits checking every TPA root before changing
 any mapping or borrowed-size metadata.
 
-NOT COMPLETE: R2 lazy/file/image/heap/mmap reservation identities and holds;
-R3 complete mutation/callsite migration (including checked owner transfers and
-whole multi-region atomicity); independent child attachment and native lifetime
-acceptance. Current host allocation tests use production records with modeled
-physical windows. The native x32 allocation/KPROC retirement check is a kernel
-self-test, not user-visible shared-Pexec proof. No new API is public.
+Reservation implementation now covers the existing ordinary heap/mmap ledgers,
+including lazy anonymous and FAT file-backed ranges. Each reservation has a
+non-recycled birth ID; split fragments preserve that identity and distinct
+births are not merged. Logical materialization/COW does not bypass sealed
+physical aliases. Move-only reservation tickets retain the root and canonical
+metadata independently of PD lifetime, without eagerly backing pages.
+
+NOT COMPLETE: captured image/staged-loader/basepage/environment/initial-stack
+reservation ownership; full R3 owner-transfer/callback/multi-region mutation
+audit; final independent owner acceptance. The integrated #942 tests remain
+historical mapping-lease evidence, not proof of these missing contracts.
+Actual x32 kernel tests now cover allocator/KPROC retirement, lazy reservation
+OOM/orphan/materialization/COW and held real FAT backing. They are kernel
+self-tests, NOT public Pexec4 execution. No new public API is exposed.
 
 Public modes4/104/200, Pfork/Pvfork, PRIVATE_VM, TLS, preemption and SMP remain
 disabled. No Pexec consumer is started before prerequisite owner acceptance.

@@ -5170,8 +5170,8 @@ static void test_file_mmap(void)
     {
         KASPACE_RESERVATION_INFO reservation;
         KPROC *identity = kproc_retain(a);
-        CHECK(kaspace_reservation_info(kproc_active_space(identity),PTOS_MMAP_BASE,PAGE,&reservation) &&
-              kproc_reservation_hold(a,PTOS_MMAP_BASE,PAGE,reservation.identity,
+        CHECK(kaspace_reservation_info(kproc_active_space(identity),PTOS_MMAP_BASE,5*PAGE,&reservation) &&
+              kproc_reservation_hold(a,PTOS_MMAP_BASE,5*PAGE,reservation.identity,
                   ASPACE_PROT_USER|ASPACE_PROT_WRITE,&file_owner_hold)==E_OK,
               "hold real lazy FAT reservation before materialization");
         kproc_release(identity);
@@ -5185,6 +5185,10 @@ static void test_file_mmap(void)
     CHECK(DISK_CALL(xlseek(0, fd, 1)) == 257 * 64 &&
           kproc_user_access(b, PTOS_MMAP_BASE, 1, TRUE), "fault preserves file position and logical write access");
     getofd(fd)->o_dfd->o_flag |= O_MEDIA_LOST;
+    CHECK(kproc_demand_page(a,PTOS_MMAP_BASE+PAGE,0)==3 &&
+          !aspace_translate(as,PTOS_MMAP_BASE+PAGE,NULL,NULL) &&
+          aspace_file_pages()==1 && aspace_file_references()==2,
+          "held lazy file backing failure retains reservation without partial page/cache ownership");
     CHECK(kproc_demand_page(b, PTOS_MMAP_BASE + PAGE, 0) == 3 &&
           !aspace_translate(bs, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
           aspace_file_pages() == 1 && aspace_file_references() == 2,
