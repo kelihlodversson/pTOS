@@ -147,7 +147,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     if (!tx->source) { error = EACCDN; goto failed; }
     tx->source_space = kaspace_share(space);
     if (!tx->source_space) goto failed;
-    if (injected(1)) goto failed;
+    if ((args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(1))) goto failed;
     if (tx->policy == PROC_CLONE_NEW_PROCESS) {
         error = proc_create_clone_process(tx->source, args->resources, &tx->process);
         if (error != E_OK) goto failed;
@@ -157,7 +157,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
         tx->process = kproc_retain_live(target);
         if (!tx->process) { error = EACCDN; goto failed; }
     }
-    if (injected(2)) goto failed;
+    if ((args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(2))) goto failed;
     if (args->vm_policy != PROC_CLONE_PRIVATE_VM) tx->space = kaspace_share(space);
 #if CONF_WITH_PRIVATE_CLONE
     else {
@@ -167,11 +167,11 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
         error = ENSMEM;
     }
 #endif
-    if (!tx->space || injected(3)) goto failed;
+    if (!tx->space || (args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(3))) goto failed;
     tx->thread = args->process_policy == PROC_CLONE_LOADED_PROCESS ?
         kthread_prepare(kproc_live_pd(tx->process), tx->space) :
         kthread_construct_identity(tx->process, tx->space);
-    if (!tx->thread || injected(4)) goto failed;
+    if (!tx->thread || (args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(4))) goto failed;
     *transaction = tx; /* the only publication during prepare */
     return E_OK;
 failed:

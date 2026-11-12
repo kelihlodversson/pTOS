@@ -1424,6 +1424,49 @@ static void test_runnable(void)
         for (page = 0; page < RUNNABLE_STACK_SIZE; page += 4096)
             runnable_stacks[cycle][page] = 0;
     }
+#if defined(__arm__) || defined(__mc68000__)
+    {
+        extern void clone_initial_entry(void *);
+        struct { volatile unsigned long passed, sp, fpu; } initial;
+        struct ptos_clone_args args = {0};
+        unsigned policy, policies = 1;
+        unsigned long expected_sp = (unsigned long)(runnable_stacks[0]+RUNNABLE_STACK_SIZE);
+        int initial_ok = 1;
+#if defined(__mc68000__)
+        expected_sp -= 8; /* native return PC and argument; ARM has an empty SP */
+#endif
+#if defined(TEST_WITH_PTHJOIN)
+        policies = 2;
+#endif
+        for (policy = 0; policy < policies; policy++) {
+            initial.passed = initial.sp = 0; initial.fpu = has_fpu != 0;
+            args.flags = CLONE_VM | (policy ? CLONE_SAME_PROCESS : 0);
+            args.entry = clone_initial_entry; args.argument = &initial;
+            args.stack_base = runnable_stacks[0]; args.stack_size = RUNNABLE_STACK_SIZE;
+            args.child_pid = &pid; args.child_tid = &tid;
+            result = pclone_trap(&args,sizeof(args));
+            ptest_assert_msg(result > 0 && result == tid,"initial register probe admitted");
+            if (result <= 0) initial_ok = 0;
+            if (result > 0) {
+                waited = policy ? trap_1_wll(GEMDOS_PTHJOIN,tid,0) : Pwaitpid(pid,0,0);
+                ptest_assert_msg(policy ? waited == 0 : ((waited >> 16) == pid && !(waited & 65535)),
+                                 "initial register probe returned normally");
+                if (initial.passed != 1 || initial.sp != expected_sp) {
+                    char diagnostic[96];
+                    sprintf(diagnostic,"native initial-state policy=%u stage=%lu sp=%lx expected=%lx\r\n",policy,initial.passed,initial.sp,expected_sp);
+                    conws(diagnostic);
+                }
+                ptest_assert_msg(initial.passed == 1 && initial.sp == expected_sp,
+                                 "first user instructions verify initialized GPR/FPU and owned stack");
+                if ((policy ? waited != 0 : ((waited >> 16) != pid || (waited & 65535))) ||
+                    initial.passed != 1 || initial.sp != expected_sp) initial_ok = 0;
+                (void)Syield(); (void)Syield(); /* root-only stopped-stack release */
+            }
+        }
+        conws(initial_ok ? "native clone first-instruction state: PASS\r\n" :
+                           "native clone first-instruction state: FAIL\r\n");
+    }
+#endif
     test_public_contract(runnable_stacks[0]);
     for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 3; mode++) {
         probe.steps = probe.error = 0; probe.mode = mode;

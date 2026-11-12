@@ -1,0 +1,130 @@
+Phase 3 completion audit (#892)
+===============================
+
+Integration baseline: 6ebabf7c0d73b7c41472a659cefa85ddf175ef11.
+Candidate changes: prepared root-group THREAD construction now uses the common
+LOADED_PROCESS/PREPARED_VM factory; native first-instruction ARM/m68k probes;
+current startup/ownership documentation. No public feature activation.
+This is an acceptance map, not a claim of final acceptance before candidate
+native execution, owner review and four exact-head CI workflows are recorded.
+
+Criterion                     Source / executable evidence / disposition
+----------------------------  ------------------------------------------
+Kernel-owned construction     proc_clone.c/.h retains source, target, selected
+and policy authentication     KASPACE; kthread.c owns membership/refcounts/TID.
+                              tests/proc_clone.c uses production objects and
+                              modeled PROCESS/CPU providers: every allocation,
+                              retained identity, bad enum/policy, loaded target,
+                              selected-root rejection and empty-result contract.
+                              SAME_PROCESS/SHARE_VM and NEW_PROCESS/SHARE_VM run
+                              natively; PREPARED_PROCESS is identity-only.
+                              LOADED_PROCESS/PREPARED_VM is non-runnable loader
+                              construction, not another PROCESS/PID factory.
+                              PRIVATE_VM is gated NEW_PROCESS-only construction.
+
+Preparation/publication       thread_startup.c; proc_clone_spawn/exec and
+                              proc_clone_commit_prepared; native_sched reserve/
+                              publish. Real startup holds/observer/aliases/stacks
+                              precede seal and no-fail stores. Native Pclone,
+                              MEMTEST and tests/thread_startup.c test failures,
+                              revoke/replace/COW, output/frame sentinels and
+                              lifetime. Published abort fails before consuming.
+                              Host callbacks/MMU are models, not user execution.
+
+Remaining root bypass         FIXED in candidate: attach_task_thread delegates
+                              to proc_clone_prepare_loaded_thread with retained
+                              task PROCESS's selected KASPACE. Scheduler retains
+                              dispatch/stack adoption. Production deferred_spawn
+                              fixture tests refusal/success while RESERVED,
+                              exact execution transfer and cleanup.
+                              Function-entry fault injection is not consumed by
+                              LOADED bootstrap. Loaded allocator failures and
+                              the preserved intended-stage failure are tested
+                              independently, with MEMTEST guards enabled. Negative
+                              mutations (old bypass, early TASK_NEW and omitted
+                              execution adoption) must each fail the fixture.
+
+Rollback/ownership            proc_clone_abort, thread_startup_abort/reclaim,
+                              TASK_RETIRING and execution cleanup scope. Tests
+                              cover stages before/after observer registration,
+                              controller/root/mapping failure, callbacks/reentry,
+                              no outputs/child/completion and exact baselines.
+                              tests/proc_clone.c, thread_startup.c and production
+                              scheduler/reference fixtures; native allocator,
+                              publication refusal and real group-cancel tests
+                              remain separate evidence, not interchangeable.
+
+x32 native startup            thread_startup_x32.c, uspace/context/entry backend:
+                              full prepared GPR/FXSAVE/user return state, CR3,
+                              FS/GS initial policy, independent kernel stacks.
+                              Actual MEMTEST clone entry verifies initial state,
+                              normal/Pterm/fault returns, x87/XMM/MXCSR patterns,
+                              leases and final pages. Native pclone user worker
+                              verifies argument, IDs, stacks and repeated peers.
+
+ARM native startup            thread_startup32.c, arch/arm/uspace{,asm}, context:
+                              AAPCS R0/user SP/LR/CPSR and integer/VFP state.
+                              Existing native register assembly checks real
+                              switched patterns; new direct-entry assembly
+                              checks R1-R12, aligned SP, LR, user CPSR mode,
+                              FPSCR and D0-D31 before any C prologue in both
+                              NEW_PROCESS and SAME_PROCESS (when join enabled).
+
+m68k native startup           thread_startup32.c, arch/m68k/uspace{,asm}, FPU
+                              backend: native return/argument stack, USP/SSP,
+                              initial format-0 RTE, model-specific FRESTORE.
+                              Direct-entry probe checks GPR defaults/register-
+                              argument policy and initial FPU when available;
+                              existing native switches check FP0-FP7/control
+                              registers and cross-page two-byte outputs/frames.
+                              QEMU040 observable FPIAR=0 is not nonzero proof;
+                              strict pinned Amiberry060 supplies that proof.
+
+PROCESS/THREAD semantics      kproc/kthread, scheduler counted anchors, retained
+                              PROCESS observers. Native tests: distinct PID/TID
+                              and shared root versus same PID/new TID, leader-
+                              first/final-worker exit, parent death/PD reuse,
+                              orphans, nested Pexec, twelve mixed peers, joins,
+                              cancellation and exactly-once PROCESS wait. #893
+                              and #909 own exit/join and public reaping policy.
+
+Scheduler/loader paths        ksched_process_prepare -> kproc_prepare_async_thread
+                              -> kproc_prepare_user_thread -> common loaded
+                              constructor. Already-loaded root-group attachment
+                              now uses it too. proc_clone_spawn/exec publish
+                              function-entry drafts into the same global queue.
+                              The remaining kthread_create MEMTEST call is an
+                              intentional rejected-association probe. Generic
+                              kthread_prepare/create are low-level primitives.
+
+ASPACE and mapping lifetime   kaspace_share/clone, logical/sealed leases, stack
+                              holds, image-generation ownership, COW rollback.
+                              Production kaspace/proc_clone/lease models and
+                              native shared-VM/private test gates cover parent-
+                              first cleanup, lazy backing/OOM, permission revoke,
+                              last release and translated-root ownership.
+                              No R1-R4 shared-Pexec policy is introduced. Public
+                              private/fork/shared-Pexec remains unsupported.
+
+Documentation                 thread-startup.txt is current across all3 MMUs;
+                              clone-execution-audit is explicitly historical;
+                              clone-mmu-parity distinguishes old scheduler gates
+                              from current global admission. aspace-clone notes
+                              integrated saved-return probes as tests, not fork.
+
+Final gates (must name exact candidate, not just baseline)
+----------------------------------------------------------
+Native x32 FAT, ARM FAT/PFS, m68k040 FAT/PFS and five shutdown checks each;
+actual pinned Falcon/TT030/040 and Amiberry060 caches off/on with strict nonzero
+FPIAR; legacy build/boot, desktop/GEM/CUIS and shutdown; production host normal,
+ASan/UBSan/fortified GCC13, ABI/ELF, ROM/eager and gitready; Build/Hatari/Amiberry/
+pBench. Native initial-entry marker must follow the actual successful probes.
+Mutation test providers are hosted. Source-qualified earlier baseline evidence
+never substitutes for new candidate execution or becomes a fresh candidate run.
+
+Boundaries: no TLS (#908), non-MMU multitasking (#911), ARM/m68k libaes (#898),
+new PROCESS reaper (#909), public Pexec4/104/200 or Pfork/Pvfork/inheritance
+policy (#894/#895), timer preemption/SMP/IRQ-frame restore (#713). No ordinary
+filesystem callback may nonlocally unwind unpublished ownership or yield during
+sealed publication. Local IRQ exclusion is not SMP synchronization. Phase1/2
+are not reopened; Phase4 is not started by this audit.

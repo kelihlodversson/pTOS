@@ -826,7 +826,11 @@ static void adopt_task_execution(KERNEL_TASK *task)
 
 static BOOL attach_task_thread(KERNEL_TASK *task)
 {
-    task->thread = kthread_create(task->program);
+    /* Already-loaded root-group images use the same non-runnable factory
+     * as loader/async preparation, retaining the target's selected space.
+     * Scheduler storage and execution adoption remain scheduler-owned. */
+    task->thread = proc_clone_prepare_loaded_thread(task->program,
+                                                     kproc_active_space(task->process));
     if (!task->thread) return FALSE;
     adopt_task_execution(task);
     return TRUE;

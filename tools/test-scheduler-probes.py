@@ -95,3 +95,23 @@ long Pwaitpid(short,short,long);
               '-I' + str(top), str(root / 'tests/global_scheduler/clock.c'), '-o', str(top / 'clock')]
     subprocess.run(command, check=True)
     subprocess.run([str(top / 'clock')], check=True)
+
+# Execute the independent production case, including alternatives absent from
+# the older enclosing managed-worker case. Missing evidence must fail.
+block = script.split('# Native initial-entry marker:', 1)[1]
+block = block[block.index('\ncase '):].split('# End native initial-entry marker.', 1)[0]
+with tempfile.TemporaryDirectory(prefix='ptos-initial-probe-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    for machine in ('virt-arm', 'virt-m68k-aspace', 'virt-m68k-mmu', 'raspi2b-aspace', 'pc-x86_64'):
+        for sched in (0, 1):
+            for clone in (0, 1):
+                for present in (False, True):
+                    (top / 'obj/autoconf.h').write_text('#define CONF_WITH_NATIVE_SCHED %d\n#define CONF_WITH_PCLONE %d\n' % (sched, clone))
+                    log.write_text('native clone first-instruction state: PASS\n' if present else '')
+                    shell = 'machine=$1; top=$2; suite_log=$3\nrecord() { printf "%s" "$1"; }\n' + block
+                    r = subprocess.run(['sh', '-c', shell, 'probe', machine, str(top), str(log)], text=True, capture_output=True, check=True)
+                    required = machine != 'pc-x86_64' and sched and clone and not present
+                    assert r.stdout == ('native clone initial register state' if required else ''), (machine, sched, clone, present, r.stdout)
+print('Native initial-entry production guards: all machine alternatives and disabled gates: PASS (host shell)')

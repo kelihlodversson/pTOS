@@ -10,7 +10,8 @@ Pfork/Pvfork and ordinary Pclone without CLONE_VM still return EINVFN.
 
 Native backend evidence: x32 QEMU, ARM A32 Cortex-A7 QEMU and m68k 68040 QEMU.
 The test-only explicit-entry probe is not a fork-return test. Saved-return
-integration belongs to #932 and must preserve the child constructor's root.
+probes from #932 are integrated behind their test gate and preserve the child
+constructor's root; they are not a public fork implementation.
 030/6888x, 060, non-MMU and ARMv6 private cloning remain unsupported. Atari and
 Amiga ROM-window MMU machines are explicitly rejected before construction. Existing saved-return ABI/FPU gates remain applicable.
 

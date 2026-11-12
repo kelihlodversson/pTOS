@@ -5,7 +5,7 @@ One dispatcher, three CPU backends
 ----------------------------------
 
 CONF_WITH_NATIVE_SCHED is selectable on USER_ASPACE kernels independently of
-CUIS/libaes. bdos/native_sched.c is the existing bounded cooperative dispatcher,
+CUIS/libaes. bdos/native_sched.c is the existing persistent global cooperative dispatcher,
 not a new scheduler. KTHREAD_CONTEXT and scheduler-stack helpers now live in
 bdos/. Queue states, root-only reap, observer lifetime, PROCESS anchors, child
 waits, publication and thread-only exit policy are unchanged shared code.
@@ -111,7 +111,9 @@ registers and exception/IRQ stacks must stay in the context-switch audit.
 No IRQ or filesystem callback may yield through half-completed construction
 or finalization. Root reclamation requires the old continuation to be dead.
 
-#892 retains remaining clone policies/private-VM and loader integration work;
+#892 covers the trusted factory and native startup; gated independent VM and
+loader-prepared initial THREAD construction are integrated. Public policies
+remain deferred rather than implied by those prerequisites.
 #893 implements opt-in managed Pthjoin and cooperative Ptermgrp; see
 thread-joining.txt and group-exit.txt for their supported boundaries; #909 owns generic PROCESS
 wait/reaping evolution. Shared-VM Pexec is #894, TLS #908, non-MMU scheduling
@@ -154,8 +156,12 @@ FPU execution from a CPU-only run. CI adds this native 060 configuration to the
 existing pinned legacy matrix. QEMU's 68060 PFLUSHA limitation (#913) remains;
 physical 68030/040/060 hardware and ARM/m68k external CUIS are not claimed.
 
-Scheduler storage follow-up (#713)
+Historical scheduler storage milestones (#713)
 -----------------------------------
+The following A1/A2a/A2b prerequisite notes are historical: A2c global
+cooperative admission and B0/B1 ownership are now integrated; see
+native-scheduler-plan.txt and clone-phase3-acceptance.txt for current status.
+
 The initial eight-record arena no longer limits active concurrency. Stable
 linked slots grow before publication and are freed only after root drain.
 Native tests on all three MMU targets create twelve mixed independent PROCESS
