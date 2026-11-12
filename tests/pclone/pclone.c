@@ -609,6 +609,7 @@ static struct {
     volatile long gate, done, entered, result_a, result_b, status_a, error, spawned;
     void *output;
     long file;
+    char cwd[128];
 } joins;
 static long join_tid(long tid, int32_t *status)
 {
@@ -649,16 +650,16 @@ static void join_survivor(void *argument)
     long original_pid = Pgetpid();
     (void)argument;
     if (join_tid(joins.leader,&status) || status != 37) joins.error = 1;
-    if (Dgetpath(cwd,3) || strcmp(cwd,"\\TESTS") ||
-        Fread(joins.file,2,contents) != 2 || contents[0] != 'O' || contents[1] != 'K')
-        joins.error = 1;
-    if (Fclose(joins.file)) joins.error = 1;
+    if (Dgetpath(cwd,3) || strcmp(cwd,joins.cwd)) joins.error |= 2;
+    if (Fread(joins.file,2,contents) != 2 || contents[0] != 'O' || contents[1] != 'K')
+        joins.error |= 4;
+    if (Fclose(joins.file)) joins.error |= 8;
     /* The stopped leader is joined before creating another live member. */
     if (launch_entry(join_after_leader,CLONE_VM|CLONE_SAME_PROCESS,
                      runnable_stacks[1],&pid,&tid) <= 0 || pid != original_pid)
-        joins.error = 1;
+        joins.error |= 16;
     else if (join_tid(tid,&status) || status || joins.spawned != 1 ||
-             Pgetpid() != original_pid) joins.error = 1;
+             Pgetpid() != original_pid) joins.error |= 32;
     Pterm(53);
     joins.error = 1;
 }
@@ -669,7 +670,9 @@ static void join_leader(void *argument)
     joins.file = Fcreate("C:\\PH4JOIN.TMP",0);
     (void)Dcreate("C:\\TESTS");
     if (joins.file < 6 || Fwrite(joins.file,2,"OK") != 2 ||
-        Fseek(0,joins.file,0) != 0 || Dsetpath("C:\\TESTS")) {
+        Fseek(0,joins.file,0) != 0 || Dsetpath("C:\\TESTS") ||
+        Dgetpath(joins.cwd,3) ||
+        (strcmp(joins.cwd,"TESTS") && strcmp(joins.cwd,"\\TESTS"))) {
         joins.error = 1;
         return;
     }
@@ -763,6 +766,8 @@ static void test_joins(void)
     ptest_assert_msg(launch_entry(join_leader,CLONE_VM,runnable_stacks[0],&pid,&joins.leader)>0,"joinable leader PROCESS created");
     ptest_assert_msg(join_tid(joins.leader,0)==-20L,"TID join does not substitute for a different PROCESS wait");
     result=Pwaitpid(pid,0,0);
+    if (joins.error) printf("leader join resources: error=%ld status=%lx spawned=%ld cwd=%s\r\n",
+                            joins.error,result,joins.spawned,joins.cwd);
     ptest_assert_msg((result>>16)==pid && (result&65535)==53 && !joins.error,"survivor joins leader, creates and joins new THREAD before final PROCESS completion");
     ptest_assert_msg(joins.spawned == 1,"leader retirement preserves CWD/file resources and new same-PROCESS membership");
     ptest_assert_msg(Fdelete("C:\\PH4JOIN.TMP") == 0,"final THREAD leaves no open leader file");
