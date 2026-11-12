@@ -1,3 +1,4 @@
+#include "gem.h"
 /* Standard file-selector contracts through the production selector/adapter. */
 #include "fsel_context.h"
 #include "transport.h"
@@ -10,7 +11,6 @@
 #define CHECK(c) do { if (!(c)) { __builtin_printf("selector failure: %d\n",__LINE__); return __LINE__; } } while (0)
 extern void *malloc(__SIZE_TYPE__ bytes);
 extern void free(void *memory);
-AESGLOBAL aes_global = { .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
 static LONG display_depth, mouse_depth, keyboard_depth, overlays, dialogs, allocations;
 static LONG next_error, first_error, graphics_error, input_error, draw_error;
 static BOOL fail_alloc, fail_listing, fail_restore;
@@ -161,6 +161,7 @@ int main(void)
     char path[128] = "C:\\*.TXT", selection[13] = "";
     WORD button = 99;
     int error;
+    aes_global = (AESGLOBAL){ .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
     display_depth = 2; mouse_depth = 3; keyboard_depth = 1;
     CHECK(!fsel_input(NULL,selection,&button) && !fsel_input(path,NULL,&button));
     CHECK(!fsel_input(path,selection,NULL) && !mt_fsel_input(path,selection,&button,NULL));

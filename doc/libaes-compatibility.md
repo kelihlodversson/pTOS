@@ -1,10 +1,12 @@
 # External libaes compatibility and cutover
 
 This is the current **x32 `CONF_WITH_LIBAES`** source API inventory for #661.
-Native applications use pTOS `gem.h` and `libaes.so`, without CUIS setup or
-a userspace AES server. The native `mt_*` interface takes `AESGLOBAL *`;
-upstream GEMlib's `short *` global-array bindings must be adapted to this
-pTOS backend before use. The earlier typed x32 kernel AES service and its
+Native applications use GEMlib's pTOS `gem.h` backend and `libaes.so`, without
+CUIS setup or a userspace AES server. The native `mt_*` interface takes
+`AESGLOBAL *`. Initialize submodules before building; pTOS builds the static
+`obj/gemlib/libgem.a` bindings automatically. External clients link that archive
+before `-laes`. `include/gem.h` forwards to GEMlib; `include/libaes.h` declares
+only the implementation API. The traditional trap backend remains separate. The earlier typed x32 kernel AES service and its
 client ABI have been retired; classic kernel AES remains for single-address-
 space systems.
 
@@ -12,8 +14,8 @@ space systems.
 documented resource/queue limits. `partial` identifies selectors or extensions
 that are still missing. `unavailable` means there is no library entry point:
 an application using it cannot currently link; this is **not** a runtime stub
-returning GEM failure. Every available/partial GEM binding below also exports
-its standard `mt_*` form. `helper` rows have no `mt_*` form.
+returning GEM failure. Every available/partial operation below has an `mt_*` export in libaes
+and a classic binding in GEMlib. libaes exports only `mt_*` functions. `helper` rows have no `mt_*` form.
 
 The check in `tools/check-libaes-compatibility.py` compares this inventory with
 the export map, public declarations and legacy AES opcode inventory. It also
@@ -65,16 +67,21 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 Native `aes_*` transport/session/window/message helpers are library-private
 and declared only in `lib/aes/native_bindings.h`. Applications use the standard
 GEM exports and `gem.h`/GEMlib; `aes_global`, `gl_apid` and `gl_ap_version` are
-standard binding state, not CUIS session handles. Raw ownership/fault/scheduling
+caller-owned GEMlib binding state, not libaes exports or CUIS session handles. Raw ownership/fault/scheduling
 probes use `tests/cuis/native_probe.h` with direct syscalls, while ordinary GEM
 clients import only standard bindings. The API inventory rejects private exports.
 
-## Typed global state (first slice of #953)
+## Typed global state and binding ownership (#953)
 
 `include/aesglobal.h` is the canonical public definition, independent of kernel
 headers. Native `aes_global` is an `AESGLOBAL` object; pass `&aes_global` or the
 address of another `AESGLOBAL` to `mt_*`. Use named fields instead of word
 indices, pointer-word copies, or casts between global representations.
+`appl_init()` and successful `appl_exit()` update GEMlib's `gl_apid` and
+`gl_ap_version`. Direct `mt_*` calls operate only on the supplied public global;
+they do not discover or synchronize GEMlib's default state or another array.
+Binding data and classic wrappers are linked into the caller, including callers
+that supply some bindings themselves, such as EmuDesk.
 `ap_private` belongs to the caller, including across `mt_appl_init` and
 `mt_appl_exit`. Resource selectors `ap_ptree`, `ap_rscmem` and `ap_rsclen` are
 authoritative for the supplied global. Resource ownership records retain image
@@ -90,9 +97,12 @@ A 15-WORD buffer is only the m68k binding representation.
 
 This slice preserves the current singleton application/session behavior.
 `ap_3resv` is reserved in userspace; explicit heap contexts, context sharing,
-removal of mutable library state, and GEMlib ownership of classic wrappers and
-binding globals are subsequent slices of #953. Kernel AES retains its historical
-area-D use of `ap_3resv`. CUIS still returns one session per process: separate
+and removal of mutable library state are subsequent slices of #953. Classic
+wrappers, binding globals and public rectangle helpers now belong to GEMlib.
+Internal rectangle routines remain private to libaes.
+`tools/check-libaes-elf.py` checks actual ELF exports/imports and the archive,
+including caller-owned x32 global storage. `make libaes-elf-check` runs it.
+Kernel AES retains its historical area-D use of `ap_3resv`. CUIS still returns one session per process: separate
 `AESGLOBAL` objects do not create independent queues, windows or identities.
 No dependency on #903, new CUIS identity API, or 68k AESPB emulation is introduced.
 

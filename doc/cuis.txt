@@ -1,15 +1,22 @@
-Native AES global-state ABI (#953, first refactor slice)
-------------------------------------------------------
-The current native libaes interface takes AESGLOBAL * from include/aesglobal.h.
-Use pTOS gem.h and rebuild native clients; historical references below to
-unmodified GEMlib headers describe the previous word-array binding ABI. GEMlib's
-pTOS backend must adopt the canonical header before using these mt_* exports.
-The m68k trap ABI remains the classic 30-byte global. ARM/x32 use natural native
-layout and pointers; see doc/libaes-compatibility.md for the layout and scope.
-EmuDesk and resource handling use named fields directly. ap_private is always
-caller-owned. ap_3resv context ownership and moving classic binding wrappers to
-GEMlib remain subsequent #953 work. CUIS still has one session per process;
-multiple global objects do not imply independent sessions. #903 is separate.
+Native AES global-state and binding ABI (#953)
+---------------------------------------------
+Native libaes exports only mt_* functions taking AESGLOBAL * from the canonical
+include/aesglobal.h. include/libaes.h declares this API. Classic wrappers,
+aes_global, gl_apid/gl_ap_version and public rectangle helpers are supplied by
+GEMlib's pTOS backend, linked into each caller from obj/gemlib/libgem.a before
+-laes. include/gem.h forwards to that backend. Initialize the GEMlib submodule
+before building, and rebuild native clients against this private ABI change.
+GEMlib's appl_init and successful appl_exit update its binding id/version;
+direct mt_* calls initialize/clear only their supplied global, without updating
+another array or GEMlib's binding data. ap_private remains caller-owned.
+EmuDesk supplies its historical bindings and passes its own typed global.
+The m68k trap ABI remains 30 bytes; ARM/x32 use native layout and pointers.
+Kernel AES retains its area-D use of ap_3resv. Explicit heap context ownership,
+full reentrancy and CUIS identity changes remain separate #953 slices. CUIS
+still has one session per process; multiple globals do not imply independent
+sessions. #903 is separate. Historical implementation notes below predate this
+binding split; see doc/libaes-compatibility.md for the current ownership and API.
+
 
 pTOS - userspace AES and kernel CUIS (#661)
 ==========================================

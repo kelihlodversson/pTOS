@@ -1,26 +1,27 @@
 /* Ordinary GEM C calls over the application's own OBJECT array.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later.
  */
-#include "gem.h"
+#include "libaes.h"
+#include "object_helpers.h"
 #include "../../aes/shared/gemobjbounds.h"
 #include "../../aes/shared/gemobjtree.h"
 
-WORD objc_add(OBJECT *tree, WORD parent, WORD child)
+static WORD objc_add_local(OBJECT *tree, WORD parent, WORD child)
 {
     if (parent < ROOT || child <= ROOT || parent == child) return 0;
     ob_add(tree, parent, child);
     return 1;
 }
-WORD objc_delete(OBJECT *tree, WORD object)
+static WORD objc_delete_local(OBJECT *tree, WORD object)
 {
     if (object <= ROOT) return 0;
     return ob_delete_local(tree, object);
 }
-WORD objc_order(OBJECT *tree, WORD object, WORD position)
+static WORD objc_order_local(OBJECT *tree, WORD object, WORD position)
 {
     return ob_order(tree, object, position);
 }
-WORD objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y)
+static WORD objc_offset_local(OBJECT *tree, WORD object, WORD *x, WORD *y)
 {
     WORD local_x, local_y;
 
@@ -42,7 +43,7 @@ static BOOL object_contains(const OBJECT *object, WORD x, WORD y, WORD mx, WORD 
 /* Scan siblings forward once and descend into the last matching child:
  * later siblings are drawn on top. No recursion or per-object scratch space.
  * Native 3D/outline expansion applies; shadowed objects keep logical hits. */
-WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my)
+WORD aes_object_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my)
 {
     WORD object = start, child, found, x, y, child_x, child_y;
 
@@ -68,25 +69,25 @@ WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my)
 WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, AESGLOBAL *global)
 {
     (void)global;
-    return objc_add(tree, parent, child);
+    return objc_add_local(tree, parent, child);
 }
 WORD mt_objc_delete(OBJECT *tree, WORD object, AESGLOBAL *global)
 {
     (void)global;
-    return objc_delete(tree, object);
+    return objc_delete_local(tree, object);
 }
 WORD mt_objc_order(OBJECT *tree, WORD object, WORD position, AESGLOBAL *global)
 {
     (void)global;
-    return objc_order(tree, object, position);
+    return objc_order_local(tree, object, position);
 }
 WORD mt_objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y, AESGLOBAL *global)
 {
     (void)global;
-    return objc_offset(tree, object, x, y);
+    return objc_offset_local(tree, object, x, y);
 }
 WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, AESGLOBAL *global)
 {
     (void)global;
-    return objc_find(tree, start, depth, mx, my);
+    return aes_object_find(tree, start, depth, mx, my);
 }

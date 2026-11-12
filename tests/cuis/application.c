@@ -1377,7 +1377,7 @@ int main(void)
     CHECK(wind_get(held, WF_KIND, NULL, NULL, NULL, NULL) == 1);
     close_result = 0;
     CHECK(mt_appl_exit(&other) == 1 && !live && closes == 1 && other.ap_id == -1 && resource_resets == 1 && graphics_resets == 1);
-    CHECK(gl_apid == -1 && aes_global.ap_id == -1 && gl_ap_version == 0);
+    CHECK(gl_apid == 7 && aes_global.ap_id == 7 && gl_ap_version == 0x400);
     CHECK(aes_global.ap_private == 0x12345678L && other.ap_private == 0x76543210L);
     CHECK(mt_appl_yield(&other) == 0 && appl_exit() == 0);
     CHECK(appl_init() == 7 && live);

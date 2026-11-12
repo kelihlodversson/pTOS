@@ -4,7 +4,6 @@
 #include "gemerror.h"
 #include "string.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell metadata failure: %d\n",__LINE__); return __LINE__; } } while (0)
-AESGLOBAL aes_global = { .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
 static UBYTE shared[4][256];
 static LONG sizes[4], depth = 2, writes, calls;
 static BOOL fail_lock, fail_read, fail_write, fail_size, fail_release;
@@ -45,6 +44,7 @@ int main(void)
     AESGLOBAL global = { 0 };
     LONG previous, count;
     int i;
+    aes_global = (AESGLOBAL){ .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
     memcpy(&global,&aes_global,sizeof(global));
     shel_rdef(command,directory);
     VERIFY(!*command && !*directory && scrp_read(scrap) == 1 && !*scrap);

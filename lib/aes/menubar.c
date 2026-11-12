@@ -1,6 +1,7 @@
 /* Standard menu bars: caller-owned GEM trees, native painting and tracking.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
+#include "object_helpers.h"
 #include "gemerror.h"
 #include "application.h"
 #include "transport.h"
@@ -82,7 +83,7 @@ static WORD title_at(WORD x, WORD y)
 {
     WORD i, title;
     if (y < 0 || y >= bar.height) return NIL;
-    title = objc_find(bar.tree,2,1,x,y);
+    title = aes_object_find(bar.tree,2,1,x,y);
     for (i = 0; i < bar.pairs; i++) if (bar.entries[i].title == title &&
         !(bar.tree[title].ob_state & DISABLED) && !(bar.tree[title].ob_flags & HIDETREE)) return i;
     return NIL;
@@ -218,7 +219,7 @@ done:
     if (next.entries) (void)aes_resource_discard(next.entries);
     return ok;
 }
-WORD menu_bar(OBJECT *tree, WORD show) { return mt_menu_bar(tree,show,&aes_global); }
+
 
 typedef struct {
     OBJECT *tree;
@@ -338,7 +339,7 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
             copied = TRUE;
             if (!mt_objc_draw(bar.tree,bar.entries[current].menu,1,rect.g_x,rect.g_y,rect.g_w,rect.g_h,global)) { ok = FALSE; break; }
         }
-        candidate = objc_find(bar.tree,bar.entries[current].menu,1,mx,my);
+        candidate = aes_object_find(bar.tree,bar.entries[current].menu,1,mx,my);
         if (candidate == bar.entries[current].menu || candidate < 0 ||
             (bar.tree[candidate].ob_state & DISABLED) || (bar.tree[candidate].ob_flags & HIDETREE)) candidate = NIL;
         if (candidate != active) {
@@ -357,7 +358,7 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
         if (events & MU_BUTTON) {
             if (!pressed) { pressed = TRUE; continue; }
             pressed = FALSE;
-            item = objc_find(bar.tree,bar.entries[current].menu,1,mx,my);
+            item = aes_object_find(bar.tree,bar.entries[current].menu,1,mx,my);
             if (pair != NIL) continue;
             if (item > 0 && item != bar.entries[current].menu && !(bar.tree[item].ob_state & DISABLED) && !(bar.tree[item].ob_flags & HIDETREE)) {
                 title = bar.entries[current].title;

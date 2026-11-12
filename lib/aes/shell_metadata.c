@@ -1,6 +1,6 @@
 /* Standard GEM desktop-default and clipboard metadata, shared across clients.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "application.h"
 #include "transport.h"
 #include "gemerror.h"
@@ -68,7 +68,7 @@ void mt_shel_rdef(char *command, char *directory, AESGLOBAL *global)
     strcpy(command,staged.command);
     strcpy(directory,staged.directory);
 }
-void shel_rdef(char *command, char *directory) { mt_shel_rdef(command,directory,&aes_global); }
+
 
 void mt_shel_wdef(const char *command, const char *directory, AESGLOBAL *global)
 {
@@ -78,7 +78,7 @@ void mt_shel_wdef(const char *command, const char *directory, AESGLOBAL *global)
         !copy_string(staged.directory,directory,sizeof(staged.directory))) return;
     (void)context_transfer(session,DEFAULT_CONTEXT_SLOT,&staged,sizeof(staged),TRUE);
 }
-void shel_wdef(const char *command, const char *directory) { mt_shel_wdef(command,directory,&aes_global); }
+
 
 short mt_scrp_read(char *path, AESGLOBAL *global)
 {
@@ -89,7 +89,7 @@ short mt_scrp_read(char *path, AESGLOBAL *global)
     /* Atari TOS succeeds even for an empty path and never probes the disk. */
     return 1;
 }
-short scrp_read(char *path) { return mt_scrp_read(path,&aes_global); }
+
 
 short mt_scrp_write(const char *path, AESGLOBAL *global)
 {
@@ -98,4 +98,3 @@ short mt_scrp_write(const char *path, AESGLOBAL *global)
     if (session < 0 || !copy_string(staged,path,sizeof(staged))) return 0;
     return context_transfer(session,SCRAP_CONTEXT_SLOT,staged,sizeof(staged),TRUE) ? 1 : 0;
 }
-short scrp_write(const char *path) { return mt_scrp_write(path,&aes_global); }

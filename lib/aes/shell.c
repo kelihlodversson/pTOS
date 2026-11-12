@@ -1,6 +1,6 @@
 /* Standard GEM shell startup/environment/file lookup, without shell services.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "shell_context.h"
 #include "resource_context.h"
 #include "application.h"
@@ -88,7 +88,7 @@ WORD mt_shel_read(char *command, char *tail, AESGLOBAL *global)
     if (!command || !tail || !startup_ready || aes_application_session(global) < 0) return 0;
     aes_shell_read_core(command,tail); return 1;
 }
-WORD shel_read(char *command, char *tail) { return mt_shel_read(command,tail,&aes_global); }
+
 static WORD application_kind(const char *path)
 {
     ULONG length = strlen(path), i;
@@ -204,8 +204,7 @@ finished:
     if (arguments.environment) (void)aes_resource_discard(arguments.environment);
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
 }
-WORD shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail)
-{ return mt_shel_write(mode,graphical,execution,command,tail,&aes_global); }
+
 WORD mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global)
 {
     char *found;
@@ -213,7 +212,7 @@ WORD mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global)
         aes_application_session(global) < 0 || !environment_valid()) return 0;
     aes_shell_env_core(&found,prefix); *result = found; return 1;
 }
-WORD shel_envrn(char **result, const char *prefix) { return mt_shel_envrn(result,prefix,&aes_global); }
+
 WORD mt_shel_find(char *path, AESGLOBAL *global)
 {
     SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
@@ -232,4 +231,3 @@ WORD mt_shel_find(char *path, AESGLOBAL *global)
     if (!result || !c.ok) return 0;
     strcpy(path,staged); return 1;
 }
-WORD shel_find(char *path) { return mt_shel_find(path,&aes_global); }

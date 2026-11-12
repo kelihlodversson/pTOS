@@ -1,7 +1,7 @@
 /* Private adapter for the shared native GEM tracking core. */
 #ifndef LIBAES_TRACKING_H
 #define LIBAES_TRACKING_H
-#include "gem.h"
+#include "libaes.h"
 #define AES_TRACK_RUBBER 0
 #define AES_TRACK_DRAG 1
 #define AES_TRACK_SLIDE 2

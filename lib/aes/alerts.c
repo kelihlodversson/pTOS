@@ -1,6 +1,6 @@
 /* Standard GEM alerts using the shared native parser, geometry and icons.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "vdi_service.h"
 #include "application.h"
@@ -66,7 +66,7 @@ done:
     if (overlay) aes_frames_resume();
     return ok ? selection : 0;
 }
-WORD form_alert(WORD button, const char *text) { return mt_form_alert(button,text,&aes_global); }
+
 
 WORD aes_error_show(WORD string, WORD *number, WORD button)
 {
@@ -108,4 +108,3 @@ WORD mt_form_error(WORD error, AESGLOBAL *global)
     error_global = saved; error_ok = saved_ok;
     return ok ? result : 0;
 }
-WORD form_error(WORD error) { return mt_form_error(error,&aes_global); }

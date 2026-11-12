@@ -6,7 +6,6 @@
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell buffer failure: %d\n",__LINE__); return __LINE__; } } while (0)
 extern void *malloc(__SIZE_TYPE__ bytes);
 extern void free(void *memory);
-AESGLOBAL aes_global = { .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
 static UBYTE shared[32767], pattern[32767], output[32769];
 static LONG size, depth = 2, allocations;
 static BOOL fail_alloc, fail_lock, fail_read, fail_write, fail_size, fail_release;
@@ -44,6 +43,7 @@ int main(void)
 {
     AESGLOBAL global = { 0 };
     int i;
+    aes_global = (AESGLOBAL){ .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
     memcpy(&global,&aes_global,sizeof(global));
     VERIFY(shel_get(NULL,SHEL_BUFSIZE) == 4192 && depth == 2);
     memset(output,0x55,sizeof(output));

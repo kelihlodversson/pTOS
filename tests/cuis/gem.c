@@ -93,7 +93,7 @@ int main(int argc, char **argv, char **envp)
         GEM_TEST_CHECK(aes_global.ap_private == 1234 && gl_apid == id && globals.ap_id == id);
     }
     GEM_TEST_CHECK(evnt_timer(0) == 1 && mt_appl_exit(&globals) == 1);
-    GEM_TEST_CHECK(gl_apid == -1 && aes_global.ap_id == -1 && globals.ap_id == -1);
+    GEM_TEST_CHECK(gl_apid == id && aes_global.ap_id == id && globals.ap_id == -1);
     GEM_TEST_CHECK(appl_exit() == 0 && appl_init() == id && appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM lifecycle/timers: PASS\r\n";

@@ -101,6 +101,7 @@ jobs:
           make CROSS_COMPILE= x32test x32-vdi-import-test
           readelf -d obj/libaes/CUIS.TOS | grep 'libaes.so'
           readelf -l obj/libaes/CUIS.TOS | grep '/GEMSYS/LIB/X32/LD.SO'
+          python3 tools/check-libaes-elf.py obj/libaes/libaes.so obj/gemlib/libgem.a obj/libaes/GEM.TOS
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Exercise shared desktop and console consumers

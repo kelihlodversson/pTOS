@@ -1,6 +1,6 @@
 /* Standard shared desktop shell context, with classic and AES4 size semantics.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "application.h"
 #include "transport.h"
 #include "resource_context.h"
@@ -43,7 +43,7 @@ short mt_shel_get(char *buffer, short length, AESGLOBAL *global)
     if (staged) (void)aes_resource_discard(staged);
     return result;
 }
-short shel_get(char *buffer, short length) { return mt_shel_get(buffer,length,&aes_global); }
+
 short mt_shel_put(const char *buffer, short length, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
@@ -55,4 +55,3 @@ short mt_shel_put(const char *buffer, short length, AESGLOBAL *global)
     if (!release_context(session)) ok = FALSE;
     return ok ? 1 : 0;
 }
-short shel_put(const char *buffer, short length) { return mt_shel_put(buffer,length,&aes_global); }

@@ -2,7 +2,7 @@
 #ifndef LIBAES_RENDER_CONTEXT_H
 #define LIBAES_RENDER_CONTEXT_H
 #include "emutos.h"
-#include "gem.h"
+#include "libaes.h"
 #include "aesext.h"
 #include "vdipb.h"
 #include "gsxdefs.h"

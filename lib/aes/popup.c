@@ -1,6 +1,7 @@
 /* Standard standalone GEM popup menus using caller-local tracking.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
+#include "object_helpers.h"
 #include "gemerror.h"
 #include "application.h"
 #include "transport.h"
@@ -32,7 +33,7 @@ static BOOL popup_pointer(void *context, WORD *x, WORD *y)
 static WORD popup_find(void *context, OBJECT *tree, WORD root, WORD x, WORD y)
 {
     (void)context;
-    return objc_find(tree,root,1,x,y);
+    return aes_object_find(tree,root,1,x,y);
 }
 static BOOL popup_rect(void *context, OBJECT *tree, WORD item, GRECT *rect)
 {
@@ -167,5 +168,3 @@ done:
     result->mn_keystate = 0;
     return 0;
 }
-WORD menu_popup(MENU *menu, WORD x, WORD y, MENU *result)
-{ return mt_menu_popup(menu,x,y,result,&aes_global); }

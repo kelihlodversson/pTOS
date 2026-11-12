@@ -1,6 +1,6 @@
 /* Standard GEM resources in application memory, using the shared RSC loader.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
@@ -316,7 +316,7 @@ WORD mt_rsrc_load(const char *name, AESGLOBAL *global)
     aes_resource = saved;
     return ok ? 1 : 0;
 }
-WORD rsrc_load(const char *name) { return mt_rsrc_load(name,&aes_global); }
+
 
 WORD mt_rsrc_rcfix(void *image, AESGLOBAL *global)
 {
@@ -368,7 +368,7 @@ WORD mt_rsrc_rcfix(void *image, AESGLOBAL *global)
     aes_resource_discard(staged);
     return ok ? 1 : 0;
 }
-WORD rsrc_rcfix(void *image) { return mt_rsrc_rcfix(image,&aes_global); }
+
 
 WORD mt_rsrc_free(AESGLOBAL *global)
 {
@@ -383,7 +383,7 @@ WORD mt_rsrc_free(AESGLOBAL *global)
     publish(global,NULL);
     return 1;
 }
-WORD rsrc_free(void) { return mt_rsrc_free(&aes_global); }
+
 void aes_resources_reset(void)
 {
     RESOURCE_CONTEXT *next;
@@ -427,7 +427,7 @@ WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, AESGLOBAL *global)
     memcpy(address,&value,sizeof(value));
     return value != (void *)-1L;
 }
-WORD rsrc_gaddr(WORD type, WORD index, void *address) { return mt_rsrc_gaddr(type,index,address,&aes_global); }
+
 WORD mt_rsrc_saddr(WORD type, WORD index, void *address, AESGLOBAL *global)
 {
     void *slot;
@@ -435,4 +435,3 @@ WORD mt_rsrc_saddr(WORD type, WORD index, void *address, AESGLOBAL *global)
     memcpy(slot,&address,sizeof(address));
     return 1;
 }
-WORD rsrc_saddr(WORD type, WORD index, void *address) { return mt_rsrc_saddr(type,index,address,&aes_global); }

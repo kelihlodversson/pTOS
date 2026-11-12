@@ -29,7 +29,6 @@
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("object draw failure: %d\n",__LINE__); return __LINE__; } } while (0)
-AESGLOBAL aes_global;
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
@@ -1149,6 +1148,7 @@ int main(void)
     USERBLK user;
     TEDINFO changed = { 0 };
     char raw[] = "AB", pattern[] = "__.__", big[258];
+    aes_global = (AESGLOBAL){ 0 };
     VERIFY(tracking_checks() == 0);
     VERIFY(frame_metric_checks() == 0);
     VERIFY(frame_paint_checks() == 0);

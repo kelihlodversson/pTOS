@@ -20,8 +20,7 @@ WORD mt_graf_rubberbox(WORD x, WORD y, WORD wmin, WORD hmin, WORD *w, WORD *h, A
     if (!aes_graphics_track(&t)) return 0;
     *w = t.result1; *h = t.result2; return 1;
 }
-WORD graf_rubberbox(WORD x, WORD y, WORD wmin, WORD hmin, WORD *w, WORD *h)
-{ return mt_graf_rubberbox(x,y,wmin,hmin,w,h,&aes_global); }
+
 WORD mt_graf_dragbox(WORD w, WORD h, WORD x, WORD y, WORD bx, WORD by, WORD bw, WORD bh,
                      WORD *rx, WORD *ry, AESGLOBAL *global)
 {
@@ -33,8 +32,7 @@ WORD mt_graf_dragbox(WORD w, WORD h, WORD x, WORD y, WORD bx, WORD by, WORD bw, 
     if (!aes_graphics_track(&t)) return 0;
     *rx = t.result1; *ry = t.result2; return 1;
 }
-WORD graf_dragbox(WORD w, WORD h, WORD x, WORD y, WORD bx, WORD by, WORD bw, WORD bh, WORD *rx, WORD *ry)
-{ return mt_graf_dragbox(w,h,x,y,bx,by,bw,bh,rx,ry,&aes_global); }
+
 
 WORD mt_graf_slidebox(OBJECT *tree, WORD parent, WORD object, WORD vertical, AESGLOBAL *global)
 {
@@ -92,5 +90,3 @@ done:
     if (aes_resource_discard(parents) != E_OK) valid = FALSE;
     return valid && aes_graphics_track(&t) ? t.result1 : 0;
 }
-WORD graf_slidebox(OBJECT *tree, WORD parent, WORD object, WORD vertical)
-{ return mt_graf_slidebox(tree,parent,object,vertical,&aes_global); }

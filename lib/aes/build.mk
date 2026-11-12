@@ -1,11 +1,16 @@
+# Classic bindings are linked into each native client from GEMlib.
+LIBAES_BINDINGS = obj/gemlib/libgem.a
+$(LIBAES_BINDINGS): $(wildcard lib/gemlib/ptos/*.[ch]) lib/gemlib/ptos/build.mk include/libaes.h include/aesglobal.h
+	$(MAKE) -C lib/gemlib BACKEND=ptos ARCH=x32 PTOS_INCLUDE="$(abspath include)" PTOS_BUILD="$(abspath obj/gemlib)" CC="$(X32_CC)" AR="$(AR)"
+
 # Ordinary shared ELF, distinct from the historic fixed-image import stubs.
 LIBAES_CFLAGS = $(LDSO_CFLAGS) -DOB_WALK_COORD=LONG -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
 LIBAES_ARCH_HEADERS-$(ARCH_X86_64) = -Iinclude/arch/x86_64
-obj/libaes/application.o: lib/aes/application.c lib/aes/lifecycle.h lib/aes/desktop.h lib/aes/graphics.h lib/aes/menubar.h lib/aes/application.h include/gem.h include/aesglobal.h lib/aes/transport.h lib/aes/native_bindings.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/application.o: lib/aes/application.c lib/aes/lifecycle.h lib/aes/desktop.h lib/aes/graphics.h lib/aes/menubar.h lib/aes/application.h include/libaes.h include/aesglobal.h lib/aes/transport.h lib/aes/native_bindings.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/gemwindows.o: lib/aes/gemwindows.c lib/aes/desktop.h lib/aes/frame_colours.h lib/aes/graphics.h aes/shared/gemslidegeom.h aes/shared/gemsizegeom.h aes/shared/gemmovegeom.h lib/aes/resource_context.h lib/aes/frames.h lib/aes/layout.h aes/shared/gemframegeom.h lib/aes/application.h lib/aes/transport.h include/gem.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/gemwindows.o: lib/aes/gemwindows.c lib/aes/desktop.h lib/aes/frame_colours.h lib/aes/graphics.h aes/shared/gemslidegeom.h aes/shared/gemsizegeom.h aes/shared/gemmovegeom.h lib/aes/resource_context.h lib/aes/frames.h lib/aes/layout.h aes/shared/gemframegeom.h lib/aes/application.h lib/aes/transport.h include/libaes.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
 obj/libaes/draw_string.o: util/string.c include/aesglobal.h $(AUTOCONF_H)
@@ -23,10 +28,10 @@ $(LIBAES_RENDER_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemobjbounds
 obj/libaes/gemobjwalk.o: aes/shared/gemobjwalk.c aes/gemobjop.h aes/shared/gemrender.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/draw.o: lib/aes/draw.c aes/shared/gemslidegeom.h aes/shared/gemobjbounds.h aes/shared/gemsizegeom.h aes/shared/gemframegeom.h lib/aes/frames.h aes/shared/gemmovegeom.h aes/gemobjop.h lib/aes/style.h aes/shared/gemcicon.h include/vdi_colmap.h lib/aes/resource_context.h aes/shared/gemrender.h lib/aes/render_context.h include/gem.h include/aesglobal.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
+obj/libaes/draw.o: lib/aes/draw.c aes/shared/gemslidegeom.h aes/shared/gemobjbounds.h aes/shared/gemsizegeom.h aes/shared/gemframegeom.h lib/aes/frames.h aes/shared/gemmovegeom.h aes/gemobjop.h lib/aes/style.h aes/shared/gemcicon.h include/vdi_colmap.h lib/aes/resource_context.h aes/shared/gemrender.h lib/aes/render_context.h include/libaes.h include/aesglobal.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/events.o: lib/aes/events.c lib/aes/lifecycle.h lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h include/gem.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/events.o: lib/aes/events.c lib/aes/lifecycle.h lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h include/libaes.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/session.o: lib/aes/session.c lib/aes/transport.h lib/aes/native_bindings.h include/cuis.h include/aesglobal.h $(AUTOCONF_H)
@@ -50,20 +55,20 @@ obj/libaes/objects.o: lib/aes/objects.c aes/shared/gemobjbounds.h aes/shared/gem
 obj/libaes/gemlayout.o: aes/shared/gemlayout.c aes/shared/gemlayout.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/layout.o: lib/aes/layout.c lib/aes/layout.h aes/shared/gemlayout.h include/gem.h include/aesglobal.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
+obj/libaes/layout.o: lib/aes/layout.c lib/aes/layout.h aes/shared/gemlayout.h include/libaes.h include/aesglobal.h include/vdi_service.h lib/aes/transport.h lib/aes/application.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemformkey.o: aes/shared/gemformkey.c aes/shared/gemformkey.h lib/aes/formkey_bindings.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_FORMKEY_BINDINGS='"formkey_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/formkeys.o: lib/aes/formkeys.c lib/aes/layout.h lib/aes/application.h aes/shared/gemformkey.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/formkeys.o: lib/aes/formkeys.c lib/aes/layout.h lib/aes/application.h aes/shared/gemformkey.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 LIBAES_FORM_OBJECTS = obj/libaes/gemformbutton.o obj/libaes/gemwatch.o
 $(LIBAES_FORM_OBJECTS): obj/libaes/%.o: aes/shared/%.c aes/shared/gemwatch.h lib/aes/form_bindings.h lib/aes/form_context.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_FORM_BINDINGS='"form_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
-obj/libaes/formbutton.o: lib/aes/formbutton.c aes/shared/gemobjbounds.h aes/gemobjop.h lib/aes/render_context.h lib/aes/style.h lib/aes/form_context.h lib/aes/layout.h lib/aes/application.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/formbutton.o: lib/aes/formbutton.c aes/shared/gemobjbounds.h aes/gemobjop.h lib/aes/render_context.h lib/aes/style.h lib/aes/form_context.h lib/aes/layout.h lib/aes/application.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemedit.o: aes/shared/gemedit.c lib/aes/edit_bindings.h lib/aes/render_context.h lib/aes/style.h include/aesglobal.h $(AUTOCONF_H)
@@ -135,38 +140,38 @@ $(LDSO_RUNTIME_DIR): $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 all: $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 
 obj/libaes/CUIS.TOS: tests/cuis/program.c tests/cuis/objects.c tests/cuis/drawing.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
-                     obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h include/gem.h include/aesglobal.h include/cuis.h
+                     obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so tests/cuis/native_probe.h include/libaes.h include/aesglobal.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.S %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.S %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/CUIS.TOS
 endif
 
 obj/libaes/CUISCHED.TOS: tests/cuis/scheduled.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
-                         obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h include/gem.h include/aesglobal.h include/cuis.h
+                         obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so tests/cuis/native_probe.h include/libaes.h include/aesglobal.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.S %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.S %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/CUISCHED.TOS
 endif
 
-obj/libaes/ASYNC.TOS: tests/cuis/async.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so tests/cuis/native_probe.h include/gem.h include/aesglobal.h
+obj/libaes/ASYNC.TOS: tests/cuis/async.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so tests/cuis/native_probe.h include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/ASYNC.TOS
 endif
 
-obj/libaes/GEM.TOS: tests/cuis/gem_explicit.c tests/cuis/gem_explicit.h obj/libaes/EXPLICIT.PRG tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEM.TOS: tests/cuis/gem_explicit.c tests/cuis/gem_explicit.h obj/libaes/EXPLICIT.PRG tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEM.TOS
 endif
 
-obj/libaes/DESKGEM.PRG: tests/x32_desktop/cuis_client.c obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/DESKGEM.PRG: tests/x32_desktop/cuis_client.c obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o %.a,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter-out $(LIBAES_BINDINGS),$(filter %.c %.o %.a,$^)) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 
 obj/libaes/DESKCON.TOS: tests/x32_desktop/console.c obj/ldso/dyncrt.o obj/ldso/libptos.so
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) \
@@ -180,61 +185,61 @@ obj/libaes/LAUNCH.TOS: tests/x32_desktop/launch_context.c obj/ldso/dyncrt.o obj/
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/ldso -lptos
 
-obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMMSG.TOS
 endif
 
-obj/libaes/GEMEVNT.TOS: tests/cuis/gem_events.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMEVNT.TOS: tests/cuis/gem_events.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMEVNT.TOS
 endif
 
-obj/libaes/GEMWIN.TOS: tests/cuis/control_message.h tests/cuis/gem_windows.c tests/cuis/window_api.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMWIN.TOS: tests/cuis/control_message.h tests/cuis/gem_windows.c tests/cuis/window_api.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter-out tests/cuis/window_api.c,$(filter %.c %.o,$^)) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter-out tests/cuis/window_api.c,$(filter %.c %.o,$^)) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMWIN.TOS
 endif
 
-obj/libaes/GEMUPD.TOS: tests/cuis/control_message.h tests/cuis/gem_update.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMUPD.TOS: tests/cuis/control_message.h tests/cuis/gem_update.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMUPD.TOS
 endif
 
-obj/libaes/GEMFOC.TOS: tests/cuis/gem_focus.c obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMFOC.TOS: tests/cuis/gem_focus.c obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMFOC.TOS
 endif
 
-obj/libaes/GEMINP.TOS: tests/cuis/gem_input.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMINP.TOS: tests/cuis/gem_input.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMINP.TOS
 endif
 
-obj/libaes/GEMMCTL.TOS: tests/cuis/control_message.h tests/cuis/gem_mouse.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMMCTL.TOS: tests/cuis/control_message.h tests/cuis/gem_mouse.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMMCTL.TOS
 endif
 
-obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h tests/cuis/native_probe.h include/gem.h include/aesglobal.h include/vdi_service.h $(AUTOCONF_H)
+obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h tests/cuis/native_probe.h include/libaes.h include/aesglobal.h include/vdi_service.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/GEMDRAW.TOS: tests/cuis/gem_selector.c tests/cuis/gem_selector.h tests/cuis/box_animations.c tests/cuis/box_animations.h tests/cuis/gem_tracking.c tests/cuis/gem_tracking.h tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/GEMDRAW.TOS: tests/cuis/gem_selector.c tests/cuis/gem_selector.h tests/cuis/box_animations.c tests/cuis/box_animations.h tests/cuis/gem_tracking.c tests/cuis/gem_tracking.h tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMDRAW.TOS
 endif
@@ -246,21 +251,21 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMTEST.RSC
 endif
 
-obj/libaes/menus.o: lib/aes/menus.c lib/aes/menu_bindings.h lib/aes/application.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/menus.o: lib/aes/menus.c lib/aes/menu_bindings.h lib/aes/application.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/gemmenuchange.o: aes/shared/gemmenuchange.c lib/aes/menu_bindings.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/gemmenuchange.o: aes/shared/gemmenuchange.c lib/aes/menu_bindings.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -DAES_MENU_BINDINGS='"menu_bindings.h"' -c $< -o $@
 
-obj/libaes/popup.o: lib/aes/popup.c include/gemmenu.h include/gem.h include/aesglobal.h aes/shared/gemmenupopup.h aes/shared/gemobjbounds.h lib/aes/resource_context.h lib/aes/application.h lib/aes/layout.h lib/aes/transport.h $(AUTOCONF_H)
+obj/libaes/popup.o: lib/aes/popup.c include/gemmenu.h include/libaes.h include/aesglobal.h aes/shared/gemmenupopup.h aes/shared/gemobjbounds.h lib/aes/resource_context.h lib/aes/application.h lib/aes/layout.h lib/aes/transport.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/gemmenupopup.o: aes/shared/gemmenupopup.c aes/shared/gemmenupopup.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
 
-obj/libaes/menubar.o: lib/aes/menubar.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h lib/aes/layout.h lib/aes/resource_context.h aes/shared/gemobjtree.h aes/shared/gemobjbounds.h aes/shared/gemmenubar.h aes/shared/gemdesk.h include/vdi_service.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/menubar.o: lib/aes/menubar.c lib/aes/menubar.h lib/aes/application.h lib/aes/transport.h lib/aes/layout.h lib/aes/resource_context.h aes/shared/gemobjtree.h aes/shared/gemobjbounds.h aes/shared/gemmenubar.h aes/shared/gemdesk.h include/vdi_service.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/gemmenubar.o: aes/shared/gemmenubar.c aes/shared/gemmenubar.h include/aesglobal.h $(AUTOCONF_H)
@@ -270,12 +275,12 @@ obj/libaes/gemmenubar.o: aes/shared/gemmenubar.c aes/shared/gemmenubar.h include
 obj/libaes/mforms.c obj/libaes/mforms.h &: mrd aes/mform.rsc aes/mform.def
 	@mkdir -p obj/libaes
 	./mrd -pmform aes/mform obj/libaes/mforms
-obj/libaes/mforms.o: obj/libaes/mforms.c obj/libaes/mforms.h include/gem.h include/aesglobal.h include/mform.h $(AUTOCONF_H)
+obj/libaes/mforms.o: obj/libaes/mforms.c obj/libaes/mforms.h include/libaes.h include/aesglobal.h include/mform.h $(AUTOCONF_H)
 	$(CC) $(LIBAES_CFLAGS) -Iobj/libaes -include gem.h -c $< -o $@
-obj/libaes/graphics.o: lib/aes/graphics.c lib/aes/graphics.h lib/aes/layout.h lib/aes/application.h lib/aes/transport.h include/gem.h include/aesglobal.h include/mform.h include/vdi_service.h include/cuis.h obj/libaes/mforms.h $(AUTOCONF_H)
+obj/libaes/graphics.o: lib/aes/graphics.c lib/aes/graphics.h lib/aes/layout.h lib/aes/application.h lib/aes/transport.h include/libaes.h include/aesglobal.h include/mform.h include/vdi_service.h include/cuis.h obj/libaes/mforms.h $(AUTOCONF_H)
 	$(CC) $(LIBAES_CFLAGS) -Iobj/libaes -c $< -o $@
 
-obj/libaes/tracking.o: lib/aes/tracking.c lib/aes/tracking.h include/gem.h include/aesglobal.h aes/shared/gemobjbounds.h $(AUTOCONF_H)
+obj/libaes/tracking.o: lib/aes/tracking.c lib/aes/tracking.h include/libaes.h include/aesglobal.h aes/shared/gemobjbounds.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/gemgrtrack.o: aes/shared/gemgrtrack.c lib/aes/track_bindings.h lib/aes/tracking.h lib/aes/render_bindings.h lib/aes/render_context.h include/aesglobal.h $(AUTOCONF_H)
@@ -283,13 +288,13 @@ obj/libaes/gemgrtrack.o: aes/shared/gemgrtrack.c lib/aes/track_bindings.h lib/ae
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_GRTRACK_BINDINGS='"track_bindings.h"' -c $< -o $@
 obj/libaes/draw.o: lib/aes/tracking.h
 
-obj/libaes/animations.o: lib/aes/animations.c lib/aes/animation.h lib/aes/application.h lib/aes/transport.h include/gem.h include/aesglobal.h include/cuis.h include/gemerror.h $(AUTOCONF_H)
+obj/libaes/animations.o: lib/aes/animations.c lib/aes/animation.h lib/aes/application.h lib/aes/transport.h include/libaes.h include/aesglobal.h include/cuis.h include/gemerror.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/draw.o obj/libaes/forms.o obj/libaes/gemformanim.o: lib/aes/animation.h
 obj/libaes/gemformanim.o: lib/aes/render_bindings.h
 
-obj/libaes/desktop.o: lib/aes/desktop.c lib/aes/desktop.h lib/aes/application.h lib/aes/transport.h lib/aes/resource_context.h lib/aes/layout.h include/gem.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/desktop.o: lib/aes/desktop.c lib/aes/desktop.h lib/aes/application.h lib/aes/transport.h lib/aes/resource_context.h lib/aes/layout.h include/libaes.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 
@@ -306,22 +311,22 @@ obj/libaes/selector_miscutil.o: util/miscutil.c include/i18nconf.h include/aesgl
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -ffunction-sections -fdata-sections -c $< -o $@
 
-obj/libaes/shell.o: lib/aes/shell.c lib/aes/lifecycle.h lib/ldso/launch.h lib/aes/shell_context.h lib/aes/resource_context.h lib/aes/transport.h lib/aes/application.h lib/ldso/client/ptos.h include/gem.h include/aesglobal.h include/bdosdefs.h include/userptr.h $(AUTOCONF_H)
+obj/libaes/shell.o: lib/aes/shell.c lib/aes/lifecycle.h lib/ldso/launch.h lib/aes/shell_context.h lib/aes/resource_context.h lib/aes/transport.h lib/aes/application.h lib/ldso/client/ptos.h include/libaes.h include/aesglobal.h include/bdosdefs.h include/userptr.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -ffunction-sections -fdata-sections -c $< -o $@
 obj/libaes/gemshquery.o: aes/shared/gemshquery.c aes/shared/gemshquery.h lib/aes/shell_bindings.h lib/aes/shell_context.h lib/aes/resource_context.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Ilib/aes -Iaes -Iaes/shared -DAES_SHELL_BINDINGS='"shell_bindings.h"' -ffunction-sections -fdata-sections -c $< -o $@
 
-obj/libaes/shell_buffer.o: lib/aes/shell_buffer.c lib/aes/application.h lib/aes/transport.h lib/aes/resource_context.h include/cuis.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/shell_buffer.o: lib/aes/shell_buffer.c lib/aes/application.h lib/aes/transport.h lib/aes/resource_context.h include/cuis.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 
-obj/libaes/shell_metadata.o: lib/aes/shell_metadata.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/shell_metadata.o: lib/aes/shell_metadata.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 
-obj/libaes/children.o: lib/aes/children.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/gem.h include/aesglobal.h $(AUTOCONF_H)
+obj/libaes/children.o: lib/aes/children.c lib/aes/application.h lib/aes/transport.h include/cuis.h include/libaes.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 
@@ -329,30 +334,34 @@ obj/libaes/FIXED.PRG: tests/cuis/fixed_child.c
 	@mkdir -p $(@D)
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Os -fno-stack-protector -Wl,-e,_start -o $@ $<
 
-obj/libaes/CHAIN.PRG: tests/cuis/chain_client.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/CHAIN.PRG: tests/cuis/chain_client.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	@mkdir -p $(@D)
-	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 
 obj/libaes/shell_arguments.o: lib/aes/shell_arguments.c lib/aes/shell_arguments.h lib/aes/shell_context.h lib/aes/resource_context.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/shell.o: lib/aes/shell_arguments.h
 
-obj/libaes/DESKACC.ACC: tests/x32_desktop/accessory.c obj/x32/libptos-vdi.a obj/ldso/dynacccrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/DESKACC.ACC: tests/x32_desktop/accessory.c obj/x32/libptos-vdi.a obj/ldso/dynacccrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o %.a,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter-out $(LIBAES_BINDINGS),$(filter %.c %.o %.a,$^)) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 
-obj/libaes/lifecycle.o: lib/aes/lifecycle.c lib/aes/lifecycle.h lib/aes/application.h lib/aes/transport.h include/gem.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/lifecycle.o: lib/aes/lifecycle.c lib/aes/lifecycle.h lib/aes/application.h lib/aes/transport.h include/libaes.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 
-obj/libaes/GEMLIFE.PRG: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h include/cuis.h
+obj/libaes/GEMLIFE.PRG: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
-obj/libaes/GEMLIFE.ACC: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dynacccrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h include/cuis.h
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
+obj/libaes/GEMLIFE.ACC: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dynacccrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 
-obj/libaes/EXPLICIT.PRG: tests/cuis/gem_explicit_child.c obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h include/aesglobal.h
+obj/libaes/EXPLICIT.PRG: tests/cuis/gem_explicit_child.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
+
+.PHONY: libaes-elf-check
+libaes-elf-check: obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/libaes/GEM.TOS
+	python3 tools/check-libaes-elf.py obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/libaes/GEM.TOS

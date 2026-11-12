@@ -1,7 +1,7 @@
 /* Per-call form gesture state; callbacks can nest ordinary GEM operations. */
 #ifndef LIBAES_FORM_CONTEXT_H
 #define LIBAES_FORM_CONTEXT_H
-#include "gem.h"
+#include "libaes.h"
 #include "layout.h"
 typedef struct {
     AESGLOBAL *global;

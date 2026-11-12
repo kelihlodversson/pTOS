@@ -1,7 +1,7 @@
 /* Stack-owned alerts, including nested USERDEF calls. */
 #ifndef LIBAES_ALERT_CONTEXT_H
 #define LIBAES_ALERT_CONTEXT_H
-#include "gem.h"
+#include "libaes.h"
 #include "layout.h"
 #include "gem_rsc.h"
 typedef struct {

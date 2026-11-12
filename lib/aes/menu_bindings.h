@@ -1,7 +1,7 @@
 /* Compile the native menu state routine against ordinary GEM calls. */
 #ifndef LIBAES_MENU_BINDINGS_H
 #define LIBAES_MENU_BINDINGS_H
-#include "gem.h"
+#include "libaes.h"
 extern AESGLOBAL *aes_menu_global;
 #define do_chg aes_menu_change_core
 /* The public draw adapter supplies the full screen clip itself. */
