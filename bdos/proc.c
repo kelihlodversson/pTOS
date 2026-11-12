@@ -1424,13 +1424,24 @@ LONG proc_start_accessory(PD *p)
 #if ARCH_X86_64 || CONF_WITH_NATIVE_SCHED
 void proc_discard_scheduled(PD *p)
 {
-    if (!kproc_unlaunched(p))
-        return;
-    set_owner(p, p);
-    set_owner(USERPTR_TO_PTR(p->p_env), p);
 #if CONF_WITH_USER_ASPACE
-    proc_dispose_retained(p);
+    KPROC *process;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    process=kproc_unlaunched(p)?kproc_retain(p):NULL;
+    if (process) {
+        if (!kproc_prepare_discard(process)) panic("unstarted allocation disposal authentication failed");
+        proc_dispose_process(process);
+        kproc_release(process);
+    }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope); /* enclosing launch cleanup owns the checkpoint */
+#endif
 #else
+    if (!kproc_unlaunched(p)) return;
+    set_owner(p,p);set_owner(USERPTR_TO_PTR(p->p_env),p);
     proc_dispose_detached(p);
 #endif
 }
@@ -1480,6 +1491,7 @@ void proc_dispose_process(KPROC *process)
 #endif
     }
     proc_release_resources(p, FALSE);
+    kproc_finish_discard_allocations(process);
 #if CONF_WITH_NATIVE_SCHED
     if (complete)
         ksched_exited_identity(process, p);

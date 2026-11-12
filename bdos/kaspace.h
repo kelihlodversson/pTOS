@@ -125,6 +125,9 @@ BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_id
  * owner, outside exclusion. These are not public destructive-mutation bypasses. */
 BOOL kaspace_retire_private(KASPACE *space, VADDR address, VADDR bytes);
 BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes);
+/* Backend-only: requires an exact published, consumed, in-flight retirement
+ * owner and no live conflicting holder. Ordinary mutations cannot use this. */
+BOOL kaspace_retirement_change(struct aspace *backend,VADDR address,VADDR bytes,BOOL private);
 
 
 /* backend must be exclusively owned by the caller and not previously adopted.

@@ -1347,6 +1347,44 @@ UBYTE *kproc_curdir(PD *pd)
 
 /* TRUE for a record whose process was never launched: it still holds the
  * references init_pd_files() took, which nothing else will release. */
+#if CONF_WITH_USER_ASPACE
+BOOL kproc_prepare_discard(KPROC *process)
+{
+    const void *tpa_owner,*env_owner;
+    if (!process || !process->pd || process->started || process->completed ||
+        process->disposal_state>=PROCESS_DISPOSING) return FALSE;
+    tpa_owner=procmem_owner(process->user_start);env_owner=procmem_owner(process->env_start);
+    if (!procmem_cleanup_allowed(process->user_start,process->tpa_gen,tpa_owner,process) ||
+        !procmem_cleanup_allowed(process->env_start,process->env_gen,env_owner,process)) return FALSE;
+    /* Cooperative, no-yield/no-callback pair commit. Future owner locking must
+     * cover both checks and both stores, never merely mask local interrupts. */
+    if (!procmem_cleanup_transfer(process->user_start,process->tpa_gen,tpa_owner,process) ||
+        !procmem_cleanup_transfer(process->env_start,process->env_gen,env_owner,process))
+        panic("discard allocation owner changed after preflight");
+    return TRUE;
+}
+static void retire_discard_borrow(void *block)
+{
+    KPROC *owner;
+    ULONG i;
+    for (owner=kproc_list;owner;owner=owner->next)
+        for (i=0;i<KPROC_BORROWS;i++)
+            if (owner->borrowed[i].bytes && owner->borrowed[i].va==(VADDR)(uintptr_t)block) {
+                VADDR bytes=owner->borrowed[i].bytes;
+                if (owner->active_space && !kaspace_retire_borrow(owner->active_space,(VADDR)(uintptr_t)block,bytes))
+                    panic("discarded allocation borrow has no cleanup owner");
+                owner->borrowed[i].bytes=0;
+                return;
+            }
+}
+void kproc_finish_discard_allocations(KPROC *process)
+{
+    /* The caller's retained identity (or earlier THREAD membership) owns this
+     * finalizer. No resource keyed by its former PD survives only for cleanup. */
+    procmem_free_owned(process,retire_discard_borrow);
+}
+#endif
+
 BOOL kproc_unlaunched(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);

@@ -99,6 +99,13 @@ BOOL procmem_hold_release(PROCMEM_HOLD *hold, void **owner_identity);
 /* Whole-range, non-mutating check before any metadata/leaf/owner change. */
 BOOL procmem_mutation_allowed(const void *base, UQUAD allocation,
                              VADDR offset, VADDR bytes);
+/* Unstarted-image finalizer only: consume the current owner into an already
+ * retained canonical cleanup identity. Not a normal ownership transfer or
+ * user grant. Preflight every allocation before any no-fail pair publication;
+ * free_owned(cleanup_owner) after resource cleanup, while identity stays owned. */
+BOOL procmem_cleanup_allowed(const void *base,UQUAD generation,const void *expected_owner,const void *cleanup_owner);
+BOOL procmem_cleanup_transfer(const void *base,UQUAD generation,const void *expected_owner,const void *cleanup_owner);
+
 
 /*
  * For tests that make memory permanent on purpose (Ptermres): the generation
@@ -333,6 +340,7 @@ void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes);
  */
 BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes);
 void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes);
+void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes);
 /* Re-maps an already borrowed block with other permissions (the user bit
  * included): the block a ring-3 caller is handed. Still released by unborrow. */
 BOOL aspace_regrant(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
@@ -390,6 +398,9 @@ BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot);
 /* Pure whole-range ownership/barrier check; no leaf or metadata mutation. */
 BOOL aspace_release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes);
 BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes);
+/* Existing KASPACE retirement owner only; exact range/kind authenticated at
+ * the bounded leaf commit, before any pin-release callback can reenter. */
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes);
 #endif
 
 /*

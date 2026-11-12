@@ -71,8 +71,12 @@ int main(void)
         CHECK(kaspace_mapping_can_change(&backend,0x30000,8192));
         captured.address=0x40000;captured.bytes=13;captured.identity=kaspace_reservation_next();
         CHECK(kaspace_reservation_hold_captured(space,&captured,0x40000,2,ASPACE_PROT_USER,7,&canonical,&one)==E_OK);
+        CHECK(kaspace_reservation_duplicate(&one,&canonical,&two)==E_OK);
         CHECK(kaspace_retire_borrow(space,0x40000,13));
-        CHECK(kaspace_reservation_release(&one,&owner) && retired_borrows==1);owner=NULL;
+        CHECK(kaspace_retire_borrow(space,0x40000,4096));
+        CHECK(kaspace_reservation_release(&one,&owner) && !retired_borrows);owner=NULL;
+        CHECK(kaspace_reservation_release(&two,&owner) && retired_borrows==2);owner=NULL;
+        CHECK(kaspace_mapping_can_change(&backend,0x40000,4096));
     }
     {
         KASPACE_RESERVATION_HOLD child = {0};
@@ -139,3 +143,8 @@ BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
 
 void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes)
 { CHECK(va==0x40000 && bytes==13 && kaspace_mapping_can_change(as,va,bytes));retired_borrows++; }
+
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
+{ CHECK(kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_private++;return TRUE; }
+void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes)
+{ CHECK(kaspace_retirement_change(as,va,bytes,FALSE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_borrows++; }

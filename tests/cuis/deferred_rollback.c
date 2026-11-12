@@ -30,6 +30,15 @@ static UBYTE image_area[sizeof(PD)+16] __attribute__((aligned(16)));
 #define image (*(PD *)image_area)
 static char environment[128];
 static const void *owners[2];
+static char cleanup_owner;
+#if CONF_WITH_NATIVE_SCHED
+static ULONG model_cleanup_depth;
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(!scope->active);scope->active=TRUE;scope->depth=++model_cleanup_depth; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(scope->active && scope->depth==model_cleanup_depth);model_cleanup_depth--;scope->active=FALSE; }
+#endif
+
 void panic(const char *format, ...) { fprintf(stderr,"panic: %s\n",format); abort(); }
 static SBYTE parent_files[NUMSTD], child_files[NUMSTD];
 static UBYTE parent_dirs[NUMCURDIR], child_dirs[NUMCURDIR];
@@ -83,11 +92,11 @@ BOOL kproc_allocation_disposal_allowed(const void *base)
 void set_owner(void *p, PD *owner) { CHECK(procmem_contains(p)); owners[p == &image ? 1 : 0] = owner; }
 void procmem_free_owned(const void *owner, void (*before)(void *))
 {
-    CHECK(owner == &image && !records && allocations == 2);
-    CHECK(owners[0] == owner && owners[1] == owner);
-    before(environment); before(&image);
-    allocations = 0;
-    disposals++;
+    CHECK((owner==&image || owner==&cleanup_owner) && !records && allocations==2);
+    if (owners[0]!=owner && owners[1]!=owner) return;
+    CHECK(owners[0]==owner && owners[1]==owner);
+    if (before) { before(environment); before(&image); }
+    allocations=0;disposals++;
 }
 void procmem_keep(const void *p, ULONG bytes, void (*before)(void *))
 { (void)p; (void)bytes; (void)before; abort(); }
@@ -127,6 +136,18 @@ void kproc_release(KPROC *p)
     if (observer_mode && p) { CHECK(observer_refs); observer_refs--; }
 }
 BOOL kproc_begin_disposal(KPROC *p, PD **pd) { *pd = (PD *)p; return TRUE; }
+BOOL kproc_prepare_discard(KPROC *process)
+{
+    CHECK(process==(KPROC *)&image && records && allocations==2);
+    owners[0]=owners[1]=&cleanup_owner; /* canonical cleanup ownership model */
+    return TRUE;
+}
+void kproc_finish_discard_allocations(KPROC *process)
+{
+    CHECK(process==(KPROC *)&image && !records);
+    if (allocations && owners[0]==&cleanup_owner) procmem_free_owned(&cleanup_owner,kproc_unborrow);
+}
+
 BOOL kproc_pending_completion(const KPROC *p, UWORD *status)
 {
     CHECK(p == (KPROC *)&image);
@@ -347,6 +368,9 @@ int main(void)
             CHECK(references[0]==2 && references[1]==1 && dirtbl[3].use==1 && dirtbl[4].use==1);
         }
     }
+#if CONF_WITH_NATIVE_SCHED
+    CHECK(!model_cleanup_depth);
+#endif
     puts("Ordinary Pexec observer: prepared before publication, unchanged outputs, load/CWD/admission rollback: PASS");
     puts("Deferred rejection releases all references after interrupted close: PASS");
     return 0;

@@ -70,6 +70,33 @@ int main(void)
     CHECK(procmem_size(p)==8192 && !notices);
     procmem_pin((VADDR)(uintptr_t)p,8192,-1);
     CHECK(!procmem_size(p) && notices==1 && allocated==freed);
+    {
+        void *block=procmem_alloc(8192,0), *output=NULL;
+        UQUAD birth;
+        PROCMEM_HOLD held={0},other={0},refused={0};
+        CHECK(block && procmem_set_owner(block,&owner));birth=procmem_gen(block);
+        CHECK(procmem_hold_acquire(block,birth,&owner,0,16,ASPACE_PROT_USER,7,&canonical,&held));
+        CHECK(!procmem_cleanup_allowed(block,birth+1,&owner,&replacement));
+        CHECK(!procmem_cleanup_transfer(block,birth,&replacement,&replacement));
+        CHECK(procmem_cleanup_allowed(block,birth,&owner,&replacement) &&
+              procmem_cleanup_transfer(block,birth,&owner,&replacement));
+        CHECK(!procmem_cleanup_allowed(block,birth,&replacement,&owner));
+        CHECK(!procmem_hold_acquire(block,birth,&replacement,0,1,ASPACE_PROT_USER,7,&canonical,&refused));
+        CHECK(!procmem_shrink(block,8192));
+        CHECK(procmem_owner(block)==&replacement && !procmem_set_owner(block,&owner) &&
+              !procmem_mutation_allowed(block,birth,4096,4096) && !procmem_free(block));
+        CHECK(procmem_cleanup_transfer(block,birth,&replacement,&replacement)); /* idempotent, not another owner */
+        CHECK(procmem_on_free(block,notify,&notices));
+        procmem_pin((VADDR)(uintptr_t)block,8192,1);
+        procmem_free_owned(&replacement,NULL);
+        CHECK(!procmem_owner(block) && procmem_size(block)==8192 && notices==1);
+        CHECK(!procmem_cleanup_transfer(block,birth,NULL,&replacement));
+        CHECK(procmem_hold_duplicate(&held,&canonical,&other));
+        CHECK(procmem_hold_release(&held,&output));output=NULL;
+        CHECK(procmem_hold_release(&other,&output) && notices==1);
+        procmem_pin((VADDR)(uintptr_t)block,8192,-1);
+        CHECK(!procmem_size(block) && notices==2 && allocated==freed);
+    }
     q=procmem_alloc(12288,0); CHECK(q==p && procmem_gen(q)!=generation);
     identity=NULL; CHECK(!procmem_hold_release(&stale,&identity));
     CHECK(procmem_set_owner(q,&owner));

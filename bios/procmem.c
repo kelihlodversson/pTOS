@@ -53,6 +53,7 @@ struct alloc {
     const void *owner;          /* identity of the owning process, or NULL */
     struct allocation_hold *holds;
     ULONG hold_count;
+    BOOL cleanup_owned; /* one-way canonical disposal owner, never a user grant */
     ULONG pins;                 /* live address-space mappings of this block */
     void (*notify)(void *);
     void *notify_token;
@@ -155,6 +156,7 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     a->pins = 0;
     a->holds = NULL;
     a->hold_count = 0;
+    a->cleanup_owned = FALSE;
     a->reclaim = FALSE;
     a->notify = NULL;
     a->notify_token = NULL;
@@ -248,7 +250,7 @@ BOOL procmem_free(void *p)
         bad_frees++;
         return FALSE;
     }
-    if ((*link)->pins || (*link)->hold_count) /* mapped or explicitly retained */
+    if ((*link)->cleanup_owned || (*link)->pins || (*link)->hold_count) /* mapped or explicitly retained */
         return FALSE;
     release(link);
     return TRUE;
@@ -344,7 +346,7 @@ BOOL procmem_set_owner(const void *p, const void *owner)
 {
     struct alloc **link = find_link(p);
 
-    if (!link || ((*link)->hold_count && ((*link)->owner != owner || (*link)->reclaim))) return FALSE;
+    if (!link || (*link)->cleanup_owned || ((*link)->hold_count && ((*link)->owner != owner || (*link)->reclaim))) return FALSE;
     (*link)->owner = owner;
     (*link)->reclaim = FALSE; /* transfer or make permanent */
     return TRUE;

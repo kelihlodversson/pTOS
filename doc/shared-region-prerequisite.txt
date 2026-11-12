@@ -43,7 +43,12 @@ pending cleanup into an existing overlapping reservation lease, without an
 allocation or second registry. The cleanup owner protects the complete retired
 extent, but never widens authenticated bytes/rights. Its consumed ticket cannot
 be replayed. Other valid holders may duplicate independently; the final
-conflicting release unlinks the cleanup owner before reclaiming pages/pins.
+conflicting release authorizes an exact backend retirement job. Consumed
+cleanup fences do not block one another, but remain published through backend
+commit and reentry so ordinary allocation/mutation cannot steal the extent.
+The backend checks the in-flight range/kind and all LIVE holders; it never
+uses a global bypass flag. Other remaining borrow pins preserve a shared leaf.
+The cleanup owner is unlinked only after that bounded commit/callback returns.
 Original exact borrow-pin dimensions survive page rounding. An exiting loader
 transfers unstarted staging before wiping its heap metadata, so parent-first
 exit leaves no stale PD in a deferred block. Running UH_IMAGE ownership retains
@@ -201,3 +206,19 @@ allocating its birth ID or publishing metadata; revocable aliases are invalidate
 at publication. A rejected lazy reservation cannot overlap a foreign held image.
 Native probes require rejection while a retired staging extent is held, then
 successful same-address allocation/release after its final hold is settled.
+
+4550529918: overlapping pending borrow cleanups are inactive disposal owners,
+not live resource claims. Exact 2-byte/page-sized pin dimensions survive;
+production host and native tests require both retirements and final root/frame
+reclamation. Reentrant normal mutation remains excluded until each owner settles.
+Summary-only e09850c35 review (umem.c set_owner): scheduled discard no longer
+forces held PD/environment allocations through ordinary owner transfer. It
+preflights both recorded generations, then consumes their ownership into the
+already retained canonical PROCESS finalizer using a no-allocation pair commit.
+THREAD membership retains that identity if actual disposal must wait. After
+resource teardown, the same allocator's free_owned(finalizer) retires the bytes
+behind existing holds/pins and forgets the identity pointer. No new allocator,
+resource queue, owner PD retention or USER capability is created. The one-way
+cleanup-owned tag rejects ordinary reassignment/shrink/free or stale replay.
+The native probe includes held loader-owned PD/env, modified user p_env,
+failed pair preflight with unchanged ownership, and exactly-once final release.

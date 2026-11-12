@@ -622,11 +622,11 @@ BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot)
     return TRUE;
 }
 
-BOOL aspace_release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes)
+static BOOL release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes, BOOL retired)
 {
     VADDR pages, i;
 
-    if (!kaspace_mapping_can_change(as, va, bytes)) return FALSE;
+    if (!retired && !kaspace_mapping_can_change(as, va, bytes)) return FALSE;
     if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -644,11 +644,15 @@ BOOL aspace_release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes)
     return TRUE;
 }
 
-BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
+BOOL aspace_release_lazy_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ return release_lazy_allowed(as,va,bytes,FALSE); }
+
+static BOOL release_lazy_pages(ASPACE *as, VADDR va, VADDR bytes, BOOL retired)
 {
     VADDR pages, i;
-    if (!aspace_release_lazy_allowed(as,va,bytes)) return FALSE;
-    if (!kaspace_mapping_change(as,va,bytes)) return FALSE;
+    if (!release_lazy_allowed(as,va,bytes,retired)) return FALSE;
+    if (retired ? !kaspace_retirement_change(as,va,bytes,TRUE) :
+                  !kaspace_mapping_change(as,va,bytes)) return FALSE;
     pages = (bytes+PAGE-1)/PAGE;
     for (i = 0; i < pages; i++) {
         PADDR phys;
@@ -666,6 +670,11 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
     flush_if_current(as);
     return TRUE;
 }
+BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
+{ return release_lazy_pages(as,va,bytes,FALSE); }
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
+{ return release_lazy_pages(as,va,bytes,TRUE); }
+
 #endif
 
 #if CONF_WITH_MMAP
@@ -981,14 +990,15 @@ BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes)
     return FALSE;
 }
 
-void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes)
+static void unborrow_pages(ASPACE *as, VADDR va, VADDR bytes, BOOL retired)
 {
     VADDR page, end;
-    ULONG i;
+    ULONG i, j;
     BOOL pinned = FALSE;
 
-    if (!kaspace_mapping_change(as, va, bytes))
-        panic("unborrow during sealed startup");
+    if (retired ? !kaspace_retirement_change(as,va,bytes,FALSE) :
+                  !kaspace_mapping_change(as,va,bytes))
+        panic("unborrow without mutable/retirement ownership");
     for (i = as->npins; i-- > 0; )
         if (as->pins[i].va == va && as->pins[i].bytes == bytes) {
             as->pins[i] = as->pins[--as->npins];
@@ -1000,11 +1010,20 @@ void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes)
 #endif
     page = va & ~(PAGE - 1);
     end = (va + bytes + PAGE - 1) & ~(PAGE - 1);
-    for (; page < end; page += PAGE)
-        aspace_hw_unmap(as->root, page);
+    for (; page < end; page += PAGE) {
+        /* Another exact borrow pin may still own this same leaf. */
+        for (j=0;j<as->npins;j++)
+            if (page<as->pins[j].va+as->pins[j].bytes && as->pins[j].va<page+PAGE) break;
+        if (j==as->npins) aspace_hw_unmap(as->root, page);
+    }
     flush_if_current(as);
     if (pinned) procmem_pin(va, bytes, -1);
 }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes)
+{ unborrow_pages(as,va,bytes,FALSE); }
+void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes)
+{ unborrow_pages(as,va,bytes,TRUE); }
 
 /*
  * Gives the caller access to a block it borrowed: the same pages, now with

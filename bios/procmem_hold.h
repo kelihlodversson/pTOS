@@ -34,7 +34,7 @@ BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
     VADDR size;
     if (!result || result->base || result->allocation || result->ticket ||
         !link || !allocation || (*link)->gen != allocation ||
-        !expected_owner || (*link)->owner != expected_owner || (*link)->reclaim ||
+        !expected_owner || (*link)->owner != expected_owner || (*link)->reclaim || (*link)->cleanup_owned ||
         !owner_number || !owner_identity || !bytes ||
         !(rights & ASPACE_PROT_USER) ||
         (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))) return FALSE;
@@ -88,7 +88,7 @@ BOOL procmem_mutation_allowed(const void *base, UQUAD allocation,
     struct alloc **link = find_link(base);
     struct allocation_hold *hold;
     VADDR size;
-    if (!link || !allocation || (*link)->gen != allocation) return FALSE;
+    if (!link || !allocation || (*link)->gen != allocation || (*link)->cleanup_owned) return FALSE;
     size = (VADDR)(*link)->pages * HOLD_PAGE;
     if (offset > size || bytes > size-offset) return FALSE;
     if (!bytes) return TRUE;
@@ -122,7 +122,9 @@ BOOL procmem_shrink(void *base, ULONG bytes)
     struct alloc *a;
     ULONG keep;
     if (!link || bytes > (ULONG)~0UL - (HOLD_PAGE-1)) return FALSE;
-    a = *link; keep = (bytes+HOLD_PAGE-1)/HOLD_PAGE;
+    a = *link;
+    if (a->cleanup_owned) return FALSE;
+    keep = (bytes+HOLD_PAGE-1)/HOLD_PAGE;
     if (!keep) keep = 1;
     if (keep >= a->pages) return TRUE;
     if (!procmem_mutation_allowed(base,a->gen,(VADDR)keep*HOLD_PAGE,
@@ -133,3 +135,25 @@ BOOL procmem_shrink(void *base, ULONG bytes)
 }
 #undef HOLD_PAGE
 #undef HOLD_WINDOW
+
+/* Exact-incarnation ownership consumption for an unstarted image's canonical
+ * finalizer. No allocation/callback and no new execution/USER capability. The
+ * retained finalizer identity must stay owned until free_owned(cleanup_owner).
+ * Existing holds keep their immutable original identity/rights. */
+BOOL procmem_cleanup_allowed(const void *base,UQUAD generation,
+                            const void *expected_owner,const void *cleanup_owner)
+{
+    struct alloc **at=find_link(base);
+    if (!at || !generation || (*at)->gen!=generation || !expected_owner || !cleanup_owner ||
+        (*at)->reclaim || (*at)->owner!=expected_owner) return FALSE;
+    return !(*at)->cleanup_owned || (*at)->owner==cleanup_owner;
+}
+BOOL procmem_cleanup_transfer(const void *base,UQUAD generation,
+                             const void *expected_owner,const void *cleanup_owner)
+{
+    struct alloc **at;
+    if (!procmem_cleanup_allowed(base,generation,expected_owner,cleanup_owner)) return FALSE;
+    at=find_link(base);
+    (*at)->cleanup_owned=TRUE; (*at)->owner=cleanup_owner;
+    return TRUE;
+}
