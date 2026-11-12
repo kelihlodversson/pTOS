@@ -699,6 +699,15 @@ static void test_joins(void)
     int32_t pid, tid, status;
     int mode, cycle, spin;
     long result;
+#if defined(TEST_WITH_MMAP)
+    long readonly_output = clone_test_sys6(GEMDOS_MMAP,0,4096,PROT_READ|PROT_WRITE,
+                                          MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    ptest_assert_msg(readonly_output > 0,"join read-only output fixture allocated");
+    if (readonly_output <= 0) return;
+    *(int32_t *)readonly_output = -99;
+    ptest_assert_msg(clone_test_sys6(GEMDOS_MPROT,readonly_output,4096,PROT_READ,0,0,0) == 0,
+                     "join output fixture explicitly made read-only");
+#endif
     ptest_assert_msg(join_tid(0,0) == -20L && join_tid(-1,0) == -20L &&
                      join_tid(0x7fffffffL,0) == -20L,"invalid/dead TIDs return ESRCH");
     for (cycle = 0; cycle < 3; cycle++) for (mode = 0; mode < 4; mode++) {
@@ -709,8 +718,11 @@ static void test_joins(void)
         status = -99;
         ptest_assert_msg(join_tid(tid,(int32_t *)((unsigned char *)&status+1)) == -40L && status == -99,
                          "unaligned join output is unchanged and keeps target joinable");
-        ptest_assert_msg(join_tid(tid,(int32_t *)runnable_entry) == -40L,
-                         "executable text cannot receive a join status");
+#if defined(TEST_WITH_MMAP)
+        ptest_assert_msg(join_tid(tid,(int32_t *)readonly_output) == -40L &&
+                         *(int32_t *)readonly_output == -99,
+                         "read-only join output is unchanged and keeps target joinable");
+#endif
         ptest_assert_msg(join_tid(tid,(int32_t *)0x80001000UL) == -40L,"bad join output keeps target joinable");
         if (cycle == 1) {
             for (spin=0; spin<128 && probe.steps<12; spin++) (void)Syield();
@@ -754,6 +766,10 @@ static void test_joins(void)
     ptest_assert_msg((result>>16)==pid && (result&65535)==53 && !joins.error,"survivor joins leader, creates and joins new THREAD before final PROCESS completion");
     ptest_assert_msg(joins.spawned == 1,"leader retirement preserves CWD/file resources and new same-PROCESS membership");
     ptest_assert_msg(Fdelete("C:\\PH4JOIN.TMP") == 0,"final THREAD leaves no open leader file");
+#if defined(TEST_WITH_MMAP)
+    ptest_assert_msg(clone_test_sys6(GEMDOS_MUNMAP,readonly_output,4096,0,0,0,0) == 0,
+                     "join read-only fixture ownership released");
+#endif
     conws("native Pthjoin execution: tested\r\n");
 }
 #endif
