@@ -219,7 +219,7 @@ int main(void)
     }
     one=kaspace_adopt(parent);assert(one);
     heap=kaspace_heap(one);heap->blocks=kalloc(sizeof(*heap->blocks));
-    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2};heap->count=heap->capacity=1;
+    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2,kaspace_reservation_next()};heap->count=heap->capacity=1;
     before=allocations-frees;
     for(n=1;n<32;n++) {
         LONG result;
@@ -229,6 +229,8 @@ int main(void)
         assert(!two && allocations-frees==before);
     }
     assert(two && kaspace_heap(two)->blocks!=heap->blocks);
+    assert(heap->blocks[0].reservation && kaspace_heap(two)->blocks[0].reservation &&
+           heap->blocks[0].reservation!=kaspace_heap(two)->blocks[0].reservation);
     kaspace_heap(two)->blocks[0].pages=1;
     assert(heap->blocks[0].pages==2);
     kaspace_put(one); /* parent-first final release */
