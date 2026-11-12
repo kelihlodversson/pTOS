@@ -795,6 +795,11 @@ static BOOL release_lazy_pages(ASPACE *as, UQUAD va, UQUAD bytes, BOOL retired)
     return TRUE;
 }
 
+BOOL aspace_release_lazy(ASPACE *as,UQUAD va,UQUAD bytes)
+{ return release_lazy_pages(as,va,bytes,FALSE); }
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
+{ return release_lazy_pages(as,va,bytes,TRUE); }
+
 /* TRUE iff every page of [va, va + pages) is one of the private pages of `as` */
 static BOOL range_is_private(const struct aspace *as, UQUAD va, UQUAD pages)
 {
@@ -1044,10 +1049,6 @@ static void unborrow_pages(ASPACE *as, UQUAD va, UQUAD bytes, BOOL retired)
         }
 #if CONF_WITH_PRIVATE_CLONE
     if (!pinned) return; /* never unmap a copied/private former borrow */
-BOOL aspace_release_lazy(ASPACE *as,UQUAD va,UQUAD bytes)
-{ return release_lazy_pages(as,va,bytes,FALSE); }
-BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
-{ return release_lazy_pages(as,va,bytes,TRUE); }
 
 #endif
     page = va & ~(X86_64_PAGE_SIZE - 1);
