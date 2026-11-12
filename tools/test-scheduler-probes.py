@@ -54,13 +54,13 @@ with tempfile.TemporaryDirectory(prefix='ptos-scheduler-probes-') as directory:
 print('Production regression guards: 96 feature/marker cases, required missing evidence still fails: PASS (host shell)')
 
 # The disabled/eager MEMTEST baseline can enable the scheduler without any
-# executable asynchronous fixture. Run the actual five-marker shell block.
+# executable asynchronous fixture. Run the actual six-marker shell block.
 mmap_script = (root / 'tools/test-mmap-boot.sh').read_text()
 start = mmap_script.index("if grep -q '^CONF_WITH_NATIVE_SCHED *= *y'")
 end = mmap_script.index('\nfi', start) + 3
 block = mmap_script[start:end]
 required_markers = re.findall(r"grep -q '([^']+: PASS)'", block)
-assert len(required_markers) == 5
+assert len(required_markers) == 6
 with tempfile.TemporaryDirectory(prefix='ptos-memtest-probes-') as directory:
     top = Path(directory)
     (top / 'obj').mkdir()
@@ -74,7 +74,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-memtest-probes-') as directory:
             log.write_text('\n'.join(m for m in required_markers if m != missing) + '\n')
             result = subprocess.run(['sh', '-ec', 'log=$1\n' + block, 'probe', str(log)], cwd=top)
             assert (result.returncode != 0) == bool(required and missing), (enabled, missing, result.returncode)
-print('Production MEMTEST guards: 96 fixture/marker cases, enabled missing evidence still fails: PASS (host shell)')
+print('Production MEMTEST guards: 112 fixture/marker cases, enabled missing evidence still fails: PASS (host shell)')
 
 # Compile the real AUTO user program with bounded hosted endpoints. The
 # previous OS-version selector never advances and trips the yield limit.

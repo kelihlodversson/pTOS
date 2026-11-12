@@ -171,7 +171,7 @@ Current executable proof boundaries
 The x32 MEMTEST uses actual allocator, KPROC and MMU code for allocation and
 lazy/file/image/stack retention, partial acquisition, orphaned materialization,
 COW, failed FAT backing and late-range rejection with final resource snapshots.
-Under the existing EXIT_HANDOFF_TEST gate, a managed user Syield also invokes
+Under the existing EXIT_HANDOFF_TEST or x32 MEMTEST gate, a managed user Syield invokes
 a bounded architecture-neutral kernel ownership probe on all MMU backends.
 It creates an unstarted PROCESS through the trusted factory, stages but NEVER
 executes zero loader pages, rejects held image transfer, and checks canonical
@@ -180,3 +180,10 @@ regression driver requires its marker. This is native kernel ownership proof
 entered from real user execution; it is not public shared-Pexec execution.
 Hosted allocation, reservation, COW and scheduler fixture providers model
 physical/CPU operations and are reported separately from native execution.
+
+Upper KPROC release helpers protect token consumption, root/file/mapping cleanup
+and final canonical-reference release with the existing execution cleanup scope.
+They end without checkpointing: an enclosing batch must retain its own scope
+until every resource/output/IRQ state is settled. Low-level KASPACE/procmem
+callers likewise own their complete cleanup envelope; no arbitrary exception
+or disk-error longjmp guarantee is inferred from cancellation deferral.

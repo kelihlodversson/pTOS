@@ -3966,9 +3966,17 @@ LONG kproc_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
 BOOL kproc_reservation_release(KASPACE_RESERVATION_HOLD *hold)
 {
     void *identity = NULL;
-    if (!kaspace_reservation_release(hold,&identity)) return FALSE;
-    kproc_release(identity);
-    return TRUE;
+    BOOL released;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    released=kaspace_reservation_release(hold,&identity);
+    if (released) kproc_release(identity);
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope); /* no checkpoint with a caller's batch still owned */
+#endif
+    return released;
 }
 
 LONG kproc_allocation_duplicate(const KPROC_ALLOCATION_HOLD *source,
@@ -3990,9 +3998,17 @@ LONG kproc_allocation_duplicate(const KPROC_ALLOCATION_HOLD *source,
 BOOL kproc_allocation_release(KPROC_ALLOCATION_HOLD *hold)
 {
     void *identity = NULL;
-    if (!hold || !procmem_hold_release(&hold->token,&identity)) return FALSE;
-    kproc_release(identity); /* token is already unpublished; may release metadata */
-    return TRUE;
+    BOOL released;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    released=hold && procmem_hold_release(&hold->token,&identity);
+    if (released) kproc_release(identity); /* already unpublished */
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return released;
 }
 
 BOOL kproc_validate_user_range(VADDR address, ULONG size)
