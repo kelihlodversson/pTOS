@@ -593,6 +593,13 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
     record "exit handoff rollback" FAIL "configured injection was not exercised"
 fi
 
+# The configured ownership probe must execute actual allocator/MMU operations.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native allocation/reservation ownership and orphan reclamation: PASS' "$suite_log"; then
+    record "native region ownership" FAIL "configured allocator/reservation probe did not execute"
+fi
+
 # Generation publication in the check-to-block window must reject sleeping.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&

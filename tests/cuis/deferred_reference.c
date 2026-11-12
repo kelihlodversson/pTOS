@@ -146,3 +146,7 @@ BOOL ksched_admission_retain(const KSCHED_ADMISSION *a,KSCHED_ADMISSION *b)
 BOOL ksched_admission_complete(const KSCHED_ADMISSION *h,UWORD n,LONG value)
 { (void)h; (void)n; (void)value; abort(); }
 WORD kproc_pid(PD *p) { (void)p; return 7; }
+
+/* The architecture regression executes this MMU/allocator probe; this hosted
+ * scheduler fixture models CPU and memory ownership instead. */
+void kproc_region_selftest(void) {}
