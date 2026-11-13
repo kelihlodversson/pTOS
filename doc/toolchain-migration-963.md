@@ -53,6 +53,8 @@ comparison passed.
 - Host metadata/admission suite using real SDK x32/ARM/m68k objects: 52 passed.
 - m68k address-space QEMU regression: 25 suites passed, zero failed; shutdown
   and scalable-system-font replay checks passed.
+- ARM address-space QEMU regression: 26 suites passed, zero failed; shutdown
+  and scalable-system-font replay checks passed.
 - ARM shared-address-space interpreter/binfmt boot: passed after increasing
   the feature's BDOS stack budget from the classic 2000 bytes to 8192 bytes.
 - 256 KiB Vampire ROM with LTO: passed with 7822 bytes free.

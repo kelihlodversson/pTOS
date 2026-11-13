@@ -582,7 +582,7 @@ config BUILD_TOOLCHAIN_ELF
 
 endchoice
 
-# The two ELF toolchains need the same treatment.  -DELF_TOOLCHAIN selects
+# The ELF toolchains need the same treatment.  -DELF_TOOLCHAIN selects
 # ELF-specific source and linker-script behavior.
 config BUILD_TOOLCHAIN_IS_ELF
 	bool

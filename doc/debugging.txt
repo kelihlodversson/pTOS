@@ -156,7 +156,7 @@ Use it only on a throwaway virt-m68k debug build:
     several breakpoints and continues chained together.
   - Symbol addresses shift with every code-size change, so re-derive
     them after any rebuild:
-    `m68k-atari-mintelf-nm virt-m68k.elf | grep ' _foo$'`.
+    `m68k-unknown-ptos-prgelf-nm virt-m68k.elf | grep ' _foo$'`.
   - `-d exec` (full instruction trace) is invaluable for finding what
     looped or crashed when setting up a breakpoint is too slow or the
     crash site is unknown, but the output is enormous (millions of
