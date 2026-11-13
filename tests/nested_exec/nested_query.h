@@ -19,6 +19,15 @@
 #define NQ_LAST_TID     0x70b
 #define NQ_LAST_DEPTH   0x70c
 #define NQ_LAST_PD      0x70d   /* its basepage address */
+#define NQ_SCHEDSTACKS  0x70e
+#define NQ_COMPLETED    0x70f
+#define NQ_CANCEL_REAP  0x721
+#define NQ_IDENTITIES   0x785
+#define NQ_PROCREFS     0x786
+#define NQ_SPACEREFS    0x787
+#define NQ_ALLOCS       0x788
+#define NQ_FREEPAGES    0x789
+#define NQ_HEAPBLOCKS   0x78a
 #define NQ_FAIL_STAGE   0x710   /* + stage 1..6: one-shot construction failure */
 #define NQ_PROCESSES    0x780
 #define NQ_THREADS      0x781
@@ -87,12 +96,13 @@ static inline unsigned long nested_get_hex(const char *in, int digits)
  *       processes:4 threads:4 spaces:4 kstacks:4
  * mode: leaf exit 'r' return, 't' Pterm, '0' Pterm0, 'f' fault.
  * flag: 'x' exact global counts, 'p' wait for the peer's marker, '-' neither. */
-#define NESTED_TAIL_BYTES 43
+#define NESTED_TAIL_BYTES 55
 struct nested_chain {
     int remaining, depth, level, tracked;
     char mode, flag;
     long ppid, ptid;
     long processes, threads, spaces, kstacks;
+    long identities, procrefs, spacerefs, schedstacks;
 };
 static inline void nested_chain_tail(char *tail, const struct nested_chain *chain)
 {
@@ -109,8 +119,12 @@ static inline void nested_chain_tail(char *tail, const struct nested_chain *chai
     nested_put_hex(tail + 26, (unsigned long)chain->threads, 4);
     nested_put_hex(tail + 30, (unsigned long)chain->spaces, 4);
     nested_put_hex(tail + 34, (unsigned long)chain->kstacks, 4);
-    tail[38] = 0;
-    tail[0] = 37;
+    nested_put_hex(tail + 38, (unsigned long)chain->identities, 4);
+    nested_put_hex(tail + 42, (unsigned long)chain->procrefs, 4);
+    nested_put_hex(tail + 46, (unsigned long)chain->spacerefs, 4);
+    nested_put_hex(tail + 50, (unsigned long)chain->schedstacks, 4);
+    tail[54] = 0;
+    tail[0] = 53;
 }
 static inline long nested_leaf_status(char mode)
 {

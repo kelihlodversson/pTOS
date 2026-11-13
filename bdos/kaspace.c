@@ -616,6 +616,13 @@ ULONG kaspace_test_live(void)
     for (space = spaces; space; space = space->next) count++;
     return count;
 }
+ULONG kaspace_test_references(void)
+{
+    const KASPACE *space;
+    ULONG count = 0;
+    for (space = spaces; space; space = space->next) count += space->refs;
+    return count;
+}
 #endif
 
 KASPACE *kaspace_adopt(ASPACE *backend)

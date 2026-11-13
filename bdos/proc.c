@@ -909,9 +909,16 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         && !schedule_launch(cur_p)
 #endif
         && !prepare_launch(cur_p)) {
+#if CONF_WITH_NATIVE_SCHED
+        KSCHED_CLEANUP_SCOPE scope = {0};
+        ksched_cleanup_begin(&scope);
+#endif
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
+#if CONF_WITH_NATIVE_SCHED
+        ksched_cleanup_end(&scope);
+#endif
         return ENSMEM;
     }
 #endif
@@ -923,6 +930,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
     if (rc != E_OK) {
 #if CONF_WITH_NATIVE_SCHED
+        KSCHED_CLEANUP_SCOPE scope = {0};
+        ksched_cleanup_begin(&scope);
         /* A prepared nested association is still private: retire its THREAD
          * before the PROCESS it is attached to. */
         ksched_nested_cancel(cur_p);
@@ -930,6 +939,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
+#if CONF_WITH_NATIVE_SCHED
+        ksched_cleanup_end(&scope);
+#endif
         return rc;
     }
 #else
@@ -1569,18 +1581,19 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     proc_release_resources(p, TRUE);
 #if CONF_WITH_NATIVE_SCHED
     ksched_exited_identity(process, p);
+    /* Nested THREAD ownership can be the final KASPACE/allocation pin.
+     * Retire it after the launcher has stopped, before making completion
+     * observable. The caller's handoff reference keeps PROCESS alive. */
+    ksched_nested_leave(process);
 #endif
 #if CONF_WITH_NATIVE_SCHED
     if (!managed)
 #endif
         kproc_publish_observers(process);
-    *fs_error_current() = saved_error;
-#if CONF_WITH_NATIVE_SCHED
-    /* The launcher left the child's syscall stack and address space before
-     * calling here, and completion is published. Restore the enclosing
-     * execution and reclaim the stopped nested THREAD, if this was one. */
-    ksched_nested_leave(process);
+#if CONF_WITH_NATIVE_SCHED && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
+    ksched_test_nested_published(process);
 #endif
+    *fs_error_current() = saved_error;
 }
 
 BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)

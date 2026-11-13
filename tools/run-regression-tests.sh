@@ -580,6 +580,20 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     stop_vm
 fi
 
+# Configured nested ownership checks must execute as managed THREADs.
+if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h"; then
+    for marker in \
+        'native nested Pexec identity/exit modes/restoration: PASS' \
+        'native nested Pexec construction rollback: PASS' \
+        'native nested Pexec resource conservation: PASS' \
+        'native nested Pexec cancellation during reclamation: PASS'; do
+        if ! grep -aq "$marker" "$suite_log"; then
+            record "native nested continuation ownership" FAIL "missing $marker"
+        fi
+    done
+fi
+
 # The experimental VM test must execute, not merely compile.
 if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    { ! grep -aq 'native independent KASPACE/COW entry probe (not Pfork): PASS' "$suite_log" ||

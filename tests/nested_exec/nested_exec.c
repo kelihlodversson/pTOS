@@ -38,7 +38,10 @@ void test_nested_exec(void);
 #define CHAIN_LEVELS 3          /* child, grandchild, great-grandchild */
 static const char environment[2] = { 0, 0 };
 
-struct counts { long processes, threads, spaces, kstacks, live, depth, tid; };
+struct counts {
+    long processes, threads, spaces, kstacks, live, depth, tid;
+    long identities, procrefs, spacerefs, schedstacks, allocs, freepages, heapblocks;
+};
 
 static void settle(void)
 {
@@ -55,12 +58,22 @@ static void snapshot(struct counts *c)
     c->live = nested_query(NQ_LIVE);
     c->depth = nested_query(NQ_DEPTH);
     c->tid = nested_query(NQ_TID);
+    c->identities = nested_query(NQ_IDENTITIES);
+    c->procrefs = nested_query(NQ_PROCREFS);
+    c->spacerefs = nested_query(NQ_SPACEREFS);
+    c->schedstacks = nested_query(NQ_SCHEDSTACKS);
+    c->allocs = nested_query(NQ_ALLOCS);
+    c->freepages = nested_query(NQ_FREEPAGES);
+    c->heapblocks = nested_query(NQ_HEAPBLOCKS);
 }
 static int same(const struct counts *a, const struct counts *b)
 {
     return a->processes == b->processes && a->threads == b->threads &&
            a->spaces == b->spaces && a->kstacks == b->kstacks &&
-           a->live == b->live && a->depth == b->depth && a->tid == b->tid;
+           a->live == b->live && a->depth == b->depth && a->tid == b->tid &&
+           a->identities == b->identities && a->procrefs == b->procrefs &&
+           a->spacerefs == b->spacerefs && a->schedstacks == b->schedstacks &&
+           a->allocs == b->allocs && a->freepages == b->freepages && a->heapblocks == b->heapblocks;
 }
 static int exists(const char *path)
 {
@@ -98,6 +111,8 @@ static long run_chain(int tracked, char mode, char flag, const struct counts *ba
     chain.level = 1;
     chain.processes = base->processes; chain.threads = base->threads;
     chain.spaces = base->spaces; chain.kstacks = base->kstacks;
+    chain.identities = base->identities; chain.procrefs = base->procrefs;
+    chain.spacerefs = base->spacerefs; chain.schedstacks = base->schedstacks;
     nested_chain_tail(tail, &chain);
     return Pexec(0, NESTED_CHILD, tail, (void *)environment);
 }
@@ -108,7 +123,7 @@ static void test_chains(int tracked)
     struct counts base, now;
     struct leaf leaf, previous;
     long pid = Pgetpid(), status;
-    long prepared, reclaimed, stopped;
+    long prepared, reclaimed, stopped, completed;
     unsigned mode;
     int round;
 
@@ -121,6 +136,7 @@ static void test_chains(int tracked)
     prepared = nested_query(NQ_PREPARED);
     stopped = nested_query(NQ_STOPPED);
     reclaimed = nested_query(NQ_RECLAIMED);
+    completed = nested_query(NQ_COMPLETED);
 
     for (mode = 0; mode < sizeof(modes); mode++) {
         status = run_chain(tracked, modes[mode], tracked ? 'x' : '-', &base);
@@ -142,8 +158,9 @@ static void test_chains(int tracked)
     if (tracked) {
         ptest_assert_msg(nested_query(NQ_PREPARED) - prepared == CHAIN_LEVELS * (long)sizeof(modes) &&
                          nested_query(NQ_STOPPED) - stopped == CHAIN_LEVELS * (long)sizeof(modes) &&
-                         nested_query(NQ_RECLAIMED) - reclaimed == CHAIN_LEVELS * (long)sizeof(modes),
-                         "each nested THREAD was stopped once and reclaimed once");
+                         nested_query(NQ_RECLAIMED) - reclaimed == CHAIN_LEVELS * (long)sizeof(modes) &&
+                         nested_query(NQ_COMPLETED) - completed == CHAIN_LEVELS * (long)sizeof(modes),
+                         "each nested THREAD stops and reaps once before its observer becomes ready");
     }
 
     /* Repeated launches reuse the same basepage storage for new identities:
@@ -267,6 +284,7 @@ void test_nested_exec(void)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     /* The refused-handoff regression keeps one launch per boot without a
      * THREAD; it may be this one. The second is then associated. */
+    ptest_assert_msg(nested_query(NQ_TID) > 0, "the native driver must run as a managed THREAD");
     if (nested_query(NQ_TID) > 0) {
         long first = Pexec(0, NESTED_CHILD, identity_tail, (void *)environment);
         if (first == 2) first = Pexec(0, NESTED_CHILD, identity_tail, (void *)environment);

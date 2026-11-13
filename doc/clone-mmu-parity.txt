@@ -206,3 +206,14 @@ attachment cleanup at root reap. Host CPU models cover cancellation/ref rollback
 This is NOT user-visible background admission: unmanaged early return/root
 re-entry and independent anchor/storage reuse remain gated. No preemption.
 See doc/native-scheduler-plan.txt for exact remaining blockers and test scope.
+
+Nested continuation ownership follow-up (#713 Track A)
+-----------------------------------------------------
+The historical unassociated nested-THREAD restriction above is superseded for
+synchronous direct Pexec from managed THREADs: each child has a trusted-factory
+initial KTHREAD associated with the carrier's nested owner stack. Cooperative
+yield restores the actual nested PD/root/launcher; final THREAD exit and
+post-launcher reclamation restore the enclosing owner. Pclone/Pthjoin/Ptermgrp
+and independent nested task admission remain restricted. See the "Nested
+continuation ownership" contract in native-scheduler-plan.txt. No Phase 5
+shared-VM consumer or public Pexec(4/104) activation is included.

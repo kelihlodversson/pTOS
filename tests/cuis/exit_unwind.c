@@ -52,6 +52,8 @@ void ksched_exiting(PD *p, UWORD status)
 { CHECK(p == &child && status == 37); inject(1); }
 void ksched_exited_identity(KPROC *p, PD *pd)
 { CHECK(p == (KPROC *)&child && pd == &child && destroyed); successors++; inject(4); }
+void ksched_nested_leave(KPROC *p)
+{ CHECK(p == (KPROC *)&child && destroyed && successors && !observer_publications); }
 void kproc_release(KPROC *p) { CHECK(p == (KPROC *)&child && disposing); releases++; }
 void panic(const char *fmt, ...)
 {

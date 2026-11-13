@@ -656,6 +656,16 @@ BOOL kproc_thread_start_allowed(const KPROC *process)
  * association cannot retain its KASPACE; the next launch preparation cannot
  * allocate its syscall stack. */
 static BOOL fail_thread_space, fail_kernel_stack;
+ULONG kproc_test_identities(BOOL references)
+{
+    const KPROC *process;
+    ULONG count = 0;
+    for (process = kproc_list; process; process = process->next)
+        count += references ? process->references : 1;
+    for (process = retired_processes; process; process = process->next)
+        count += references ? process->references : 1;
+    return count;
+}
 void kproc_test_fail_thread_space(BOOL armed) { fail_thread_space = armed; }
 void kproc_test_fail_kernel_stack(BOOL armed) { fail_kernel_stack = armed; }
 #endif

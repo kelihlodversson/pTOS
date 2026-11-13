@@ -150,6 +150,7 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 ULONG kaspace_test_live(void); /* address spaces with at least one owner */
+ULONG kaspace_test_references(void);
 #endif
 #if CONF_WITH_X86_64_MEMTEST
 /* Fail the next adoption, leaving backend ownership with its caller. */

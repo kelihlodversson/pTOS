@@ -260,6 +260,9 @@ BOOL kproc_check_launch(PD *p, PD *caller) { abort(); }
 ASPACE *kproc_user_aspace(PD *p) { CHECK(deny_mutation && p==&parent); return NULL; }
 UQUAD kproc_user_root(PD *p) { abort(); }
 BOOL kproc_prepare_user(PD *p, PD *caller) { abort(); }
+LONG ksched_nested_prepare(PD *p) { abort(); }
+void ksched_nested_enter(PD *p) { abort(); }
+void ksched_nested_cancel(PD *p) { CHECK(p == &image); }
 void kproc_set_creator(PD *p, PD *caller) { abort(); }
 void kproc_hand_over(PD *caller, PD *p) { abort(); }
 void kproc_set_give_back(PD *p, BOOL give_back) { abort(); }

@@ -740,10 +740,12 @@ static KPROC *owner_process(const KERNEL_TASK *task)
 {
     return task->nested ? task->nested->process : task->process;
 }
+#if CONF_WITH_PTERMGRP
 static BOOL *owner_cancel_delivering(KERNEL_TASK *task)
 {
     return task->nested ? &task->nested->cancel_delivering : &task->cancel_delivering;
 }
+#endif
 
 BOOL ksched_cleanup_active(void)
 {
@@ -854,6 +856,8 @@ static struct {
     ULONG prepared, entered, stopped, reclaimed, cancelled, refused, untracked;
     ULONG deepest;
     ULONG last_pid, last_tid, last_depth; /* most recently entered execution */
+    ULONG completed, cancel_reaped;
+    UQUAD retiring; /* canonical identity awaiting observer publication */
     uintptr_t last_pd;
     UWORD fail_stage;
     BOOL untracked_next, reported;
@@ -909,6 +913,15 @@ LONG ksched_test_nested(UWORD selector)
     case 11: return (LONG)nested_probe.last_tid;
     case 12: return (LONG)nested_probe.last_depth;
     case 13: return (LONG)(nested_probe.last_pd & 0x7fffffffUL);
+    case 14: {
+        KERNEL_TASK *task;
+        ULONG count = 0;
+        for (task = scheduler.tasks; task; task = task->next_task)
+            if (task->execution.stack.physical) count++;
+        return (LONG)count;
+    }
+    case 15: return (LONG)nested_probe.completed;
+    case 0x21: return (LONG)nested_probe.cancel_reaped;
     case 0x20: nested_probe.untracked_next = TRUE; return E_OK;
     default:
         if (selector >= 0x10 && selector <= 0x16) {
@@ -916,6 +929,17 @@ LONG ksched_test_nested(UWORD selector)
         }
         return EINVFN;
     }
+}
+void ksched_test_nested_published(KPROC *process)
+{
+    PROCESS_COMPLETION completion;
+    if (!nested_probe.retiring || kproc_ref_number(process) != nested_probe.retiring) return;
+    if (!kproc_ref_terminal(process) || kproc_ref_has_basepage(process) ||
+        !kproc_ref_completion(process, &completion) || completion.state != PROCESS_COMPLETED ||
+        !(completion.order_low || completion.order_high))
+        panic("scheduler: nested observer missed stopped resource release");
+    nested_probe.retiring = 0;
+    nested_probe.completed++;
 }
 #else
 #define nested_injected(stage) FALSE
@@ -936,6 +960,27 @@ static void reclaim_nested_execution(void *resource)
     if (frame->state != NESTED_RECLAIMING || frame->carrier->nested == frame ||
         frame->carrier->nested_prepared == frame)
         panic("scheduler: reclaiming an associated nested execution");
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (kproc_ref_terminal(frame->process))
+        panic("scheduler: nested observer ready before THREAD reclamation");
+    if (frame->tid && !frame->program) {
+        if (!ksched_cleanup_active()) panic("scheduler: unprotected nested reclamation");
+#if CONF_WITH_PTERMGRP
+        if (ksched_cancellation_pending()) {
+            KTHREAD *enclosing = ksched_exit_thread(run);
+            /* Exercise a real scheduler handoff in a destructor while the
+             * restored owner is already cancelled. No partial release may
+             * be interrupted at the resumed GEMDOS checkpoint. */
+            ksched_yield();
+            ksched_cancel_point();
+            if (ksched_exit_thread(run) != enclosing || !ksched_cleanup_active() ||
+                !ksched_cancellation_pending())
+                panic("scheduler: cancellation interrupted nested reclamation");
+            nested_probe.cancel_reaped++;
+        }
+#endif
+    }
+#endif
 }
 static void release_nested_frame(KSCHED_NESTED *frame)
 {
@@ -943,6 +988,10 @@ static void release_nested_frame(KSCHED_NESTED *frame)
     frame->state = NESTED_RECLAIMING;
     frame->thread = NULL;
     if (thread) kthread_destroy(thread); /* stopped or never started */
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (kproc_ref_terminal(frame->process))
+        panic("scheduler: nested observer ready during resource reclamation");
+#endif
     kproc_release(frame->process);
     kproc_release(frame->enclosing_process);
     kfree(frame);
@@ -957,6 +1006,7 @@ LONG ksched_nested_prepare(PD *pd)
     KERNEL_TASK *task = execution_cpu.current;
     KSCHED_NESTED *frame;
     KTHREAD *enclosing;
+    KSCHED_CLEANUP_SCOPE scope = {0};
     runqueue_unlocked();
     if (scheduler.stopping || !scheduler.active || !task || task->state != TASK_RUNNING)
         return KSCHED_NESTED_UNMANAGED;
@@ -970,8 +1020,9 @@ LONG ksched_nested_prepare(PD *pd)
      * its scopes belong to the owner that opened them. */
     if (task->nested_prepared || task->cleanup_depth) return EACCDN;
     if (nested_injected(1)) return ENSMEM;
+    ksched_cleanup_begin(&scope);
     frame = kalloc(sizeof(*frame));
-    if (!frame) return ENSMEM;
+    if (!frame) { ksched_cleanup_end(&scope); return ENSMEM; }
     memset(frame, 0, sizeof(*frame));
     frame->state = NESTED_PREPARED;
     frame->carrier = task;
@@ -1012,9 +1063,11 @@ LONG ksched_nested_prepare(PD *pd)
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     nested_probe.prepared++;
 #endif
+    ksched_cleanup_end(&scope);
     return E_OK;
 failed:
     release_nested_frame(frame);
+    ksched_cleanup_end(&scope);
     return ENSMEM;
 }
 /* Roll back a preparation whose launch was abandoned before entry. The image
@@ -1023,13 +1076,16 @@ void ksched_nested_cancel(PD *pd)
 {
     KERNEL_TASK *task = execution_cpu.current;
     KSCHED_NESTED *frame;
+    KSCHED_CLEANUP_SCOPE scope = {0};
     runqueue_unlocked();
     if (!scheduler.active || !task || !(frame = task->nested_prepared) || frame->program != pd)
         return;
     if (frame->state != NESTED_PREPARED || frame->carrier != task)
         panic("scheduler: cancelling a published nested execution");
     task->nested_prepared = NULL;
+    ksched_cleanup_begin(&scope);
     release_nested_frame(frame);
+    ksched_cleanup_end(&scope);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     nested_probe.cancelled++;
 #endif
@@ -1075,6 +1131,7 @@ void ksched_nested_leave(KPROC *process)
     KERNEL_TASK *task = execution_cpu.current;
     KSCHED_NESTED *frame;
     RUNQUEUE_GUARD guard;
+    KSCHED_CLEANUP_SCOPE scope = {0};
     runqueue_unlocked();
     if (!scheduler.active || !task || !(frame = task->nested) || frame->process != process)
         return; /* task-owned or untracked PROCESS */
@@ -1092,9 +1149,17 @@ void ksched_nested_leave(KPROC *process)
     if (ksched_exit_thread(run) != frame->enclosing_thread ||
         kthread_process(frame->enclosing_thread) != frame->enclosing_process)
         panic("scheduler: enclosing THREAD lost across nested execution");
+    /* Final KASPACE/identity release may invoke a yielding file destructor.
+     * Keep enclosing cancellation latched until every nested owner is gone. */
+    ksched_cleanup_begin(&scope);
     /* No ticket can name this stopped execution; none may outlive it. */
     ksched_waiter_retire(frame->process, frame->tid, task->execution.identity);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (nested_probe.retiring) panic("scheduler: nested completion publication skipped");
+    nested_probe.retiring = kproc_ref_number(process);
+#endif
     release_nested_frame(frame);
+    ksched_cleanup_end(&scope);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     nested_probe.reclaimed++;
     if (!task->nested && nested_probe.deepest >= 2 && !nested_probe.reported) {

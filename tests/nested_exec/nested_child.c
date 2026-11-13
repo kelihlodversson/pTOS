@@ -30,12 +30,31 @@ static int identity_is(const struct nested_chain *chain, long pid, long tid)
 }
 static int counts_are(const struct nested_chain *chain, long extra)
 {
+    static const unsigned selectors[] = { NQ_PROCESSES, NQ_THREADS, NQ_SPACES, NQ_KSTACKS,
+        NQ_LIVE, NQ_IDENTITIES, NQ_PROCREFS, NQ_SPACEREFS, NQ_SCHEDSTACKS };
+    long level = chain->level + extra;
+    long expected[9];
+    unsigned i;
     if (chain->flag != 'x') return 1;
-    return nested_query(NQ_PROCESSES) == chain->processes + chain->level + extra &&
-           nested_query(NQ_THREADS) == chain->threads + chain->level + extra &&
-           nested_query(NQ_SPACES) == chain->spaces + chain->level + extra &&
-           nested_query(NQ_KSTACKS) == chain->kstacks + chain->level + extra &&
-           nested_query(NQ_LIVE) == chain->depth + extra;
+    expected[0] = chain->processes + level; expected[1] = chain->threads + level;
+    expected[2] = chain->spaces + level; expected[3] = chain->kstacks + level;
+    expected[4] = chain->depth + extra; expected[5] = chain->identities + level;
+    /* Each level: live lookup, frame, THREAD, enclosing frame retain and
+     * the launch's retained logical parent identity. */
+    expected[6] = chain->procrefs + 5 * level; expected[7] = chain->spacerefs + 2 * level;
+    expected[8] = chain->schedstacks;
+    for (i = 0; i < 9; i++) {
+        long actual = nested_query(selectors[i]);
+        if (actual != expected[i]) {
+            char message[] = "nested count 000 actual 00000000 expected 00000000\r\n";
+            nested_put_hex(message + 13, selectors[i], 3);
+            nested_put_hex(message + 24, (unsigned long)actual, 8);
+            nested_put_hex(message + 42, (unsigned long)expected[i], 8);
+            Cconws(message);
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static int run_chain(const char *tail)
@@ -56,6 +75,11 @@ static int run_chain(const char *tail)
     chain.threads = (long)nested_get_hex(tail + 25, 4);
     chain.spaces = (long)nested_get_hex(tail + 29, 4);
     chain.kstacks = (long)nested_get_hex(tail + 33, 4);
+
+    chain.identities = (long)nested_get_hex(tail + 37, 4);
+    chain.procrefs = (long)nested_get_hex(tail + 41, 4);
+    chain.spacerefs = (long)nested_get_hex(tail + 45, 4);
+    chain.schedstacks = (long)nested_get_hex(tail + 49, 4);
 
     /* A distinct PROCESS and, where the launcher is a managed THREAD, a
      * distinct THREAD of its own, one association deeper. */
@@ -146,6 +170,7 @@ int main(void)
         chain.depth = chain.tracked ? (int)nested_query(NQ_DEPTH) + 1 : 0;
         chain.level = 1;
         chain.processes = chain.threads = chain.spaces = chain.kstacks = 0;
+        chain.identities = chain.procrefs = chain.spacerefs = chain.schedstacks = 0;
         nested_chain_tail(next_tail, &chain);
         if (Pexec(0, NESTED_CHILD, next_tail, (void *)environment) != NESTED_LEVEL_STATUS(1)) Pterm(110);
         if (Pgetpid() != pid || nested_query(NQ_TID) != tid) Pterm(111);
