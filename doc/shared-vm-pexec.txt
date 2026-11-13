@@ -2,6 +2,38 @@ Implementation slice (private test kernels only until independent acceptance):
 - Reuse the PE_LOAD-created distinct KPROC/PD/PID as NEW_PROCESS/SHARE_VM loader input; no second public basepage/PID allocation. The generic factory creates the new THREAD and independent kernel stacks, not a duplicate process manager. Rollback does not dispose the caller-owned staged PROCESS.
 - Associate bounded R1 physical/R2 reservation ownership with this KPROC. Source metadata references are canonical; no live source PD is retained as a completion controller. Preserve original image/basepage/environment mappings and source ownership.
 - Independent exact backend borrow-reference duplication validates unchanged physical mappings, then acquires its own pin without remapping/revoking leases. Existing transactional map_procmem is untouched.
-- Stage ELF W->X policy under a short non-yielding reversible permission journal before installing new holds/startup. Restore old permissions and old lease revocations on all prepublication failures. No allocation/callback/user execution crosses journal lifetime. Existing foreign held mappings reject admission.
+- Stage ELF W->X policy under a short non-yielding reversible permission journal before installing new holds/startup. Restore old permissions and old lease revocations on all prepublication failures. Only bounded allocation occurs within the no-yield journal lifetime; no callback or user execution may cross it. Revocation snapshots use non-recycled lease IDs, never borrowed lease pointers. Abort drops new image fences before restoring old permissions, and restores before raw-allocation final releases. Existing foreign held mappings reject admission.
 - Preserve ordinary PE_LOAD ownership and patchable data; mark original heap grant as shared attachment on no-fail commit. Parent retirement retires attached ranges into existing R4 fences; it cannot destroy an executing child KPROC merely because its allocation was parent-owned.
 - Reuse existing canonical #909 reap, adding only an internal full-result projection to the same consumption path for Pexec4's full16 status. No second observer registry or reaper.
+
+Workstream B status (unaccepted, test-only implementation)
+-------------------------------------------------------
+Base: integrated epic dd3ec30d307c42e528d3b82858920260ab85e5a5. The independent
+post-merge audit REJECTED this prerequisite baseline after exposing a narrow
+retained-lazy reservation defect. Its correction is isolated in #958; it is
+not bundled into this consumer. No activation or final acceptance is possible
+until that correction is independently accepted and integrated.
+
+The current source provides a test-gated static staged-ELF path for both modes,
+with independent trusted THREAD construction, guarded ordinary-heap stack,
+bounded retained physical/logical ownership and the canonical PROCESS reap.
+CONF_WITH_SHARED_VM_PEXEC_TEST defaults n and no shipped preset selects it.
+Ordinary ring-3 mode4/104 rejection remains unchanged. This test switch is
+not a production activation decision.
+
+Still incomplete: legacy PRG and interpreter policy, full exit-order/orphan
+and SAME_PROCESS worker tests, all preparation-stage failure injections,
+concurrent-wait and cancellation claim coverage, PROT_NONE reservation
+inheritance, final cross-architecture/compatibility matrix and independent
+loader/memory-owner acceptance. The permission-preparation and inactive
+reservation extensions also require focused review; successful basic execution
+is not proof of complete shared-ASPACE allocation lifetime.
+
+Preliminary authored-tree tests: x32 actual trap launch of static PIE through
+both4/104, normal return, async public wait exactly once, duplicate launch
+rejection and staged owner cleanup; complete suite24/0 plus five shutdowns.
+Production borrow/permission rollback tests pass with modeled MMU providers
+across x32/ARM/m68k, normal/ASan/fortified (prior preparation slice); those are
+not native shared-Pexec evidence on ARM/m68k. Full gate-off x32 MEMTEST/GEM/
+form/input passed before the guard refinement. Exact-commit validation will
+be recorded separately, not inferred from these work-in-progress tests.

@@ -208,6 +208,16 @@ BOOL kproc_thread_attach_space(KPROC *process, struct kaspace *construction_spac
 BOOL kproc_clone_target_ready(const KPROC *process, struct kthread *thread);
 BOOL kproc_clone_adopt_space(KPROC *process, struct kthread *thread, struct kaspace *space);
 #if CONF_WITH_NATIVE_SCHED
+/* Loader-only, distinct existing PE_LOAD PROCESS; no resource adoption on failure. */
+#include "thread_startup.h"
+LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PERMISSION_TRANSACTION **);
+void kproc_shared_exec_abort(KPROC *);
+void kproc_shared_exec_finish(KPROC *);
+BOOL kproc_shared_exec_ready(const KPROC *,struct kthread *);
+BOOL kproc_shared_exec_active(PD *);
+BOOL kproc_shared_exec_committed(const KPROC *);
+BOOL kproc_shared_exec_retire_source(void *);
+void kproc_shared_exec_release_base(void *);
 BOOL kproc_clone_prepare_compat(KPROC *, struct kthread *, struct kaspace *);
 void kproc_clone_drop_compat(KPROC *);
 BOOL kproc_clone_run_ready(KPROC *, struct kthread *, struct kaspace *);

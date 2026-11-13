@@ -18,8 +18,10 @@ struct kaspace {
 #endif
 };
 
+static UQUAD lease_ids; /* Non-recycled storage identity; not an owning handle. */
 static KASPACE *spaces; /* borrowed registry; serialized with retain/release */
 struct kaspace_lease {
+    UQUAD identity;
     KASPACE *space; /* owning; list membership is non-owning */
     VADDR first, last; /* inclusive page addresses; no end-address overflow */
     UWORD access;
@@ -71,6 +73,7 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_lease_after && !--fail_lease_after) return ENSMEM;
 #endif
+    if (lease_ids == ~(UQUAD)0) return ENSMEM;
     lease = kalloc(sizeof(*lease));
     if (!lease) return ENSMEM;
     lease->reservation_ticket = lease->reservation_id = lease->owner_number = 0;
@@ -84,6 +87,7 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     lease->revoked = lease->sealed = lease->held = lease->stack = FALSE;
     if (!kaspace_lease_valid(lease)) { kfree(lease); return EIMBA; }
     if (!kaspace_share(space)) { kfree(lease); return ENSMEM; }
+    lease->identity=++lease_ids;
     lease->next = space->leases;
     space->leases = lease;
     *result = lease;
@@ -273,8 +277,8 @@ BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
             bytes <= length-(address-block->va)) {
             result->address = block->va; result->bytes = length;
             result->identity = block->reservation;
-            result->rights = ASPACE_PROT_USER|ASPACE_PROT_WRITE;
-            result->flags = KASPACE_RESERVATION_LAZY;
+            result->rights = (block->flags&KASPACE_HEAP_GUARD)?0:ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+            result->flags = (block->flags&KASPACE_HEAP_GUARD)?KASPACE_RESERVATION_INACCESSIBLE:KASPACE_RESERVATION_LAZY;
             return TRUE;
         }
     }
@@ -319,14 +323,16 @@ static LONG reservation_install(KASPACE *space, const KASPACE_RESERVATION_INFO *
         info->address >= USER_VA_LIMIT || info->bytes > USER_VA_LIMIT-info->address ||
         address < info->address || address-info->address >= info->bytes ||
         bytes > info->bytes-(address-info->address) ||
-        !(rights & ASPACE_PROT_USER) ||
+        (!(rights & ASPACE_PROT_USER) && !(rights==0 && info->rights==0 &&
+          (info->flags&KASPACE_RESERVATION_INACCESSIBLE) && !(info->flags&KASPACE_RESERVATION_LAZY))) ||
         (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC)) ||
-        (info->flags & ~(KASPACE_RESERVATION_LAZY|KASPACE_RESERVATION_CAPTURED))) return EINVAL;
+        (info->flags & ~(KASPACE_RESERVATION_LAZY|KASPACE_RESERVATION_CAPTURED|KASPACE_RESERVATION_INACCESSIBLE))) return EINVAL;
     if ((info->rights & rights) != rights) return EACCDN;
     if (reservation_tickets == ~(UQUAD)0) return ENSMEM;
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_lease_after && !--fail_lease_after) return ENSMEM;
 #endif
+    if (lease_ids == ~(UQUAD)0) return ENSMEM;
     lease = kalloc(sizeof(*lease));
     if (!lease) return ENSMEM;
     if (!kaspace_share(space)) { kfree(lease); return ENSMEM; }
@@ -339,6 +345,7 @@ static LONG reservation_install(KASPACE *space, const KASPACE_RESERVATION_INFO *
     lease->reservation_rights = info->rights; lease->reservation_flags = info->flags;
     lease->captured = (info->flags & KASPACE_RESERVATION_CAPTURED) != 0;
     lease->owner_identity = owner_identity; lease->reservation_ticket = ++reservation_tickets;
+    lease->identity=++lease_ids;
     lease->next = space->leases; space->leases = lease;
     result->ticket = lease->reservation_ticket;
     return E_OK;
@@ -350,7 +357,6 @@ LONG kaspace_reservation_hold(KASPACE *space, UQUAD identity,
 {
     KASPACE_RESERVATION_INFO info;
     if (!result || result->ticket || !identity || !owner_number || !owner_identity ||
-        !(rights & ASPACE_PROT_USER) ||
         (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))) return EINVAL;
     if (!kaspace_reservation_info(space,address,bytes,&info) || info.identity!=identity) return EACCDN;
     return reservation_install(space,&info,address,bytes,rights,owner_number,owner_identity,result);
@@ -408,10 +414,11 @@ LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_lease_after && !--fail_lease_after) return ENSMEM;
 #endif
+    if (lease_ids == ~(UQUAD)0) return ENSMEM;
     copy = kalloc(sizeof(*copy));
     if (!copy) return ENSMEM;
     if (!kaspace_share(lease->space)) { kfree(copy); return ENSMEM; }
-    *copy = *lease; copy->reservation_ticket = ++reservation_tickets;
+    *copy = *lease; copy->identity=++lease_ids; copy->reservation_ticket = ++reservation_tickets;
     copy->retire_address=copy->retire_bytes=0; copy->retire_private=copy->retire_running=copy->retire_committed=FALSE;
     copy->first=copy->exact_address&~(VADDR)(USER_PAGE_SIZE-1);
     copy->last=(copy->exact_address+copy->exact_bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
@@ -620,12 +627,25 @@ BOOL kaspace_heap_contains(KASPACE *space, UQUAD address)
     return FALSE;
 }
 
+BOOL kaspace_heap_protection(KASPACE *space,UQUAD address,UWORD *rights)
+{
+    ULONG i;
+    if(!space || !rights) return FALSE;
+    for(i=0;i<space->heap.count;i++) {
+        KASPACE_HEAP_BLOCK *block=&space->heap.blocks[i];
+        if(address>=block->va && address-block->va<(VADDR)block->pages*USER_PAGE_SIZE) {
+            *rights=(block->flags&KASPACE_HEAP_GUARD)?0:ASPACE_PROT_USER|ASPACE_PROT_WRITE;return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 int kaspace_heap_demand_page(KASPACE *space, UQUAD address, UWORD access)
 {
 #if CONF_WITH_DEMAND_PAGING
-    VADDR va;
-    if (!kaspace_heap_contains(space, address)) return -1;
-    if (access & ~(ASPACE_PROT_USER | ASPACE_PROT_WRITE)) return 0;
+    VADDR va;UWORD rights;
+    if (!kaspace_heap_protection(space,address,&rights)) return -1;
+    if(!rights || (access & ~rights)) return 0;
     va = (VADDR)address;
 #if CONF_WITH_PRIVATE_CLONE
     {
@@ -804,3 +824,7 @@ failed:
     return EINVFN;
 #endif
 }
+
+#if CONF_WITH_NATIVE_SCHED
+#include "kaspace_permission.h"
+#endif

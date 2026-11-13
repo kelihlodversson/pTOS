@@ -120,3 +120,29 @@ UQUAD aspace_test_table_hash(const ASPACE *as)
 #endif
 #undef BORROW_HASH_COUNT
 #undef BORROW_HASH_PAGE
+
+/* Acquire an independent reference to an EXISTING exact procmem translation.
+ * This never remaps a leaf, grants USER rights, revokes a lease or consumes
+ * another borrow. It is valid beneath a retained logical reservation fence. */
+BOOL aspace_duplicate_borrow(ASPACE *as,VADDR va,VADDR bytes)
+{
+    VADDR page,last;PADDR physical;
+    struct pin *grown=NULL;ULONG capacity=as->pin_capacity;
+    if(!bytes || va>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-va || !procmem_range_live(va,bytes)) return FALSE;
+    last=(va+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+    for(page=va&~(VADDR)(USER_PAGE_SIZE-1);;page+=USER_PAGE_SIZE) {
+        if(!aspace_translate(as,page,&physical,NULL) || physical!=procmem_phys_of(page)) return FALSE;
+        if(page==last) break;
+    }
+    if(as->npins==capacity) {
+        if(capacity>(ULONG)~0UL/(2*sizeof(*grown))) return FALSE;
+        capacity=capacity?capacity*2:4;
+        grown=kalloc(capacity*sizeof(*grown));if(!grown) return FALSE;
+        if(as->npins) memcpy(grown,as->pins,as->npins*sizeof(*grown));
+    }
+    if(!procmem_try_pin(va,bytes)) { kfree(grown);return FALSE; }
+    if(grown) { kfree(as->pins);as->pins=grown;as->pin_capacity=capacity; }
+    as->pins[as->npins].va=va;as->pins[as->npins].bytes=bytes;
+    as->pins[as->npins++].retired=FALSE;
+    return TRUE;
+}

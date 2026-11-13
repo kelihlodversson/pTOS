@@ -11,6 +11,7 @@
 #include "kthread.h"
 #include "thread_startup.h"
 #include "proc_clone.h"
+#include "process_observer.h"
 #include "fs.h"
 #include "callback_cpu.h"
 #include "ksched_legacy_irq.h"
@@ -37,6 +38,8 @@ typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING
 typedef struct kernel_task {
     struct kernel_task *next_task; /* Stable arena link; never a lifetime reference. */
     PD *program, *parent;
+    UQUAD synchronous_wait_process;
+    ULONG synchronous_waiter; /* non-recycled TID; no borrowed waiter stack */
     struct kernel_task *completion_owner; /* owns one dependent reference; NULL is anchor */
     ULONG dependents; /* prevents anchor retirement/reuse until worker root reap */
     BOOL process_completed, result_published;
@@ -1557,16 +1560,24 @@ static BOOL child_ready(void *argument)
     return !found;
 }
 
-LONG ksched_wait(WORD pid, WORD options, UQUAD address)
+static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETION *completion)
 {
     CHILD_WAIT wait;
     uintptr_t flags;
     KERNEL_TASK *task;
+    ULONG waiter=kthread_tid(ksched_exit_thread(run));
+    KPROC *wait_owner=kproc_retain(run);
+    UQUAD wait_number=kproc_ref_number(wait_owner);
+    kproc_release(wait_owner);
     if (scheduler.stopping) return EACCDN;
     if (options & ~3) return EINVAL;
     /* No process-group or stopped-process model is implemented yet. */
     if (!pid || pid < -1) return EINVFN;
     if (!scheduler.active) return EFILNF;
+    if(completion && (!wait_number || pid<1)) return EINVFN;
+#if CONF_WITH_PTERMGRP
+    if(completion) ksched_cancel_point(); /* caller owns no uncommitted launch resources */
+#endif
     wait.parent = run; wait.pid = pid;
     flags = native_sched_irq_save();
     for (;;) {
@@ -1576,6 +1587,10 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
             if (!task->asynchronous || task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != run ||
                 (pid > 0 && task->pid != pid)) continue;
             found = TRUE;
+            if(task->synchronous_wait_process && (task->synchronous_wait_process!=wait_number || task->synchronous_waiter!=waiter)) {
+                native_sched_irq_restore(flags);return EACCDN;
+            }
+            if(completion) { task->synchronous_wait_process=wait_number;task->synchronous_waiter=waiter; }
             if (task->state != TASK_ZOMBIE || task->dependents) continue;
             /* Back/copy output outside IRQ exclusion. This path never yields,
              * so the zombie remains owned and cannot change under the copy. */
@@ -1583,6 +1598,9 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
             if (address && !kproc_copy_to_user(address, task->usage, sizeof(task->usage))) return EIMBA;
             kproc_add_child_usage(run, task->usage[0]);
             native_sched_irq_disable();
+            if(completion && (!process_observer_snapshot(task->process,completion) ||
+                completion->state!=PROCESS_COMPLETED)) panic("zombie without canonical PROCESS result");
+            task->synchronous_waiter=0;task->synchronous_wait_process=0;
             status = ((ULONG)(UWORD)task->pid << 16) |
                      (task->signal ? ((ULONG)task->signal << 8) : (task->result & 255));
             task->parent = NULL;
@@ -1608,10 +1626,24 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
             native_sched_irq_restore(flags);
         }
 #if CONF_WITH_PTERMGRP
+        if(completion && ksched_cancellation_pending()) {
+            uintptr_t release_flags=native_sched_irq_save();
+            for(task=async_tasks();task;task=task->next_task)
+                if(task->parent==run && task->pid==pid && task->synchronous_waiter==waiter && task->synchronous_wait_process==wait_number) {
+                    task->synchronous_waiter=0;task->synchronous_wait_process=0; }
+            native_sched_irq_restore(release_flags);
+        }
         ksched_cancel_point();
 #endif
         flags = native_sched_irq_save();
     }
+}
+LONG ksched_wait(WORD pid,WORD options,UQUAD address)
+{ return wait_process(pid,options,address,NULL); }
+LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion)
+{
+    if(!completion) return EINVAL;
+    return wait_process(pid,0,0,completion);
 }
 
 /* Called only after the scheduler has switched back to its root context.
@@ -1980,6 +2012,26 @@ BOOL ksched_clone_context(KPROC *source, PD **controller)
         execution_cpu.current->program != run || kproc_live_pd(source) != run) return FALSE;
     *controller = ksched_controller_pd(); return *controller!=NULL;
 }
+BOOL ksched_loaded_clone_context(KPROC *source,PD **controller)
+{
+    if(!source || !ksched_async_allowed() || kproc_live_pd(source)!=run ||
+#if CONF_WITH_PTERMGRP
+        kproc_group_status(source,NULL) ||
+#endif
+        !kproc_active_space(source)) return FALSE;
+    if(ksched_exit_thread(run) && execution_cpu.current->process!=source) return FALSE;
+    *controller=ksched_controller_pd();return *controller!=NULL;
+}
+BOOL ksched_loaded_clone_begin(KPROC *source,PD **controller,KSCHED_PUBLICATION_GUARD *guard)
+{
+    uintptr_t flags=native_sched_irq_save();
+    if(!ksched_loaded_clone_context(source,controller)) {native_sched_irq_restore(flags);return FALSE;}
+#if CONF_WITH_X86_64_MEMTEST
+    if(clone_masked) panic("nested loaded clone publication");
+    clone_masked=TRUE;
+#endif
+    guard->flags=flags;return TRUE;
+}
 BOOL ksched_clone_begin(KPROC *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard)
 {
     uintptr_t flags;
@@ -2028,7 +2080,9 @@ void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STA
         task->execution.syscall_stack.top = syscall_stack->top;
         syscall_stack->physical = syscall_stack->top = 0;
     } else if (logical_parent) {
-        if (execution_cpu.current->process != logical_parent || kproc_live_pd(logical_parent) != run)
+        if ((execution_cpu.current && execution_cpu.current->process != logical_parent &&
+             !(kproc_shared_exec_committed(process) && !ksched_exit_thread(run))) ||
+            !ksched_async_allowed() || kproc_live_pd(logical_parent) != run)
             panic("clone publication parent changed");
         task->asynchronous = TRUE; task->parent = run;
     }

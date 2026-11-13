@@ -341,6 +341,9 @@ void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes);
  * takes it away again (and unpins), exactly once per borrow.  See aspace.c.
  */
 BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes);
+/* Additional exact reference only; translation/permissions must already match.
+ * No mapping/lease mutation; ordinary/retired unborrow consumes it once. */
+BOOL aspace_duplicate_borrow(ASPACE *as,VADDR va,VADDR bytes);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 void aspace_test_borrow_failure(ASPACE *as,LONG after);
 LONG aspace_test_borrow_pending(const ASPACE *as);

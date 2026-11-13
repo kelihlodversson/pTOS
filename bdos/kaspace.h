@@ -42,6 +42,17 @@ BOOL kaspace_mapping_can_change(const struct aspace *backend, VADDR address, VAD
 BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end);
 
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
+#if CONF_WITH_NATIVE_SCHED
+/* Loader-only, synchronous no-yield permission preparation. Abort only after
+ * releasing all new startup/region holds. Existing lease pointers cannot be
+ * released/reentered during the transaction. Never an IRQ/SMP primitive. */
+typedef struct kaspace_permission_transaction KASPACE_PERMISSION_TRANSACTION;
+typedef struct { VADDR address,bytes; UWORD rights; } KASPACE_PROTECTION;
+LONG kaspace_permission_prepare(KASPACE *,const KASPACE_PROTECTION *,UWORD,
+                               KASPACE_PERMISSION_TRANSACTION **);
+void kaspace_permission_finish(KASPACE_PERMISSION_TRANSACTION **,BOOL commit);
+#endif
+
 /* Logical reservation-preserving lazy/file backing only. This cannot authorize
  * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */
 BOOL kaspace_materialization_change(struct aspace *backend, VADDR address,
@@ -58,13 +69,16 @@ typedef struct {
     VADDR va;
     ULONG pages;
     UQUAD reservation; /* immutable birth identity; not a physical frame */
+    UWORD flags; /* zero for ordinary allocations */
 } KASPACE_HEAP_BLOCK;
+#define KASPACE_HEAP_GUARD 1U
 typedef struct {
     KASPACE_HEAP_BLOCK *blocks;
     ULONG count, capacity;
 } KASPACE_HEAP;
 KASPACE_HEAP *kaspace_heap(KASPACE *space);
 BOOL kaspace_heap_contains(KASPACE *space, UQUAD address);
+BOOL kaspace_heap_protection(KASPACE *,UQUAD address,UWORD *rights);
 /* -1: not reserved; otherwise the usual demand-fault result. */
 int kaspace_heap_demand_page(KASPACE *space, UQUAD address, UWORD access);
 #if CONF_WITH_MMAP
@@ -105,6 +119,7 @@ typedef struct {
 } KASPACE_RESERVATION_INFO;
 #define KASPACE_RESERVATION_LAZY 1
 #define KASPACE_RESERVATION_CAPTURED 2
+#define KASPACE_RESERVATION_INACCESSIBLE 4 /* ownership only, no USER access */
 UQUAD kaspace_reservation_next(void); /* 0 on permanent exhaustion */
 BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
                              KASPACE_RESERVATION_INFO *result);

@@ -53,7 +53,8 @@
 enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
        UH_LOADED = 1,           /* a program Pexec(PE_LOAD) loaded for a child, until PE_GO */
        UH_IMAGE = 2,            /* the image of this very process, moved here by PE_GO */
-       UH_LENT = 3 };           /* the image of a PE_GO child, lent to it until it ends */
+       UH_LENT = 3,
+       UH_SHARED_IMAGE = 4 };           /* the image of a PE_GO child, lent to it until it ends */
 enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
        PROCESS_DISPOSING, PROCESS_RETIRED };
 #endif
@@ -62,6 +63,26 @@ enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
  * link so the public p_xdta field keeps working verbatim. */
 
 #if CONF_WITH_KPROC
+
+#if CONF_WITH_NATIVE_SCHED
+/* Loader-owned shared-VM attachments. The existing allocator and KASPACE
+ * ledgers own all ranges; this bounded PROCESS record owns their R1/R2 tokens.
+ * All preparation is no-yield and covered by the caller's cleanup scope. */
+#define SHARED_REGIONS 96
+#define SHARED_RAW 8
+#define SHARED_STACK_BYTES (64UL*1024UL)
+struct shared_exec_regions {
+    KASPACE *space;
+    KPROC *parent;
+    KPROC_ALLOCATION_HOLD raw[SHARED_RAW];
+    KASPACE_RESERVATION_HOLD logical[SHARED_REGIONS];
+    UWORD nraw,nlogical;
+    VADDR stack;ULONG stack_pages;UQUAD stack_birth,guard_birth;
+    KASPACE_PERMISSION_TRANSACTION *permissions;
+    BOOL committed;
+};
+static void shared_exec_commit(KPROC *target);
+#endif
 
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
@@ -115,6 +136,7 @@ struct kproc {
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
+    struct shared_exec_regions *shared_exec;
     BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
@@ -171,6 +193,7 @@ struct kproc {
         UBYTE kind;             /* UH_MALLOC here is only legacy PE_GO give-back */
         PD *pd;                 /* UH_LOADED: the process it is loaded for */
         UQUAD reservation;      /* immutable staged/image allocation birth */
+        UQUAD shared_generation; /* exact source-owned PD allocation incarnation */
     } *heap;
     ULONG nheap, heap_capacity;
     VADDR stack_size;           /* Psetlimit(): the stack's address space; 0: the default */
@@ -693,6 +716,9 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
 BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *thread)
 {
     ULONG i;
+#if CONF_WITH_NATIVE_SCHED
+    if (p && p->shared_exec) return kproc_shared_exec_ready(p,thread);
+#endif
     if (!p || !p->pd || p->started || p->completed ||
         p->disposal_state != PROCESS_LIVE || p->clone_identity_only ||
         p->active_space || p->pending_space || p->has_image || p->lost || p->kstack_phys ||
@@ -735,14 +761,14 @@ BOOL kproc_clone_prepare_compat(KPROC *p, KTHREAD *thread, KASPACE *space)
         procmem_gen(p->user_start) != p->tpa_gen || procmem_gen(p->env_start) != p->env_gen) return FALSE;
     p->clone_compat = kaspace_share(space);
     if (!p->clone_compat) return FALSE;
-    if (!clone_borrow_unique(kaspace_backend(space), (VADDR)(uintptr_t)p->user_start,
-                       p->user_end - p->user_start)) goto failed;
+    if (!(p->shared_exec ? aspace_duplicate_borrow(kaspace_backend(space),(VADDR)(uintptr_t)p->user_start,p->user_end-p->user_start) :
+          clone_borrow_unique(kaspace_backend(space),(VADDR)(uintptr_t)p->user_start,p->user_end-p->user_start))) goto failed;
     p->clone_maps = 1;
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_clone_compat == 1) { fail_clone_compat = 0; goto failed; }
 #endif
-    if (!clone_borrow_unique(kaspace_backend(space), (VADDR)(uintptr_t)p->env_start,
-                       p->env_end - p->env_start)) goto failed;
+    if (!(p->shared_exec ? aspace_duplicate_borrow(kaspace_backend(space),(VADDR)(uintptr_t)p->env_start,p->env_end-p->env_start) :
+          clone_borrow_unique(kaspace_backend(space),(VADDR)(uintptr_t)p->env_start,p->env_end-p->env_start))) goto failed;
     p->clone_maps = 3;
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_clone_compat == 2) { fail_clone_compat = 0; goto failed; }
@@ -800,7 +826,8 @@ BOOL kproc_clone_prepare_parent(KPROC *p, KPROC *parent)
 {
     /* Factory already retained the parent. No new ref acquisition is needed
      * during launch or after publication. */
-    return p && parent && kproc_live_pd(parent) && p->parent_identity == parent;
+    return p && parent && kproc_live_pd(parent) &&
+        (p->parent_identity==parent || (p->shared_exec && p->shared_exec->parent==parent));
 }
 /* Distinct from logical parent_identity. The backend guarantees that its root
  * continuation is blocked until the group ends. Own an allocation pin as well
@@ -872,6 +899,7 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
             panic("clone controller identity changed");
         p->parent = p->clone_controller_pd; /* logical identity remains separate */
     }
+    if(p->shared_exec) shared_exec_commit(p);
     p->active_space = space; p->aspace = kaspace_backend(space);
     p->clone_guarded = TRUE; p->clone_identity_only = FALSE;
     p->child_usage_at_wait = wait_usage;
@@ -1121,7 +1149,7 @@ void kproc_destroy(PD *pd)
                 ULONG staged_index;
                 for (staged_index=0;staged_index<kproc->nheap;staged_index++) {
                     struct uheap_block *staged=&kproc->heap[staged_index];
-                    if (staged->kind==UH_LOADED && staged->pages) {
+                    if ((staged->kind==UH_LOADED || staged->kind==UH_SHARED_IMAGE) && staged->pages) {
                         if (!kaspace_retire_private(kproc->active_space,staged->va,
                                 (VADDR)staged->pages*USER_PAGE_SIZE)) panic("loader-owner staging retirement");
                         staged->pd=NULL; staged->pages=0;
@@ -1137,6 +1165,7 @@ void kproc_destroy(PD *pd)
             kproc_load_leave();             /* (a disk error jumped out of a load) */
 #if CONF_WITH_NATIVE_SCHED
             kproc_clone_drop_compat(kproc);
+            kproc_shared_exec_abort(kproc);
 #endif
             kaspace_put(kproc->pending_space);
             /* Unlinked first, so the record is gone before its address
@@ -3059,6 +3088,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
         heap->blocks[index].va = va;
         heap->blocks[index].pages = (ULONG)(size / USER_PAGE_SIZE);
         heap->blocks[index].reservation = reservation;
+        heap->blocks[index].flags = 0;
         heap->count++;
         return va;
     }
@@ -3069,6 +3099,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
     kproc->heap[index].kind = kind;
     kproc->heap[index].pd = pd;
     kproc->heap[index].reservation = reservation;
+    kproc->heap[index].shared_generation = 0;
     kproc->nheap++;
     return va;
 }
@@ -3092,8 +3123,8 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
 #endif
     if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP)
         return TRUE;
-    if (kaspace_heap_contains(kproc->active_space, va))
-        return TRUE;
+    if (kaspace_heap_protection(kproc->active_space,va,prot))
+        return (*prot&ASPACE_PROT_USER)!=0;
     for (i = 0; i < kproc->nheap; i++)
         if (va >= kproc->heap[i].va &&
             va < kproc->heap[i].va + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE)
@@ -4200,6 +4231,10 @@ BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size)
                aspace_copy_to_user(kproc->aspace, address, src, size);
     return kproc_copy_to_user(address, src, size);
 }
+
+#if CONF_WITH_NATIVE_SCHED
+#include "kproc_shared_exec.h"
+#endif
 
 #endif
 

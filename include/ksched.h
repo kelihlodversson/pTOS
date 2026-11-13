@@ -88,6 +88,10 @@ BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
 /* Nonmasking query during serialized preparation; begin revalidates it. */
 BOOL ksched_clone_context(struct kproc *source, PD **controller);
+/* Loader NEW_PROCESS only: ordinary unmanaged callers use the same global
+ * reservation/runqueue without acquiring an attachment or borrowed root. */
+BOOL ksched_loaded_clone_context(struct kproc *,PD **);
+BOOL ksched_loaded_clone_begin(struct kproc *,PD **,KSCHED_PUBLICATION_GUARD *);
 BOOL ksched_clone_begin(struct kproc *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard);
 void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard);
 void ksched_clone_commit(void *slot, struct kproc *, struct kthread *, struct thread_startup_draft *,
@@ -171,6 +175,11 @@ LONG ksched_yield(void);
 LONG ksched_join(ULONG tid, UQUAD status);
 #endif
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
+/* Internal full-result projection of the SAME public PROCESS reap. Claims
+ * only the requested PID for this TID; cancellation releases before checkpoint.
+ * No observer, registry, output pointer retained beyond the call. */
+#include "process_completion.h"
+LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion);
 BOOL ksched_pid_reserved(WORD pid);
 void ksched_exiting(PD *pd, UWORD status);
 /* Generic successor activation after complete teardown; identity is retained. */

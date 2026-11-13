@@ -72,6 +72,11 @@ typedef struct {
  * or user code. Teardown callbacks obey the existing no-unwind/bounded-close
  * contract. Commit revalidates live state. */
 LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transaction);
+#if CONF_WITH_NATIVE_SCHED
+/* Authenticated loader target only: NEW_PROCESS+SHARE_VM without a duplicate
+ * PID/basepage factory. Abort preserves caller's staged PROCESS; no user ABI. */
+LONG proc_clone_loaded_shared(struct kproc *,struct kproc *,PROC_CLONE_TRANSACTION **);
+#endif
 /* Existing loader initial THREAD, non-runnable. Uses the same transaction,
  * does not adopt/publish the PROCESS space or consume loader resources. */
 struct kthread *proc_clone_prepare_loaded_thread(struct _pd *pd, struct kaspace *space);

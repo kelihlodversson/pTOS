@@ -17,9 +17,36 @@
 
 #include "test.h"
 #include <mint/osbind.h>
+#include <mint/mintbind.h>
 #include <mint/basepage.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+static void shared_vm_basic(void)
+{
+    unsigned i;
+    for(i=0;i<2;i++) {
+        BASEPAGE *bp=(BASEPAGE *)Pexec(PE_LOAD,"C:\\PIEPROBE.TOS","",0);
+        char *env;long result,waited;
+        ptest_assert_msg((long)bp>0,"shared VM: PE_LOAD staging succeeds");
+        if((long)bp<=0) continue;
+        env=bp->p_env;
+        result=Pexec(i?104:4,0,bp,0);
+        if(result<0) { conws("shared VM launch error: ");
+            {unsigned n;for(n=0;n<8;n++) Cconout("0123456789abcdef"[((unsigned long)result>>(28-4*n))&15]);} conws("\r\n"); }
+        ptest_assert_msg(i?result>0:result==0,"shared VM: actual 4/104 child executes and exits normally");
+        if(i && result>0) {
+            waited=Pwaitpid(result,0,0);
+            ptest_assert_msg((waited>>16)==result && !(waited&65535),"shared VM104: canonical wait returns child PID/status");
+            ptest_assert_msg(Pwaitpid(result,1,0)==-33,"shared VM104: exactly one public reap");
+        }
+        if(result>=0) ptest_assert_msg(Pexec(4,0,bp,0)==-40,"shared VM: consumed loader target cannot launch twice");
+        ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared VM: staged owner cleanup after child exit");
+    }
+    conws("native shared-VM Pexec4/104 execution and canonical reap: tested\r\n");
+}
+#endif
 
 void test_pie_load(void);
 
@@ -84,7 +111,7 @@ void test_pie_load(void)
                       "PIEPROBE.TOS exited nonzero "
                       "(PIE dynamic relocations not applied?)");
 
-#if defined(TEST_WITH_USER_ASPACE)
+#if defined(TEST_WITH_USER_ASPACE) && !defined(TEST_WITH_SHARED_VM_PEXEC)
     {
         BASEPAGE *bp = (BASEPAGE *)Pexec(PE_LOAD, "C:\\PIEPROBE.TOS", "", 0);
         ptest_assert_msg((long)bp > 0, "mode 3 did not stage PIEPROBE.TOS");
@@ -118,5 +145,8 @@ void test_pie_load(void)
     }
 #endif
 
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+    shared_vm_basic();
+#endif
     ptest_pass();
 }

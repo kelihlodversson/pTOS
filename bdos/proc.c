@@ -170,6 +170,10 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void proc_release_block(void *base)
 {
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+    if(kproc_shared_exec_retire_source(base)) return;
+    kproc_shared_exec_release_base(base);
+#endif
     /* the tables are in the record: release through it, then drop it */
     if (kproc_unlaunched((PD *)base))
         release_pd_files((PD *)base);
@@ -193,6 +197,10 @@ static void proc_release_block(void *base)
 static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+    if(kproc_shared_exec_retire_source(base)) return;
+    kproc_shared_exec_release_base(base);
+#endif
 #if CONF_WITH_USER_ASPACE
     KPROC *observer = kproc_unlaunched(child) ? kproc_retain(child) : NULL;
 #endif
@@ -659,6 +667,12 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 
         return (long)p;
 #if CONF_WITH_NATIVE_SCHED
+    case 104: /* Test kernels only until native/owner activation acceptance. */
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+        return caller_has_aspace() ? proc_shared_vm_exec((PD *)tail,TRUE) : EINVFN;
+#else
+        return EINVFN;
+#endif
     case PE_ASYNC_GO_FREE:
         if (!ksched_async_allowed()) return EINVFN;
         p = (PD *)tail;
@@ -698,8 +712,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #if CONF_WITH_USER_ASPACE
         /* Ring-3 mode 4 will return as shared-VM Pexec in #894. Refuse it
          * before touching the staged image or changing any ownership. */
-        if (flag == PE_GO && caller_has_aspace())
+        if (flag == PE_GO && caller_has_aspace()) {
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+            return proc_shared_vm_exec((PD *)tail,FALSE);
+#else
             return EINVFN;
+#endif
+        }
 #endif
         p = (PD *) tail;
 #if CONF_WITH_USER_ASPACE
