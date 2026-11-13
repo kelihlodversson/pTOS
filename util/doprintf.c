@@ -75,7 +75,7 @@ static void *numconv(char *p, unsigned long value, int radix, int precision, uns
     return p;
 }
 
-int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
+int doprintf_context(void (*outc)(void *, int), void *context, const char *RESTRICT fmt, va_list ap)
 {
     char *p, *bufstart, buf[MAXNUMLEN];
     long longval;
@@ -96,7 +96,7 @@ int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
                 return length;
             if (c == '%')
                 break;
-            (*outc)(c);
+            (*outc)(context, c);
             length++;
         }
 
@@ -206,8 +206,8 @@ int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
             /* pointers are always long & zero-filled to a width of 8 */
             flags |= FLAG_WIDTH|FLAG_LONG|FLAG_ZERO;
             width = 8;
-            outc('0');
-            outc((flags&FLAG_CAPS)?'X':'x');
+            outc(context, '0');
+            outc(context, (flags&FLAG_CAPS)?'X':'x');
             length += 2;
             longval = va_arg(ap, long);
             p = numconv(p, longval, 16, precision, flags);
@@ -263,20 +263,32 @@ int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
         {
             if ((*p == '-') && (fill == '0'))
             {
-                (*outc)(*p++);
+                (*outc)(context, *p++);
                 length++;
                 n--;
             }
             for ( ; fill_len; fill_len--, length++)
-                (*outc)(fill);
+                (*outc)(context, fill);
         }
         /* output the item */
         for ( ; n; n--, length++)
-            (*outc)(*p++);
+            (*outc)(context, *p++);
         /* output fill characters, if any */
         for ( ; fill_len; fill_len--, length++)
-            (*outc)(fill);
+            (*outc)(context, fill);
     }
 
     return length;
+}
+
+/* Adapt existing kernel sinks without process-global formatting state. */
+static void legacy_outc(void *context, int character)
+{
+    void (**sink)(int) = context;
+    (*sink)(character);
+}
+
+int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
+{
+    return doprintf_context(legacy_outc,&outc,fmt,ap);
 }

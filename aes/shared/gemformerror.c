@@ -1,6 +1,7 @@
 /* Original GEM form_error mapping and return conventions.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "gemfmlib.h"
@@ -9,7 +10,7 @@
 #include AES_ERROR_BINDINGS
 #endif
 
-WORD fm_error(WORD n)             /* n = dos error number */
+WORD fm_error(AES_ERROR_PARAM WORD n)             /* n = dos error number */
 {
     WORD    ret, string;
 
@@ -42,7 +43,7 @@ WORD fm_error(WORD n)             /* n = dos error number */
         break;
     }
 
-    ret = fm_show(string, ((string == ALXXERR) ? &n : 0), 1);
+    ret = fm_show(AES_ERROR_ARG string, ((string == ALXXERR) ? &n : 0), 1);
 
     return (ret != 1);
 }

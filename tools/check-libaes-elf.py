@@ -20,7 +20,30 @@ def symbols(path, dynamic=False):
     return result
 
 
+def check_mutable_state(library):
+    relro = []
+    for line in subprocess.check_output(["readelf", "--wide", "--program-headers", str(library)], text=True).splitlines():
+        fields = line.split()
+        if fields and fields[0] == "GNU_RELRO":
+            start = int(fields[2], 16)
+            relro.append((start, start + int(fields[5], 16)))
+    writable = {}
+    for line in subprocess.check_output(["readelf", "--wide", "--section-headers", str(library)], text=True).splitlines():
+        match = re.match(r"\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\S+\s+(\S+)", line)
+        if not match:
+            continue
+        section, name, address, size, flags = match.groups()
+        address, size = int(address, 16), int(size, 16)
+        if not size or "A" not in flags:
+            continue
+        if "T" in flags or ("W" in flags and not any(low <= address and address + size <= high for low, high in relro)):
+            writable[section] = name
+    offenders = {name: writable[value["section"]] for name, value in symbols(library).items() if value["section"] in writable}
+    assert not writable, ("libaes mutable state outside RELRO (including TLS)", writable, offenders)
+
+
 def check(library, archive, clients):
+    check_mutable_state(library)
     expected = set(re.findall(r"\bmt_\w+\b", (ROOT / "lib/aes/exports.map").read_text()))
     dynamic = symbols(library, True)
     public = {name for name, value in dynamic.items()
@@ -42,7 +65,7 @@ def check(library, archive, clients):
         assert defined["aes_global"]["size"] == 32, (client, "x32 AESGLOBAL layout")
         imported = {name for name, value in symbols(client, True).items() if value["section"] == "UND"}
         assert not imported & bindings, (client, "classic binding import", imported & bindings)
-    print("Native AES ELF ownership: mt_* in libaes; bindings/data/helpers in GEMlib and clients: PASS")
+    print("Native AES ELF ownership and immutable helper state: PASS")
 
 
 if __name__ == "__main__":

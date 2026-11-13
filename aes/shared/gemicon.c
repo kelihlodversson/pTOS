@@ -1,4 +1,5 @@
 /*      GEMGRAF.C       04/11/84 - 09/17/85     Lee Lorenzen            */
+#include "aescontext.h"
 /*      merge High C vers. w. 2.2               8/21/87         mdf     */
 /*      fix gr_gicon null text                  11/18/87        mdf     */
 
@@ -39,9 +40,9 @@
 #include "gemdos.h"
 #endif
 
-static void gr_gblt(WORD *pimage, GRECT *pi, WORD col1, WORD col2)
+static void gr_gblt(AES_RENDER_PARAM WORD *pimage, GRECT *pi, WORD col1, WORD col2)
 {
-    gsx_blt(pimage, 0, 0, pi->g_x, pi->g_y,
+    gsx_blt(AES_RENDER_ARG pimage, 0, 0, pi->g_x, pi->g_y,
             pi->g_w, pi->g_h, MD_TRANS, col1, col2);
 }
 
@@ -87,13 +88,13 @@ static void gr_colourblit(WORD *pdata, GRECT *pi, WORD num_planes)
  *
  *  returns NULL if memory can't be allocated
  */
-static WORD *dither_mask(WORD *pdata, WORD w, WORD h)
+static WORD *dither_mask(AES_RENDER_PARAM WORD *pdata, WORD w, WORD h)
 {
     WORD width = w / 16;    /* in WORDs */
     WORD i, j, dither;
     WORD *mask, *p, *q;
 
-    mask = dos_alloc_anyram((LONG)width * sizeof(WORD) * h);
+    mask = dos_alloc_anyram(AES_RENDER_ARG (LONG)width * sizeof(WORD) * h);
     if (!mask)
         return NULL;
 
@@ -115,7 +116,7 @@ static WORD *dither_mask(WORD *pdata, WORD w, WORD h)
  *  Iff colour icons are enabled, and 'cicon' is not NULL, this will
  *  draw a colour icon
  */
-void gr_gicon(WORD state, ICONBLK *ib, CICON *cicon)
+void gr_gicon(AES_RENDER_PARAM WORD state, ICONBLK *ib, CICON *cicon)
 {
     WORD    *pdata, *pmask;
     WORD    fgcol, bgcol, tmp;
@@ -164,14 +165,14 @@ void gr_gicon(WORD state, ICONBLK *ib, CICON *cicon)
     if ( !((state & WHITEBAK) && (bgcol == WHITE)) )
     {
         /* NOTE: this may need to be modified for 16-bit colour */
-        gr_gblt(pmask, pi, bgcol, fgcol);
+        gr_gblt(AES_RENDER_ARG pmask, pi, bgcol, fgcol);
         /* do not draw background rectangle for icon text if the string is empty */
         if (ib->ib_ptext[0])
         {
             if (cicon && (state & SELECTED))
-                gr_rect(fgcol, IP_SOLID, pt);
+                gr_rect(AES_RENDER_ARG fgcol, IP_SOLID, pt);
             else
-                gr_rect(bgcol, IP_SOLID, pt);
+                gr_rect(AES_RENDER_ARG bgcol, IP_SOLID, pt);
         }
     }
 
@@ -187,10 +188,10 @@ void gr_gicon(WORD state, ICONBLK *ib, CICON *cicon)
             bgcol = tmp;
             if (!cicon->sel_data)       /* check if we need to darken */
             {
-                WORD *mask = dither_mask(pmask, pi->g_w, pi->g_h);
+                WORD *mask = dither_mask(AES_RENDER_ARG pmask, pi->g_w, pi->g_h);
                 if (mask)               /* malloc ok */
                 {
-                    gr_gblt(mask, pi, BLACK, WHITE);
+                    gr_gblt(AES_RENDER_ARG mask, pi, BLACK, WHITE);
                     dos_free(mask);
                 }
             }
@@ -199,17 +200,17 @@ void gr_gicon(WORD state, ICONBLK *ib, CICON *cicon)
     else
 #endif
     {
-        gr_gblt(pdata, pi, fgcol, bgcol);
+        gr_gblt(AES_RENDER_ARG pdata, pi, fgcol, bgcol);
     }
 
     /* draw the character */
-    gsx_attr(TRUE, MD_TRANS, fgcol);
+    gsx_attr(AES_RENDER_ARG TRUE, MD_TRANS, fgcol);
     if (ch)
     {
         intin[0] = ch;
-        gsx_tblt(SMALL, ib->ib_xicon+ib->ib_xchar, ib->ib_yicon+ib->ib_ychar, 1);
+        gsx_tblt(AES_RENDER_ARG SMALL, ib->ib_xicon+ib->ib_xchar, ib->ib_yicon+ib->ib_ychar, 1);
     }
 
     /* draw the label */
-    gr_gtext(TE_CNTR, SMALL, ib->ib_ptext, pt);
+    gr_gtext(AES_RENDER_ARG TE_CNTR, SMALL, ib->ib_ptext, pt);
 }

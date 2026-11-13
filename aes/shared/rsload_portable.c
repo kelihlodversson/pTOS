@@ -9,7 +9,7 @@
  *  This file is distributed under the GPL, version 2 or at your
  *  option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #include "config.h"
 #include "portab.h"
 #include "obdefs.h"
@@ -436,7 +436,7 @@ static void transform_cicons(RSHDR *hdr)
 #endif
 
 
-void fix_objects(void)
+void fix_objects(AES_RESOURCE_PARAM0)
 {
     WORD ii;
     WORD obtype;
@@ -447,7 +447,7 @@ void fix_objects(void)
 
     for (ii = 0; ii < rs_hdr->rsh_nobs; ii++)
     {
-        obj = (OBJECT *)get_addr(R_OBJECT, ii);
+        obj = (OBJECT *)get_addr(AES_RESOURCE_ARG R_OBJECT, ii);
         rs_obfix(obj, 0);
         obtype = obj->ob_type & 0x00ff;
         switch (obtype)
@@ -690,7 +690,7 @@ static BOOL decode_object_spec(OBSPEC *native, UWORD type, ULONG spec,
     }
 }
 
-static BOOL materialize_rsc(AESGLOBAL *pglobal, const struct disk_rsc *disk)
+static BOOL materialize_rsc(AES_RESOURCE_PARAM AESGLOBAL *pglobal, const struct disk_rsc *disk)
 {
     struct native_rsc_layout layout;
     struct disk_cicon_info cicons;
@@ -891,7 +891,7 @@ fail:
  *  case of the GEM resource file this workstation will not have
  *  been loaded into memory yet.
  */
-WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
+WORD rs_readit(AES_RESOURCE_PARAM AESGLOBAL *pglobal,UWORD fd)
 {
     UBYTE header[DISK_RSHDR_SIZE];
     struct disk_rsc disk;
@@ -926,7 +926,7 @@ WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
         goto fail;               /* error or short read */
     if (!disk_header(&disk, buffer, rslsize))
         goto fail;
-    if (!materialize_rsc(pglobal, &disk))
+    if (!materialize_rsc(AES_RESOURCE_ARG pglobal, &disk))
         goto fail;
     dos_free(buffer);
     return TRUE;
@@ -951,14 +951,14 @@ static AESGLOBAL rs_own_global;
  *  desktop test hook's path (CONF_WITH_VDI_CICON_TEST) -- it has no
  *  application context of its own.
  */
-OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size)
+OBJECT *rs_loadmem(AES_RESOURCE_PARAM AESGLOBAL *pglobal, const void *rsmem, LONG size)
 {
     struct disk_rsc disk;
 
     if (!pglobal)
         pglobal = &rs_own_global;
     if (!disk_header(&disk, rsmem, size) || (disk.hdr.rsh_ntree <= 0)
-        || !materialize_rsc(pglobal, &disk))
+        || !materialize_rsc(AES_RESOURCE_ARG pglobal, &disk))
         return NULL;
     rs_fixit(pglobal);
 

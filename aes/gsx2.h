@@ -9,7 +9,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #ifndef GSX2_H
 #define GSX2_H
 
@@ -25,6 +25,6 @@ extern VDIPB vdipb;
 #define i_ptr2(p)   (contrl.ptr2 = (p))
 #define m_lptr2(p)  ((p) = contrl.ptr2)
 
-void gsx2(void);
+void gsx2(AES_RENDER_PARAM0);
 
 #endif /* GSX2_H */

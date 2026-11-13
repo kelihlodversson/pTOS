@@ -1,6 +1,7 @@
 /* Shared original AES drawing code.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesdefs.h"
@@ -68,7 +69,7 @@ BYTE ob_sst(OBJECT *tree, WORD obj, OBSPEC *pspec, WORD *pstate, WORD *ptype,
 }
 
 
-void everyobj(OBJECT *tree, WORD this, WORD last, EVERYOBJ_CALLBACK routine,
+void everyobj(AES_WALK_PARAM OBJECT *tree, WORD this, WORD last, EVERYOBJ_CALLBACK routine,
               OB_WALK_COORD startx, OB_WALK_COORD starty, WORD maxdep)
 {
     WORD    tmp1;
@@ -92,7 +93,7 @@ child:
     obj = tree + this;
     x[depth] = x[depth-1] + obj->ob_x;
     y[depth] = y[depth-1] + obj->ob_y;
-    (*routine)(tree, this, x[depth], y[depth]);
+    (*routine)(AES_WALK_ARG tree, this, x[depth], y[depth]);
 
     /* if this guy has kids then do them */
     tmp1 = obj->ob_head;

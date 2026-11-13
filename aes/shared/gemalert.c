@@ -1,6 +1,7 @@
 /* Original GEM alert parsing and layout.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesext.h"
@@ -164,7 +165,7 @@ static void fm_parse(OBJECT *tree, char *palstr, WORD *picnum, WORD *pnummsg,
  *      numbut          number of buttons
  *      mlenbut         length of biggest button
  */
-static void fm_build(OBJECT *tree, WORD iconnum, WORD nummsg, WORD mlenmsg,
+static void fm_build(AES_ALERT_PARAM OBJECT *tree, WORD iconnum, WORD nummsg, WORD mlenmsg,
                      WORD numbut, WORD mlenbut)
 {
     WORD i, hicon, allbut;
@@ -295,14 +296,14 @@ static void fm_build(OBJECT *tree, WORD iconnum, WORD nummsg, WORD mlenmsg,
 }
 
 
-OBJECT *fm_alert_tree(WORD defbut, char *palstr, GRECT *rectangle)
+OBJECT *fm_alert_tree(AES_ALERT_PARAM WORD defbut, char *palstr, GRECT *rectangle)
 {
     WORD inm, nummsg, mlenmsg, numbut, mlenbut;
     OBJECT *tree = rs_trees[DIALERT];
     OBJECT *obj;
 
     fm_parse(tree, palstr, &inm, &nummsg, &mlenmsg, &numbut, &mlenbut);
-    fm_build(tree, inm, nummsg, mlenmsg, numbut, mlenbut);
+    fm_build(AES_ALERT_ARG tree, inm, nummsg, mlenmsg, numbut, mlenbut);
 
     if (defbut > 0 && defbut <= numbut)
     {

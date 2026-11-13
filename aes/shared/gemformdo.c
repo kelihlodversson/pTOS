@@ -1,6 +1,7 @@
 /* Original modal GEM form loop, shared with the userspace bindings.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "gemformkey.h"
@@ -50,7 +51,7 @@ static WORD fm_inifld(OBJECT *tree, WORD start_fld)
  *  form.  The cursor is placed at the starting field.  This routine
  *  returns the object that caused the exit to occur
  */
-WORD fm_do(OBJECT *tree, WORD start_fld)
+WORD fm_do(AES_MODAL_PARAM OBJECT *tree, WORD start_fld)
 {
     BOOL editing = FALSE;
     WORD    edit_obj;
@@ -81,7 +82,7 @@ WORD fm_do(OBJECT *tree, WORD start_fld)
         {
             edit_obj = next_obj;
             next_obj = 0;
-            ob_edit(tree, edit_obj, 0, &idx, EDINIT);
+            ob_edit(AES_MODAL_ARG tree, edit_obj, 0, &idx, EDINIT);
             editing = FM_DO_OK();
         }
         /* wait for mouse or key */
@@ -91,9 +92,9 @@ WORD fm_do(OBJECT *tree, WORD start_fld)
         /* handle keyboard event */
         if (which & MU_KEYBD)
         {
-            cont = fm_keybd(tree, edit_obj, &rets[4], &next_obj);
+            cont = fm_keybd(AES_MODAL_ARG tree, edit_obj, &rets[4], &next_obj);
             if (rets[4])
-              ob_edit(tree, edit_obj, rets[4], &idx, EDCHAR);
+              ob_edit(AES_MODAL_ARG tree, edit_obj, rets[4], &idx, EDCHAR);
         }
 
         /* handle button event */
@@ -106,19 +107,19 @@ WORD fm_do(OBJECT *tree, WORD start_fld)
                 next_obj = 0;
             }
             else
-                cont = fm_button(tree, next_obj, rets[5], &next_obj);
+                cont = fm_button(AES_MODAL_ARG tree, next_obj, rets[5], &next_obj);
         }
 
         /* handle end of field clean up */
         if (!cont ||
             ((next_obj != 0) && (next_obj != edit_obj)))
         {
-            ob_edit(tree, edit_obj, 0, &idx, EDEND);
+            ob_edit(AES_MODAL_ARG tree, edit_obj, 0, &idx, EDEND);
             editing = FALSE;
         }
     }
 
-    if (!FM_DO_OK() && editing) ob_edit(tree,edit_obj,0,&idx,EDEND);
+    if (!FM_DO_OK() && editing) ob_edit(AES_MODAL_ARG tree,edit_obj,0,&idx,EDEND);
 
     /* give up mouse and screen ownership */
     FM_DO_LEAVE();

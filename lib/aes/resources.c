@@ -14,7 +14,6 @@
 
 extern char *getenv(const char *name);
 #define RESOURCE_PATH DL_LAUNCH_PATH
-RESOURCE_CONTEXT *aes_resource;
 /* Reserve cleanup linkage before allocation can need a failed-free retry.
  * The union keeps returned storage aligned for pointers and 64-bit fields. */
 typedef union resource_allocation {
@@ -246,7 +245,7 @@ done:
 }
 WORD mt_rsrc_load(const char *name, AESGLOBAL *global)
 {
-    RESOURCE_CONTEXT *resource, *saved = aes_resource;
+    RESOURCE_CONTEXT *resource, *aes_resource;
     AES_RESOURCE_STATE *owner;
     LONG handle, session;
     AESGLOBAL loaded = { 0 };
@@ -266,7 +265,7 @@ WORD mt_rsrc_load(const char *name, AESGLOBAL *global)
     if (handle < 0) { dispose_resource(resource); return 0; }
     owner->pending_close = handle; owner->close_pending = TRUE;
     aes_resource = resource;
-    ok = aes_resource_read(&loaded,(UWORD)handle) != 0;
+    ok = aes_resource_read(aes_resource, &loaded,(UWORD)handle) != 0;
     resource->image = loaded.ap_rscmem;
     resource->trees = loaded.ap_ptree;
     resource->length = loaded.ap_rsclen;
@@ -274,13 +273,12 @@ WORD mt_rsrc_load(const char *name, AESGLOBAL *global)
     if (ok) { resource->header = *resource->image; ok = valid_trees(resource,FALSE); }
     if (ok && aes_application_session(global) != session) ok = FALSE;
     if (ok) {
-        aes_resource_fix();
+        aes_resource_fix(aes_resource);
         resource->next = owner->resources; owner->resources = resource;
         publish(global,resource);
     } else {
         dispose_resource(resource);
     }
-    aes_resource = saved;
     return ok ? 1 : 0;
 }
 
@@ -384,7 +382,7 @@ static BOOL address_index(const RSHDR *header, WORD type, WORD index)
 }
 WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, AESGLOBAL *global)
 {
-    RESOURCE_CONTEXT *resource, *saved = aes_resource;
+    RESOURCE_CONTEXT *resource, *aes_resource;
     void *value = (void *)-1L;
     if (!address) return 0;
     if (aes_application_session(global) >= 0) {
@@ -392,9 +390,8 @@ WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, AESGLOBAL *global)
         if (resource && !memcmp(resource->image,&resource->header,sizeof(resource->header)) &&
             address_index(&resource->header,type,index)) {
             aes_resource = resource;
-            value = aes_resource_addr(type,index);
-            aes_resource = saved;
-        }
+            value = aes_resource_addr(aes_resource, type,index);
+                }
     }
     memcpy(address,&value,sizeof(value));
     return value != (void *)-1L;

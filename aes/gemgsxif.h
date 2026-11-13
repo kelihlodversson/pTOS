@@ -6,7 +6,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #ifndef GEMGSXIF_H
 #define GEMGSXIF_H
 
@@ -23,7 +23,7 @@ void gsx_mfree(void);
 
 void gsx_mret(LONG *pmaddr, LONG *pmlen);
 void gsx_0code(WORD code);
-void gsx_1code(WORD code, WORD value);
+void gsx_1code(AES_RENDER_PARAM WORD code, WORD value);
 
 void gsx_wsclose(void);
 void gsx_wsclear(void);
@@ -50,11 +50,11 @@ void gsx_textsize(WORD *charw, WORD *charh, WORD *cellw, WORD *cellh);
 
 void gsx_fix(FDB *pfd, void *theaddr, WORD wb, WORD h);
 void gsx_fix_screen(FDB *pfd);
-void v_pline(WORD count, WORD *pxyarray);
-void vs_clip(WORD clip_flag, WORD *pxyarray );
-void vst_height(WORD height, WORD *pchr_width, WORD *pchr_height,
+void v_pline(AES_RENDER_PARAM WORD count, WORD *pxyarray);
+void vs_clip(AES_RENDER_PARAM WORD clip_flag, WORD *pxyarray );
+void vst_height(AES_RENDER_PARAM WORD height, WORD *pchr_width, WORD *pchr_height,
                 WORD *pcell_width, WORD *pcell_height);
-void vr_recfl(WORD *pxyarray);
+void vr_recfl(AES_RENDER_PARAM WORD *pxyarray);
 void vro_cpyfm(WORD wr_mode, WORD *pxyarray, FDB *psrcMFDB, FDB *pdesMFDB );
 void vrt_cpyfm(WORD wr_mode, WORD *pxyarray, FDB *psrcMFDB, FDB *pdesMFDB,
                WORD fgcolor, WORD bgcolor);
@@ -68,10 +68,10 @@ void vex_wheelv(PFVOID new, PFVOID *old);
 /*
  * use #defines for simple functions
  */
-#define vsf_color(x)    gsx_1code(SET_FILL_COLOR, x)
-#define vsf_interior(x) gsx_1code(SET_FILL_INTERIOR, x)
-#define vsf_style(x)    gsx_1code(SET_FILL_STYLE, x)
-#define vsl_type(x)     gsx_1code(SET_LINE_TYPE, x)
-#define vsl_udsty(x)    gsx_1code(SET_UD_LINE_STYLE, x)
+#define vsf_color(x)    gsx_1code(AES_RENDER_ARG SET_FILL_COLOR, x)
+#define vsf_interior(x) gsx_1code(AES_RENDER_ARG SET_FILL_INTERIOR, x)
+#define vsf_style(x)    gsx_1code(AES_RENDER_ARG SET_FILL_STYLE, x)
+#define vsl_type(x)     gsx_1code(AES_RENDER_ARG SET_LINE_TYPE, x)
+#define vsl_udsty(x)    gsx_1code(AES_RENDER_ARG SET_UD_LINE_STYLE, x)
 
 #endif

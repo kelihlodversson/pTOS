@@ -94,9 +94,19 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                     "CC=" + os.environ.get("HOSTCC", "cc")], check=True)
 
     def compile_native(command):
+        if any("_BINDINGS=" in str(arg) for arg in command) or any(str(arg).startswith("lib/aes/") and str(arg).endswith(".c") for arg in command):
+            command += ["-DLIBAES_CONTEXTS"]
         if any(str(arg).startswith("lib/aes/") and str(arg).endswith(".c") for arg in command):
             command += ["-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections", str(bindings)]
         subprocess.run(command, check=True)
+
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-I" + temp, "-Iinclude", "tests/cuis/format_context.c", "util/string.c", "util/doprintf.c",
+                "-o", str(work / "format-context")]
+    compile_native(command)
+    subprocess.run([str(work / "format-context")], check=True)
+    subprocess.run([sys.executable, "tools/test-libaes-state.py"], check=True)
 
     for preset in ("pc-x86_64", "virt-arm", "virt-m68k"):
         rejected = kconfiglib.Kconfig(warn_to_stderr=False)

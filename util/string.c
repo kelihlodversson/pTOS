@@ -181,33 +181,26 @@ int toupper(int c)
 /*
  * Implementation of sprintf():
  * It uses doprintf to print into a string.
- * Note: It is currently not reentrant.
+ * Each invocation owns its output cursor, including nested formatting.
  */
 
-static char *sprintf_str;
-static int sprintf_flag;
-
-static void sprintf_outc(int c)     /* Output one character from doprintf */
+static void sprintf_outc(void *context, int c)
 {
-    *sprintf_str++ = c;
+    char **cursor = context;
+    *(*cursor)++ = c;
 }
 
 int sprintf(char *RESTRICT str, const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;
-
-    /*if (sprintf_flag)  panic("sprintf is not reentrant!\n");*/
-
-    sprintf_flag += 1;
-    sprintf_str = str;
+    char *cursor = str;
 
     va_start(ap, fmt);
-    n = doprintf(sprintf_outc, fmt, ap);
+    n = doprintf_context(sprintf_outc, &cursor, fmt, ap);
     va_end(ap);
 
     str[n] = 0;                     /* Terminate string with a 0 */
-    sprintf_flag -= 1;
 
     return n;
 }

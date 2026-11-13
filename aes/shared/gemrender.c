@@ -1,6 +1,7 @@
 /* Shared original AES drawing code.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesdefs.h"
@@ -81,7 +82,7 @@ static const UBYTE vdi16comp[] = {
  * colours beyond the maximum colour number for the current resolution,
  * or beyond 15, returns WHITE.
  */
-static WORD xor_color(WORD color)
+static WORD xor_color(AES_RENDER_PARAM WORD color)
 {
     if ((color >= 16) || (color >= gl_ws.ws_ncolors))
         return WHITE;
@@ -95,7 +96,7 @@ static WORD xor_color(WORD color)
 /*
  * Return TRUE iff it's ok to toggle an object's SELECTED state via XOR
  */
-static BOOL xor_is_ok(WORD obtype, WORD obflags, OBSPEC obspec)
+static BOOL xor_is_ok(AES_RENDER_PARAM WORD obtype, WORD obflags, OBSPEC obspec)
 {
     WORD colour_word;
 
@@ -141,13 +142,13 @@ static BOOL xor_is_ok(WORD obtype, WORD obflags, OBSPEC obspec)
 /*
  * Draw outline for 3D background object
  */
-static void draw_3d_outline(GRECT *pt)
+static void draw_3d_outline(AES_RENDER_PARAM GRECT *pt)
 {
     WORD pts[6], i;
 
     gsx_moff();
 
-    gsx_attr(FALSE, MD_REPLACE, LBLACK);
+    gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, LBLACK);
     /*
      * draw 3 grey nested lines from bottom left to bottom right to top right:
      *                [4,5]
@@ -160,7 +161,7 @@ static void draw_3d_outline(GRECT *pt)
     pts[3] = pts[1];
     pts[4] = pts[2];
     pts[5] = pt->g_y - 3;
-    v_pline(3, pts);
+    v_pline(AES_RENDER_ARG 3, pts);
 
     for (i = 0; i < 2; i++)
     {
@@ -170,7 +171,7 @@ static void draw_3d_outline(GRECT *pt)
         pts[3]--;
         pts[4]--;
         pts[5]++;
-        v_pline(3, pts);
+        v_pline(AES_RENDER_ARG 3, pts);
     }
 
     /*
@@ -186,9 +187,9 @@ static void draw_3d_outline(GRECT *pt)
     pts[3] = pt->g_y - 3;
     pts[4] = pts[2] + pt->g_w + 5;
     pts[5] = pts[3];
-    v_pline(3, pts);
+    v_pline(AES_RENDER_ARG 3, pts);
 
-    gsx_attr(FALSE, MD_REPLACE, WHITE);
+    gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, WHITE);
 
     for (i = 0; i < 2; i++)
     {
@@ -198,7 +199,7 @@ static void draw_3d_outline(GRECT *pt)
         pts[3]++;
         pts[4]--;
         pts[5]++;
-        v_pline(3, pts);
+        v_pline(AES_RENDER_ARG 3, pts);
     }
 
     gsx_mon();
@@ -208,7 +209,7 @@ static void draw_3d_outline(GRECT *pt)
  * Draw highlights & shadows around a rectangle to give a 3D appearance:
  * raised if not selected, depressed if selected.
  */
-static void add_3d_effect(GRECT *pt, WORD obstate, WORD th, WORD color)
+static void add_3d_effect(AES_RENDER_PARAM GRECT *pt, WORD obstate, WORD th, WORD color)
 {
     WORD pts[6], draw_color;
     GRECT r;
@@ -241,8 +242,8 @@ static void add_3d_effect(GRECT *pt, WORD obstate, WORD th, WORD color)
     pts[4] = pts[2] + r.g_w - 2;
 
     draw_color = (obstate & SELECTED) ? BLACK : WHITE;
-    gsx_attr(FALSE, MD_REPLACE, draw_color);
-    v_pline(3,pts);
+    gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, draw_color);
+    v_pline(AES_RENDER_ARG 3,pts);
 
     /*
      * draw a line from bottom left to bottom right to top right:
@@ -261,8 +262,8 @@ static void add_3d_effect(GRECT *pt, WORD obstate, WORD th, WORD color)
     draw_color = (obstate & SELECTED) ? LWHITE : LBLACK;
     if ((draw_color == color) || (gl_ws.ws_ncolors < draw_color))
         draw_color = (obstate & SELECTED) ? WHITE : BLACK;
-    gsx_attr(FALSE, MD_REPLACE, draw_color);
-    v_pline(3,pts);
+    gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, draw_color);
+    v_pline(AES_RENDER_ARG 3,pts);
 
     gsx_mon();
 }
@@ -349,7 +350,7 @@ static __inline__ WORD call_usercode(USERBLK *ub, PARMBLK *pb)
  *  Routine to load up and call a user-defined object draw or change
  *  routine.
  */
-static WORD ob_user(OBJECT *tree, WORD obj, GRECT *pt, OBSPEC spec,
+static WORD ob_user(AES_RENDER_PARAM OBJECT *tree, WORD obj, GRECT *pt, OBSPEC spec,
                     WORD curr_state, WORD new_state)
 {
     PARMBLK pb;
@@ -360,7 +361,7 @@ static WORD ob_user(OBJECT *tree, WORD obj, GRECT *pt, OBSPEC spec,
     pb.pb_prevstate = curr_state;
     pb.pb_currstate = new_state;
     rc_copy(pt, (GRECT *)&pb.pb_x);     /* FIXME: Ugly typecasting */
-    gsx_gclip((GRECT *)&pb.pb_xc);      /* FIXME: ditto */
+    gsx_gclip(AES_RENDER_ARG (GRECT *)&pb.pb_xc);      /* FIXME: ditto */
     pb.pb_parm = ub->ub_parm;
 
     return call_usercode(ub, &pb);
@@ -387,7 +388,7 @@ static BOOL is_dashes(char *s, WORD len)
 /*
  *  Routine to draw an object from an object tree.
  */
-void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
+void ob_render_object(AES_RENDER_PARAM OBJECT *tree, WORD obj, WORD sx, WORD sy)
 {
     WORD bcol = BLACK, tcol = BLACK, ipat = IP_HOLLOW, icol = WHITE, tmode = MD_REPLACE, th;
     WORD state, obtype, len, flags;
@@ -405,7 +406,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     BOOL movetext, changecol;
 #endif
 
-    if (ob_render_cancelled(tree) || (tree[obj].ob_flags & HIDETREE))
+    if (ob_render_cancelled(AES_RENDER_ARG tree) || (tree[obj].ob_flags & HIDETREE))
         return;
     if (!OB_RENDER_READY(tree,obj,sx,sy))
         return;
@@ -444,7 +445,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
     else
     {
         movetext = FALSE;
-        changecol = !xor_is_ok(obtype, flags, spec);
+        changecol = !xor_is_ok(AES_RENDER_ARG obtype, flags, spec);
     }
 #endif
 
@@ -453,7 +454,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
      * & thickness
      */
 #ifdef OB_RENDER_EXTENT
-    if (!OB_RENDER_EXTENT(&t,state,th))
+    if (!OB_RENDER_EXTENT(AES_RENDER_ARG &t,state,th))
         return;
 #else
     if (gl_clip.g_w && gl_clip.g_h)
@@ -464,7 +465,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         else
             gr_inside(&c, ((th < 0) ? (3 * th) : (-3 * th)) );
 
-        if (!(gsx_chkclip(&c)))
+        if (!(gsx_chkclip(AES_RENDER_ARG &c)))
             return;
     }
 #endif
@@ -590,8 +591,8 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             /* draw box's border */
             if (th != 0)
             {
-                gsx_attr(FALSE, MD_REPLACE, bcol);
-                gr_box(t.g_x, t.g_y, t.g_w, t.g_h, th);
+                gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, bcol);
+                gr_box(AES_RENDER_ARG t.g_x, t.g_y, t.g_w, t.g_h, th);
             }
             /* draw filled box */
             if (obtype != G_IBOX)
@@ -614,10 +615,10 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
                         icol = BLACK;
                     }
                     else
-                        icol = xor_color(icol);
+                        icol = xor_color(AES_RENDER_ARG icol);
                 }
 #endif
-                gr_rect(icol, ipat, &t);
+                gr_rect(AES_RENDER_ARG icol, ipat, &t);
                 gr_inside(&t, -tmpth);
             }
             break;
@@ -630,11 +631,11 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         if (changecol && (state & SELECTED))
         {
             tmode = MD_TRANS;
-            tcol = xor_color(tcol);
+            tcol = xor_color(AES_RENDER_ARG tcol);
         }
 #endif
 
-        gsx_attr(TRUE, tmode, tcol);
+        gsx_attr(AES_RENDER_ARG TRUE, tmode, tcol);
 
         /*
          * do what's left for all types
@@ -682,7 +683,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
                     c.g_y--;
             }
 #endif
-            gr_gtext(edblk.te_just, edblk.te_font, edblk.te_ptext, &c);
+            gr_gtext(AES_RENDER_ARG edblk.te_just, edblk.te_font, edblk.te_ptext, &c);
             break;
         case G_IMAGE:
             bi = *(spec.bitblk);
@@ -693,11 +694,11 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
              */
             if (state & SELECTED)
             {
-                bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x, t.g_y, t.g_w, t.g_h);
-                bi.bi_color = xor_color(bi.bi_color);
+                bb_fill(AES_RENDER_ARG MD_XOR, FIS_SOLID, IP_SOLID, t.g_x, t.g_y, t.g_w, t.g_h);
+                bi.bi_color = xor_color(AES_RENDER_ARG bi.bi_color);
             }
 #endif
-            gsx_blt((void *)bi.bi_pdata, bi.bi_x, bi.bi_y,
+            gsx_blt(AES_RENDER_ARG (void *)bi.bi_pdata, bi.bi_x, bi.bi_y,
                     t.g_x, t.g_y, bi.bi_wb * 8,
                     bi.bi_hl, MD_TRANS, bi.bi_color, WHITE);
             break;
@@ -714,11 +715,11 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             ib.ib_yicon += t.g_y;
             ib.ib_xtext += t.g_x;
             ib.ib_ytext += t.g_y;
-            gr_gicon(state, &ib, cicon);
+            gr_gicon(AES_RENDER_ARG state, &ib, cicon);
             state &= ~SELECTED;
             break;
         case G_USERDEF:
-            state = ob_user(tree, obj, &t, spec, state, state);
+            state = ob_user(AES_RENDER_ARG tree, obj, &t, spec, state, state);
             break;
         } /* switch type */
     }
@@ -741,7 +742,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             if ((obtype == G_BUTTON) && changecol && (state & SELECTED))
                 tcol = WHITE;
 #endif
-            gsx_attr(TRUE, MD_TRANS, tcol);
+            gsx_attr(AES_RENDER_ARG TRUE, MD_TRANS, tcol);
             tmpx = t.g_x;
             tmpy = t.g_y + ((t.g_h-gl_hchar)/2);
             if (obtype == G_BUTTON)
@@ -765,12 +766,12 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
              */
             if ((obtype == G_STRING) && (state & DISABLED) && (len > 3) && is_dashes(spec.free_string, len))
             {
-                gsx_cline(t.g_x, t.g_y+t.g_h/2, t.g_x+t.g_w-1, t.g_y+t.g_h/2);
+                gsx_cline(AES_RENDER_ARG t.g_x, t.g_y+t.g_h/2, t.g_x+t.g_w-1, t.g_y+t.g_h/2);
             }
             else
 #endif
             {
-                gsx_tblt(IBM, tmpx, tmpy, len);
+                gsx_tblt(AES_RENDER_ARG IBM, tmpx, tmpy, len);
             }
 #if OB_RENDER_EXTENDED
             /*
@@ -778,11 +779,11 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
              */
             if ((obtype == G_STRING) && (state & WHITEBAK) && ((state&0xFF00) == 0xFF00))
             {
-                gsx_attr(FALSE, MD_REPLACE, LBLACK);
-                gsx_cline(t.g_x, t.g_y+t.g_h+2, t.g_x+t.g_w, t.g_y+t.g_h+2);
+                gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, LBLACK);
+                gsx_cline(AES_RENDER_ARG t.g_x, t.g_y+t.g_h+2, t.g_x+t.g_w, t.g_y+t.g_h+2);
 #if OB_RENDER_3D
-                gsx_attr(FALSE, MD_REPLACE, WHITE);
-                gsx_cline(t.g_x, t.g_y+t.g_h+1, t.g_x+t.g_w, t.g_y+t.g_h+1);
+                gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, WHITE);
+                gsx_cline(AES_RENDER_ARG t.g_x, t.g_y+t.g_h+1, t.g_x+t.g_w, t.g_y+t.g_h+1);
 #endif
             }
 #endif
@@ -802,15 +803,15 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
              */
             if ((flags & FL3DMASK) == FL3DBAK)
             {
-                draw_3d_outline(&t);
+                draw_3d_outline(AES_RENDER_ARG &t);
             }
             else
 #endif
             {
-                gsx_attr(FALSE, MD_REPLACE, BLACK);
-                gr_box(t.g_x-3, t.g_y-3, t.g_w+6, t.g_h+6, 1);
-                gsx_attr(FALSE, MD_REPLACE, WHITE);
-                gr_box(t.g_x-2, t.g_y-2, t.g_w+4, t.g_h+4, 2);
+                gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, BLACK);
+                gr_box(AES_RENDER_ARG t.g_x-3, t.g_y-3, t.g_w+6, t.g_h+6, 1);
+                gsx_attr(AES_RENDER_ARG FALSE, MD_REPLACE, WHITE);
+                gr_box(AES_RENDER_ARG t.g_x-2, t.g_y-2, t.g_w+4, t.g_h+4, 2);
             }
         }
 
@@ -822,24 +823,24 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         if ((state & SHADOWED) && th)
         {
             vsf_color(bcol);
-            bb_fill(MD_REPLACE, FIS_SOLID, 0, t.g_x, t.g_y+t.g_h+th,
+            bb_fill(AES_RENDER_ARG MD_REPLACE, FIS_SOLID, 0, t.g_x, t.g_y+t.g_h+th,
                     t.g_w + th, 2*th);
-            bb_fill(MD_REPLACE, FIS_SOLID, 0, t.g_x+t.g_w+th, t.g_y,
+            bb_fill(AES_RENDER_ARG MD_REPLACE, FIS_SOLID, 0, t.g_x+t.g_w+th, t.g_y,
                     2*th, t.g_h+(3*th));
         }
 
         if (state & CHECKED)
         {
-            gsx_attr(TRUE, MD_TRANS, BLACK);
+            gsx_attr(AES_RENDER_ARG TRUE, MD_TRANS, BLACK);
             intin[0] = 0x08;                            /* a check mark */
-            gsx_tblt(IBM, t.g_x+2, t.g_y, 1);
+            gsx_tblt(AES_RENDER_ARG IBM, t.g_x+2, t.g_y, 1);
         }
 
         if (state & CROSSED)
         {
-            gsx_attr(FALSE, MD_TRANS, WHITE);
-            gsx_cline(t.g_x, t.g_y, t.g_x+t.g_w-1, t.g_y+t.g_h-1);
-            gsx_cline(t.g_x, t.g_y+t.g_h-1, t.g_x+t.g_w-1, t.g_y);
+            gsx_attr(AES_RENDER_ARG FALSE, MD_TRANS, WHITE);
+            gsx_cline(AES_RENDER_ARG t.g_x, t.g_y, t.g_x+t.g_w-1, t.g_y+t.g_h-1);
+            gsx_cline(AES_RENDER_ARG t.g_x, t.g_y+t.g_h-1, t.g_x+t.g_w-1, t.g_y);
         }
 
         if (state & DISABLED)
@@ -853,7 +854,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
                 bcol = backgrcol;
 #endif
             vsf_color(bcol);
-            bb_fill(MD_TRANS, FIS_PATTERN, IP_4PATT, t.g_x, t.g_y,
+            bb_fill(AES_RENDER_ARG MD_TRANS, FIS_PATTERN, IP_4PATT, t.g_x, t.g_y,
                     t.g_w, t.g_h);
         }
 
@@ -866,7 +867,7 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             if (!(flags & FL3DOBJ) && !changecol)
 #endif
             {
-                bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x, t.g_y, t.g_w, t.g_h);
+                bb_fill(AES_RENDER_ARG MD_XOR, FIS_SOLID, IP_SOLID, t.g_x, t.g_y, t.g_w, t.g_h);
             }
         }
     }
@@ -876,11 +877,11 @@ void ob_render_object(OBJECT *tree, WORD obj, WORD sx, WORD sy)
      * do 3D effect for activators, indicators
      */
     if (flags & FL3DOBJ)
-        add_3d_effect(&effect_grect, state, effect_th, icol);
+        add_3d_effect(AES_RENDER_ARG &effect_grect, state, effect_th, icol);
 #endif
 } /* ob_render_object */
 
-void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
+void ob_render_change(AES_RENDER_PARAM OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
 {
     WORD flags, obtype, th;
     GRECT t;
@@ -910,7 +911,7 @@ void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
     switch(obtype)
     {
     case G_USERDEF: /* just call the user's drawing routine */
-        ob_user(tree, obj, &t, spec, curr_state, new_state);
+        ob_user(AES_RENDER_ARG tree, obj, &t, spec, curr_state, new_state);
         redraw = FALSE;
         break;
 #if OB_RENDER_COLOUR_ICONS && defined(AES_RENDER_BINDINGS)
@@ -927,10 +928,10 @@ void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
          */
         if ((new_state ^ curr_state) & SELECTED)
         {
-            BOOL ok = xor_is_ok(obtype,flags, spec);
+            BOOL ok = xor_is_ok(AES_RENDER_ARG obtype,flags, spec);
             if (ok || ((obtype == G_IMAGE) && !(new_state & SELECTED)))
             {
-                bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,
+                bb_fill(AES_RENDER_ARG MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,
                         t.g_w-(2*th), t.g_h-(2*th));
                 redraw = !ok;
             }
@@ -939,7 +940,7 @@ void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
         /* no 3D support: always use XOR if SELECTED state has changed */
         if ((new_state ^ curr_state) & SELECTED)
         {
-            bb_fill(MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,
+            bb_fill(AES_RENDER_ARG MD_XOR, FIS_SOLID, IP_SOLID, t.g_x+th, t.g_y+th,
                     t.g_w-(2*th), t.g_h-(2*th));
             redraw = FALSE;
         }
@@ -947,7 +948,7 @@ void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
     }
 
     if (redraw)
-        ob_render_object(tree, obj, t.g_x, t.g_y);
+        ob_render_object(AES_RENDER_ARG tree, obj, t.g_x, t.g_y);
 
     gsx_mon();
 }
@@ -956,7 +957,7 @@ void ob_render_change(OBJECT *tree, WORD obj, UWORD new_state, WORD redraw)
 /*
  *  Initialise variables related to 3D objects
  */
-void init_3d(void)
+void init_3d(AES_RENDER_PARAM0)
 {
     indtxtmove = 0;         /* indicators: don't move text */
     indcolchange = 1;       /* ... but change colour       */
@@ -979,7 +980,7 @@ void init_3d(void)
 /*
  *  Implements objc_sysvar(): set/get variables to control 3D object display
  */
-WORD ob_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
+WORD ob_sysvar(AES_RENDER_PARAM WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
 {
     /*
      * handle setting the variables
