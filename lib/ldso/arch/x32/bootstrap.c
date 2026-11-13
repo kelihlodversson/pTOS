@@ -32,17 +32,26 @@ int dl_bootstrap(const uint32_t *stack)
     if (i == 16384) return 1;
     for (v++, i = 0; i < 32 && v[0]; i++, v += 2)
         if (v[0] == 7) base = v[1];
-    if (!base || base < 0xf000000 || base >= 0xfff0000 || i == 32) return 1;
+    /* Shared-VM loading may rebase the interpreter outside its old window.
+     * Keep the complete initial header/PHDR page inside positive user VA. */
+    if (!base || (base & 4095U) || base > 0x80000000U - 4096U || i == 32) return 1;
     image = (const unsigned char *)(uintptr_t)base;
     if (word(image) != 0x464c457fUL || image[4] != 1 || image[5] != 1) return 1;
     off = word(image + 28);
     count = image[44] | ((uint32_t)image[45] << 8);
     if (!count || count > DL_MAX_PHDRS || off > 4096 || count * 32 > 4096 - off) return 1;
     ph = image + off;
-    for (i = 0; i < count; i++)
-        if (word(ph + i * 32) == 2) {
-            dyn = word(ph + i * 32 + 8); ds = word(ph + i * 32 + 16);
+    for (i = 0; i < count; i++) {
+        const unsigned char *h = ph + i * 32;
+        /* Validate every load before forming any dynamic/table/target pointer.
+         * Widen before addition; a wrapped 32-bit VA cannot regain validity. */
+        if (word(h) == 1 &&
+            ((uint64_t)base + word(h + 8) >= 0x80000000U ||
+             (uint64_t)base + word(h + 8) + word(h + 20) > 0x80000000U)) return 1;
+        if (word(h) == 2) {
+            dyn = word(h + 8); ds = word(h + 16);
         }
+    }
     if (!ds || ds % 8 || ds > 4096 || !range(ph, count, dyn, ds, 4)) return 1;
     d = image + dyn;
     for (i = 0; i < ds; i += 8) {
@@ -55,7 +64,7 @@ int dl_bootstrap(const uint32_t *stack)
     }
     if (i == ds || (size && ent != 12) || size % 12 || size / 12 > DL_MAX_RELOCATIONS ||
         (size && !range(ph, count, rela, size, 4))) return 1;
-    table = image + rela;
+    table = image + (size ? rela : 0);
     /* Validate every write before applying any; metadata remains immutable. */
     for (pass = 0; pass < 2; pass++)
         for (n = 0; n < size; n += 12) {
