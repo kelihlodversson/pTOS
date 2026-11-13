@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#include <osbind.h>
+#include <mint/osbind.h>
 #include <stdarg.h>
 #include "doprintf.h"
 

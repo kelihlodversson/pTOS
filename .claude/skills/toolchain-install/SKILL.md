@@ -126,3 +126,13 @@ Run `make distclean` when changing toolchains, and record compiler/package
 versions with the results. A missing compiler is a setup problem: fix the
 installation, then retry the original build. Only report a configuration as
 unbuildable after the appropriate installation or build has actually failed.
+
+## Current m68k compiler workaround
+
+GCC 16.2 can combine source post-increment with a destination using the same
+address register, shifting page-table copies by a word. pTOS passes
+`-fno-auto-inc-dec` to SDK m68k kernel/program/library compilations until
+[toolchain issue #15](https://github.com/kelihlodversson/pTOS-toolchain/issues/15)
+is fixed in published packages. Keep this flag when reproducing current builds;
+do not remove it merely because compilation succeeds. Verify runtime boot and
+address-space tests when upgrading the compiler.

@@ -63,7 +63,7 @@ are in the sections named; everything not in the table is the same.
     compiler        pTOS x32 SDK           pTOS ARM SDK          pTOS m68k SDK
     object          ELF32 EM_X86_64        ELF32 EM_ARM           ELF32 EM_68K
                     little endian          little endian          big endian
-    e_flags         0                      0x05000400             0
+    e_flags         0                      0x05000400             0 or EF_M68K_M68000
     tables          DT_RELA                DT_REL                 DT_RELA
     PT_GNU_RELRO    yes                    no (the bare-metal     yes
                                            linker has none)
@@ -710,7 +710,7 @@ for another compiler. Userspace is freestanding: -ffreestanding -nostdlib,
 no host libc, only the target libgcc. Legacy MiNT compilers lack ordinary
 PIC, so selecting one for the kernel still needs a PIC-capable SDK for LD.SO.
 
-Objects are ELF32 EM_68K, big endian, e_flags 0 (the 68020 and later), linked
+Objects are ELF32 EM_68K, big endian, e_flags 0 or EF_M68K_M68000 (the classic m68k family), linked
 with -z max-page-size=4096 and --build-id=none.  A program is a fixed-address
 ET_EXEC at 0x400000 or above, a page up from the headers
 (-Wl,-Ttext-segment=0x401000), with PT_INTERP /GEMSYS/LIB/M68K/LD.SO; its

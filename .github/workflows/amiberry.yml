@@ -33,6 +33,10 @@ on:
       - tests/**
       - .github/actions/setup-amiberry/**
       - .github/workflows/amiberry.yml
+      - .github/actions/setup-toolchain/**
+      - tools/install-ptos-toolchain.sh
+      - Makefile
+      - Kconfig.machine
       - bios/arch/m68k/**
       - bios/amiga*
       - bios/aros*

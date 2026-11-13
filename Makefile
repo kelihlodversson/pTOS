@@ -353,6 +353,11 @@ CSTANDARD = -std=gnu90
 # case a future compiler version narrows what the pass flag covers.
 OTHERFLAGS = -fomit-frame-pointer -fno-common \
              -fno-tree-loop-distribute-patterns -fno-builtin-strlen
+ifdef BUILD_TOOLCHAIN_PTOS
+# GCC 16 can post-increment a source base also used by the destination,
+# shifting page-table copies. Remove after pTOS-toolchain#15 is fixed.
+OTHERFLAGS += -fno-auto-inc-dec
+endif
 DEBUGFLAGS = $(if $(DEBUG_INFO),-g)
 
 WARNFLAGS = -Wall -Wundef -Wmissing-prototypes -Wstrict-prototypes
@@ -452,14 +457,17 @@ ifdef ARCH_ARM
 # The ARM linker script cannot produce a raw binary directly.
 EMUTOS_IMG = emutos.elf
 LDFLAGS += -Wl,-build-id=none
-# This kernel image deliberately shares one load segment for code and data;
-# the Raspberry Pi image is extracted as a flat binary. Newer linkers warn
-# about its RWX segment. Keep older toolchains, which lack this option, usable.
-LDFLAGS += $(shell $(CROSS_COMPILE)ld --help 2>/dev/null | \
-                  grep -q -- '--no-warn-rwx-segments' && echo -Wl,--no-warn-rwx-segments)
 else
 EMUTOS_IMG = emutos.img
 endif
+endif
+
+ifneq (,$(or $(ARCH_ARM),$(MACHINE_VIRT_M68K)))
+# Boot images deliberately share a load segment for code and data. The Pi
+# uses a flat binary; virt-m68k's kernel sets its own MMU permissions. This
+# affects boot images only, never userspace libraries or executable links.
+LDFLAGS += $(shell $(CROSS_COMPILE)ld --help 2>/dev/null | \
+                  grep -- '--no-warn-rwx-segments' >/dev/null && echo -Wl,--no-warn-rwx-segments)
 endif
 
 ifdef BUILD_TOOLCHAIN_IS_ELF
@@ -1093,7 +1101,7 @@ obj/boot.o obj/bootsect.o: obj/ramtos.h
 
 ifdef TARGET_PRG
 $(IMAGE): obj/minicrt.o obj/boot.o obj/bootram.o obj/ramtos.o
-	$(LD) $+ $(LIBS) -o $@ -s
+	$(LD) $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) $+ $(LIBS) -o $@ -s
 endif
 
 ifdef TARGET_FLOPPY
@@ -1122,11 +1130,11 @@ date.prg dumpkbd.prg:
 	$(error $@ cannot be built with CONF_WITH_MFASTCALL set: util/arch/m68k/minicrt.S's startup has not been audited for -mfastcall's register-argument convention. Disable CONF_WITH_MFASTCALL in "make menuconfig" first)
 else
 date.prg: obj/minicrt.o obj/doprintf.o obj/date.o
-	$(LD) $+ $(LIBS) -o $@ -s
+	$(LD) $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) $+ $(LIBS) -o $@ -s
 
 dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 	     obj/string.o
-	$(LD) $+ $(LIBS) -o $@ -s
+	$(LD) $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) $+ $(LIBS) -o $@ -s
 endif
 
 #
@@ -1456,9 +1464,16 @@ endif
 # We don't generate this automatically, because it might be processed by
 # the wrong compiler when a non-m68k machine is configured.
 #
-include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c include/lineavars.h
-	@echo "warning: $@ is out of date" >&2
-	@echo "run \"$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@\" to regenerate it" >&2
+include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c include/lineavars.h | obj
+ifdef ARCH_M68K
+	@$(CC) $(CFILE_FLAGS) -fno-lto -S $< -o obj/lineaasm.s
+	@grep '^#define' obj/lineaasm.s > obj/lineaasm.h
+	@cmp -s obj/lineaasm.h $@ || { echo "error: regenerate $@ with the selected m68k compiler" >&2; diff -u $@ obj/lineaasm.h; exit 1; }
+	@touch $@
+else
+	@echo "error: validate $@ under an m68k configuration" >&2
+	@exit 1
+endif
 
 #
 # Generic dsm handling
@@ -1649,6 +1664,9 @@ LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
 LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) \
     CROSSPREFIX=$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
+ifdef BUILD_TOOLCHAIN_PTOS
+LIBCMINI_MAKE += ARCH_CFLAGS=-fno-auto-inc-dec
+endif
 ifdef ARCH_X86_64
 # libcmini's x86-64 port is the x32 userland: built with the same compiler and
 # flags as the other x32 programs (X32_CROSS_COMPILE/X32_CFLAGS), not the
@@ -1660,6 +1678,7 @@ LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
 LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
+LIBCMINI_BUILD_ID = $(LIBCMINI_DEFCONFIG):$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE)):$(if $(BUILD_TOOLCHAIN_PTOS),-fno-auto-inc-dec)
 
 # Build libcmini from the submodule.  The defconfig is arch-specific; for
 # m68k we use mintelf_defconfig, which produces ELF-compatible objects
@@ -1716,7 +1735,7 @@ $(LIBCMINI_DIR)/Makefile:
 
 $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	@mkdir -p $(dir $@)
-	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
+	@want="$(LIBCMINI_BUILD_ID):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
 	have=$$(cat $@ 2>/dev/null || true); \
 	if [ "$$want" != "$$have" ]; then \
 	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \

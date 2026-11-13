@@ -72,7 +72,8 @@ LIBCMINI_DEFCONFIG = mintelf_defconfig
 # toolchain's default (non -mshort) multilib, so this program has to
 # match it or every call across the boundary into libcmini (strlen(),
 # Bconin(), ...) would use a mismatched calling convention for plain int.
-ARCH_CFLAGS = -Wa,--register-prefix-optional
+ARCH_CFLAGS = -Wa,--register-prefix-optional -fno-auto-inc-dec
+LIBCMINI_MAKE += ARCH_CFLAGS=-fno-auto-inc-dec
 # The bare m68k-elf toolchain (M68K_ELF=y, from the top level Makefile) makes
 # an ELF file, which pTOS's ELF loader needs as a relocatable image, as on
 # ARM; the others make a PRG.
