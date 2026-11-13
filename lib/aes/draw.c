@@ -270,7 +270,7 @@ static WORD colour_pen(UWORD index)
         if (pen != BLACK && vdi_pen_order[pen] == index) return pen;
     return index;
 }
-void *aes_render_alloc(LONG bytes) { return aes_temporary_alloc(bytes); }
+void *aes_render_alloc(LONG bytes) { return aes_temporary_alloc(bytes,aes_painter->global); }
 WORD aes_render_free(void *memory) { return aes_resource_discard(memory); }
 CICON *aes_render_cicon(CICONBLK *block)
 {
@@ -488,6 +488,7 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
      * to whole-screen ownership or changing its lifetime. */
     if (lock != E_OK && lock != EAGAIN) return 0;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
+    p.global = global;
     p.style = &aes_app_context(global)->graphics.style;
     opened = TRUE; aes_painter = &p; p.handle = ws.handle; p.ok = TRUE;
     memcpy(&p.workstation,ws.intout,sizeof(ws.intout));
@@ -789,6 +790,7 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) return 0;
     if (aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK ||
         ws.intout[13] <= 0 || ws.intout[13] > 256) return 0;
+    p.global = global;
     p.style = &aes_app_context(global)->graphics.style;
     p.workstation.ws_ncolors = ws.intout[13]; aes_painter = &p;
     if (!p.style->ready) { aes_init_3d(); p.style->ready = TRUE; }

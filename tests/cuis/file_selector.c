@@ -27,9 +27,10 @@ BOOL aes_layout_metrics(LAYOUT_METRICS *m, AESGLOBAL *global)
 BOOL aes_frames_dialog(BOOL begin, AESGLOBAL *global) { (void)global; dialogs += begin ? 1 : -1; return TRUE; }
 BOOL aes_frames_suspend(AESGLOBAL *global) { (void)global; overlays++; return TRUE; }
 void aes_frames_resume(AESGLOBAL *global) { (void)global; overlays--; }
-void *aes_temporary_alloc(LONG bytes)
+void *aes_temporary_alloc(LONG bytes, AESGLOBAL *global)
 {
     void *memory;
+    (void)global;
     if (fail_alloc || (fail_listing && bytes < 100000)) return NULL;
     memory = malloc(bytes);
     if (memory) allocations++;

@@ -177,7 +177,7 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     parse = mode == SWM_LAUNCH && execution == CL_PARSE;
     if (!aes_shell_arguments(path,tail,parse,
             environment ? environment : parse || (UBYTE)tail[0] == 127 ? aes_shell_environment : NULL,
-            environment ? 32766UL : environment_bytes,&arguments)) return 0;
+            environment ? 32766UL : environment_bytes,&arguments,global)) return 0;
     if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN) {
         pid = cuis_call6(set_directory ? CUIS_PROCESS_DEFER_DIRECTORY : CUIS_PROCESS_DEFER,session,(uintptr_t)path,
             (uintptr_t)arguments.tail,(uintptr_t)arguments.environment,set_directory ? (uintptr_t)directory : 0,0) == E_OK ? 1 : 0;

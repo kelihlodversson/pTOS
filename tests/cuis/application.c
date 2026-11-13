@@ -25,9 +25,10 @@ UQUAD aes_memory_call(ULONG function, UQUAD argument)
     if (function == 0x49) { free((void *)(uintptr_t)argument); return E_OK; }
     return (QUAD)EINVFN;
 }
-void *aes_temporary_alloc(LONG bytes)
+void *aes_temporary_alloc(LONG bytes, AESGLOBAL *global)
 {
     void *memory = region_alloc_failure ? NULL : malloc(bytes);
+    (void)global;
     if (memory) region_allocations++;
     return memory;
 }
@@ -122,7 +123,7 @@ short mt_objc_draw(OBJECT *tree, short object, short depth, short x, short y,
     return 1;
 }
 static int resource_resets;
-void aes_resources_reset(void) { resource_resets++; }
+BOOL aes_resources_reset(AESGLOBAL *global) { (void)global; resource_resets++; return TRUE; }
 BOOL aes_menu_registered(void) { return menu_test; }
 BOOL aes_menu_listening(void) { return menu_test; }
 LONG aes_menu_flush(AESGLOBAL *global) { (void)global; return E_OK; }

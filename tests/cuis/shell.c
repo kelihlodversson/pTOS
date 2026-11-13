@@ -1,5 +1,6 @@
 /* Standard GEM shell queries use startup metadata and a private search DTA. */
 #include "gem.h"
+#include "../../lib/aes/app_context.h"
 #include "shell_context.h"
 #include "transport.h"
 #include "gemerror.h"
@@ -366,6 +367,10 @@ int main(void)
     AESGLOBAL global = { 0 };
     int i, before;
     aes_global = (AESGLOBAL){ .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
+    {
+        static AES_APP_CONTEXT context;
+        aes_global.ap_3resv = &context;
+    }
     memcpy(&global,&aes_global,sizeof(global));
     memcpy(environment,env,sizeof(env)); basepage.p_env = PTR_TO_USERPTR(environment);
     initial_tail[0] = 5; memcpy(initial_tail+1,"a b c",5);

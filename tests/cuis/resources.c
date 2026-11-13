@@ -3,6 +3,7 @@
 #include "gemerror.h"
 #include "gem_resources.h"
 #include "../../lib/aes/resource_context.h"
+#include "../../lib/aes/app_context.h"
 #include "../../lib/aes/transport.h"
 #include "string.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("resource failure: %d\n",__LINE__); return __LINE__; } } while (0)
@@ -13,6 +14,8 @@ static UBYTE disk[16384], original[16384];
 static LONG disk_size, position;
 static int files, allocations, alloc_after = -1, reads, short_read, close_error, seek_error, graphics_error;
 static int close_keeps_handle, close_calls;
+static BOOL open_handles[16];
+static LONG stuck_handle = -1;
 static BOOL present = TRUE, registration_error, invalidate_on_close;
 static void *blocks[128];
 static int free_after = -1;
@@ -56,7 +59,7 @@ UQUAD aes_memory_call(ULONG function, UQUAD argument)
 }
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
-    LONG bytes;
+    LONG bytes, handle;
     switch (function) {
     case 0x19: return 2;
     case 0x47: strcpy((void *)(uintptr_t)a,"\\START"); return E_OK;
@@ -64,44 +67,109 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         if (attempts < 16) strcpy(tried[attempts],(void *)(uintptr_t)a);
         attempts++;
         if (!present || strcmp((void *)(uintptr_t)a,available)) return (UQUAD)(QUAD)EFILNF;
-        files++; reads = 0; position = 0; return 3;
+        for (handle = 0; handle < 16 && open_handles[handle]; handle++) ;
+        if (handle == 16) return (QUAD)ENHNDL;
+        open_handles[handle] = TRUE; files++; reads = 0; position = 0; return handle+3;
     case 0x3e:
         close_calls++;
-        if (a != 3 || !files) return (UQUAD)(QUAD)EIHNDL;
-        if (close_keeps_handle) {
+        if (a < 3 || a >= 19 || !open_handles[a-3]) return (UQUAD)(QUAD)EIHNDL;
+        if (close_keeps_handle && (stuck_handle < 0 || a == (UQUAD)stuck_handle)) {
             if (close_keeps_handle > 0) close_keeps_handle--;
             return (UQUAD)(QUAD)EACCDN;
         }
-        files--;
+        open_handles[a-3] = FALSE; files--;
         if (invalidate_on_close) registration_error = TRUE;
         return close_error ? (UQUAD)(QUAD)EACCDN : E_OK;
     case 0x3f:
-        if (a != 3 || !files) return (UQUAD)(QUAD)EIHNDL;
+        if (a < 3 || a >= 19 || !open_handles[a-3]) return (UQUAD)(QUAD)EIHNDL;
         bytes = b;
         if (bytes > disk_size-position) bytes = disk_size-position;
         if (++reads == short_read && bytes) bytes--;
         memcpy((void *)(uintptr_t)c,disk+position,bytes); position += bytes;
         return bytes;
     case 0x42:
+        if (b < 3 || b >= 19 || !open_handles[b-3]) return (QUAD)EIHNDL;
         if (seek_error) return (UQUAD)(QUAD)EACCDN;
-        position = (LONG)a;
+        position = (c == 1 ? position : c == 2 ? disk_size : 0)+(LONG)a;
         return position;
     default: return (UQUAD)(QUAD)EINVFN;
     }
 }
 static void disk_word(int offset, unsigned int value) { disk[offset] = value>>8; disk[offset+1] = value; }
 static void disk_long(int offset, unsigned long value) { disk_word(offset,value>>16); disk_word(offset+2,value); }
+/* Independent ownership uses the same mocked native session deliberately. */
+static int context_checks(void)
+{
+    AES_APP_CONTEXT left = { 0 }, right = { 0 };
+    AESGLOBAL first = { .ap_id = 1, .ap_3resv = &left };
+    AESGLOBAL second = { .ap_id = 1, .ap_3resv = &right }, alias, foreign;
+    void *address, *a, *b;
+    int calls, opens;
+    VERIFY(mt_rsrc_load("GEMTEST.RSC",&first) == 1);
+    VERIFY(mt_rsrc_load("GEMTEST.RSC",&second) == 1 && allocations == 4);
+    alias = first; foreign = first; foreign.ap_3resv = second.ap_3resv;
+    VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&alias) == 1 && address == first.ap_ptree[0]);
+    VERIFY(!mt_rsrc_gaddr(R_TREE,0,&address,&foreign) && !mt_rsrc_free(&foreign));
+    /* Public selectors select another owned image through the same alias. */
+    VERIFY(mt_rsrc_load("GEMTEST.RSC",&alias) == 1 && allocations == 6);
+    VERIFY(first.ap_rscmem != alias.ap_rscmem && first.ap_ptree != alias.ap_ptree);
+    VERIFY(mt_rsrc_free(&alias) && allocations == 4);
+    VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&first) == 1);
+    free_after = 0;
+    VERIFY(!aes_resources_reset(&alias) && allocations == 4);
+    VERIFY(!mt_rsrc_gaddr(R_TREE,0,&address,&first));
+    free_after = -1;
+    VERIFY(aes_resources_reset(&second) && allocations == 2);
+    VERIFY(mt_rsrc_load("GEMTEST.RSC",&second) == 1 && allocations == 4);
+    VERIFY(aes_resources_reset(&first) && allocations == 2);
+    VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&second) == 1);
+    /* Failed temporary releases stay with their allocating context. */
+    a = aes_temporary_alloc(32,&first); b = aes_temporary_alloc(48,&second);
+    VERIFY(a && b && allocations == 4);
+    free_after = 0;
+    VERIFY(aes_resource_discard(a) != E_OK && aes_resource_discard(b) != E_OK);
+    free_after = -1;
+    VERIFY(aes_resources_reset(&alias) && allocations == 3);
+    VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&second) == 1);
+    VERIFY(aes_resources_reset(&second) && !allocations);
+    /* A failed close in one context cannot block or be retried by another. */
+    close_keeps_handle = -1; stuck_handle = 3;
+    VERIFY(!mt_rsrc_load("GEMTEST.RSC",&first) && files == 1);
+    calls = close_calls;
+    VERIFY(aes_resources_reset(&second) && close_calls == calls && files == 1);
+    VERIFY(mt_rsrc_load("GEMTEST.RSC",&second) == 1 && files == 1);
+    opens = attempts;
+    VERIFY(!mt_rsrc_load("GEMTEST.RSC",&alias) && attempts == opens && files == 1);
+    VERIFY(aes_resources_reset(&second) && !allocations && files == 1);
+    close_keeps_handle = 0; stuck_handle = -1;
+    VERIFY(aes_resources_reset(&first) && !files && !allocations);
+    /* First close keeps A's descriptor; retry releases it but returns an
+     * error. B reuses it and its own close then persistently fails. */
+    close_keeps_handle = 1; close_error = 1;
+    VERIFY(!mt_rsrc_load("GEMTEST.RSC",&first) && !files && !left.resources.close_pending);
+    close_error = 0; close_keeps_handle = -1;
+    VERIFY(!mt_rsrc_load("GEMTEST.RSC",&second) && files == 1 && right.resources.close_pending);
+    calls = close_calls;
+    VERIFY(aes_resources_reset(&first) && close_calls == calls && files == 1);
+    seek_error = 1;
+    VERIFY(!aes_resources_reset(&second) && files == 1 && right.resources.close_pending);
+    seek_error = 0; close_keeps_handle = 0;
+    VERIFY(aes_resources_reset(&second) && !files && !allocations);
+    return 0;
+}
 int main(int argc, char **argv)
 {
     void *file, *address;
     AESGLOBAL saved = { 0 };
+    AES_APP_CONTEXT context = { 0 };
     int i, result, before, size;
-    aes_global = (AESGLOBAL){ .ap_id = 1 };
+    aes_global = (AESGLOBAL){ .ap_id = 1, .ap_3resv = &context };
     VERIFY(argc == 3);
     file = fopen(argv[1],"rb"); VERIFY(file != NULL);
     disk_size = fread(disk,1,sizeof(disk),file); VERIFY(fclose(file) == 0 && disk_size > 36);
     memcpy(original,disk,sizeof(disk));
     aes_resources_init();
+    VERIFY(context_checks() == 0);
     result = gem_resource_native(1,8,16);
     VERIFY(result == 0 && !allocations);
     for (i = 0; i < 4; i++) {
@@ -111,9 +179,9 @@ int main(int argc, char **argv)
     alloc_after = -1;
     free_after = 0;
     VERIFY(gem_resource_native(1,8,16) == 0 && allocations > 0);
-    aes_resources_reset(); VERIFY(allocations > 0);
+    aes_resources_reset(&aes_global); VERIFY(allocations > 0);
     free_after = -1;
-    aes_resources_reset(); VERIFY(!allocations);
+    aes_resources_reset(&aes_global); VERIFY(!allocations);
     result = gem_resource_checks(1,8,16);
     if (result) __builtin_printf("GEM resource failure: %x\n",result);
     VERIFY(result == 0 && !files && !allocations);
@@ -153,9 +221,9 @@ int main(int argc, char **argv)
      * cleanup attempt failed, without discarding its ownership record. */
     close_keeps_handle = -1;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && files == 1);
-    aes_resources_reset(); VERIFY(files == 1 && !allocations);
+    aes_resources_reset(&aes_global); VERIFY(files == 1 && !allocations);
     close_keeps_handle = 0;
-    aes_resources_reset(); VERIFY(!files && !allocations);
+    aes_resources_reset(&aes_global); VERIFY(!files && !allocations);
     VERIFY(rsrc_load("GEMTEST.RSC") == 1);
     memcpy(&saved,&aes_global,sizeof(saved)); before = allocations;
     seek_error = 1;
@@ -249,19 +317,19 @@ int main(int argc, char **argv)
         VERIFY(rsrc_load("GEMTEST.RSC") == 1);
         memcpy(&stale,&aes_global,sizeof(stale));
         free_after = i;
-        aes_resources_reset();
+        aes_resources_reset(&aes_global);
         VERIFY(allocations == 2-i && !files);
         VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&stale) == 0 &&
             mt_rsrc_free(&stale) == 0);
-        aes_resources_reset(); VERIFY(allocations == 2-i);
+        aes_resources_reset(&aes_global); VERIFY(allocations == 2-i);
         free_after = -1;
         if (!i) {
-            aes_resources_reset(); VERIFY(!allocations);
+            aes_resources_reset(&aes_global); VERIFY(!allocations);
             VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&stale) == 0);
         }
         /* A new load also retries retired metadata without selecting it. */
         VERIFY(rsrc_load("GEMTEST.RSC") == 1 && allocations == 2);
-        aes_resources_reset(); VERIFY(!allocations);
+        aes_resources_reset(&aes_global); VERIFY(!allocations);
         VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0);
     }
     /* Explicit free may release the image but fail to release its record. */
@@ -270,7 +338,7 @@ int main(int argc, char **argv)
     VERIFY(rsrc_free() == 1 && allocations == 1);
     VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0);
     free_after = -1;
-    aes_resources_reset(); VERIFY(!allocations);
+    aes_resources_reset(&aes_global); VERIFY(!allocations);
     /* Failed temporary frees retain input, validation scratch and rejected
      * images without requiring a new allocation to record ownership. */
     for (i = 0; i < 4; i++) {
@@ -280,12 +348,12 @@ int main(int argc, char **argv)
         VERIFY(rsrc_load("GEMTEST.RSC") == (i < 2 ? 1 : 0));
         VERIFY(allocations == (i == 0 ? 4 : i == 1 ? 3 : i == 2 ? 3 : 2));
         free_after = 0;
-        aes_resources_reset();
+        aes_resources_reset(&aes_global);
         VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0);
         free_after = -1; short_read = 0;
         memcpy(disk,original,sizeof(disk));
-        aes_resources_reset(); VERIFY(!allocations && !files);
-        aes_resources_reset(); VERIFY(!allocations);
+        aes_resources_reset(&aes_global); VERIFY(!allocations && !files);
+        aes_resources_reset(&aes_global); VERIFY(!allocations);
     }
     /* Search order: app directory, caller path, drive root, then PATH. */
     available = "GOOD\\GEMTEST.RSC"; attempts = 0;
@@ -293,7 +361,7 @@ int main(int argc, char **argv)
     VERIFY(attempts == 5 && !strcmp(tried[0],"C:\\START\\APP\\GEMTEST.RSC") &&
         !strcmp(tried[1],"ELSE\\GEMTEST.RSC") && !strcmp(tried[2],"\\GEMTEST.RSC") &&
         !strcmp(tried[3],"BAD\\GEMTEST.RSC") && !strcmp(tried[4],"GOOD\\GEMTEST.RSC"));
-    aes_resources_reset(); VERIFY(!allocations && !files && rsrc_free() == 0);
+    aes_resources_reset(&aes_global); VERIFY(!allocations && !files && rsrc_free() == 0);
     available = "C:\\START\\APP\\GEMORIG.RSC";
     file = fopen(argv[2],"rb"); VERIFY(file != NULL);
     disk_size = fread(disk,1,sizeof(disk),file); VERIFY(fclose(file) == 0);

@@ -119,7 +119,9 @@ the supplied global's slot. All other aliases become invalid; the caller must
 stop using them. Reset a retired alias's slot to null before starting a new
 context. A failed close retains the context for retry. If freeing the
 context fails after close, retrying exit retries the free without closing or
-cleaning up twice. No other operations are valid after that partial exit.
+resetting the window/menu/desktop/graphics adapters twice. Failed resource
+releases or file closes also retain the context; each exit retry attempts its
+remaining resource cleanup before freeing the context. No other operations are valid after that partial exit.
 
 Except for initialization with a null slot, passing an uninitialized, invalid,
 mismatched, closed or freed context is undefined behavior. There is no magic,
@@ -136,21 +138,29 @@ The context now owns these retained state groups:
 - Cached graphics workstation/metrics, cursor forms and visibility depth,
   and 3D style preferences. Each stack painter borrows the supplied context's
   style state, including during nested USERDEF calls using another global.
+- Resource ownership lists, retired resource records, failed temporary frees
+  and pending resource-file closes. The supplied public `ap_ptree`, `ap_rscmem`
+  and `ap_rsclen` fields remain authoritative selectors within that context.
+  An alias shares ownership without synchronizing its public selectors.
+  Each temporary allocation records its cleanup owner before publication,
+  including buffers used by drawing, dialogs, menus, windows and shell calls.
+  Resetting one context never retries another context's deferred cleanup.
 
 Private helpers receive the caller's global explicitly. Window, desktop and
 graphics resets clean up only that context's retained state; explicit aliases
 share it. The native `wind_new` operation still resets the kernel session's
 windows, whose identity boundary remains unchanged.
 
-Resources/failed-cleanup bookkeeping, menus, shell state and temporary helper
-pointers still need migration in subsequent #953 slices. This is not yet a
+Menus, shell state and temporary helper pointers still need migration in
+subsequent #953 slices. The captured launch-directory snapshot remains part
+of shell startup state until that migration. This is not yet a
 reentrant implementation or independent application isolation. CUIS
 still returns one session per process: two fresh globals allocate distinct
 userspace contexts, but currently receive the same native session. Ending it
 through either context invalidates the other context's kernel session. Tests
 of independent enumeration/cohort state use distinct mocked session handles.
-Window/desktop/graphics tests also verify private state isolation and alias
-sharing while retaining the current shared-session constraint. Independent
+Window/desktop/graphics/resource tests also verify private state isolation and
+alias sharing while retaining the current shared-session constraint. Independent
 native sessions require the separate CUIS identity work
 coordinated with #896/#907/#915.
 

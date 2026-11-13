@@ -1371,6 +1371,7 @@ int main(void)
     VERIFY(before == 0);
     VERIFY(preflight_scaling() == 0);
     {
+        PAINTER painter = { 0 }, *saved_painter = aes_painter;
         CICONBLK colour = { 0 };
         CICON variants[4] = { { 0 } };
         void *temporary;
@@ -1382,17 +1383,19 @@ int main(void)
         VERIFY(rs_cicon_best(&colour,0) == NULL && rs_cicon_best(&colour,1) == variants);
         VERIFY(rs_cicon_best(&colour,3) == variants && rs_cicon_best(&colour,4) == variants+2);
         VERIFY(rs_cicon_best(&colour,8) == variants+1 && rs_cicon_best(&colour,32) == variants+1);
+        painter.global = &aes_global; aes_painter = &painter;
         temporary = aes_render_alloc(70000); VERIFY(temporary != NULL);
         release_error = TRUE; VERIFY(aes_render_free(temporary) == EACCDN);
-        release_error = FALSE; aes_resources_reset();
+        release_error = FALSE; aes_resources_reset(&aes_global);
         allocation_error = TRUE; VERIFY(aes_render_alloc(16) == NULL); allocation_error = FALSE;
+        aes_painter = saved_painter;
     }
     screen_planes = 16;
     before = gem_colour_checks(0); VERIFY(before == 0);
     screen_planes = 32;
     release_error = TRUE;
     before = gem_colour_checks(0);
-    release_error = FALSE; aes_resources_reset();
+    release_error = FALSE; aes_resources_reset(&aes_global);
     VERIFY(before == 0);
     before = gem_colour_checks(0);
     if (before) __builtin_printf("colour object failure: %x\n",before);
@@ -1437,7 +1440,7 @@ int main(void)
             }
             popup_paint_failure = FALSE;
             allocation_error = mouse_error = snapshot_error = draw_error = input_error = release_error = FALSE;
-            aes_resources_reset();
+            aes_resources_reset(&aes_global);
         }
         popup_mode = FALSE;
     }
