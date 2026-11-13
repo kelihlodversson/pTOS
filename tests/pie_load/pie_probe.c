@@ -17,10 +17,28 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+#include <mint/osbind.h>
+#include <mint/basepage.h>
+#endif
+
 static int target = 0x1234;
 static int *ptr = &target;
 
 int main(void)
 {
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+    if(_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='f') Pterm(0xffff);
+    if(_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='i') {
+#if defined(__x86_64__)
+        __asm__ volatile("ud2");
+#elif defined(__arm__)
+        __asm__ volatile("udf #0");
+#elif defined(__mc68000__)
+        __asm__ volatile("illegal");
+#endif
+        Pterm(91);
+    }
+#endif
     return (*ptr == 0x1234) ? 0 : 1;
 }

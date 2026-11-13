@@ -66,6 +66,55 @@ static void shared_vm_prg(void)
     conws("native shared-VM PRG Pexec4/104 entry, status and shared data: tested\r\n");
 }
 #endif
+#if defined(TEST_WITH_ELF_SHARED)
+static void shared_vm_interpreted(void)
+{
+    static const char envspec[]="CHECK=phase5\0\0";
+    unsigned mode;
+    for(mode=0;mode<2;mode++) {
+        BASEPAGE *bp=(BASEPAGE *)Pexec(PE_LOAD,"C:\\SHRINT.ELF","",envspec);
+        char *env;long rc;
+        ptest_assert_msg((long)bp>0,"shared interpreter: PE_LOAD");if((long)bp<=0) continue;
+        env=bp->p_env;rc=Pexec(mode?104:4,0,bp,0);
+        if(rc<0) {conws("shared interpreter launch error\r\n");}
+        ptest_assert_msg(mode?rc>0:rc==77,"shared interpreter: auxv, relocation, RELRO and fini");
+        if(mode && rc>0) {
+            long waited=Pwaitpid(rc,0,0);
+            ptest_assert_msg((waited>>16)==rc && (waited&65535)==77,"shared interpreter: canonical PROCESS wait");
+            ptest_assert_msg(Pwaitpid(rc,1,0)==-33,"shared interpreter: exactly one reap");
+        }
+        ptest_assert_msg(Mfree(bp)==0,"shared interpreter: final image cleanup");
+        ptest_assert_msg(Mfree(env)==0,"shared interpreter: final environment cleanup");
+    }
+    conws("native shared-VM PT_INTERP Pexec4/104 standard entry: tested\r\n");
+}
+#endif
+static void shared_vm_status(void)
+{
+    unsigned mode,kind;
+    for(mode=0;mode<2;mode++) for(kind=0;kind<2;kind++) {
+        char tail[3]={1,0,0};
+        BASEPAGE *bp;char *env;long rc,expected;
+        tail[1]=kind?'i':'f';
+        bp=(BASEPAGE *)Pexec(PE_LOAD,"C:\\PIEPROBE.TOS",tail,0);
+        ptest_assert_msg((long)bp>0,"shared status: PE_LOAD");if((long)bp<=0) continue;
+        env=bp->p_env;rc=Pexec(mode?104:4,0,bp,0);
+        if(mode) {
+            ptest_assert_msg(rc>0,"shared104 status: PID");
+            if(rc>0) {
+                long waited=Pwaitpid(rc,0,0);
+                expected=kind?0x0400:0x00ff;
+                ptest_assert_msg((waited>>16)==rc && (waited&65535)==expected,
+                    "shared104: normal ffff and SIGILL use canonical distinct encoding");
+                ptest_assert_msg(Pwaitpid(rc,1,0)==-33,"shared status: one reap");
+            }
+        } else ptest_assert_msg(rc==(kind?0x0400:0xffff),
+                    "shared4: full normal ffff distinct from fault SIGILL");
+        ptest_assert_msg(Mfree(bp)==0,"shared status: reclaim image after normal/fault");
+        ptest_assert_msg(Mfree(env)==0,"shared status: reclaim environment after normal/fault");
+    }
+    conws("native shared-VM full-status/fault and canonical wait: tested\r\n");
+}
 static void shared_vm_basic(void)
 {
     unsigned i;
@@ -190,6 +239,10 @@ void test_pie_load(void)
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     shared_vm_basic();
+    shared_vm_status();
+#if defined(TEST_WITH_ELF_SHARED)
+    shared_vm_interpreted();
+#endif
 #if defined(__mc68000__)
     shared_vm_prg();
 #endif
