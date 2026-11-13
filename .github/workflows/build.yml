@@ -112,6 +112,7 @@ jobs:
             /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py --permissions --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py --relro --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-elf-startup.py --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-elf-bootstrap.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-shared-interp.py --mode "$mode"
           done
       - name: Test address-space ownership
