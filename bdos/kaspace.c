@@ -261,7 +261,8 @@ BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
         }
         if (lease->reservation_ticket) {
             KASPACE_RESERVATION_INFO info;
-            if (!kaspace_lease_valid(lease)) return FALSE;
+            if (!kaspace_lease_valid(lease) ||
+                (lease->reservation_flags&KASPACE_RESERVATION_INACCESSIBLE)) return FALSE;
             if (lease->captured) {
                 /* Different authenticated owner views can cover the same
                  * stack page. Validate each immutable witness independently. */
@@ -331,6 +332,7 @@ static BOOL ordinary_reservation_info(KASPACE *space,VADDR address,VADDR bytes,
                 result->address = region->address; result->bytes = region->length;
                 result->identity = region->reservation; result->rights = region->prot;
                 result->flags = region->backing ? 0 : KASPACE_RESERVATION_LAZY;
+                if (!region->prot) result->flags |= KASPACE_RESERVATION_INACCESSIBLE;
                 return TRUE;
             }
     }
@@ -446,7 +448,7 @@ static LONG reservation_install(KASPACE *space, const KASPACE_RESERVATION_INFO *
         address < info->address || address-info->address >= info->bytes ||
         bytes > info->bytes-(address-info->address) ||
         (!(rights & ASPACE_PROT_USER) && !(rights==0 && info->rights==0 &&
-          (info->flags&KASPACE_RESERVATION_INACCESSIBLE) && !(info->flags&KASPACE_RESERVATION_LAZY))) ||
+          (info->flags&KASPACE_RESERVATION_INACCESSIBLE))) ||
         (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC)) ||
         (info->flags & ~(KASPACE_RESERVATION_LAZY|KASPACE_RESERVATION_CAPTURED|KASPACE_RESERVATION_INACCESSIBLE))) return EINVAL;
     if ((info->rights & rights) != rights) return EACCDN;
@@ -507,7 +509,8 @@ BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *righ
     for (lease=space->leases;lease;lease=lease->next)
         if (reservation_backing_contains(lease,address&~(VADDR)(USER_PAGE_SIZE-1),
                                         address&~(VADDR)(USER_PAGE_SIZE-1)) &&
-            (lease->reservation_flags&KASPACE_RESERVATION_LAZY)) {
+            (lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
+            !(lease->reservation_flags&KASPACE_RESERVATION_INACCESSIBLE)) {
             *rights=lease->reservation_rights; return TRUE;
         }
     return FALSE;

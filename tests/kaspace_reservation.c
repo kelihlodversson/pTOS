@@ -6,7 +6,7 @@
 #include "../bdos/kaspace.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"reservation hold:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 struct aspace { unsigned destroyed; };
-static unsigned allocations, frees, fail_alloc, walks, backing_puts, retired_private, retired_borrows, deferred_pins;
+static unsigned allocations, frees, fail_alloc, walks, backing_puts, retired_private, retired_borrows, deferred_pins, inactive_retired;
 void *kalloc(ULONG bytes) { void *p; if(fail_alloc) return NULL; p=calloc(1,bytes); if(p) allocations++; return p; }
 void kfree(void *p) { if(p) { frees++; free(p); } }
 void aspace_destroy(ASPACE *as) { CHECK(!as->destroyed); as->destroyed++; }
@@ -106,6 +106,46 @@ int main(void)
 #endif
 #if CONF_WITH_MMAP
     {
+        MMAP_REGION *region=kalloc(sizeof(*region));
+        KASPACE_RESERVATION_HOLD one={0},two={0},spent;
+        KASPACE_RESERVATION_INFO inactive;
+        UWORD rights=0xffff;unsigned before_walks=walks;
+        CHECK(region);region->address=0x190000;region->length=2*USER_PAGE_SIZE;
+        region->reservation=kaspace_reservation_next();
+        space->mmap.regions=region;space->mmap.bytes=region->length;
+        CHECK(kaspace_reservation_info(space,region->address,region->length,&inactive) &&
+              !inactive.rights && (inactive.flags&KASPACE_RESERVATION_LAZY) &&
+              (inactive.flags&KASPACE_RESERVATION_INACCESSIBLE));
+        CHECK(kaspace_reservation_hold_captured(space,&inactive,region->address,
+                    region->length,ASPACE_PROT_USER,7,&canonical,&bad)==EACCDN && !bad.ticket);
+        CHECK(kaspace_reservation_hold_captured(space,&inactive,region->address,
+                    region->length,0,7,&canonical,&one)==E_OK);
+        CHECK(kaspace_reservation_duplicate(&one,&canonical,&two)==E_OK);
+        CHECK(walks==before_walks && !kaspace_retained_lazy_protection(space,region->address,&rights) && rights==0xffff);
+        CHECK(!kaspace_mapping_can_change(&backend,region->address,region->length));
+        CHECK(!kaspace_materialization_change(&backend,region->address,USER_PAGE_SIZE,0) &&
+              !kaspace_materialization_change(&backend,region->address,USER_PAGE_SIZE,ASPACE_PROT_USER));
+        spent=one;CHECK(kaspace_reservation_release(&one,&owner) && owner==&canonical);owner=NULL;
+        CHECK(!kaspace_reservation_release(&spent,&owner) && !owner);
+        CHECK(!kaspace_mapping_can_change(&backend,region->address,region->length));
+        CHECK(kaspace_reservation_info(space,region->address,region->length,&info) &&
+              info.identity==inactive.identity && !info.rights && info.flags==inactive.flags);
+        CHECK(kaspace_reservation_release(&two,&owner) && owner==&canonical);owner=NULL;
+        CHECK(kaspace_mapping_can_change(&backend,region->address,region->length) && walks==before_walks);
+        CHECK(kaspace_reservation_hold_captured(space,&inactive,region->address,
+                    region->length,0,7,&canonical,&one)==E_OK);
+        CHECK(kaspace_retire_private(space,region->address,region->length) && !inactive_retired);
+        space->mmap.regions=NULL;space->mmap.bytes=0;kfree(region);
+        CHECK(kaspace_reservation_info(space,inactive.address,inactive.bytes,&info) &&
+              info.identity==inactive.identity && !info.rights &&
+              (info.flags&KASPACE_RESERVATION_LAZY) && (info.flags&KASPACE_RESERVATION_INACCESSIBLE));
+        CHECK(!kaspace_retained_lazy_protection(space,inactive.address,&rights));
+        CHECK(!kaspace_materialization_change(&backend,inactive.address,USER_PAGE_SIZE,0));
+        CHECK(kaspace_reservation_release(&one,&owner) && owner==&canonical && inactive_retired==1);owner=NULL;
+        CHECK(!kaspace_reservation_info(space,inactive.address,inactive.bytes,&info) &&
+              kaspace_mapping_can_change(&backend,inactive.address,inactive.bytes) && walks==before_walks);
+    }
+    {
         MMAP_REGION *region=kalloc(sizeof(*region));CHECK(region);
         region->address=0x10000;region->length=3*USER_PAGE_SIZE;
         region->prot=ASPACE_PROT_USER;region->backing=(FILE_BACKING *)1;
@@ -149,7 +189,9 @@ void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes)
 { CHECK(va==0x40000 && bytes==13 && kaspace_mapping_can_change(as,va,bytes));retired_borrows++; }
 
 BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
-{ CHECK(kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_private++;return TRUE; }
+{ CHECK(kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_retirement_change(as,va,bytes,TRUE));CHECK(!kaspace_mapping_can_change(as,va,bytes));
+  if(va==0x190000) {CHECK(bytes==8192);inactive_retired++;}else retired_private++;
+  return TRUE; }
 BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;CHECK(va==0x40000 && (bytes==13 || bytes==4096 || bytes==8));deferred_pins++;return TRUE; }
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes)

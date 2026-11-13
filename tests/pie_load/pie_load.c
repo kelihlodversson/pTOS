@@ -83,6 +83,7 @@ static void shared_vm_interpreted(void)
     for(mode=0;mode<2;mode++) {
         BASEPAGE *bp=(BASEPAGE *)Pexec(PE_LOAD,"C:\\SHRINT.ELF","",envspec);
         char *env;long rc;
+        if((long)bp<=0) shared_vm_interpreted_result(2+mode,(long)bp);
         ptest_assert_msg((long)bp>0,"shared interpreter: PE_LOAD");if((long)bp<=0) continue;
         env=bp->p_env;rc=Pexec(mode?104:4,0,bp,0);
         shared_vm_interpreted_result(mode,rc);
