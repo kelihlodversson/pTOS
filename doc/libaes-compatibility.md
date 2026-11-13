@@ -135,6 +135,20 @@ The context now owns these retained state groups:
 - Window metadata, visible-region iterators, pending frame/control work and
   modal overlay/dialog counters.
 - Window-zero desktop tree, background region iterator and screen buffer.
+- Menu tree/index, metrics, busy/pending state and deferred GEM messages.
+  Private readiness/flush/dispatch/reset helpers select the supplied context.
+- Shell command/tail, application directory, environment pointer/length and
+  startup readiness. Fresh contexts consume the loader's saved launch record;
+  aliases reuse that state without reinitializing it. If registration runs
+  before libptos auxiliary-vector initialization, capture remains pending and
+  completes on the first shell/resource lookup after it becomes available.
+  Early shell queries fail without committing outputs. Command/tail/directory
+  are copied; the process environment remains borrowed caller/loader storage.
+  There is no libaes `DT_INIT` startup cache. Shell lookup work buffers and
+  saved-DTA state are stack-local. Context-owned
+  DTA slots have stable addresses for the kernel search cache; nested calls
+  use separate reusable slots, including through aliases. Extra slots are
+  freed at context exit, with failed frees queued for normal resource retry.
 - Cached graphics workstation/metrics, cursor forms and visibility depth,
   and 3D style preferences. Each stack painter borrows the supplied context's
   style state, including during nested USERDEF calls using another global.
@@ -146,21 +160,26 @@ The context now owns these retained state groups:
   including buffers used by drawing, dialogs, menus, windows and shell calls.
   Resetting one context never retries another context's deferred cleanup.
 
-Private helpers receive the caller's global explicitly. Window, desktop and
-graphics resets clean up only that context's retained state; explicit aliases
-share it. The native `wind_new` operation still resets the kernel session's
+Private retained-state helpers receive the caller's global explicitly. Window,
+desktop, graphics and menu resets clean up only that context's retained state;
+explicit aliases share it. The native `wind_new` operation still resets the kernel session's
 windows, whose identity boundary remains unchanged.
 
-Menus, shell state and temporary helper pointers still need migration in
-subsequent #953 slices. The captured launch-directory snapshot remains part
-of shell startup state until that migration. This is not yet a
-reentrant implementation or independent application isolation. CUIS
+The native loader captures launch metadata before executable preinitializers.
+Consequently a first `mt_appl_init` after cwd/basepage changes still sees the
+original command/tail/directory. Without an optional launch record, resource
+lookup derives a best-effort directory from `AT_EXECFN` and the cwd at context
+initialization; `shel_read` cannot supply missing launch metadata.
+
+Shared temporary helper pointers still need replacement by explicit per-call
+arguments in subsequent #953 slices. This is not yet a fully reentrant
+implementation or independent application isolation. CUIS
 still returns one session per process: two fresh globals allocate distinct
 userspace contexts, but currently receive the same native session. Ending it
 through either context invalidates the other context's kernel session. Tests
 of independent enumeration/cohort state use distinct mocked session handles.
-Window/desktop/graphics/resource tests also verify private state isolation and
-alias sharing while retaining the current shared-session constraint. Independent
+Window/desktop/graphics/resource/menu/shell tests also verify private state
+isolation and alias sharing while retaining the current shared-session constraint. Independent
 native sessions require the separate CUIS identity work
 coordinated with #896/#907/#915.
 

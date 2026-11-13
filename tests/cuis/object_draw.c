@@ -1173,6 +1173,59 @@ static int style_context_checks(void)
     return 0;
 }
 
+static AESGLOBAL *menu_target;
+static OBJECT *nested_menu;
+static WORD nested_menu_result;
+static WORD menu_callback(PARMBLK *parameters)
+{
+    (void)parameters;
+    nested_menu_result = mt_menu_bar(nested_menu,MENU_INSTALL,menu_target);
+    return 0;
+}
+static int menu_context_checks(void)
+{
+    AES_APP_CONTEXT context = { 0 }, *first = aes_app_context(&aes_global);
+    AESGLOBAL second = { 0 }, alias = aes_global;
+    OBJECT other[10], object = { NIL,NIL,NIL,G_USERDEF,LASTOB,NORMAL,{0},0,0,16,16 };
+    OBJECT *original;
+    MENU_BAR_ENTRY *entries;
+    USERBLK user = { menu_callback,0 };
+    int before;
+    second.ap_3resv = &context;
+    VERIFY(!aes_menu_registered(&aes_global) && !aes_menu_registered(&second));
+    VERIFY(gem_menubar_install(0,2));
+    original = first->menu.tree; entries = first->menu.entries;
+    VERIFY(aes_menu_registered(&alias) && !aes_menu_registered(&second));
+    __builtin_memcpy(other,original,sizeof(other));
+    other[1].ob_spec.index = 0x1173;
+    first->menu.busy = TRUE;
+    VERIFY(!mt_menu_bar(other,MENU_INSTALL,&alias));
+    menu_target = &second; nested_menu = other; nested_menu_result = 0;
+    object.ob_spec.userblk = &user;
+    VERIFY(objc_draw(&object,0,0,0,0,16,16) && nested_menu_result);
+    menu_target = NULL; nested_menu = NULL;
+    VERIFY(first->menu.tree == original && first->menu.entries == entries && first->menu.busy);
+    VERIFY(context.menu.tree == other && context.menu.entries != entries && !context.menu.busy);
+    first->menu.busy = FALSE;
+    first->menu.pending = TRUE; first->menu.message[0] = MN_SELECTED; first->menu.message[3] = 31;
+    VERIFY(!aes_menu_listening(&alias) && aes_menu_listening(&second));
+    bar_mode = TRUE; before = bar_writes;
+    VERIFY(aes_menu_flush(&second) == E_OK && bar_writes == before && first->menu.pending);
+    context.menu.pending = TRUE; context.menu.message[0] = MN_SELECTED; context.menu.message[3] = 42;
+    VERIFY(aes_menu_flush(&second) == E_OK && bar_writes == before+1 && bar_message[3] == 42);
+    VERIFY(first->menu.pending && !context.menu.pending && !aes_menu_listening(&alias));
+    release_error = TRUE;
+    aes_menu_reset(&alias);
+    VERIFY(!aes_menu_registered(&aes_global) && aes_menu_registered(&second));
+    VERIFY(first->resources.discarded_allocations && context.menu.tree == other);
+    release_error = FALSE;
+    VERIFY(aes_resources_reset(&aes_global) && aes_menu_registered(&second));
+    VERIFY(mt_menu_bar(NULL,MENU_REMOVE,&second) && !aes_menu_registered(&second));
+    VERIFY(aes_resources_reset(&second) && !bar_height && !nesting && !mouse_nesting);
+    bar_mode = bar_stream = FALSE;
+    return 0;
+}
+
 int main(void)
 {
     AES_APP_CONTEXT context = {0};
@@ -1455,14 +1508,14 @@ int main(void)
         bar_line_error = TRUE;
         VERIFY(gem_menubar_install(0,2) == 0);
         bar_line_error = FALSE;
-        VERIFY(!nesting && !mouse_nesting && !bar_height && !aes_menu_registered());
+        VERIFY(!nesting && !mouse_nesting && !bar_height && !aes_menu_registered(&aes_global));
         VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
         VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
         reads = snapshot_reads; writes = snapshot_writes;
         bar_close_error = TRUE; bar_snapshot_handle = 0;
         VERIFY(gem_menubar_install(0,3) == 0);
         VERIFY(bar_failed_closes == 1 && !bar_close_error && !bar_trial_height);
-        VERIFY(!bar_height && !aes_menu_registered() && !nesting && !mouse_nesting);
+        VERIFY(!bar_height && !aes_menu_registered(&aes_global) && !nesting && !mouse_nesting);
         VERIFY(snapshot_reads == reads+1 && snapshot_writes == writes+1);
         VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
     }
@@ -1472,14 +1525,14 @@ int main(void)
             VERIFY(gem_menubar_install(0,2) == 1);
             gem_menubar_input_stage(0);
             bar_write_block = TRUE;
-            VERIFY(aes_menu_dispatch(&aes_global) == E_OK && !aes_menu_listening());
+            VERIFY(aes_menu_dispatch(&aes_global) == E_OK && !aes_menu_listening(&aes_global));
             before = bar_writes;
             bar_write_block = FALSE;
             if (mode) { bar_close_error = TRUE; bar_snapshot_handle = 0; }
             else bar_line_error = TRUE;
             VERIFY(gem_menubar_install(0,3) == 0);
             bar_line_error = FALSE;
-            VERIFY(bar_writes == before+1 && aes_menu_listening());
+            VERIFY(bar_writes == before+1 && aes_menu_listening(&aes_global));
             VERIFY(aes_menu_flush(&aes_global) == E_OK && bar_writes == before+1);
             VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
             bar_stream = bar_mode = FALSE;
@@ -1489,7 +1542,7 @@ int main(void)
     gem_menubar_mutate();
     before = snapshot_reads;
     VERIFY(aes_menu_dispatch(&aes_global) < 0 && snapshot_reads == before);
-    VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !aes_menu_registered());
+    VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !aes_menu_registered(&aes_global));
     before = gem_menubar_checks(0);
     bar_mode = FALSE; gesture_count = gesture_at = 0;
     if (before) __builtin_printf("menu bar failure: %x\n",before);
@@ -1507,16 +1560,16 @@ int main(void)
             VERIFY(!nesting && !mouse_nesting && gem_menubar_unchanged());
             VERIFY(bar_recipient == 99);
             if (mode == 1) {
-                VERIFY(bar_writes == before && !aes_menu_listening());
-                VERIFY(aes_menu_flush(&aes_global) == E_OK && !aes_menu_listening());
+                VERIFY(bar_writes == before && !aes_menu_listening(&aes_global));
+                VERIFY(aes_menu_flush(&aes_global) == E_OK && !aes_menu_listening(&aes_global));
                 bar_write_block = FALSE;
-                VERIFY(aes_menu_flush(&aes_global) == E_OK && aes_menu_listening());
+                VERIFY(aes_menu_flush(&aes_global) == E_OK && aes_menu_listening(&aes_global));
             }
             if (mode != 2) {
                 VERIFY(bar_writes == before+1 && bar_message[0] == AC_OPEN && bar_message[4] == 4);
                 VERIFY(bar_message[1] == aes_global.ap_id && !bar_message[2] && !bar_message[3]);
                 VERIFY(!bar_message[5] && !bar_message[6] && !bar_message[7]);
-            } else VERIFY(bar_writes == before && aes_menu_listening());
+            } else VERIFY(bar_writes == before && aes_menu_listening(&aes_global));
             VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
             bar_stream = bar_mode = accessory_entry = accessory_gone = FALSE;
         }
@@ -1532,17 +1585,17 @@ int main(void)
             bar_message[0] = WM_REDRAW;
             before = bar_writes;
             VERIFY(aes_menu_dispatch(&aes_global) == E_OK && !self_blocked);
-            VERIFY(bar_recipient == 7 && bar_writes == before && !aes_menu_listening());
+            VERIFY(bar_recipient == 7 && bar_writes == before && !aes_menu_listening(&aes_global));
             VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
                               NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
-            VERIFY(message[0] == WM_REDRAW && !self_blocked && !aes_menu_listening());
+            VERIFY(message[0] == WM_REDRAW && !self_blocked && !aes_menu_listening(&aes_global));
             bar_write_block = FALSE;
             VERIFY(aes_menu_flush(&aes_global) == E_OK && bar_writes == before+1);
             mouse_x = 30; mouse_y = 59; /* The completed gesture left the menu bar. */
             VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
                               NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
             VERIFY(message[0] == AC_OPEN && message[4] == 4 && !self_blocked);
-            VERIFY(aes_menu_listening() && gem_menubar_unchanged());
+            VERIFY(aes_menu_listening(&aes_global) && gem_menubar_unchanged());
             VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !nesting && !mouse_nesting);
             bar_stream = bar_mode = accessory_entry = accessory_self = FALSE;
         }
@@ -1622,5 +1675,6 @@ int main(void)
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     VERIFY(!frame_overlay_depth && !frame_dialog_depth && !bad_overlay_scope);
     VERIFY(style_context_checks() == 0);
+    VERIFY(menu_context_checks() == 0);
     return 0;
 }

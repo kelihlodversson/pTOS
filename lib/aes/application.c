@@ -80,6 +80,7 @@ short mt_appl_init(AESGLOBAL *global)
         context = (AES_APP_CONTEXT *)(uintptr_t)address;
         memset(context,0,sizeof(*context));
         context->search_after = -1;
+        aes_shell_init(context);
         handle = aes_session_open();
         if (handle < 0 || !publish_label(handle,&context->lifecycle.accessory)) {
             if (handle >= 0) (void)aes_session_close(handle);
@@ -104,7 +105,7 @@ short mt_appl_exit(AESGLOBAL *global)
     if (context->session >= 0) {
         if (aes_session_close(context->session) != E_OK) return 0;
         context->session = -1;
-        aes_menu_reset(); aes_windows_reset(global); aes_desktop_reset(global); aes_graphics_reset(global);
+        aes_menu_reset(global); aes_shell_reset(global); aes_windows_reset(global); aes_desktop_reset(global); aes_graphics_reset(global);
     }
     /* Deferred resource cleanup also keeps the context alive for retry. */
     if (!aes_resources_reset(global)) return 0;
@@ -125,7 +126,7 @@ short mt_appl_yield(AESGLOBAL *global)
 short mt_evnt_timer(unsigned long interval, AESGLOBAL *global)
 {
     if (!registered(global) || interval > 0xffffffffUL) return 0;
-    if (!aes_menu_registered() && !aes_frames_registered(global) &&
+    if (!aes_menu_registered(global) && !aes_frames_registered(global) &&
         !aes_controls_listening(global) && !aes_frames_wait_display(global) && !aes_lifecycle_listening(global))
         return cuis_call6(CUIS_SESSION_DELAY, (QUAD)aes_app_context(global)->session, interval, 0, 0, 0, 0) == E_OK ? 1 : 0;
     return mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,interval,
@@ -291,7 +292,7 @@ short mt_appl_read(short id, short length, void *buffer, AESGLOBAL *global)
             BOOL repeat = aes_controls_repeating(global);
             if (cuis_call6(CUIS_SESSION_WAIT, aes_app_context(global)->session, length,
                            (aes_lifecycle_wait_display(global) ? CUIS_READY_DISPLAY : CUIS_READY_STREAM | CUIS_READY_CHILD) | (aes_frames_suspended(global) ? 0 : aes_frames_wait_display(global) ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
-                           (aes_menu_listening() ? CUIS_READY_SURFACE : 0) | (aes_controls_listening(global) ? CUIS_READY_CONTROL : 0) |
+                           (aes_menu_listening(global) ? CUIS_READY_SURFACE : 0) | (aes_controls_listening(global) ? CUIS_READY_CONTROL : 0) |
                            (repeat ? CUIS_READY_SERVICE : 0) |
                            (aes_lifecycle_listening(global) && !aes_lifecycle_wait_display(global) && !aes_frames_wait_display(global) ? CUIS_READY_COHORT : 0), 0, 0, 0) <= 0) return 0;
         }

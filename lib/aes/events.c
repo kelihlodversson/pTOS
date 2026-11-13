@@ -76,7 +76,7 @@ static short event_once(short events, short clicks, short button_mask, short but
         mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD;
     }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
-    wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
+    wait_mask = mask | (aes_menu_listening(global) ? CUIS_READY_SURFACE : 0);
     if (aes_lifecycle_listening(global) && !aes_frames_wait_display(global) && !aes_lifecycle_wait_display(global)) wait_mask |= CUIS_READY_COHORT;
     /* A multi-click owns per-call accumulation until completion. Service
      * frame work afterward rather than interrupting that unfinished count. */
@@ -173,7 +173,7 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     session = aes_application_session(global);
     if (session < 0) return 0;
     clocked = (events & MU_TIMER) &&
-        ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered(global) ||
+        ((events & MU_MESAG) || aes_menu_registered(global) || aes_frames_registered(global) ||
          aes_controls_listening(global) || aes_frames_wait_display(global) || aes_lifecycle_listening(global));
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     duration = interval/5 + (interval%5 != 0) + (interval != 0);

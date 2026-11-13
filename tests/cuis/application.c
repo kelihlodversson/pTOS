@@ -124,8 +124,8 @@ short mt_objc_draw(OBJECT *tree, short object, short depth, short x, short y,
 }
 static int resource_resets;
 BOOL aes_resources_reset(AESGLOBAL *global) { (void)global; resource_resets++; return TRUE; }
-BOOL aes_menu_registered(void) { return menu_test; }
-BOOL aes_menu_listening(void) { return menu_test; }
+BOOL aes_menu_registered(AESGLOBAL *global) { (void)global; return menu_test; }
+BOOL aes_menu_listening(AESGLOBAL *global) { (void)global; return menu_test; }
 LONG aes_menu_flush(AESGLOBAL *global) { (void)global; return E_OK; }
 LONG aes_menu_dispatch(AESGLOBAL *global)
 {
@@ -133,7 +133,9 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
     if (menu_test) { menu_ticks += menu_dispatch_ticks; menu_dispatch_ticks = 0; }
     return E_OK;
 }
-void aes_menu_reset(void) { }
+void aes_menu_reset(AESGLOBAL *global) { (void)global; }
+void aes_shell_reset(AESGLOBAL *global) { (void)global; }
+void aes_shell_init(AES_APP_CONTEXT *context) { (void)context; }
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;

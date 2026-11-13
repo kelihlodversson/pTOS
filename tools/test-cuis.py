@@ -274,7 +274,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-ffunction-sections", "-fdata-sections", "-I" + temp, "-Iinclude", "-Iaes", "-Iaes/shared", "-Ilib/aes", "-Ilib/ldso/client", "-Ilib/ldso",
                 '-DAES_RSC_BINDINGS="resource_bindings.h"', "-D__ptos_getauxval=aes_test_getauxval", "-Dgetenv=aes_test_getenv", "-Dsprintf=aes_resource_test_sprintf",
-                "tests/cuis/resources.c", "tests/cuis/gem_resources.c", "lib/aes/resources.c", "aes/shared/rsload_portable.c",
+                "tests/cuis/resources.c", "tests/cuis/gem_resources.c", "lib/aes/resources.c", "lib/aes/startup.c", "aes/shared/rsload_portable.c",
                 "aes/shared/gemrsaddr.c", "aes/shared/gemrcfix.c", "aes/shared/gemlayout.c", "util/string.c", "-Wl,--gc-sections", "-o", str(work / "resources")]
     compile_native(command)
     subprocess.run([str(work / "resources"), str(fixture), "aes/gem.rsc"], check=True)
@@ -288,7 +288,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
                 "-I" + temp, "-Iinclude", "-Iinclude/arch/x86_64", "-Iaes", "-Iaes/shared", "-Ilib/aes", "-Ilib/ldso/client", "-Ilib/ldso",
-                '-DAES_SHELL_BINDINGS="shell_bindings.h"', "tests/cuis/shell.c", "lib/aes/shell.c", "lib/aes/lifecycle.c", "lib/aes/shell_arguments.c", "lib/aes/children.c", "lib/aes/resources.c", "lib/ldso/launch.c",
+                '-DAES_SHELL_BINDINGS="shell_bindings.h"', "tests/cuis/shell.c", "lib/aes/shell.c", "lib/aes/startup.c", "lib/aes/lifecycle.c", "lib/aes/shell_arguments.c", "lib/aes/children.c", "lib/aes/resources.c", "lib/ldso/launch.c",
                 "aes/shared/gemshquery.c", "util/optimize.c", "util/miscutil.c", "util/string.c", "util/doprintf.c",
                 "-o", str(work / "shell")]
     compile_native(command)
