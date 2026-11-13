@@ -179,6 +179,37 @@ static void shared_vm_tail(char *tail,char role,struct shared_vm_probe *probe)
     for(i=0;i<8;i++) tail[3+i]="0123456789abcdef"[(address>>(28-4*i))&15];
     tail[11]=0;
 }
+static void shared_vm_limits(void)
+{
+    static struct shared_vm_probe probe;
+    long core=Psetlimit(2,-1),data=Psetlimit(3,-1),stack=Psetlimit(0x100,-1),result;
+    BASEPAGE *image;void *env;char tail[12];
+    memset(&probe,0,sizeof(probe));
+    ptest_assert_msg(Psetlimit(2,96L*1024*1024)==core &&
+        Psetlimit(3,64L*1024*1024)==data && Psetlimit(0x100,1024L*1024)==stack,
+        "shared limits: prepare source limits");
+    shared_vm_tail(tail,'p',&probe);
+    image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+    if((long)image>0) {
+        env=image->p_env;result=Pexec(4,0,image,0);
+        shared_vm_diagnostic("shared limit CORE=",probe.core_limit);
+        shared_vm_diagnostic("shared limit DATA=",probe.data_limit);
+        shared_vm_diagnostic("shared limit STACK=",probe.stack_limit);
+        shared_vm_diagnostic("shared limit terminal status=",result);
+        shared_vm_diagnostic("shared limit phantom write completed=",probe.done);
+        ptest_assert_msg(probe.started && probe.core_limit==96UL*1024*1024 &&
+            probe.data_limit==64UL*1024*1024 && probe.stack_limit==1024UL*1024,
+            "shared limits: child inherits source CORE/DATA/stack policy");
+        ptest_assert_msg(probe.same_limit==1024UL*1024 && (int32_t)probe.resize_limit==-36,
+            "shared limits: unchanged cap accepted and stack relocation refused");
+        ptest_assert_msg(result==0x0b00 && !probe.done,
+            "shared limits: no synthetic default-stack materialization authority");
+        ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared limits: reclaim faulted child image");
+    } else ptest_assert_msg(0,"shared limits: stage child");
+    (void)Psetlimit(2,core);(void)Psetlimit(3,data);(void)Psetlimit(0x100,stack);
+    conws("native shared-VM inherited limits and exact stack authority: tested\r\n");
+}
+
 static void shared_vm_orphan(void)
 {
     static struct shared_vm_probe probe;
@@ -241,6 +272,7 @@ static void shared_vm_last_thread(void)
             args.flags=CLONE_VM|CLONE_SAME_PROCESS;args.entry=shared_vm_controller;args.argument=&probe;
             args.stack_base=controller;args.stack_size=16384;
             controller_tid=trap_1_wll(GEMDOS_PCLONE,(long)&args,sizeof(args));
+            if(controller_tid<=0) shared_vm_diagnostic("shared controller clone error=",controller_tid);
             ptest_assert_msg(controller_tid>0,"shared THREAD lifetime: independent managed waiter controller");
             if(controller_tid<=0) {(void)Mfree(controller);(void)Mfree(image);(void)Mfree(env);continue;}
         }
@@ -291,6 +323,26 @@ static void shared_vm_last_thread(void)
         ptest_assert_msg(Mfree(env)==0,"shared THREAD lifetime: source environment final release");
     }
     conws("native shared-VM final-THREAD completion and competing waiter: tested\r\n");
+}
+void shared_vm_run_managed_tests(void)
+{
+    ptest_begin("shared-VM managed THREAD lifetime");
+    shared_vm_last_thread();
+    ptest_pass();
+}
+static void shared_vm_managed_worker(void)
+{
+    static const char tail[]="\13--shared-vm";
+    long pid,result;
+    /* Synchronous outer Pexec may be a nested unmanaged launcher on ARM and
+     * m68k. Admit a real managed PROCESS before exercising public Pclone. */
+    ptest_log_flush();pid=Pexec(100,"runtests.tos",tail,0);
+    ptest_assert_msg(pid>0,"shared THREAD lifetime: admit managed test PROCESS");
+    if(pid>0) {
+        result=Pwaitpid(pid,0,0);
+        ptest_assert_msg((result>>16)==pid && !(result&65535),
+            "shared THREAD lifetime: managed worker passes all assertions");
+    }
 }
 #endif
 static void shared_vm_staged_retirement(void)
@@ -449,8 +501,9 @@ void test_pie_load(void)
     shared_vm_status();
     shared_vm_staged_retirement();
     shared_vm_orphan();
+    shared_vm_limits();
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
-    shared_vm_last_thread();
+    shared_vm_managed_worker();
 #endif
 #if defined(TEST_WITH_ELF_SHARED)
     shared_vm_interpreted();

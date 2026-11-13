@@ -5,6 +5,9 @@
 #undef main
 #include "../bdos/kproc.c"
 WORD bootdev=2;
+/* This fixture has no file-backed reservations; an unexpected read is a bug. */
+LONG fileback_read(FILE_BACKING *backing,ULONG offset,void *buffer,ULONG size)
+{ (void)backing;(void)offset;(void)buffer;(void)size;abort();return EREADF; }
 #if CONF_WITH_MMAP
 void fileback_put(FILE_BACKING *backing) { (void)backing;abort(); }
 void fileback_hold(FILE_BACKING *backing) { (void)backing;abort(); }
@@ -83,6 +86,22 @@ int main(void)
     retiring_construction_borrows();
     source.number=123;
     source.pd=&source_pd;source.aspace=aspace_create();source.active_space=kaspace_adopt(source.aspace);
+    {
+        struct shared_exec_regions stack_owner={0};UWORD rights=0;
+        KASPACE_RESERVATION_INFO info={0};UQUAD before=free_pages;
+        source.stack_size=1024UL*1024;source.shared_exec=&stack_owner;
+        stack_owner.stack=USER_HEAP_BASE;stack_owner.stack_bytes=USER_STACK_MIN;
+        kproc_list=&source;
+        CHECK(kproc_psetlimit(source.pd,PSETLIMIT_STACK,-1)==1024UL*1024);
+        CHECK(kproc_psetlimit(source.pd,PSETLIMIT_STACK,1024UL*1024)==1024UL*1024);
+        CHECK(kproc_psetlimit(source.pd,PSETLIMIT_STACK,1024UL*1024+TEST_PAGE)==EACCDN);
+        CHECK(!lazy_area(&source,USER_STACK_TOP-2*1024UL*1024,&rights));
+        CHECK(!lazy_area(&source,USER_STACK_TOP-TEST_PAGE,&rights));
+        CHECK(kproc_reservation_info(source.pd,USER_STACK_TOP-TEST_PAGE,TEST_PAGE,&info)==EACCDN);
+        CHECK(!back_page(&source,USER_STACK_TOP-2*1024UL*1024,ASPACE_PROT_WRITE));
+        CHECK(free_pages==before && source.stack_size==1024UL*1024);
+        kproc_list=NULL;source.shared_exec=NULL;source.stack_size=0;
+    }
     source.legacy=TRUE;target.pd=&target_pd;
     original=aspace_create();pending=kaspace_adopt(original);target.pending_space=pending;target.pending_as=original;
     memset(&recipe,0,sizeof(recipe));stage_plan(&recipe.program,2*TEST_PAGE,2*TEST_PAGE);
@@ -204,6 +223,19 @@ int main(void)
         CHECK(words[2]==0 && words[3]==0 && words[4]==3);
         CHECK(words[5]==target.layout.entry-recipe.program.entry+recipe.program.phdr);
         CHECK(aspace_copy_from_user(source.aspace,name,words[1],sizeof(name)) && !strcmp(name,"demo.elf"));
+    }
+    {
+        static UBYTE large_env[32768];
+        ULONG original_bytes=set.stack_bytes;UQUAD saved_rsp=target.initial_rsp;
+        memset(large_env,'a',sizeof(large_env));large_env[sizeof(large_env)-2]=0;
+        large_env[sizeof(large_env)-1]=0;
+        target.env_start=large_env;target.env_end=large_env+sizeof(large_env);
+        set.stack_bytes=USER_STACK_MIN;
+        CHECK(shared_interp_stack(&target,&set,ordinary)==ENSMEM && target.initial_rsp==saved_rsp);
+        target.env_start=environment;target.env_end=environment+sizeof(environment);
+        CHECK(shared_interp_stack(&target,&set,ordinary)==E_OK);
+        CHECK(set.initial_sp>=ordinary+TEST_PAGE && set.initial_sp<ordinary+USER_STACK_MIN);
+        set.stack_bytes=original_bytes;
     }
     CHECK(aspace_unmap_private(source.aspace,ordinary,set.stack_bytes));
     kaspace_heap(source.active_space)->count=0;

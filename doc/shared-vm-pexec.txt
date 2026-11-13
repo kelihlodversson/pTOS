@@ -57,3 +57,20 @@ Hosted production startup, permissions, wait claims and RELRO tests use modeled
 CPU/MMU/physical providers. Their normal/ASan/UBSan/fortified results are not
 native shared-Pexec execution evidence. No public activation, merge or Phase5
 completion follows from these incremental tests.
+
+Shared-loader stack and inherited limits (test-gated consumer)
+------------------------------------------------------------
+Preparation snapshots the source PROCESS priority, CORE/DATA limits and effective
+stack cap. Commit assigns them without a new fallible step; aborted preparation
+does not change the staged PROCESS policy. The shared child uses its independently
+retained, guarded resident heap stack, capped by the inherited stack limit. This
+is a bounded startup extent, not an implementation of lazy growth to that cap.
+Interpreted argc/argv/AUXV construction fits within the actual body and leaves a
+resident page below it for runtime use; excessive startup data fails preparation.
+
+The inherited scalar cap does not authorize a synthetic top-of-VA stack. Shared
+children obtain backing only from their actual heap/mmap or authenticated retained
+reservations. Callback stack bounds use the actual body. Querying the stack cap
+and setting the same normalized cap succeed; relocating/resizing this sealed
+stack returns EACCDN. Nested shared launches duplicate existing reservation holds
+rather than inventing a new default-stack owner.

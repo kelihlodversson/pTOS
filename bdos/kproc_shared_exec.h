@@ -153,7 +153,11 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     }
     set=kalloc(sizeof(*set));if(!set) return ENSMEM;memset(set,0,sizeof(*set));
     set->space=kaspace_share(source->active_space);set->parent=kproc_retain_live(source);
-    set->legacy=legacy;target->shared_exec=set;
+    set->legacy=legacy;
+    set->inherited_stack=stack_bytes(source);
+    set->inherited_core=source->lim_core;set->inherited_data=source->lim_data;
+    set->inherited_priority=source->prio;
+    target->shared_exec=set;
     if(!set->space || !set->parent) { error=ENSMEM;goto failed; }
     if(!kproc_user_access(source->pd,(VADDR)(uintptr_t)target->pd,sizeof(PD),TRUE)) {error=EACCDN;goto failed;}
 #define SHARED_TRY(call) do {error=(call);if(error) goto failed;}while(0)
@@ -215,7 +219,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
                               (VADDR)(source->user_end-source->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->env_start,
                               (VADDR)(source->env_end-source->env_start),ASPACE_PROT_USER));
-    if(!source->legacy) SHARED_TRY(shared_logical(set,source,USER_STACK_TOP-stack_bytes(source),stack_bytes(source),ASPACE_PROT_USER));
+    if(!source->legacy && owns_top_stack(source)) SHARED_TRY(shared_logical(set,source,USER_STACK_TOP-stack_bytes(source),stack_bytes(source),ASPACE_PROT_USER));
     if(source->has_image) for(i=0;i<source->layout.nseg;i++)
         if(source->layout.seg[i].memsz) SHARED_TRY(shared_logical(set,source,source->layout.seg[i].vaddr,
                                                                source->layout.seg[i].memsz,ASPACE_PROT_USER));
@@ -249,6 +253,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
 #if KPROC_SHARED_INTERP
     if(interpreted) set->stack_bytes+=DL_START_CAPACITY;
 #endif
+    if(set->stack_bytes>set->inherited_stack) set->stack_bytes=set->inherited_stack;
     set->stack_pages=set->stack_bytes/USER_PAGE_SIZE+1;
     set->stack=kproc_uheap_alloc(source->pd,set->stack_pages*USER_PAGE_SIZE);
     if(!set->stack) {error=ENSMEM;goto failed;}
@@ -299,6 +304,9 @@ static void shared_exec_commit(KPROC *target)
         image->kind=UH_SHARED_IMAGE;image->shared_generation=target->tpa_gen;
         target->load_parent=NULL;
     }
+    target->stack_size=set->inherited_stack;
+    target->lim_core=set->inherited_core;target->lim_data=set->inherited_data;
+    target->prio=set->inherited_priority;
     target->parent_identity=set->parent;set->parent=NULL;
     set->committed=TRUE;
 }

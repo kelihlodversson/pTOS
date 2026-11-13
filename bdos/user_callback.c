@@ -309,7 +309,7 @@ static LONG altstack(UQUAD input, UQUAD output)
 {
     USER_CALLBACK_STATE *state = state_get();
     USER_CALLBACK_STACK next, old;
-    UQUAD bottom = kproc_stack_bottom(run);
+    UQUAD bottom = kproc_stack_bottom(run), stack_top = kproc_stack_top(run);
 
     if (!state)
         return ENSMEM;
@@ -331,7 +331,7 @@ static LONG altstack(UQUAD input, UQUAD output)
             if ((next.ss_sp & 15) || (next.ss_size & 15) ||
                 next.ss_size < USER_CALLBACK_MIN_STACK || next.ss_size > 1024UL * 1024UL ||
                 (UQUAD)next.ss_sp + next.ss_size > USER_VA_LIMIT ||
-                overlaps(next.ss_sp, next.ss_size, bottom, USER_STACK_TOP - bottom))
+                overlaps(next.ss_sp, next.ss_size, bottom, stack_top - bottom))
                 return EINVAL;
             if (!kproc_callback_stack_stable(run, next.ss_sp, next.ss_size))
                 return EACCDN;
@@ -453,7 +453,7 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     /* Preserve the interrupted x32 ABI's 128-byte red zone, and keep a full
      * page for the handler before its first instruction can run. */
     frame->failed = top > (frame->alternate ?
-        (UQUAD)state->stack.ss_sp + state->stack.ss_size : USER_STACK_TOP);
+        (UQUAD)state->stack.ss_sp + state->stack.ss_size : kproc_stack_top(run));
     if (bytes && top >= 144 + bytes) {
         payload = (top - 128 - bytes) & ~15ULL;
         top = payload;
@@ -462,9 +462,9 @@ static LONG invoke(USER_CALLBACK *cb, UWORD signature, LONG a, LONG b,
     sp = top >= 152 ? ((top - 144) & ~15ULL) - 8 : 0;
     frame->stack_bottom = bottom;
     frame->stack_top = frame->alternate ?
-        (UQUAD)state->stack.ss_sp + state->stack.ss_size : USER_STACK_TOP;
+        (UQUAD)state->stack.ss_sp + state->stack.ss_size : kproc_stack_top(run);
     frame->failed |= sp < bottom + 4096 ||
-        top > (frame->alternate ? (UQUAD)state->stack.ss_sp + state->stack.ss_size : USER_STACK_TOP);
+        top > (frame->alternate ? (UQUAD)state->stack.ss_sp + state->stack.ss_size : kproc_stack_top(run));
     frame->gs_swapped = x86_64_gs_to_user();
     callback_cpu()->frame = frame;
     callback_cpu()->depth++;

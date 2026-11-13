@@ -18,7 +18,7 @@ static VADDR shared_interp_fixed(KPROC *source,PD *child,VADDR va,ULONG bytes)
         if(shared_overlap(va,bytes,source->heap[i].va,(VADDR)source->heap[i].pages*USER_PAGE_SIZE)) return 0;
     for(i=0;i<heap->count;i++)
         if(shared_overlap(va,bytes,heap->blocks[i].va,(VADDR)heap->blocks[i].pages*USER_PAGE_SIZE)) return 0;
-    if(!source->legacy && shared_overlap(va,bytes,USER_STACK_TOP-stack_bytes(source)-USER_PAGE_SIZE,
+    if(!source->legacy && owns_top_stack(source) && shared_overlap(va,bytes,USER_STACK_TOP-stack_bytes(source)-USER_PAGE_SIZE,
                                         stack_bytes(source)+USER_PAGE_SIZE)) return 0;
 #if CONF_WITH_MMAP
     {
@@ -120,9 +120,13 @@ static LONG shared_interp_stack(KPROC *target,struct shared_exec_regions *set,VA
 {
     const struct shared_interp_recipe *recipe=target->shared_interp_recipe;
     DL_START_INFO info;uint32_t rsp=0,used=0;UBYTE *stack;int status;
+    /* Leave a whole resident page below argv/AUXV for ABI/runtime use even
+     * when the inherited cap is smaller than the preferred startup extent. */
+    ULONG capacity=set->stack_bytes-USER_PAGE_SIZE;
     ULONG bias=(ULONG)(target->layout.entry-recipe->program.entry);
     ULONG ibias=(ULONG)(target->interp_entry-recipe->interpreter.entry);
-    stack=kalloc(DL_START_CAPACITY);if(!stack) return ENSMEM;
+    if(capacity>DL_START_CAPACITY) capacity=DL_START_CAPACITY;
+    stack=kalloc(capacity);if(!stack) return ENSMEM;
     memset(&info,0,sizeof(info));info.phdr=recipe->program.phdr+bias;
     info.phnum=recipe->program.phnum;info.entry=target->layout.entry;
     info.base=ibias;info.pagesz=USER_PAGE_SIZE;info.basepage=(ULONG)(uintptr_t)target->pd;
@@ -130,11 +134,11 @@ static LONG shared_interp_stack(KPROC *target,struct shared_exec_regions *set,VA
 #if CONF_WITH_LIBAES
     info.capture_launch=1;info.environment=(ULONG)(uintptr_t)target->env_start;
 #endif
-    status=dl_start_stack(stack,DL_START_CAPACITY,body+set->stack_bytes,
+    status=dl_start_stack(stack,capacity,body+set->stack_bytes,
         recipe->filename,strlen(recipe->filename)+1,(const UBYTE *)target->pd->p_cmdlin,
         sizeof(target->pd->p_cmdlin),target->env_start,target->env_end-target->env_start,&info,&rsp,&used);
     if(status!=DL_OK || !aspace_copy_to_user(kaspace_backend(set->space),rsp,
-                    stack+DL_START_CAPACITY-used,used)) {
+                    stack+capacity-used,used)) {
         kfree(stack);return status==DL_NO_SPACE?ENSMEM:EPLFMT;
     }
     kfree(stack);set->initial_sp=rsp;target->initial_rsp=rsp;

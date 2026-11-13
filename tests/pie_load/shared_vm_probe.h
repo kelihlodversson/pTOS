@@ -7,5 +7,6 @@ struct shared_vm_probe {
     volatile uint32_t started,grandchild,grand_environment;
     volatile uint32_t worker_stack,worker_tid,second_tid,worker_started,steps;
     volatile uint32_t controller_result;
+    volatile uint32_t core_limit,data_limit,stack_limit,same_limit,resize_limit;
 };
 #endif

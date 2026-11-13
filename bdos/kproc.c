@@ -97,6 +97,8 @@ struct shared_exec_regions {
     VADDR relro_address[2],relro_bytes[2];
 #endif
     ULONG stack_bytes;
+    VADDR inherited_stack,inherited_core,inherited_data;
+    SBYTE inherited_priority;
 };
 static void shared_exec_commit(KPROC *target);
 #endif
@@ -2584,6 +2586,17 @@ static VADDR stack_bytes(const KPROC *kproc)
 {
     return kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE;
 }
+/* Shared-loader execution has a separately owned guarded heap stack. Its
+ * inherited limit is policy, never authority to invent a top-of-VA stack. */
+static BOOL owns_top_stack(const KPROC *kproc)
+{
+#if CONF_WITH_NATIVE_SCHED
+    return !kproc->shared_exec;
+#else
+    UNUSED(kproc);
+    return TRUE;
+#endif
+}
 
 #if CONF_WITH_USER_CALLBACKS
 USER_CALLBACK_STATE *kproc_callbacks_get(PD *pd)
@@ -2617,7 +2630,20 @@ void kproc_record_rsp(PD *pd, UQUAD rsp)
 UQUAD kproc_stack_bottom(PD *pd)
 {
     KPROC *k = kproc_find(pd);
+#if CONF_WITH_NATIVE_SCHED
+    if (k && k->shared_exec)
+        return k->shared_exec->stack + USER_PAGE_SIZE;
+#endif
     return k ? USER_STACK_TOP - stack_bytes(k) : 0;
+}
+UQUAD kproc_stack_top(PD *pd)
+{
+    KPROC *k = kproc_find(pd);
+#if CONF_WITH_NATIVE_SCHED
+    if (k && k->shared_exec)
+        return k->shared_exec->stack + USER_PAGE_SIZE + k->shared_exec->stack_bytes;
+#endif
+    return k ? USER_STACK_TOP : 0;
 }
 #endif
 
@@ -3197,7 +3223,7 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
     if (kaspace_mmap_protection(kproc->active_space, va, prot))
         return TRUE;
 #endif
-    if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP)
+    if (owns_top_stack(kproc) && va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP)
         return TRUE;
     if (kaspace_heap_protection(kproc->active_space,va,prot))
         return (*prot&ASPACE_PROT_USER)!=0;
@@ -3242,7 +3268,7 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
     if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER)) return 0;
     if (!aspace_fault_in(kproc->aspace, va, prot)) return 2;
     va &= ~(USER_PAGE_SIZE - 1);
-    if (va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP &&
+    if (owns_top_stack(kproc) && va >= USER_STACK_TOP - stack_bytes(kproc) && va < USER_STACK_TOP &&
         (!kproc->stack_low || va < kproc->stack_low))
         kproc->stack_low = va;
     return TRUE;
@@ -3434,6 +3460,12 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
                 return ERANGE;
             size = ((VADDR)value + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
         }
+#if CONF_WITH_NATIVE_SCHED
+        /* This stack is resident and sealed in a shared root. A scalar limit
+         * update cannot relocate it or manufacture an unrelated lazy stack. */
+        if (kproc->shared_exec)
+            return size == old ? (LONG)old : EACCDN;
+#endif
         if (size + USER_PAGE_SIZE > USER_STACK_TOP - USER_HEAP_BASE)
             return ENSMEM;
         highest = USER_HEAP_BASE;
@@ -4032,7 +4064,7 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
     } else if (range_within(address,(ULONG)bytes,owner->env_start,owner->env_end) &&
                procmem_gen(owner->env_start)==owner->env_gen) {
         birth=&owner->reservation_birth[1]; raw=TRUE;
-    } else if (address >= USER_STACK_TOP-stack_bytes(owner) &&
+    } else if (owns_top_stack(owner) && address >= USER_STACK_TOP-stack_bytes(owner) &&
                address < USER_STACK_TOP && bytes <= USER_STACK_TOP-address) {
         birth=&owner->reservation_birth[2]; lazy=CONF_WITH_DEMAND_PAGING;
     }

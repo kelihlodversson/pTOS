@@ -70,7 +70,7 @@ int main(void)
 {
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     if(_base->p_cmdlin[0]==10 && (_base->p_cmdlin[1]=='s' || _base->p_cmdlin[1]=='o' ||
-        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l')) {
+        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p')) {
         uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
         for(i=3;i<11;i++) {
             unsigned char c=(unsigned char)_base->p_cmdlin[i];
@@ -80,6 +80,18 @@ int main(void)
             address=(address<<4)|c;
         }
         probe=(struct shared_vm_probe *)address;
+        if(_base->p_cmdlin[1]=='p') {
+            probe->core_limit=(uint32_t)Psetlimit(2,-1);
+            probe->data_limit=(uint32_t)Psetlimit(3,-1);
+            probe->stack_limit=(uint32_t)Psetlimit(0x100,-1);
+            probe->same_limit=(uint32_t)Psetlimit(0x100,probe->stack_limit);
+            probe->resize_limit=(uint32_t)Psetlimit(0x100,probe->stack_limit+4096);
+            probe->started=1;
+            /* Outside the inherited 1MiB top-stack reservation and the
+             * child's actual guarded heap stack. No logical owner exists. */
+            *(volatile uint32_t *)(uintptr_t)0x7f001000UL=0x894;
+            probe->done=1;Pterm(0x55);
+        }
         if(_base->p_cmdlin[1]=='l') {
             void *stack=(void *)Malloc(16384);long tid;
             probe->pid=(uint32_t)Pgetpid();probe->worker_stack=(uint32_t)(uintptr_t)stack;
