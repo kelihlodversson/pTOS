@@ -181,23 +181,40 @@ int toupper(int c)
 /*
  * Implementation of sprintf():
  * It uses doprintf to print into a string.
- * Each invocation owns its output cursor, including nested formatting.
+ * The userspace AES build owns its output cursor per invocation.
  */
 
+#ifdef LIBAES_CONTEXTS
 static void sprintf_outc(void *context, int c)
 {
     char **cursor = context;
     *(*cursor)++ = c;
 }
+#else
+static char *sprintf_str;
+
+static void sprintf_outc(int c)
+{
+    *sprintf_str++ = c;
+}
+#endif
 
 int sprintf(char *RESTRICT str, const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;
+#ifdef LIBAES_CONTEXTS
     char *cursor = str;
+#else
+    sprintf_str = str;
+#endif
 
     va_start(ap, fmt);
+#ifdef LIBAES_CONTEXTS
     n = doprintf_context(sprintf_outc, &cursor, fmt, ap);
+#else
+    n = doprintf(sprintf_outc, fmt, ap);
+#endif
     va_end(ap);
 
     str[n] = 0;                     /* Terminate string with a 0 */

@@ -101,7 +101,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
         subprocess.run(command, check=True)
 
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
-    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+    command += ["-DLIBAES_CONTEXTS", "-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
                 "-I" + temp, "-Iinclude", "tests/cuis/format_context.c", "util/string.c", "util/doprintf.c",
                 "-o", str(work / "format-context")]
     compile_native(command)
