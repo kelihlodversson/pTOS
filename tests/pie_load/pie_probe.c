@@ -20,6 +20,8 @@
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#include <mint/mintbind.h>
+#include "shared_vm_probe.h"
 #endif
 
 static int target = 0x1234;
@@ -28,6 +30,25 @@ static int *ptr = &target;
 int main(void)
 {
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
+    if(_base->p_cmdlin[0]==10 && _base->p_cmdlin[1]=='s') {
+        uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
+        for(i=3;i<11;i++) {
+            unsigned char c=(unsigned char)_base->p_cmdlin[i];
+            if(c>='0' && c<='9') c-='0';
+            else if(c>='a' && c<='f') c=c-'a'+10;
+            else Pterm(90);
+            address=(address<<4)|c;
+        }
+        probe=(struct shared_vm_probe *)address;
+        {
+            BASEPAGE *staged=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",0);
+            if((long)staged<=0) {probe->error=(uint32_t)(long)staged;Pterm(91);}
+            probe->staged=(uint32_t)(uintptr_t)staged;
+            probe->environment=(uint32_t)(uintptr_t)staged->p_env;
+            probe->pid=(uint32_t)Pgetpid();probe->done=1;
+        }
+        Pterm(0x31);
+    }
     if(_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='f') Pterm(0xffff);
     if(_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='i') {
 #if defined(__x86_64__)

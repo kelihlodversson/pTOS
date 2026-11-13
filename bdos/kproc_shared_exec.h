@@ -7,7 +7,7 @@ static LONG shared_logical(struct shared_exec_regions *set,KPROC *source,VADDR v
     error=kproc_reservation_info(source->pd,va,bytes,&info);
     if(!error) {
         KPROC *owner=kproc_retain_live(source);
-#if KPROC_SHARED_INTERP
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
         /* A fresh authenticated image capture may retain its allocation
          * without granting access across protected padding or mixed pages. */
         if(!access && (info.flags&KASPACE_RESERVATION_CAPTURED) &&
@@ -21,6 +21,20 @@ static LONG shared_logical(struct shared_exec_regions *set,KPROC *source,VADDR v
         if(error) kproc_release(owner);else set->nlogical++;
     }
     return error;
+}
+static LONG shared_source_images(struct shared_exec_regions *set,KPROC *source)
+{
+    ULONG i;LONG error;
+    for(i=0;i<source->nheap;i++)
+        if(source->heap[i].kind==UH_SHARED_IMAGE || source->heap[i].kind==UH_IMAGE) {
+            /* The exact allocation includes protected gaps. Its lifetime
+             * reference conveys no USER grant; live segment/entry witnesses
+             * and mapping-owned permissions remain authoritative. */
+            error=shared_logical(set,source,source->heap[i].va,
+                    (VADDR)source->heap[i].pages*USER_PAGE_SIZE,0);
+            if(error) return error;
+        }
+    return E_OK;
 }
 static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,UQUAD generation)
 {
@@ -184,8 +198,19 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
 #if KPROC_SHARED_INTERP
     if(interpreted) set->image_hold=set->nlogical;
 #endif
-    if(!legacy) SHARED_TRY(shared_logical(set,source,target->load_va,(VADDR)target->load_pages*USER_PAGE_SIZE,
-                                               interpreted?0:ASPACE_PROT_USER));
+    if(!legacy) {
+        SHARED_TRY(shared_logical(set,source,target->load_va,
+                    (VADDR)target->load_pages*USER_PAGE_SIZE,0));
+        for(i=0;i<target->layout.nseg;i++) if(target->layout.seg[i].memsz)
+            SHARED_TRY(shared_logical(set,source,target->layout.seg[i].vaddr,
+                        target->layout.seg[i].memsz,ASPACE_PROT_USER));
+#if CONF_WITH_ELF_SHARED
+        if(interpreted) for(i=0;i<target->interpreter_layout.nseg;i++)
+            if(target->interpreter_layout.seg[i].memsz)
+                SHARED_TRY(shared_logical(set,source,target->interpreter_layout.seg[i].vaddr,
+                            target->interpreter_layout.seg[i].memsz,ASPACE_PROT_USER));
+#endif
+    }
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->user_start,
                               (VADDR)(source->user_end-source->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->env_start,
@@ -203,8 +228,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         if(set->nlogical==SHARED_REGIONS) {error=ENSMEM;goto failed;}
         SHARED_TRY(kproc_reservation_duplicate(&source->shared_exec->logical[i],&set->logical[set->nlogical]));set->nlogical++;
     }
-    for(i=0;i<source->nheap;i++) if(source->heap[i].kind==UH_SHARED_IMAGE || source->heap[i].kind==UH_IMAGE)
-        SHARED_TRY(shared_logical(set,source,source->heap[i].va,(VADDR)source->heap[i].pages*USER_PAGE_SIZE,ASPACE_PROT_USER));
+    SHARED_TRY(shared_source_images(set,source));
     heap=kaspace_heap(set->space);
     for(i=0;i<heap->count;i++) SHARED_TRY(shared_logical(set,source,heap->blocks[i].va,
                                                      (VADDR)heap->blocks[i].pages*USER_PAGE_SIZE,

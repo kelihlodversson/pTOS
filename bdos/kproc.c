@@ -1097,6 +1097,24 @@ BOOL kproc_thread_detach(KPROC *process, KTHREAD *thread, KTHREAD *next)
 }
 #endif
 
+#if CONF_WITH_USER_ASPACE
+static void retire_process_borrows(KPROC *process)
+{
+    ULONG i;
+    for(i=0;i<KPROC_BORROWS;i++) if(process->borrowed[i].bytes) {
+        VADDR address=process->borrowed[i].va,bytes=process->borrowed[i].bytes;
+        if(!process->active_space || process->borrowed[i].generation!=
+                procmem_gen((void *)(uintptr_t)address))
+            panic("retiring PROCESS borrow incarnation changed");
+        /* The backend owns the exact original pin; a different PROCESS's
+         * duplicate remains independent. Consume before cleanup can reenter. */
+        process->borrowed[i].bytes=0;
+        if(!kaspace_retire_borrow(process->active_space,address,bytes))
+            panic("retiring PROCESS borrow has no cleanup owner");
+    }
+}
+#endif
+
 void kproc_destroy(PD *pd)
 {
     KPROC **link;
@@ -1139,6 +1157,11 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_USER_ASPACE
+            /* A shared root may outlive this record. Root destruction cannot
+             * stand in for disposing this PROCESS's construction pin rights. */
+            retire_process_borrows(kproc);
+#endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
             /* Registry cursor is detached; the lookup reference still owns
              * this identity. Child teardown cannot invalidate an outer link. */
@@ -4084,7 +4107,7 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
         if (page==last) break;
     }
     if (!(rights&ASPACE_PROT_USER)) {
-#if KPROC_SHARED_INTERP
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
         if(raw || lazy) return EACCDN;
 #else
         return EACCDN;

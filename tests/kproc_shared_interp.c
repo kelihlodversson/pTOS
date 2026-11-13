@@ -27,6 +27,50 @@ static void stage_plan(DL_IMAGE *plan,ULONG size,ULONG alignment)
     plan->loads[0].address=0;plan->loads[0].filesz=128;plan->loads[0].memsz=128;
     plan->loads[0].flags=DL_PF_R|DL_PF_X;
 }
+static ULONG retired_allocation_notifications;
+static void retired_allocation_freed(void *token)
+{ CHECK(token==&retired_allocation_notifications);retired_allocation_notifications++; }
+static void retiring_construction_borrows(void)
+{
+    unsigned running;
+    for(running=0;running<2;running++) {
+        KPROC owner={0};PD owner_pd={0};ASPACE *as;KASPACE *space,*peer;
+        KASPACE_RESERVATION_HOLD held={0};KASPACE_RESERVATION_INFO info={0};
+        PROCMEM_STATS before,after;void *block,*released=NULL;
+        ULONG metadata=metadata_live,ram=physical_live,notices=retired_allocation_notifications;
+        procmem_stats(&before);as=aspace_create();space=kaspace_adopt(as);peer=kaspace_share(space);
+        CHECK(as && space && peer);selected_root=aspace_root(as);
+        block=procmem_alloc(2*TEST_PAGE,0);CHECK(block && procmem_set_owner(block,&owner_pd));
+        CHECK(procmem_on_free(block,retired_allocation_freed,&retired_allocation_notifications));
+        CHECK(aspace_map_procmem(as,(VADDR)(uintptr_t)block,2*TEST_PAGE,ASPACE_PROT_WRITE));
+        owner.pd=&owner_pd;owner.aspace=as;owner.active_space=space;
+        owner.borrowed[0].va=(VADDR)(uintptr_t)block;owner.borrowed[0].bytes=2*TEST_PAGE;
+        owner.borrowed[0].generation=procmem_gen(block);
+        if(running) {
+            CHECK(aspace_duplicate_borrow(as,(VADDR)(uintptr_t)block,2*TEST_PAGE));
+            info.address=(VADDR)(uintptr_t)block;info.bytes=2*TEST_PAGE;
+            info.identity=kaspace_reservation_next();info.rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+            CHECK(kaspace_reservation_hold_captured(space,&info,info.address,info.bytes,
+                        ASPACE_PROT_USER,42,&owner,&held)==E_OK);
+        }
+        retire_process_borrows(&owner);CHECK(!owner.borrowed[0].bytes);
+        retire_process_borrows(&owner); /* consumed exact reference cannot be retired twice */
+        procmem_free_owned(&owner_pd,NULL);
+        if(running) {
+            CHECK(procmem_size(block) && procmem_pins(block)==2 && !procmem_owner(block));
+            CHECK(kaspace_retire_borrow(space,(VADDR)(uintptr_t)block,2*TEST_PAGE));
+            CHECK(procmem_size(block) && procmem_pins(block)==2 && aspace_translate(as,info.address,NULL,NULL));
+            CHECK(kaspace_reservation_release(&held,&released) && released==&owner);
+        }
+        CHECK(!procmem_size(block) && !aspace_translate(as,(VADDR)(uintptr_t)block,NULL,NULL));
+        CHECK(retired_allocation_notifications==notices+1);
+        procmem_stats(&after);CHECK(after.live_allocs==before.live_allocs && after.free_pages==before.free_pages);
+        /* The independent same-root peer remains alive: root destruction did
+         * not hide a pin or allocation leak. Cached tables remain root-owned. */
+        kaspace_put(space);CHECK(kaspace_backend(peer)==as);kaspace_put(peer);
+        CHECK(metadata_live==metadata && physical_live==ram);
+    }
+}
 int main(void)
 {
     KPROC source={0},target={0};PD source_pd={0},target_pd={0},original_pd;
@@ -36,6 +80,7 @@ int main(void)
     ULONG i;LONG error;VADDR ordinary;static UBYTE environment[2]={0,0};
     PROG_LAYOUT original_layout={0};
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
+    retiring_construction_borrows();
     source.number=123;
     source.pd=&source_pd;source.aspace=aspace_create();source.active_space=kaspace_adopt(source.aspace);
     source.legacy=TRUE;target.pd=&target_pd;
@@ -75,6 +120,22 @@ int main(void)
     {
         UWORD rights;VADDR tail=target.load_va+(VADDR)target.load_pages*TEST_PAGE-TEST_PAGE;
         CHECK(aspace_translate(source.aspace,tail,NULL,&rights) && !rights);
+    }
+    {
+        struct shared_exec_regions peer={0};struct uheap_block *image=heap_find(&source,target.load_va);
+        UBYTE kind;void *identity=NULL;PADDR old_physical,new_physical;UWORD old_rights,new_rights;
+        CHECK(image && aspace_translate(source.aspace,target.layout.entry,&old_physical,&old_rights));kind=image->kind;
+        source.references=1;kproc_list=&source;image->kind=UH_SHARED_IMAGE;
+        peer.space=source.active_space;peer.parent=&source;
+        CHECK(shared_source_images(&peer,&source)==E_OK && peer.nlogical==1 && source.references==2);
+        CHECK(kaspace_reservation_matches(&peer.logical[0],source.active_space,
+                    image->reservation,image->va,(VADDR)image->pages*TEST_PAGE));
+        CHECK(!kaspace_mapping_can_change(source.aspace,image->va,(VADDR)image->pages*TEST_PAGE));
+        CHECK(aspace_translate(source.aspace,target.layout.entry,&new_physical,&new_rights) &&
+                    new_physical==old_physical && new_rights==old_rights);
+        CHECK(kaspace_reservation_release(&peer.logical[0],&identity) && identity==&source);
+        kproc_release(&source);CHECK(source.references==1);
+        image->kind=kind;kproc_list=NULL;
     }
     {
         KASPACE_RESERVATION_INFO info={0};void *released=NULL;UQUAD ticket,birth;

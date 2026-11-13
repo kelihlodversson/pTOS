@@ -24,6 +24,7 @@
 #include <string.h>
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
+#include "shared_vm_probe.h"
 #if defined(__mc68000__)
 static void shared_vm_prg(void)
 {
@@ -76,6 +77,41 @@ static void shared_vm_interpreted_result(unsigned mode,long result)
     for(i=0;i<8;i++) text[39+i]=hex[(value>>(28-4*i))&15];
     conws(text);
 }
+static void shared_vm_interpreted_peers(void)
+{
+    unsigned completed_first;
+    for(completed_first=0;completed_first<2;completed_first++) {
+        BASEPAGE *images[2]={0,0};char *envs[2]={0,0};long pids[2]={0,0};
+        unsigned i;
+        for(i=0;i<2;i++) {
+            images[i]=(BASEPAGE *)Pexec(PE_LOAD,"C:\\SHRINT.ELF","", "CHECK=phase5\0\0");
+            ptest_assert_msg((long)images[i]>0,"shared interpreter peers: PE_LOAD");
+            if((long)images[i]<=0) {images[i]=0;break;}
+            envs[i]=images[i]->p_env;pids[i]=Pexec(104,0,images[i],0);
+            ptest_assert_msg(pids[i]>0,"shared interpreter peers: retain first image while admitting second");
+            if(i==0 && !completed_first && pids[0]>0)
+                ptest_assert_msg(Pwaitpid(pids[0],1,0)==0,"shared interpreter peers: first child still live before second admission");
+            if(i==0 && completed_first && pids[0]>0) {
+                long waited=Pwaitpid(pids[0],0,0);
+                ptest_assert_msg((waited>>16)==pids[0] && (waited&65535)==77,
+                    "shared interpreter peers: completed first image remains staged-owned");
+                ptest_assert_msg(Pwaitpid(pids[0],1,0)==-33,"shared interpreter peers: first child one reap");
+                pids[0]=0;
+            }
+        }
+        for(i=0;i<2;i++) if(pids[i]>0) {
+            long waited=Pwaitpid(pids[i],0,0);
+            ptest_assert_msg((waited>>16)==pids[i] && (waited&65535)==77,
+                "shared interpreter peers: both PROCESSes complete independently");
+            ptest_assert_msg(Pwaitpid(pids[i],1,0)==-33,"shared interpreter peers: one reap per child");
+        }
+        for(i=0;i<2;i++) if(images[i]) {
+            ptest_assert_msg(Mfree(images[i])==0,"shared interpreter peers: image final release");
+            ptest_assert_msg(Mfree(envs[i])==0,"shared interpreter peers: environment final release");
+        }
+    }
+    conws("native shared-VM simultaneous and completed-image peers: tested\r\n");
+}
 static void shared_vm_interpreted(void)
 {
     static const char envspec[]="CHECK=phase5\0\0";
@@ -126,6 +162,30 @@ static void shared_vm_status(void)
         ptest_assert_msg(Mfree(env)==0,"shared status: reclaim environment after normal/fault");
     }
     conws("native shared-VM full-status/fault and canonical wait: tested\r\n");
+}
+static void shared_vm_staged_retirement(void)
+{
+    static struct shared_vm_probe probe;
+    char tail[12]={10,'s',' ',0};BASEPAGE *image;char *env;
+    unsigned i;uintptr_t address=(uintptr_t)&probe;long result;
+    memset(&probe,0,sizeof(probe));
+    for(i=0;i<8;i++) tail[3+i]="0123456789abcdef"[(address>>(28-4*i))&15];
+    image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+    ptest_assert_msg((long)image>0,"shared staged retirement: source PE_LOAD");
+    if((long)image<=0) return;
+    env=image->p_env;result=Pexec(4,0,image,0);
+    ptest_assert_msg(result==0x31 && probe.done && !probe.error && probe.staged && probe.environment,
+        "shared staged retirement: source staged an unstarted child then exited");
+    for(i=0;i<8;i++) (void)Syield();
+    if(probe.staged) {
+        ptest_assert_msg(Mvalidate((int)Pgetpid(),(void *)(uintptr_t)probe.staged,256,0)==-40,
+            "shared staged retirement: original construction basepage borrow released");
+        ptest_assert_msg(Mvalidate((int)Pgetpid(),(void *)(uintptr_t)probe.environment,1,0)==-40,
+            "shared staged retirement: original construction environment borrow released");
+    }
+    ptest_assert_msg(Mfree(image)==0,"shared staged retirement: source image final release");
+    ptest_assert_msg(Mfree(env)==0,"shared staged retirement: source environment final release");
+    conws("native shared-VM unstarted-child source retirement: tested\r\n");
 }
 static void shared_vm_basic(void)
 {
@@ -252,8 +312,10 @@ void test_pie_load(void)
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     shared_vm_basic();
     shared_vm_status();
+    shared_vm_staged_retirement();
 #if defined(TEST_WITH_ELF_SHARED)
     shared_vm_interpreted();
+    shared_vm_interpreted_peers();
 #endif
 #if defined(__mc68000__)
     shared_vm_prg();
