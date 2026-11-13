@@ -545,11 +545,57 @@ jobs:
           path: sdcard/
           retention-days: 14
 
+  # Positive shared-Pexec evidence is separate from the gate-off compatibility
+  # jobs. The runner requires the configured user-trap assertion markers.
+  shared-pexec:
+    name: shared Pexec ${{ matrix.machine }} ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf }
+          - { arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm }
+          - { arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm }
+          - { arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc }
+          - { arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Execute positive shared-VM traps and shutdown checks
+        run: |
+          set -o pipefail
+          sh tools/ci-shared-pexec.sh '${{ matrix.machine }}' '${{ matrix.fs }}' 2>&1 | tee shared-pexec.log
+      - name: Record exact source and effective configuration
+        if: always()
+        run: |
+          git rev-parse HEAD > shared-pexec-source.txt
+          cp .config shared-pexec.config
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-pexec-${{ matrix.machine }}-${{ matrix.fs }}
+          path: |
+            shared-pexec.log
+            shared-pexec-source.txt
+            shared-pexec.config
+            build.log
+          retention-days: 14
+
   # A single job to require in the branch protection rules, so that the list
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, x86_64, regression, pmmu-check, release-archives, raspi-sdcard]
+    needs: [build, x86_64, regression, shared-pexec, pmmu-check, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -570,6 +616,7 @@ jobs:
           echo "m68k and arm builds:   ${{ needs.build.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
+          echo "positive shared Pexec: ${{ needs.shared-pexec.result }}"
           echo "PMMU startup check:     ${{ needs.pmmu-check.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
@@ -578,6 +625,7 @@ jobs:
           [ '${{ needs.build.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
+          [ '${{ needs.shared-pexec.result }}' = success ] || ok=false
           [ '${{ needs.pmmu-check.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false

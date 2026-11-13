@@ -580,6 +580,52 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     stop_vm
 fi
 
+# A positive shared-Pexec build must execute every configured consumer fixture.
+# The ordinary gate-off jobs remain independent compatibility evidence.
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; then
+    for marker in \
+        'native shared-VM Pexec4/104 execution and canonical reap: tested' \
+        'native shared-VM full-status/fault and canonical wait: tested' \
+        'native shared-VM unstarted-child source retirement: tested' \
+        'native shared-VM running orphan and nested unstarted cleanup: tested' \
+        'native shared-VM inherited limits and exact stack authority: tested' \
+        'native shared-VM live-target and self-relaunch ownership rejection: tested'; do
+        if ! grep -aqF "$marker" "$suite_log"; then
+            record "native shared-Pexec execution" FAIL "missing consumer assertion: $marker"
+        fi
+    done
+    if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM PROCESS-local group cancellation and orphan survival: tested' "$suite_log"; then
+        record "native shared-Pexec group exit" FAIL "PROCESS-local group assertion did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM final-THREAD completion and competing waiter: tested' "$suite_log"; then
+        record "native shared-Pexec final THREAD" FAIL "managed lifetime assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM constructor/observer/prepublication rollback and retry: tested' "$suite_log"; then
+        record "native shared-Pexec rollback" FAIL "configured factory injections did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM absent file backing and resident file-COW: tested' "$suite_log"; then
+        record "native shared-Pexec file mappings" FAIL "file backing/COW assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_ELF_SHARED 1' "$top/obj/autoconf.h"; then
+        for marker in \
+            'native shared-VM PT_INTERP Pexec4/104 standard entry: tested' \
+            'native shared-VM simultaneous and completed-image peers: tested'; do
+            if ! grep -aqF "$marker" "$suite_log"; then
+                record "native shared-Pexec interpreter" FAIL "missing consumer assertion: $marker"
+            fi
+        done
+    fi
+    if grep -q '^#define ARCH_M68K 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM PRG Pexec4/104 entry, status and shared data: tested' "$suite_log"; then
+        record "native shared-Pexec PRG" FAIL "PRG assertions did not execute"
+    fi
+fi
+
 # The experimental VM test must execute, not merely compile.
 if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    { ! grep -aq 'native independent KASPACE/COW entry probe (not Pfork): PASS' "$suite_log" ||

@@ -1,7 +1,10 @@
 Pexec creation and executable-transition policy audit (#894 / #895)
 =================================================================
 
-Baseline: epic197d05ce6d71efb8e626df5b4e7db11d29f5c3fc (merged #931).
+Accepted baseline: epic5a490963f51c08d1dddcef60cfc86c2daa082e89.
+The mode table below records the original migration inventory. Shared4/104 now
+have a default-off test implementation; see shared-vm-pexec.txt and the current
+acceptance ledger, not this historical table, for implementation status.
 This workstream owns executable creation/transition policy and fork/vfork.
 The scheduler, final PROCESS termination, public waits and filesystem reference
 service remain #713/#914, #893, #909 and #933 respectively. #907/#935 owns the
@@ -74,9 +77,9 @@ publication and stopped-stack reclamation are unchanged.
 
 Paths deliberately not yet migrated
 ----------------------------------
-- Direct nested proc_go, ROM/accessory launch and group attachment of an already
-  prepared image still use their existing launcher/THREAD association. Their
-  topology must be reviewed before changing #713's continuation admission.
+- Direct nested proc_go and ROM/accessory launch still use their existing
+  continuation association. Already-prepared scheduler group attachment now
+  calls proc_clone_prepare_loaded_thread; it is no longer an unmigrated path.
 - KPROC/env/TPA allocation and image-specific KASPACE construction still originate
   in loader policy. This increment consolidates initial managed THREAD creation;
   it does not claim complete Pexec -> proc_clone convergence.
@@ -101,8 +104,10 @@ invariant check still follows loading; its old ordering needs separate review
 before claiming a general no-fail executable-replacement transaction. Do not
 reuse the isolated move-private mechanism on COW/shared pages for exec200.
 
-Next default-off shared-VM increment (4/104)
------------------------------------------
+Implemented default-off shared-VM consumer (4/104)
+------------------------------------------------
+The following policy is implemented behind CONF_WITH_SHARED_VM_PEXEC_TEST;
+whole-consumer acceptance is pending. It does not authorize production use.
 Use distinct PROCESS identities with the same retained KASPACE, not SAME_PROCESS.
 A loaded-image policy must authenticate the caller's PE_LOAD grant, retain
 image/stack/environment/basepage allocations and logical mappings through
@@ -119,6 +124,26 @@ of heap/image ledgers and controller mappings needs a reviewed shared-space
 policy, not attachment of two KPROC records to one page-table pointer. Keep4/104
 EINVFN until native x32/A32/m68k040 and owner gates pass. Non-MMU compatibility
 continues its old path, without claiming new shared-VM parity.
+
+Direct nested MMU continuation dependency (#713)
+-----------------------------------------------
+The full #894 creation-convergence requirement is not yet satisfied. During
+dispatch, schedule_launch deliberately uses direct prepare_launch/proc_go;
+kproc_prepare_user passes no thread_result to the factory. The nested image
+runs inside its caller's task, whose program/PROCESS identity stays the outer
+caller. ksched_exit_thread(nested_pd) therefore returns NULL.
+
+Creating a LOADED_PROCESS THREAD alone is unsafe: its membership would remain
+attached while kproc_prepare_thread_exit_handoff(nested_process,NULL) refuses
+the handoff, and ordinary teardown requires no attached THREADs. The missing
+contract belongs to scheduler/launcher execution ownership: associate the
+nested continuation with its THREAD, restore the outer association, and retire
+the nested execution resources only after all three architecture launchers
+have stopped using them. Current root admission cannot simply be reentered
+while entered/waiter_attached. Preserve these checks and the supported legacy
+behavior until #713 supplies that handoff; do not substitute a private loader
+scheduler or bypass the THREAD invariant. This is distinct from preemption,
+SMP, public PROCESS dispatch and the canonical #909 PROCESS reaper.
 
 Committed executable replacement design (200)
 --------------------------------------------

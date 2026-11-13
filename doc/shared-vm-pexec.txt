@@ -37,8 +37,9 @@ Additional draft implementation:
   rule; public C entries retain their RSP+8 alignment requirement.
 - Interpreted images are staged transactionally in shared owner storage,
   with rebuilt standard stack/AUXV and preserved original pending image on
-  rollback. Actual interpreted startup exposed the native entry-kind defect;
-  the scoped correction requires a fresh native rerun, not merely model tests.
+  rollback. The native entry-kind correction is implemented. Static and
+  interpreted runtime fixtures both exist; final-source evidence is recorded
+  separately from historical checkpoints in phase5-acceptance.txt and PR956.
 - RELRO tightening may only remove WRITE from fully preflighted private,
   non-FILE, non-EXEC user leaves. It preserves immutable ticket ceilings while
   checking current minimum access and updating COW logical protection. The
@@ -47,11 +48,16 @@ Additional draft implementation:
 - Canonical PROCESS wait claims use PROCESS number/TID identity, skip another
   waiter's claimed zombie and release before cancellation checkpoints.
 
-Still incomplete: interpreted runtime acceptance, full exit-order/orphan and
-final-THREAD tests, preparation failure injections, full wait/cancellation and
-PROT_NONE lifetime coverage, final cross-architecture/compatibility matrix and
-independent loader/memory-owner acceptance. Successful basic execution is not
-proof of complete shared-ASPACE allocation lifetime.
+Existing native fixtures now include running orphan, unstarted-child retirement,
+leader-first/final-THREAD completion, worker-created THREAD/join, inherited
+limits, file-backed/COW mappings, live/self relaunch rejection and six generic
+constructor/observer/publication failures. These do not cover the complete
+acceptance matrix: multiple surviving children, an orphan executing a further
+child, all shared-preparation failures, exact native resource conservation,
+PROT_NONE/PD-reuse/interpreter retirement, complete wait/cancellation and GUI
+observation remain unaccepted. Direct nested MMU construction also requires
+the #713 continuation-owner handoff described in pexec-clone-migration.txt.
+Successful execution is not proof of complete shared-ASPACE allocation lifetime.
 
 Hosted production startup, permissions, wait claims and RELRO tests use modeled
 CPU/MMU/physical providers. Their normal/ASan/UBSan/fortified results are not

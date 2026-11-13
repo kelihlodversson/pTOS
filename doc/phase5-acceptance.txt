@@ -1,0 +1,60 @@
+Phase 5 whole-consumer acceptance ledger (#894 / PR956)
+=====================================================
+
+Initial audit source: fa25a8f6a55d3d8dd305b011a98455c2c663d12e.
+Accepted epic: 5a490963f51c08d1dddcef60cfc86c2daa082e89.
+Refreshed remote refs match both SHAs. No newer source was imported.
+
+Disposition: NOT ACCEPTED. Keep Draft; no integration/activation/closure.
+Independent read-only kernel, memory and loader assessments found no confirmed
+new defect in the supported shared transaction, but all three withheld
+whole-consumer acceptance. Scoped no-defect conclusions are not acceptance.
+
+Criterion matrix (U: implemented, insufficient current-head verification;
+M: missing acceptance mechanism; D: independently owned dependency):
+
+Requirement                                      Class / evidence gap
+distinct PROCESS/THREAD and common SHARE_VM        U; existing factory/probes
+4 full16 / 104 PID / canonical one-time reap       U; final native rerun
+parent-first and child-first                      U; existing orphan/basic
+multiple surviving children / executable grandchild U; fixtures incomplete
+leader-first / further worker THREAD / final exit U; managed fixture exists
+PROCESS-local group exit and independent peer     U; existing orphan('g')
+raw/basepage/env/image/interpreter retention       U; retirement/reuse matrix
+R1-R4 overlapping holders / mutation refusal      U; component tests exist
+heap/mmap/file-COW/PROT_NONE/guard lifetimes        U; consumer matrix incomplete
+exact final reclamation                           U; native snapshots missing
+PE_LOAD/grant and R1/R2 prefix failures            U; full consumer sweep missing
+borrow/pin/partial mapping rollback               U; accepted component tests
+interpreter/relocation/permission/stack failures   U; full consumer sweep missing
+THREAD/observer/scheduler/publication rollback    U; six generic native stages
+failed live/self launch preserves attachment      U; existing fa25 fixture
+wait ABI/early/late/WNOHANG/copyout/claims/cancel   U; expand consumer evidence
+parent/orphan/PID reuse and independent CH_EXIT    U; positive GUI slice missing
+0/3/6/100/106; static/interpreted/PRG/nested paths  U; final compatibility rerun
+C vs ELF stack / AUXV / RELRO / exec-stack        U; native + hosted fixtures
+direct nested MMU creation convergence            D; #713 continuation handoff
+positive native CI gate and assertion enforcement M at fa25; correction added
+final FAT/PFS/MMU/GUI/legacy/eager/pinned matrix    U; final source required
+host ASan/UBSan/GCC13; ABI/ELF/gitready             U; final source required
+independent whole-consumer acceptance             M; all three withheld
+
+Verified GitHub at initial head: Build43482292159, Hatari43482291990,
+Amiberry43482291889, pBench43482292298 all SUCCESS. Those runners did not
+enable the shared-Pexec gate; these successes are not positive execution proof.
+Historical native checkpoints in PR discussion remain historical evidence.
+
+Verification correction
+-----------------------
+tools/ci-shared-pexec.sh explicitly selects private test configurations for x32
+FAT, ARM FAT/PFS and m68k040 FAT/PFS, asserting both the gate and FS choice.
+Build adds a separate required five-way job so ordinary gate-off compatibility
+coverage remains available. run-regression-tests.sh requires every configured
+shared-consumer marker, including generic rollback, final THREAD, interpreter,
+file-COW and PRG where enabled. Full suite assertions and shutdown checks remain
+mandatory; markers alone do not establish success. No timeout or assertion was
+weakened. Shipped presets and public capability gates are unchanged.
+
+Exact follow-up commit, logs, suite counts, CI and review disposition belong in
+the durable PR956/#894 comments after each material verification checkpoint.
+Do not label this verification correction as full Phase 5 completion.
