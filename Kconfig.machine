@@ -591,7 +591,8 @@ config BUILD_TOOLCHAIN_IS_ELF
 config BUILD_LTO
 	bool "Link-time optimization (-flto)"
 	depends on (BUILD_TOOLCHAIN_PTOS || BUILD_TOOLCHAIN_MINTELF) && ARCH_M68K_CLASSIC
-	default y if TARGET_CART || TARGET_192 || TARGET_256
+	default y if TARGET_CART || TARGET_192 || TARGET_256 || TARGET_AMIGA_KICKDISK
+	default y if TARGET_AMIGA_ROM && !CONF_AMIGA_ROM_512K
 	help
 	  Build the kernel with GCC's link-time optimization, which lets the
 	  compiler inline and discard code across source files.  This makes

@@ -430,6 +430,10 @@ SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
 # Linker: relocation information and, for most targets, a raw binary.
 LD = $(LTO_LDPREFIX) $(CC) $(MULTILIBFLAGS) $(OPTFLAGS) $(LTOFLAGS) $(LTOFLAGS_LD) -nostartfiles -nostdlib
+ifdef BUILD_TOOLCHAIN_PTOS
+# RTL generation happens at link time with LTO; retain the same workaround.
+LD += -fno-auto-inc-dec
+endif
 LIBS = -lgcc
 
 # FreeType, for the scalable fonts: a library of its own, linked into the
