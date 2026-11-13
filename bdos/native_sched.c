@@ -1545,17 +1545,38 @@ LONG ksched_spawn(PD *pd)
 }
 #endif
 
-typedef struct { PD *parent; WORD pid; } CHILD_WAIT;
+typedef struct { PD *parent; WORD pid; UQUAD owner; ULONG tid; } CHILD_WAIT;
+static BOOL process_wait_target(const KERNEL_TASK *task,const CHILD_WAIT *wait)
+{
+    return task->asynchronous && !task->completion_owner &&
+        task->state!=TASK_UNUSED && task->state!=TASK_RESERVED && task->state!=TASK_RETIRING &&
+        task->parent==wait->parent && (wait->pid<0 || task->pid==wait->pid);
+}
+static BOOL process_wait_claim_available(const KERNEL_TASK *task,const CHILD_WAIT *wait)
+{
+    return !task->synchronous_wait_process ||
+        (task->synchronous_wait_process==wait->owner && task->synchronous_waiter==wait->tid);
+}
+static void process_wait_release_claim(const CHILD_WAIT *wait)
+{
+    KERNEL_TASK *task;
+    uintptr_t flags=native_sched_irq_save();
+    for(task=async_tasks();task;task=task->next_task)
+        if(process_wait_target(task,wait) && task->synchronous_wait_process==wait->owner &&
+           task->synchronous_waiter==wait->tid) {
+            task->synchronous_waiter=0;task->synchronous_wait_process=0;
+        }
+    native_sched_irq_restore(flags);
+}
 static BOOL child_ready(void *argument)
 {
-    CHILD_WAIT *wait = argument;
+    CHILD_WAIT *wait=argument;
     KERNEL_TASK *task;
-    BOOL found = FALSE;
-    for (task = async_tasks(); task; task = task->next_task) {
-        if (!task->asynchronous || task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != wait->parent ||
-            (wait->pid > 0 && task->pid != wait->pid)) continue;
-        found = TRUE;
-        if (task->state == TASK_ZOMBIE) return TRUE;
+    BOOL found=FALSE;
+    for(task=async_tasks();task;task=task->next_task) {
+        if(!process_wait_target(task,wait) || !process_wait_claim_available(task,wait)) continue;
+        found=TRUE;
+        if(task->state==TASK_ZOMBIE) return TRUE;
     }
     return !found;
 }
@@ -1578,18 +1599,19 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
 #if CONF_WITH_PTERMGRP
     if(completion) ksched_cancel_point(); /* caller owns no uncommitted launch resources */
 #endif
-    wait.parent = run; wait.pid = pid;
+    wait.parent = run; wait.pid = pid; wait.owner=wait_number;wait.tid=waiter;
     flags = native_sched_irq_save();
     for (;;) {
-        BOOL found = FALSE;
+        BOOL found = FALSE,contended=FALSE;
         for (task = async_tasks(); task; task = task->next_task) {
             ULONG status;
-            if (!task->asynchronous || task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != run ||
-                (pid > 0 && task->pid != pid)) continue;
-            found = TRUE;
-            if(task->synchronous_wait_process && (task->synchronous_wait_process!=wait_number || task->synchronous_waiter!=waiter)) {
-                native_sched_irq_restore(flags);return EACCDN;
+            if(!process_wait_target(task,&wait)) continue;
+            if(!process_wait_claim_available(task,&wait)) {
+                contended=TRUE;
+                if(pid>0) {native_sched_irq_restore(flags);return EACCDN;}
+                continue; /* wait-any can still consume an unrelated child */
             }
+            found=TRUE;
             if(completion) { task->synchronous_wait_process=wait_number;task->synchronous_waiter=waiter; }
             if (task->state != TASK_ZOMBIE || task->dependents) continue;
             /* Back/copy output outside IRQ exclusion. This path never yields,
@@ -1616,25 +1638,19 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
         }
         if (!found || (options & 1)) {
             native_sched_irq_restore(flags);
-            return found ? 0 : EFILNF;
+            return found ? 0 : contended ? EACCDN : EFILNF;
         }
         if (!ksched_spawn_allowed()) {
             LONG error;
             native_sched_irq_restore(flags);
             error=enter_root(FALSE,child_ready,&wait);
-            if(error) return error;
+            if(error) { if(completion) process_wait_release_claim(&wait);return error; }
         } else {
             cancellation_wait(child_ready, &wait);
             native_sched_irq_restore(flags);
         }
 #if CONF_WITH_PTERMGRP
-        if(completion && ksched_cancellation_pending()) {
-            uintptr_t release_flags=native_sched_irq_save();
-            for(task=async_tasks();task;task=task->next_task)
-                if(task->parent==run && task->pid==pid && task->synchronous_waiter==waiter && task->synchronous_wait_process==wait_number) {
-                    task->synchronous_waiter=0;task->synchronous_wait_process=0; }
-            native_sched_irq_restore(release_flags);
-        }
+        if(completion && ksched_cancellation_pending()) process_wait_release_claim(&wait);
         ksched_cancel_point();
 #endif
         flags = native_sched_irq_save();
