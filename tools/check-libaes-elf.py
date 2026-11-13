@@ -26,7 +26,8 @@ def check_mutable_state(library):
         fields = line.split()
         if fields and fields[0] == "GNU_RELRO":
             start = int(fields[2], 16)
-            relro.append((start, start + int(fields[5], 16)))
+            # Match the native loader: only complete 4 KiB pages seal.
+            relro.append((start & ~4095, (start + int(fields[5], 16)) & ~4095))
     writable = {}
     for line in subprocess.check_output(["readelf", "--wide", "--section-headers", str(library)], text=True).splitlines():
         match = re.match(r"\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\S+\s+(\S+)", line)
