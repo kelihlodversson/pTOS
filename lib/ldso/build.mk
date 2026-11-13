@@ -167,6 +167,9 @@ LDSO_SYSCALL-$(ARCH_M68K) = lib/ldso/arch/m68k/syscall.c
 LDSO_APP_BASE-$(ARCH_ARM) = -Wl,-Ttext-segment=0x401000 -Wl,-z,noexecstack
 # (the GNU/Linux linker drops a library nothing refers to, which the failure fixtures are)
 LDSO_APP_BASE-$(ARCH_M68K) = -Wl,-Ttext-segment=0x401000 -Wl,-z,noexecstack -Wl,--no-as-needed
+ifeq ($(CONF_WITH_SHARED_VM_PEXEC_TEST),y)
+LDSO_APP_BASE-$(ARCH_X86_64) = -Wl,-Ttext-segment=0x400000 -Wl,-z,noexecstack -Wl,--no-as-needed
+endif
 LDSO_APP_BASE = $(LDSO_APP_BASE-y)
 obj/ldso/test/soapp.elf: LDSO_RUNTIME_APP_LINK = -no-pie $(LDSO_APP_BASE)
 obj/ldso/test/soapp-pie.elf: LDSO_RUNTIME_APP_LINK = -pie
@@ -177,7 +180,7 @@ obj/ldso/test/soapp.elf obj/ldso/test/soapp-pie.elf: $(LDSO_TEST_START-y) tests/
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/ldso/test/soapp.elf
 endif
-ifneq ($(ARCH_ARM)$(ARCH_M68K),)
+ifneq ($(ARCH_ARM)$(ARCH_M68K)$(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),$(ARCH_X86_64)),)
 obj/ldso/test/libmiss.so obj/ldso/test/libbad.so: obj/ldso/test/lib%.so: tests/ldso_arm/miss.c $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,lib$*.so $< -o $@
