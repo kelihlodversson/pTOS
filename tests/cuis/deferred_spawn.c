@@ -88,7 +88,7 @@ void proc_dispose_process(KPROC *p)
     if (inject_retirement) {
         KERNEL_TASK *previous=execution_cpu.current;
         void *stale=&tasks[1];
-        CHILD_WAIT wait;
+        CHILD_WAIT wait = { 0 };
         inject_retirement=FALSE;
         CHECK(tasks[1].state==TASK_RETIRING && !tasks[1].parent && !tasks[1].process &&
               !tasks[1].thread && references==1 && identities==1 && stacks==1);
@@ -158,7 +158,7 @@ int main(void)
      * return. It is neither runnable nor visible to public child waits. */
     {
         void *slot = NULL;
-        CHILD_WAIT wait;
+        CHILD_WAIT wait = { 0 };
         unsigned disposed = disposals;
         execution_cpu.current = &tasks[0];
         tasks[1].program = NULL; /* Modeled finalizer revokes the retired PD. */
