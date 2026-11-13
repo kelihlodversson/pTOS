@@ -213,6 +213,8 @@ BOOL kproc_clone_adopt_space(KPROC *process, struct kthread *thread, struct kasp
 LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PERMISSION_TRANSACTION **);
 void kproc_shared_exec_abort(KPROC *);
 void kproc_shared_exec_finish(KPROC *);
+BOOL kproc_shared_exec_relro_range(const KPROC *,VADDR address,VADDR bytes);
+VADDR kproc_shared_exec_initial_sp(const KPROC *);
 BOOL kproc_shared_exec_ready(const KPROC *,struct kthread *);
 BOOL kproc_shared_exec_active(PD *);
 BOOL kproc_shared_exec_committed(const KPROC *);

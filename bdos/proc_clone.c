@@ -361,6 +361,21 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
     return thread_startup_prepare(tx->space, args, &tx->startup);
 }
 
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG proc_clone_prepare_startup_elf(PROC_CLONE_TRANSACTION *tx,const THREAD_STARTUP_ARGS *args,VADDR initial_sp)
+{
+    if(!tx || !args || tx->startup || !initial_sp) return EINVAL;
+    if(!tx->loaded_shared || tx->policy!=PROC_CLONE_NEW_PROCESS ||
+        kproc_shared_exec_initial_sp(tx->process)!=initial_sp ||
+#if CONF_WITH_PTERMGRP
+        kproc_group_status(tx->source,NULL) || kproc_group_status(tx->process,NULL) ||
+#endif
+        kproc_active_space(tx->source)!=tx->source_space || tx->space!=tx->source_space ||
+        !kproc_clone_target_ready(tx->process,tx->thread)) return EACCDN;
+    return thread_startup_prepare_elf(tx->space,args,initial_sp,&tx->startup);
+}
+#endif
+
 static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 {
     return tx && tx->startup &&

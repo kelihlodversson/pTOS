@@ -47,6 +47,10 @@
 #include "../lib/ldso/startup.h"
 #endif
 
+#define KPROC_SHARED_INTERP (CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_ELF_SHARED)
+#if KPROC_SHARED_INTERP
+struct shared_interp_recipe { DL_IMAGE program,interpreter; ULONG bias,ibias; char filename[1024]; };
+#endif
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
 
@@ -80,6 +84,17 @@ struct shared_exec_regions {
     VADDR stack;ULONG stack_pages;UQUAD stack_birth,guard_birth;
     KASPACE_PERMISSION_TRANSACTION *permissions;
     BOOL committed, legacy;
+#if KPROC_SHARED_INTERP
+    BOOL interpreted;
+    KASPACE *original_pending;
+    PROG_LAYOUT original_layout,original_interpreter;
+    PD original_pd;
+    UQUAD original_initial_rsp,original_interp_entry,original_interp_bytes,original_stack_low;
+    VADDR original_entry,original_stack_top,initial_sp;
+    VADDR provisional_va;ULONG provisional_pages;
+    VADDR relro_address[2],relro_bytes[2];
+#endif
+    ULONG stack_bytes;
 };
 static void shared_exec_commit(KPROC *target);
 #endif
@@ -174,6 +189,9 @@ struct kproc {
     BOOL legacy_text_recorded;
 #endif
 #if CONF_WITH_ELF_SHARED
+#if KPROC_SHARED_INTERP
+    struct shared_interp_recipe *shared_interp_recipe;
+#endif
     PROG_LAYOUT interpreter_layout;
     BOOL standard_entry;
     UQUAD interp_entry, initial_rsp, interp_bytes;
@@ -1167,6 +1185,9 @@ void kproc_destroy(PD *pd)
             kproc_clone_drop_compat(kproc);
             kproc_shared_exec_abort(kproc);
 #endif
+#if KPROC_SHARED_INTERP
+            kfree(kproc->shared_interp_recipe);
+#endif
             kaspace_put(kproc->pending_space);
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
@@ -2139,6 +2160,9 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     DL_START_INFO info;
     LONG rc = ENSMEM;
     int status;
+#if KPROC_SHARED_INTERP
+    struct shared_interp_recipe *recipe=NULL;
+#endif
 
     if (!kproc || kproc->has_image || kproc->pending_as || kproc->aspace ||
         program->nload > PROG_MAX_SEGMENTS || interpreter->nload > PROG_MAX_SEGMENTS ||
@@ -2160,6 +2184,15 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     stack = kalloc(DL_START_CAPACITY);
     if (!stack)
         return ENSMEM;
+#if KPROC_SHARED_INTERP
+    if(procmem_owner(pd)!=pd && kproc_has_heap(run)) {
+        recipe=kalloc(sizeof(*recipe));
+        if(!recipe) { kfree(stack);return ENSMEM; }
+        recipe->program=*program;recipe->interpreter=*interpreter;
+        recipe->bias=bias;recipe->ibias=ibias;
+        memcpy(recipe->filename,filename,fnsize+1);
+    }
+#endif
     info.phdr = program->phdr + bias;
     info.phnum = program->phnum;
     info.entry = program->entry + bias;
@@ -2231,8 +2264,14 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     pd->p_tlen = program->size;
     pd->p_dbase = pd->p_bbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)kproc->layout.end);
     pd->p_dlen = pd->p_blen = 0;
+#if KPROC_SHARED_INTERP
+    kproc->shared_interp_recipe=recipe;recipe=NULL;
+#endif
     rc = E_OK;
 done:
+#if KPROC_SHARED_INTERP
+    kfree(recipe);
+#endif
     kfree(stack);
     return rc;
 }
@@ -3048,6 +3087,7 @@ static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *larg
             at = end + (VADDR)heap->blocks[j++].pages * USER_PAGE_SIZE;
         else
             break;
+        if(at<USER_HEAP_BASE) at=USER_HEAP_BASE;
     }
     return found;
 }
@@ -4030,10 +4070,17 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
         rights &= protection;
         if (page==last) break;
     }
-    if (!(rights&ASPACE_PROT_USER)) return EACCDN;
+    if (!(rights&ASPACE_PROT_USER)) {
+#if KPROC_SHARED_INTERP
+        if(raw || lazy) return EACCDN;
+#else
+        return EACCDN;
+#endif
+    }
     if (!*birth && !(*birth=kaspace_reservation_next())) return ENSMEM;
     info.address=address; info.bytes=bytes; info.identity=*birth;
     info.rights=rights; info.flags=KASPACE_RESERVATION_CAPTURED|(lazy?KASPACE_RESERVATION_LAZY:0);
+    if(!(rights&ASPACE_PROT_USER)) info.flags|=KASPACE_RESERVATION_INACCESSIBLE;
     *result=info;
     return E_OK;
 }
@@ -4233,6 +4280,9 @@ BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size)
 }
 
 #if CONF_WITH_NATIVE_SCHED
+#if KPROC_SHARED_INTERP
+#include "kproc_shared_interp.h"
+#endif
 #include "kproc_shared_exec.h"
 #endif
 

@@ -90,6 +90,9 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
  * Identity-only commit still returns EINVFN with a draft attached. Only the
  * trusted NEW_PROCESS/SAME_PROCESS publication paths below can publish prepared execution. */
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *transaction, const THREAD_STARTUP_ARGS *args);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG proc_clone_prepare_startup_elf(PROC_CLONE_TRANSACTION *,const THREAD_STARTUP_ARGS *,VADDR initial_sp);
+#endif
 LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *transaction, VADDR pid, VADDR tid);
 /* Heap-owned asynchronous observation: one caller reference plus one startup
  * registration. Release either order; completion is read from retained KPROC,

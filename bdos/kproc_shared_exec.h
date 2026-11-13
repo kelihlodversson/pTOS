@@ -7,6 +7,14 @@ static LONG shared_logical(struct shared_exec_regions *set,KPROC *source,VADDR v
     error=kproc_reservation_info(source->pd,va,bytes,&info);
     if(!error) {
         KPROC *owner=kproc_retain_live(source);
+#if KPROC_SHARED_INTERP
+        /* A fresh authenticated image capture may retain its allocation
+         * without granting access across protected padding or mixed pages. */
+        if(!access && (info.flags&KASPACE_RESERVATION_CAPTURED) &&
+            !(info.flags&KASPACE_RESERVATION_LAZY)) {
+            info.rights=0;info.flags|=KASPACE_RESERVATION_INACCESSIBLE;
+        }
+#endif
         if(!owner) return ENSMEM;
         error=kaspace_reservation_hold_captured(set->space,&info,va,bytes,access,
                     kproc_ref_number(owner),owner,&set->logical[set->nlogical]);
@@ -60,6 +68,9 @@ void kproc_shared_exec_abort(KPROC *process)
     while(set->nlogical) if(!kproc_reservation_release(&set->logical[--set->nlogical]))
         panic("shared exec reservation released twice");
     kaspace_permission_finish(&set->permissions,FALSE);
+#if KPROC_SHARED_INTERP
+    shared_interp_abort(process,set);
+#endif
     while(set->nraw) if(!kproc_allocation_release(&set->raw[--set->nraw]))
         panic("shared exec allocation released twice");
     kproc_release(set->parent);kaspace_put(set->space);kfree(set);
@@ -97,13 +108,18 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     KASPACE_PROTECTION policy[PROG_MAX_SEGMENTS];
     KASPACE_HEAP *heap;
     struct uheap_block *image=NULL;
-    ULONG i;UWORD count=0;LONG error=EACCDN;BOOL legacy=FALSE;
+    ULONG i;UWORD count=0;LONG error=EACCDN;BOOL legacy=FALSE,interpreted=FALSE;
     VADDR body;UQUAD guard_birth;
+#if KPROC_SHARED_INTERP
+    interpreted=target && target->standard_entry && target->shared_interp_recipe &&
+        target->pending_space && target->pending_as==kaspace_backend(target->pending_space) &&
+        !target->load_parent;
+#endif
     if(!source || source->pd!=run || !target || target==source || !startup ||
         !permissions || *permissions || !source->active_space || !target->pd ||
         target->creator!=source->pd || target->started || target->completed ||
         target->disposal_state!=PROCESS_LIVE || target->threads || target->shared_exec ||
-        target->active_space || target->pending_space || target->kstack_phys || target->parent_identity ||
+        target->active_space || (target->pending_space && !interpreted) || target->kstack_phys || target->parent_identity ||
         procmem_gen(target->user_start)!=target->tpa_gen ||
         procmem_gen(target->env_start)!=target->env_gen ||
         (VADDR)target->pd->p_lowtpa!=(VADDR)(uintptr_t)target->user_start ||
@@ -115,7 +131,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         !target->load_parent && target->legacy_text_bytes &&
         target->legacy_text_bytes<=(VADDR)(target->user_end-target->user_start)-sizeof(PD);
 #endif
-    if(!legacy) {
+    if(!legacy && !interpreted) {
         if(!target->has_image || target->load_parent!=source->pd) return EINVFN;
         image=heap_find(source,target->load_va);
         if(!image || image->kind!=UH_LOADED || image->pd!=target->pd || image->pages!=target->load_pages ||
@@ -127,6 +143,9 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     if(!set->space || !set->parent) { error=ENSMEM;goto failed; }
     if(!kproc_user_access(source->pd,(VADDR)(uintptr_t)target->pd,sizeof(PD),TRUE)) {error=EACCDN;goto failed;}
 #define SHARED_TRY(call) do {error=(call);if(error) goto failed;}while(0)
+#if KPROC_SHARED_INTERP
+    if(interpreted) SHARED_TRY(shared_interp_prepare(source,target,set));
+#endif
     /* The borrowed-text transaction authenticates an already-owned R1 ticket.
      * Keep that exact physical allocation held until commit or full rollback. */
     SHARED_TRY(shared_raw(set,source,target->user_start,target->tpa_gen));
@@ -146,7 +165,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
 #else
         error=EINVFN;goto failed;
 #endif
-    } else {
+    } else if(!interpreted) {
         for(i=0;i<target->layout.nseg;i++) {
             const PROG_SEGMENT *s=&target->layout.seg[i];
             if(!s->memsz) continue;
@@ -162,7 +181,8 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
                               (VADDR)(target->user_end-target->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)target->env_start,
                               (VADDR)(target->env_end-target->env_start),ASPACE_PROT_USER));
-    if(!legacy) SHARED_TRY(shared_logical(set,source,target->load_va,(VADDR)target->load_pages*USER_PAGE_SIZE,ASPACE_PROT_USER));
+    if(!legacy) SHARED_TRY(shared_logical(set,source,target->load_va,(VADDR)target->load_pages*USER_PAGE_SIZE,
+                                               interpreted?0:ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->user_start,
                               (VADDR)(source->user_end-source->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->env_start,
@@ -195,7 +215,11 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         }
     }
 #endif
-    set->stack_pages=SHARED_STACK_BYTES/USER_PAGE_SIZE+1;
+    set->stack_bytes=SHARED_STACK_BYTES;
+#if KPROC_SHARED_INTERP
+    if(interpreted) set->stack_bytes+=DL_START_CAPACITY;
+#endif
+    set->stack_pages=set->stack_bytes/USER_PAGE_SIZE+1;
     set->stack=kproc_uheap_alloc(source->pd,set->stack_pages*USER_PAGE_SIZE);
     if(!set->stack) {error=ENSMEM;goto failed;}
     heap=kaspace_heap(set->space);
@@ -211,16 +235,22 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     heap->blocks[i].flags=KASPACE_HEAP_GUARD;
     heap->blocks[i+1].va=body;heap->blocks[i+1].pages=set->stack_pages-1;
     set->guard_birth=guard_birth;
-    for(i=0;i<SHARED_STACK_BYTES/USER_PAGE_SIZE;i++) {
+    for(i=0;i<set->stack_bytes/USER_PAGE_SIZE;i++) {
         VADDR page=body+(VADDR)i*USER_PAGE_SIZE;
         int backed=aspace_translate(kaspace_backend(set->space),page,NULL,NULL)?1:
             kaspace_heap_demand_page(set->space,page,ASPACE_PROT_WRITE);
         if(backed!=1) {error=ENSMEM;goto failed;}
     }
     SHARED_TRY(shared_logical(set,source,set->stack,USER_PAGE_SIZE,0));
-    SHARED_TRY(shared_logical(set,source,body,SHARED_STACK_BYTES,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    SHARED_TRY(shared_logical(set,source,body,set->stack_bytes,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
     startup->entry=legacy?(VADDR)(uintptr_t)target->user_start+sizeof(PD):target->layout.entry;startup->argument=(VADDR)(uintptr_t)target->pd;
-    startup->stack_base=body;startup->stack_size=SHARED_STACK_BYTES;
+    startup->stack_base=body;startup->stack_size=set->stack_bytes;
+#if KPROC_SHARED_INTERP
+    if(interpreted) {
+        SHARED_TRY(shared_interp_stack(target,set,body));
+        startup->entry=target->interp_entry;
+    }
+#endif
     return E_OK;
 failed:
     kproc_shared_exec_abort(target);return error;
@@ -263,6 +293,36 @@ void kproc_shared_exec_finish(KPROC *process)
     if(!process || !process->shared_exec || !process->shared_exec->committed)
         panic("shared exec permission commit without publication");
     kaspace_permission_finish(&process->shared_exec->permissions,TRUE);
+#if KPROC_SHARED_INTERP
+    kaspace_put(process->shared_exec->original_pending);
+    process->shared_exec->original_pending=NULL;
+#endif
+}
+VADDR kproc_shared_exec_initial_sp(const KPROC *process)
+{
+#if KPROC_SHARED_INTERP
+    if(process && process->shared_exec && process->shared_exec->interpreted)
+        return process->shared_exec->initial_sp;
+#else
+    UNUSED(process);
+#endif
+    return 0;
+}
+
+BOOL kproc_shared_exec_relro_range(const KPROC *process,VADDR address,VADDR bytes)
+{
+#if KPROC_SHARED_INTERP
+    ULONG i;const struct shared_exec_regions *set=process?process->shared_exec:NULL;
+    if(!set || !set->committed || !set->interpreted || !process->standard_entry ||
+        !process->started || process->completed || process->active_space!=set->space ||
+        !bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address) return FALSE;
+    for(i=0;i<2;i++) if(address>=set->relro_address[i] &&
+        address-set->relro_address[i]<set->relro_bytes[i] &&
+        bytes<=set->relro_bytes[i]-(address-set->relro_address[i])) return TRUE;
+#else
+    UNUSED(process);UNUSED(address);UNUSED(bytes);
+#endif
+    return FALSE;
 }
 
 BOOL kproc_shared_exec_committed(const KPROC *process)
