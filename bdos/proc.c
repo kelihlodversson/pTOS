@@ -170,7 +170,7 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void proc_release_block(void *base)
 {
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
     if(kproc_shared_exec_retire_source(base)) return;
     kproc_shared_exec_release_base(base);
 #endif
@@ -197,7 +197,7 @@ static void proc_release_block(void *base)
 static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
     if(kproc_shared_exec_retire_source(base)) return;
     kproc_shared_exec_release_base(base);
 #endif

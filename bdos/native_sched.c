@@ -1598,8 +1598,10 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
             if (address && !kproc_copy_to_user(address, task->usage, sizeof(task->usage))) return EIMBA;
             kproc_add_child_usage(run, task->usage[0]);
             native_sched_irq_disable();
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
             if(completion && (!process_observer_snapshot(task->process,completion) ||
                 completion->state!=PROCESS_COMPLETED)) panic("zombie without canonical PROCESS result");
+#endif
             task->synchronous_waiter=0;task->synchronous_wait_process=0;
             status = ((ULONG)(UWORD)task->pid << 16) |
                      (task->signal ? ((ULONG)task->signal << 8) : (task->result & 255));
@@ -1642,8 +1644,12 @@ LONG ksched_wait(WORD pid,WORD options,UQUAD address)
 { return wait_process(pid,options,address,NULL); }
 LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion)
 {
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
     if(!completion) return EINVAL;
     return wait_process(pid,0,0,completion);
+#else
+    UNUSED(pid);UNUSED(completion);return EINVFN;
+#endif
 }
 
 /* Called only after the scheduler has switched back to its root context.
