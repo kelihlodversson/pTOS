@@ -25,6 +25,12 @@
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
 #include "shared_vm_probe.h"
+static void shared_vm_diagnostic(const char *label,long value)
+{
+    char number[11];unsigned i;
+    for(i=0;i<8;i++) number[i]="0123456789abcdef"[((unsigned long)value>>(28-4*i))&15];
+    number[8]='\r';number[9]='\n';number[10]=0;conws(label);conws(number);
+}
 #if defined(__mc68000__)
 static void shared_vm_prg(void)
 {
@@ -178,9 +184,14 @@ static void shared_vm_staged_retirement(void)
         "shared staged retirement: source staged an unstarted child then exited");
     for(i=0;i<8;i++) (void)Syield();
     if(probe.staged) {
-        ptest_assert_msg(Mvalidate((int)Pgetpid(),(void *)(uintptr_t)probe.staged,256,0)==-40,
+        long basepage_check=Mvalidate((int)Pgetpid(),(void *)(uintptr_t)probe.staged,256,0);
+        long environment_check=Mvalidate((int)Pgetpid(),(void *)(uintptr_t)probe.environment,1,0);
+        shared_vm_diagnostic("shared staged retirement basepage check=",basepage_check);
+        shared_vm_diagnostic("shared staged retirement environment check=",environment_check);
+        /* Mvalidate uses GEMDOS EINVAL(-25) for inaccessible memory. */
+        ptest_assert_msg(basepage_check==-25,
             "shared staged retirement: original construction basepage borrow released");
-        ptest_assert_msg(Mvalidate((int)Pgetpid(),(void *)(uintptr_t)probe.environment,1,0)==-40,
+        ptest_assert_msg(environment_check==-25,
             "shared staged retirement: original construction environment borrow released");
     }
     ptest_assert_msg(Mfree(image)==0,"shared staged retirement: source image final release");
