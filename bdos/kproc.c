@@ -79,7 +79,7 @@ struct shared_exec_regions {
     UWORD nraw,nlogical;
     VADDR stack;ULONG stack_pages;UQUAD stack_birth,guard_birth;
     KASPACE_PERMISSION_TRANSACTION *permissions;
-    BOOL committed;
+    BOOL committed, legacy;
 };
 static void shared_exec_commit(KPROC *target);
 #endif

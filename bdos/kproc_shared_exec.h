@@ -97,7 +97,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     KASPACE_PROTECTION policy[PROG_MAX_SEGMENTS];
     KASPACE_HEAP *heap;
     struct uheap_block *image=NULL;
-    ULONG i;UWORD count=0;LONG error=EACCDN;
+    ULONG i;UWORD count=0;LONG error=EACCDN;BOOL legacy=FALSE;
     VADDR body;UQUAD guard_birth;
     if(!source || source->pd!=run || !target || target==source || !startup ||
         !permissions || *permissions || !source->active_space || !target->pd ||
@@ -108,26 +108,53 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         procmem_gen(target->env_start)!=target->env_gen ||
         (VADDR)target->pd->p_lowtpa!=(VADDR)(uintptr_t)target->user_start ||
         (VADDR)target->pd->p_env!=(VADDR)(uintptr_t)target->env_start ||
-        (VADDR)target->pd->p_hitpa<=(VADDR)(uintptr_t)(target->user_start+sizeof(PD)) ||
+        (VADDR)target->pd->p_hitpa<(VADDR)(uintptr_t)(target->user_start+sizeof(PD)) ||
         (VADDR)target->pd->p_hitpa>(VADDR)(uintptr_t)target->user_start+procmem_size(target->user_start)) return EIMBA;
-    if(!target->has_image || target->load_parent!=source->pd) return EINVFN;
-    image=heap_find(source,target->load_va);
-    if(!image || image->kind!=UH_LOADED || image->pd!=target->pd || image->pages!=target->load_pages ||
-        !layout_valid_in(&target->layout,FALSE,image->va,image->va+(VADDR)image->pages*USER_PAGE_SIZE)) return EIMBA;
+#if KPROC_LEGACY_PRG
+    legacy=target->legacy && target->legacy_text_recorded && !target->has_image &&
+        !target->load_parent && target->legacy_text_bytes &&
+        target->legacy_text_bytes<=(VADDR)(target->user_end-target->user_start)-sizeof(PD);
+#endif
+    if(!legacy) {
+        if(!target->has_image || target->load_parent!=source->pd) return EINVFN;
+        image=heap_find(source,target->load_va);
+        if(!image || image->kind!=UH_LOADED || image->pd!=target->pd || image->pages!=target->load_pages ||
+            !layout_valid_in(&target->layout,FALSE,image->va,image->va+(VADDR)image->pages*USER_PAGE_SIZE)) return EIMBA;
+    }
     set=kalloc(sizeof(*set));if(!set) return ENSMEM;memset(set,0,sizeof(*set));
     set->space=kaspace_share(source->active_space);set->parent=kproc_retain_live(source);
-    target->shared_exec=set;
+    set->legacy=legacy;target->shared_exec=set;
     if(!set->space || !set->parent) { error=ENSMEM;goto failed; }
     if(!kproc_user_access(source->pd,(VADDR)(uintptr_t)target->pd,sizeof(PD),TRUE)) {error=EACCDN;goto failed;}
-    for(i=0;i<target->layout.nseg;i++) {
-        const PROG_SEGMENT *s=&target->layout.seg[i];
-        if(!s->memsz) continue;
-        policy[count].address=s->vaddr;policy[count].bytes=s->memsz;
-        policy[count].rights=ASPACE_PROT_USER|((s->flags&1)?ASPACE_PROT_EXEC:0)|((s->flags&2)?ASPACE_PROT_WRITE:0);count++;
-    }
-    error=kaspace_permission_prepare(set->space,policy,count,&set->permissions);if(error) goto failed;
 #define SHARED_TRY(call) do {error=(call);if(error) goto failed;}while(0)
+    /* The borrowed-text transaction authenticates an already-owned R1 ticket.
+     * Keep that exact physical allocation held until commit or full rollback. */
     SHARED_TRY(shared_raw(set,source,target->user_start,target->tpa_gen));
+    if(legacy) {
+#if KPROC_LEGACY_PRG
+        VADDR base=(VADDR)(uintptr_t)target->user_start;
+        VADDR bytes=procmem_size(target->user_start);
+        VADDR text_end=(base+sizeof(PD)+target->legacy_text_bytes+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        policy[0].address=base;policy[0].bytes=text_end-base;
+        policy[0].rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC;count=1;
+        if(text_end<base+bytes) {
+            policy[1].address=text_end;policy[1].bytes=base+bytes-text_end;
+            policy[1].rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE;count++;
+        }
+        SHARED_TRY(kaspace_permission_prepare_procmem(set->space,&set->raw[0].token,
+                    policy,count,&set->permissions));
+#else
+        error=EINVFN;goto failed;
+#endif
+    } else {
+        for(i=0;i<target->layout.nseg;i++) {
+            const PROG_SEGMENT *s=&target->layout.seg[i];
+            if(!s->memsz) continue;
+            policy[count].address=s->vaddr;policy[count].bytes=s->memsz;
+            policy[count].rights=ASPACE_PROT_USER|((s->flags&1)?ASPACE_PROT_EXEC:0)|((s->flags&2)?ASPACE_PROT_WRITE:0);count++;
+        }
+        SHARED_TRY(kaspace_permission_prepare(set->space,policy,count,&set->permissions));
+    }
     SHARED_TRY(shared_raw(set,source,target->env_start,target->env_gen));
     SHARED_TRY(shared_raw(set,source,source->user_start,source->tpa_gen));
     SHARED_TRY(shared_raw(set,source,source->env_start,source->env_gen));
@@ -135,7 +162,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
                               (VADDR)(target->user_end-target->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)target->env_start,
                               (VADDR)(target->env_end-target->env_start),ASPACE_PROT_USER));
-    SHARED_TRY(shared_logical(set,source,target->load_va,(VADDR)target->load_pages*USER_PAGE_SIZE,ASPACE_PROT_USER));
+    if(!legacy) SHARED_TRY(shared_logical(set,source,target->load_va,(VADDR)target->load_pages*USER_PAGE_SIZE,ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->user_start,
                               (VADDR)(source->user_end-source->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->env_start,
@@ -192,7 +219,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     }
     SHARED_TRY(shared_logical(set,source,set->stack,USER_PAGE_SIZE,0));
     SHARED_TRY(shared_logical(set,source,body,SHARED_STACK_BYTES,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
-    startup->entry=target->layout.entry;startup->argument=(VADDR)(uintptr_t)target->pd;
+    startup->entry=legacy?(VADDR)(uintptr_t)target->user_start+sizeof(PD):target->layout.entry;startup->argument=(VADDR)(uintptr_t)target->pd;
     startup->stack_base=body;startup->stack_size=SHARED_STACK_BYTES;
     return E_OK;
 failed:
@@ -203,11 +230,15 @@ static void shared_exec_commit(KPROC *target)
 {
     struct shared_exec_regions *set=target->shared_exec;
     KPROC *source;struct uheap_block *image;
-    if(!set || set->committed || !(source=set->parent) || !source->pd ||
-        !(image=heap_find(source,target->load_va)) || image->pd!=target->pd || image->kind!=UH_LOADED)
+    if(!set || set->committed || !(source=set->parent) || !source->pd)
         panic("shared exec staging changed before publication");
-    image->kind=UH_SHARED_IMAGE;image->shared_generation=target->tpa_gen;
-    target->load_parent=NULL;
+    if(!set->legacy) {
+        image=heap_find(source,target->load_va);
+        if(!image || image->pd!=target->pd || image->kind!=UH_LOADED)
+            panic("shared exec image changed before publication");
+        image->kind=UH_SHARED_IMAGE;image->shared_generation=target->tpa_gen;
+        target->load_parent=NULL;
+    }
     target->parent_identity=set->parent;set->parent=NULL;
     set->committed=TRUE;
 }
