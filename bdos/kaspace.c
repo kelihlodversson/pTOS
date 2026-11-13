@@ -608,6 +608,16 @@ void kaspace_test_fail_lease_after(UWORD count) { fail_lease_after = count; }
 void kaspace_test_fail_next(void) { fail_next_adoption = TRUE; }
 #endif
 
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+ULONG kaspace_test_live(void)
+{
+    const KASPACE *space;
+    ULONG count = 0;
+    for (space = spaces; space; space = space->next) count++;
+    return count;
+}
+#endif
+
 KASPACE *kaspace_adopt(ASPACE *backend)
 {
     KASPACE *space;

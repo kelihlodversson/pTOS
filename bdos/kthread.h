@@ -82,10 +82,13 @@ void kthread_forget_completions(struct kproc *process);
 
 /* KPROC's borrowed membership links; internal to the ownership layer. */
 KTHREAD **kthread_next_link(KTHREAD *thread);
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 /* Fail after association to exercise the complete constructor rollback. */
-void kthread_test_fail_after_attach(void);
 void kthread_test_fail_attach_after(UWORD count);
+ULONG kthread_test_live(void); /* constructed and not yet reaped */
+#endif
+#if CONF_WITH_X86_64_MEMTEST
+void kthread_test_fail_after_attach(void);
 ULONG kthread_test_set_last_tid(ULONG tid);
 #endif
 

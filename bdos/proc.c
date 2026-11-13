@@ -132,6 +132,16 @@ static BOOL prepare_launch(PD *p)
 {
     if (kernel_code_pd == p)
         return TRUE;
+#if CONF_WITH_NATIVE_SCHED
+    {
+        /* A managed THREAD's synchronous child gets its own initial THREAD
+         * and a scheduler-owned association with this carrier. Every other
+         * direct launch keeps the THREAD-less contract below. */
+        LONG nested = ksched_nested_prepare(p);
+        if (nested != KSCHED_NESTED_UNMANAGED)
+            return nested == E_OK;
+    }
+#endif
     return kproc_prepare_user(p, run);
 }
 
@@ -906,8 +916,17 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 #endif
 #if CONF_WITH_PLUGGABLE_FS || CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_SCHED && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
+    rc = flag == PE_LOADGO && ksched_test_nested_injected(6) ? ENSMEM : init_pd_files(cur_p);
+#else
     rc = init_pd_files(cur_p);
+#endif
     if (rc != E_OK) {
+#if CONF_WITH_NATIVE_SCHED
+        /* A prepared nested association is still private: retire its THREAD
+         * before the PROCESS it is attached to. */
+        ksched_nested_cancel(cur_p);
+#endif
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
@@ -1366,6 +1385,11 @@ static void proc_go(PD *p, WORD entry_type)
     proc_launch_prepare(p, &supstk[SUPSIZ]);   /* arch: launch.c */
 
     /* the new process is the one to run */
+#if CONF_WITH_NATIVE_SCHED
+    /* No-fail: a prepared nested execution becomes this carrier's innermost
+     * owner, with the enclosing owner and launcher chain recorded. */
+    ksched_nested_enter(p);
+#endif
 #if CONF_WITH_KPROC
     kproc_mark_started(p);
 #endif
@@ -1551,6 +1575,12 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 #endif
         kproc_publish_observers(process);
     *fs_error_current() = saved_error;
+#if CONF_WITH_NATIVE_SCHED
+    /* The launcher left the child's syscall stack and address space before
+     * calling here, and completion is published. Restore the enclosing
+     * execution and reclaim the stopped nested THREAD, if this was one. */
+    ksched_nested_leave(process);
+#endif
 }
 
 BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)

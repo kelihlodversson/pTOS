@@ -34,8 +34,14 @@ extern PD *run;
 typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
 } TASK_STATE;
+struct ksched_nested;
 typedef struct kernel_task {
     struct kernel_task *next_task; /* Stable arena link; never a lifetime reference. */
+    /* Synchronous nested PROCESS executions hosted by this continuation. Each
+     * frame owns its own PROCESS/THREAD identity; these fields never replace
+     * the carrier's anchor, completion or PID state below. */
+    struct ksched_nested *nested;          /* innermost associated owner, or NULL */
+    struct ksched_nested *nested_prepared; /* private until its launcher entry */
     PD *program, *parent;
     struct kernel_task *completion_owner; /* owns one dependent reference; NULL is anchor */
     ULONG dependents; /* prevents anchor retirement/reuse until worker root reap */
@@ -65,6 +71,42 @@ typedef struct kernel_task {
     LONG result;
     ULONG usage[2];
 } KERNEL_TASK;
+/* One synchronous nested PROCESS execution on a carrier task (#713).
+ *
+ * The nested PROCESS has no schedulable continuation of its own: its user
+ * image runs on its own syscall stack, entered and left through the existing
+ * architecture launcher, whose frame lives on the enclosing execution's kernel
+ * stack. This record is the scheduler's explicit, reversible association of
+ * that logical execution with the carrier:
+ *
+ *   PREPARED  private to the carrier; owns the retained PROCESS identities and
+ *             the trusted-factory THREAD. Nothing is runnable or observable.
+ *   ACTIVE    innermost owner of the carrier. ksched_exit_thread() answers for
+ *             this PROCESS only; every enclosing owner is suspended in its
+ *             launcher and authenticates nobody.
+ *   STOPPED   the launcher has left the nested syscall stack and detached the
+ *             THREAD. The frame stays innermost, so no owner is authenticated
+ *             while the common PROCESS finalizer runs.
+ *
+ * ksched_nested_leave() then restores the enclosing owner and reclaims the
+ * THREAD on the enclosing kernel stack. The carrier's program/process/thread,
+ * anchor, PID and completion admission are never rewritten. */
+typedef enum { NESTED_PREPARED, NESTED_ACTIVE, NESTED_STOPPED, NESTED_RECLAIMING } NESTED_STATE;
+typedef struct ksched_nested {
+    struct ksched_nested *outer;  /* enclosing frame; NULL is the carrier's own owner */
+    KERNEL_TASK *carrier;
+    UQUAD carrier_execution;      /* non-recycled carrier identity at preparation */
+    PD *program;                  /* nested basepage while its THREAD may execute */
+    PD *enclosing;                /* loaded PROCESS to restore after the launcher */
+    KPROC *process;               /* retained identity, including after exit */
+    KPROC *enclosing_process;     /* retained identity of the enclosing owner */
+    KTHREAD *thread;              /* owned until reclaimed off its syscall stack */
+    KTHREAD *enclosing_thread;    /* borrowed: executing while its launcher is suspended */
+    void *enclosing_launcher;     /* CPU-loaded launcher chain head at entry */
+    ULONG tid;
+    BOOL cancel_delivering;       /* this owner's termination hooks, never the carrier's */
+    NESTED_STATE state;
+} KSCHED_NESTED;
 /* Shared queue/policy. Execution state is owned by the selected CPU below. */
 static struct {
     BOOL active; /* queue exists, including while boot CPU root is parked */
@@ -243,7 +285,8 @@ static void clear_task(KERNEL_TASK *task)
     KERNEL_TASK *next;
     KSCHED_ADMISSION completion;
     RUNQUEUE_GUARD guard=runqueue_enter();
-    if (task->dependents || task->completion_owner || task->execution.on_cpu)
+    if (task->dependents || task->completion_owner || task->execution.on_cpu ||
+        task->nested || task->nested_prepared)
         panic("scheduler: clearing referenced task");
     completion=task->completion;
     task->completion.identity=0;
@@ -574,7 +617,7 @@ static void wait_probe_on_yield(void)
     LONG results[2]={-81,-82};
     KTHREAD *thread;
     ULONG tid;
-    if (wait_probe.execution || !task || !task->asynchronous || task->completion_owner || !task->parent) return;
+    if (wait_probe.execution || !task || task->nested || !task->asynchronous || task->completion_owner || !task->parent) return;
     for (parent=scheduler.tasks;parent;parent=parent->next_task)
         if (parent->program==task->parent && parent->state==TASK_BLOCKED) break;
     if (!parent || !(thread=ksched_exit_thread(run))) return;
@@ -664,7 +707,7 @@ KTHREAD_CONTEXT *ksched_interrupt_target(PD *pd, struct kaspace **space, ULONG *
     if (scheduler.stopping || !scheduler.active || execution_cpu.leaf_held || execution_cpu.legacy_irq_held ||
         !task || execution_cpu.inflight!=task || !task->execution.on_cpu ||
         task->execution.owner_cpu!=execution_cpu.number || task->state!=TASK_RUNNING ||
-        task->program!=pd || !kthread_is_executing(task->thread)) return NULL;
+        task->nested || task->program!=pd || !kthread_is_executing(task->thread)) return NULL;
     *space=kthread_aspace(task->thread);
     if (!*space || *space!=kproc_active_space(task->process)) return NULL;
     *tid=kthread_tid(task->thread);
@@ -674,10 +717,32 @@ KTHREAD_CONTEXT *ksched_interrupt_target(PD *pd, struct kaspace **space, ULONG *
 KTHREAD *ksched_exit_thread(PD *pd)
 {
     KERNEL_TASK *task = execution_cpu.current;
-    if (!scheduler.active || !task || task->state != TASK_RUNNING ||
-        task->program != pd || !kthread_is_executing(task->thread))
+    KSCHED_NESTED *frame;
+    if (!scheduler.active || !task || task->state != TASK_RUNNING)
+        return NULL;
+    frame = task->nested;
+    if (frame) {
+        /* Only the innermost associated execution owns this continuation.
+         * Every enclosing owner is suspended in its launcher, and a stopped
+         * frame authenticates nobody until that launcher restores its owner. */
+        if (frame->state != NESTED_ACTIVE || frame->program != pd ||
+            !kthread_is_executing(frame->thread))
+            return NULL;
+        return frame->thread;
+    }
+    if (task->program != pd || !kthread_is_executing(task->thread))
         return NULL;
     return task->thread;
+}
+/* Identity and termination-hook state of the validated logical owner. The
+ * carrier's own PROCESS fields are never used on behalf of a nested child. */
+static KPROC *owner_process(const KERNEL_TASK *task)
+{
+    return task->nested ? task->nested->process : task->process;
+}
+static BOOL *owner_cancel_delivering(KERNEL_TASK *task)
+{
+    return task->nested ? &task->nested->cancel_delivering : &task->cancel_delivering;
 }
 
 BOOL ksched_cleanup_active(void)
@@ -694,9 +759,9 @@ void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
     thread=ksched_exit_thread(run);
     if (thread) {
         KERNEL_TASK *task=execution_cpu.current;
-        if (!task->execution.identity || !task->process || task->process!=kthread_process(thread) ||
+        if (!task->execution.identity || !owner_process(task) || owner_process(task)!=kthread_process(thread) ||
             task->cleanup_depth==0xffffffffUL || task->cleanup_serial==~(UQUAD)0) panic("cleanup execution ownership invalid");
-        scope->thread=thread; scope->process=task->process;
+        scope->thread=thread; scope->process=owner_process(task);
         scope->execution=task->execution.identity; scope->tid=kthread_tid(thread);
         scope->depth=++task->cleanup_depth;
         scope->parent_ticket=task->cleanup_ticket;
@@ -713,7 +778,7 @@ void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
     thread=ksched_exit_thread(run);
     if (scope->thread) {
         KERNEL_TASK *task=execution_cpu.current;
-        if (thread!=scope->thread || !task || task->process!=scope->process ||
+        if (thread!=scope->thread || !task || owner_process(task)!=scope->process ||
             kthread_process(thread)!=scope->process || kthread_tid(thread)!=scope->tid ||
             task->execution.identity!=scope->execution || task->cleanup_depth!=scope->depth ||
             task->cleanup_ticket!=scope->ticket || !scope->ticket || !scope->depth) panic("cleanup scope release is not nested in its execution");
@@ -733,18 +798,21 @@ void ksched_cancel_point(void)
     KTHREAD *thread = ksched_exit_thread(run);
     UWORD status;
     if (scheduler.stopping) return;
-    if (thread && !ksched_cleanup_active() && !execution_cpu.current->cancel_delivering &&
+    if (thread && !ksched_cleanup_active() && !*owner_cancel_delivering(execution_cpu.current) &&
         kproc_group_status(kthread_process(thread), &status)) xterm(status);
 }
 void ksched_enter_exit(PD *pd)
 {
-    if (ksched_exit_thread(pd)) execution_cpu.current->cancel_delivering = TRUE;
+    if (ksched_exit_thread(pd)) *owner_cancel_delivering(execution_cpu.current) = TRUE;
 }
 LONG ksched_termgrp(UWORD status)
 {
     KTHREAD *thread = ksched_exit_thread(run);
     uintptr_t flags;
     if (!thread) return EINVFN;
+    /* A nested synchronous PROCESS has one THREAD and no scheduler anchor of
+     * its own. It keeps the documented unassociated-caller result. */
+    if (execution_cpu.current->nested) return EINVFN;
     if (scheduler.stopping || execution_cpu.current->cancel_delivering || ksched_cleanup_active()) return EACCDN;
     flags = native_sched_irq_save();
     if (!kproc_request_group_exit(kthread_process(thread), status)) {
@@ -770,6 +838,272 @@ static void check_task_thread(KERNEL_TASK *task, UWORD stage)
 #endif
 }
 
+/* ------------------------------------------------------------------------
+ * Nested synchronous PROCESS execution (#713).
+ *
+ * A managed THREAD that calls synchronous Pexec stays suspended in the
+ * architecture launcher on its own kernel stack while the child runs. The
+ * child therefore has no schedulable continuation of its own; what it needs
+ * is an authentic THREAD identity, and an owner that is restored when it has
+ * gone. Preparation is fallible and private, entry and exit are no-fail.
+ * ---------------------------------------------------------------------- */
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+/* Native assertions/injection for the regression kernels only. Every counted
+ * transition has already passed the production invariant checks below. */
+static struct {
+    ULONG prepared, entered, stopped, reclaimed, cancelled, refused, untracked;
+    ULONG deepest;
+    ULONG last_pid, last_tid, last_depth; /* most recently entered execution */
+    uintptr_t last_pd;
+    UWORD fail_stage;
+    BOOL untracked_next, reported;
+#if CONF_WITH_EXIT_HANDOFF_TEST
+    BOOL handoff_subject;
+#endif
+} nested_probe;
+static BOOL nested_injected(UWORD stage)
+{
+    if (nested_probe.fail_stage != stage) return FALSE;
+    nested_probe.fail_stage = 0;
+    nested_probe.refused++;
+    return TRUE;
+}
+BOOL ksched_test_nested_injected(UWORD stage) { return nested_injected(stage); }
+static ULONG nested_depth(const KERNEL_TASK *task)
+{
+    const KSCHED_NESTED *frame;
+    ULONG depth = 0;
+    for (frame = task ? task->nested : NULL; frame; frame = frame->outer) depth++;
+    return depth;
+}
+/* The refused-handoff regressions need one launch that still has no THREAD:
+ * a managed THREAD may never fall back to in-context teardown. */
+static BOOL nested_keep_untracked(void)
+{
+#if CONF_WITH_EXIT_HANDOFF_TEST
+    if (!nested_probe.handoff_subject) {
+        nested_probe.handoff_subject = TRUE;
+        nested_probe.untracked++;
+        return TRUE;
+    }
+#endif
+    if (!nested_probe.untracked_next) return FALSE;
+    nested_probe.untracked_next = FALSE;
+    nested_probe.untracked++;
+    return TRUE;
+}
+LONG ksched_test_nested(UWORD selector)
+{
+    switch (selector) {
+    case 0: return (LONG)nested_depth(execution_cpu.current);
+    case 1: return (LONG)nested_probe.prepared;
+    case 2: return (LONG)nested_probe.entered;
+    case 3: return (LONG)nested_probe.stopped;
+    case 4: return (LONG)nested_probe.reclaimed;
+    case 5: return (LONG)nested_probe.cancelled;
+    case 6: return (LONG)nested_probe.refused;
+    case 7: return (LONG)nested_probe.untracked;
+    case 8: return (LONG)nested_probe.deepest;
+    case 9: return (LONG)(nested_probe.prepared - nested_probe.reclaimed - nested_probe.cancelled);
+    case 10: return (LONG)nested_probe.last_pid;
+    case 11: return (LONG)nested_probe.last_tid;
+    case 12: return (LONG)nested_probe.last_depth;
+    case 13: return (LONG)(nested_probe.last_pd & 0x7fffffffUL);
+    case 0x20: nested_probe.untracked_next = TRUE; return E_OK;
+    default:
+        if (selector >= 0x10 && selector <= 0x16) {
+            nested_probe.fail_stage = selector - 0x10; return E_OK;
+        }
+        return EINVFN;
+    }
+}
+#else
+#define nested_injected(stage) FALSE
+#define nested_keep_untracked() FALSE
+#endif
+static void nested_note_stopped(KSCHED_NESTED *frame)
+{
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    nested_probe.stopped++;
+#endif
+    UNUSED(frame);
+}
+/* A nested THREAD owns no scheduler stack. Its syscall stack belongs to the
+ * architecture launcher, which released it before this can be reached. */
+static void reclaim_nested_execution(void *resource)
+{
+    KSCHED_NESTED *frame = resource;
+    if (frame->state != NESTED_RECLAIMING || frame->carrier->nested == frame ||
+        frame->carrier->nested_prepared == frame)
+        panic("scheduler: reclaiming an associated nested execution");
+}
+static void release_nested_frame(KSCHED_NESTED *frame)
+{
+    KTHREAD *thread = frame->thread;
+    frame->state = NESTED_RECLAIMING;
+    frame->thread = NULL;
+    if (thread) kthread_destroy(thread); /* stopped or never started */
+    kproc_release(frame->process);
+    kproc_release(frame->enclosing_process);
+    kfree(frame);
+}
+/* E_OK: `pd` now has a private prepared association, consumed by
+ * ksched_nested_enter() or ksched_nested_cancel(). KSCHED_NESTED_UNMANAGED:
+ * the loaded execution is not an authentic managed THREAD (kernel-code
+ * process, user callback, untracked child, shutdown), so the launch keeps its
+ * existing THREAD-less carrier contract. A negative result leaves no state. */
+LONG ksched_nested_prepare(PD *pd)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_NESTED *frame;
+    KTHREAD *enclosing;
+    runqueue_unlocked();
+    if (scheduler.stopping || !scheduler.active || !task || task->state != TASK_RUNNING)
+        return KSCHED_NESTED_UNMANAGED;
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame) return KSCHED_NESTED_UNMANAGED;
+#endif
+    enclosing = ksched_exit_thread(run);
+    if (!enclosing) return KSCHED_NESTED_UNMANAGED;
+    if (nested_keep_untracked()) return KSCHED_NESTED_UNMANAGED;
+    /* One private preparation per carrier, never inside a protected cleanup:
+     * its scopes belong to the owner that opened them. */
+    if (task->nested_prepared || task->cleanup_depth) return EACCDN;
+    if (nested_injected(1)) return ENSMEM;
+    frame = kalloc(sizeof(*frame));
+    if (!frame) return ENSMEM;
+    memset(frame, 0, sizeof(*frame));
+    frame->state = NESTED_PREPARED;
+    frame->carrier = task;
+    frame->carrier_execution = task->execution.identity;
+    frame->program = pd;
+    frame->enclosing = run;
+    frame->enclosing_thread = enclosing;
+    frame->process = nested_injected(2) ? NULL : kproc_retain(pd);
+    frame->enclosing_process = kproc_retain(run);
+    if (!frame->process || !frame->enclosing_process ||
+        frame->enclosing_process != kthread_process(enclosing) || frame->process == frame->enclosing_process)
+        goto failed;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (nested_injected(3)) kthread_test_fail_attach_after(1);
+    if (nested_injected(4)) kproc_test_fail_kernel_stack(TRUE);
+    if (nested_injected(5)) kproc_test_fail_thread_space(TRUE);
+#endif
+    /* Address space, syscall stack and the trusted-factory initial THREAD.
+     * It retains the PROCESS and its KASPACE; nothing is runnable. This is
+     * the last fallible step, and it precedes the irreversible image move. */
+    {
+        BOOL prepared = kproc_prepare_user_thread(pd, run, &frame->thread);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+        /* An injection that this launch never reached must not hit a peer. */
+        kthread_test_fail_attach_after(0);
+        kproc_test_fail_kernel_stack(FALSE);
+        kproc_test_fail_thread_space(FALSE);
+#endif
+        if (!prepared) goto failed;
+    }
+    if (!kthread_set_execution(frame->thread, frame, reclaim_nested_execution) ||
+        !kproc_thread_start_allowed(frame->process) ||
+        kproc_active_space(frame->process) != kthread_aspace(frame->thread) ||
+        kthread_process(frame->thread) != frame->process)
+        panic("scheduler: prepared nested THREAD is not startable");
+    frame->tid = kthread_tid(frame->thread);
+    task->nested_prepared = frame;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    nested_probe.prepared++;
+#endif
+    return E_OK;
+failed:
+    release_nested_frame(frame);
+    return ENSMEM;
+}
+/* Roll back a preparation whose launch was abandoned before entry. The image
+ * and PROCESS stay with the caller's existing failure path. */
+void ksched_nested_cancel(PD *pd)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_NESTED *frame;
+    runqueue_unlocked();
+    if (!scheduler.active || !task || !(frame = task->nested_prepared) || frame->program != pd)
+        return;
+    if (frame->state != NESTED_PREPARED || frame->carrier != task)
+        panic("scheduler: cancelling a published nested execution");
+    task->nested_prepared = NULL;
+    release_nested_frame(frame);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    nested_probe.cancelled++;
+#endif
+}
+/* The launcher is about to load `pd`. No allocation, callback or failure:
+ * the enclosing owner and its launcher chain are recorded, the THREAD starts,
+ * and the frame becomes the carrier's innermost owner in one leaf section. */
+void ksched_nested_enter(PD *pd)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_NESTED *frame;
+    RUNQUEUE_GUARD guard;
+    if (!scheduler.active || !task || !(frame = task->nested_prepared) || frame->program != pd)
+        return; /* task-owned, kernel-code or untracked launch */
+    if (task->state != TASK_RUNNING || frame->state != NESTED_PREPARED || frame->carrier != task ||
+        frame->carrier_execution != task->execution.identity || frame->enclosing != run ||
+        ksched_exit_thread(run) != frame->enclosing_thread || task->cleanup_depth ||
+        kproc_live_pd(frame->process) != pd || kproc_live_pd(frame->enclosing_process) != run)
+        panic("scheduler: nested association changed before entry");
+    if (!kthread_start(frame->thread)) panic("scheduler: nested identity cannot start");
+    guard = runqueue_enter();
+    frame->enclosing_launcher = execution_cpu.loaded_launcher;
+    frame->outer = task->nested;
+    task->nested_prepared = NULL;
+    frame->state = NESTED_ACTIVE;
+    task->nested = frame;
+    runqueue_leave(guard);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    nested_probe.entered++;
+    nested_probe.last_pid = (ULONG)kproc_pid(pd);
+    nested_probe.last_tid = frame->tid;
+    nested_probe.last_depth = nested_depth(task);
+    nested_probe.last_pd = (uintptr_t)pd;
+    if (nested_depth(task) > nested_probe.deepest) nested_probe.deepest = nested_depth(task);
+#endif
+}
+/* Called by the common PROCESS finalizer, on the enclosing kernel stack, after
+ * the launcher has released the nested syscall stack and restored its own
+ * address space. Restores the enclosing owner before any destructor runs,
+ * then reclaims the stopped THREAD: exactly once, never on its own stack. */
+void ksched_nested_leave(KPROC *process)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_NESTED *frame;
+    RUNQUEUE_GUARD guard;
+    runqueue_unlocked();
+    if (!scheduler.active || !task || !(frame = task->nested) || frame->process != process)
+        return; /* task-owned or untracked PROCESS */
+    if (task->state != TASK_RUNNING || frame->carrier != task ||
+        frame->carrier_execution != task->execution.identity ||
+        frame->state != NESTED_STOPPED || !kthread_is_stopped(frame->thread) ||
+        task->nested_prepared || task->cleanup_depth ||
+        run != frame->enclosing || kproc_live_pd(frame->enclosing_process) != run ||
+        execution_cpu.loaded_launcher != frame->enclosing_launcher)
+        panic("scheduler: nested exit restored the wrong enclosing execution");
+    guard = runqueue_enter();
+    task->nested = frame->outer;
+    frame->outer = NULL;
+    runqueue_leave(guard);
+    if (ksched_exit_thread(run) != frame->enclosing_thread ||
+        kthread_process(frame->enclosing_thread) != frame->enclosing_process)
+        panic("scheduler: enclosing THREAD lost across nested execution");
+    /* No ticket can name this stopped execution; none may outlive it. */
+    ksched_waiter_retire(frame->process, frame->tid, task->execution.identity);
+    release_nested_frame(frame);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    nested_probe.reclaimed++;
+    if (!task->nested && nested_probe.deepest >= 2 && !nested_probe.reported) {
+        nested_probe.reported = TRUE;
+        kcprintf("native nested THREAD association/exit handoff/enclosing restoration: PASS\n");
+    }
+#endif
+}
+
 BOOL ksched_finalizing_process(const KPROC *process)
 {
     KERNEL_TASK *task=execution_cpu.current;
@@ -781,9 +1115,23 @@ BOOL ksched_finalizing_process(const KPROC *process)
 BOOL ksched_finish_exit(KPROC *process, PD *pd, UWORD status)
 {
     KTHREAD *thread = ksched_exit_thread(pd);
+    KSCHED_NESTED *frame;
     BOOL final;
-    if (!thread) return TRUE; /* Nested synchronous child, not this task's process. */
+    if (!thread) return TRUE; /* Untracked legacy child: no THREAD membership to retire. */
     final = kproc_exit_handoff_pending(process);
+    frame = execution_cpu.current->nested;
+    if (frame) {
+        /* The launcher has left this THREAD's syscall stack. Detach its
+         * membership exactly once; the frame stays innermost, so nobody is
+         * authenticated until the finalizer restores the enclosing owner. */
+        if (!final || frame->process != process || frame->thread != thread ||
+            kthread_process(thread) != process || !kthread_finish_exit(thread, status))
+            panic("scheduler: invalid nested launcher exit handoff");
+        frame->program = NULL; /* the basepage is about to be released */
+        frame->state = NESTED_STOPPED;
+        nested_note_stopped(frame);
+        return TRUE;
+    }
     /* Fault intent belongs to this execution, never to a surviving sibling.
      * Group exit preserves its first normal status instead of a later fault. */
     if (final && execution_cpu.current->signal
@@ -1058,6 +1406,8 @@ static void task_entry(void)
         LONG status = proc_start_scheduled(task->program, task->take_ownership);
         if (!task->process_completed) task->result = status;
     }
+    if (task->nested || task->nested_prepared)
+        panic("scheduler: carrier exited with an associated nested execution");
     refused = !task->exited;
     if (refused) {
         if (task->completion_owner)
@@ -1145,7 +1495,7 @@ BOOL ksched_cancellation_pending(void)
 {
 #if CONF_WITH_PTERMGRP
     KTHREAD *thread = ksched_exit_thread(run);
-    return !scheduler.stopping && thread && !execution_cpu.current->cancel_delivering &&
+    return !scheduler.stopping && thread && !*owner_cancel_delivering(execution_cpu.current) &&
         kproc_group_status(kthread_process(thread), NULL);
 #else
     return FALSE;
@@ -1205,6 +1555,7 @@ LONG ksched_result_wait(const KSCHED_ADMISSION *admission,LONG *results,UWORD co
     BOOL cancelled=FALSE;
     if (scheduler.stopping) return EACCDN;
     if (!thread) return EINVFN; /* result tickets require a managed execution */
+    if (execution_cpu.current->nested) return EINVFN; /* tickets bind the carrier's own THREAD */
     if (!results) return EINVAL;
     actor=kthread_process(thread); tid=kthread_tid(thread); execution=ksched_context_id();
     flags=native_sched_irq_save();
@@ -1292,6 +1643,7 @@ LONG ksched_join(ULONG tid, UQUAD address)
     LONG error;
     if (scheduler.stopping) return EACCDN;
     if (!caller) return EINVFN;
+    if (execution_cpu.current->nested) return EINVFN; /* no sibling THREAD can exist */
     if (address && (address >= USER_VA_LIMIT ||
         (address & (__alignof__(ULONG) - 1)) ||
         !kproc_user_access(run, address, sizeof(output), TRUE))) return EIMBA;
@@ -1629,6 +1981,8 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
 #endif
     if (execution_cpu.current || task->execution.on_cpu || (task->state != TASK_DONE && task->state != TASK_ZOMBIE && task->state != TASK_DRAINING))
         return FALSE;
+    if (task->nested || task->nested_prepared)
+        panic("scheduler: stopped carrier retains a nested execution");
     /* Terminal task predicates must be unpublished before dropping the
      * kernel operation that supplied their argument or reclaiming its stack. */
     task->ready=NULL;
@@ -1725,7 +2079,9 @@ failed:
 static BOOL cancel_wait_ready(const KERNEL_TASK *task)
 {
 #if CONF_WITH_PTERMGRP
-    return task->cancel_boundary && !task->cancel_delivering &&
+    /* A carrier hosting a nested execution is not at its own PROCESS's
+     * boundary: the request stays latched until that launcher has returned. */
+    return !task->nested && task->cancel_boundary && !task->cancel_delivering &&
         task->execution.cpu.pd == task->program && kproc_group_status(task->process, NULL);
 #else
     UNUSED(task);
@@ -1975,7 +2331,9 @@ BOOL ksched_clone_context(KPROC *source, PD **controller)
 #if CONF_WITH_PTERMGRP
     if (kproc_group_status(source, NULL)) return FALSE;
 #endif
-    if (!ksched_spawn_allowed() || completion_task(execution_cpu.current)->dependents==~(ULONG)0 ||
+    /* A nested execution has no anchor to own dependents (see ksched_nested_prepare). */
+    if (!ksched_spawn_allowed() || execution_cpu.current->nested ||
+        completion_task(execution_cpu.current)->dependents==~(ULONG)0 ||
         execution_cpu.current->process != source ||
         execution_cpu.current->program != run || kproc_live_pd(source) != run) return FALSE;
     *controller = ksched_controller_pd(); return *controller!=NULL;
