@@ -25,8 +25,8 @@ LONG aes_window_messages_poll(LONG session, AESGLOBAL *global)
     }
     return E_OK;
 }
-BOOL aes_frames_wait_display(void) { return notice_blocked; }
-BOOL aes_windows_pending(void) { return FALSE; }
+BOOL aes_frames_wait_display(AESGLOBAL *global) { (void)global; return notice_blocked; }
+BOOL aes_windows_pending(AESGLOBAL *global) { (void)global; return FALSE; }
 LONG aes_application_session(AESGLOBAL *global) { (void)global; return 42; }
 LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token)
 {

@@ -14,9 +14,9 @@ static WORD animate(WORD kind, const GRECT *small, const GRECT *large, AESGLOBAL
     BOOL ok;
     if (session < 0 || !valid_rect(small) || !valid_rect(large) ||
         (kind != AES_ANIMATION_MOVE && (small->g_w > large->g_w || small->g_h > large->g_h))) return 0;
-    if (!aes_frames_suspend()) return 0;
+    if (!aes_frames_suspend(global)) return 0;
     ok = aes_form_animation(kind,small,large,global) != 0;
-    aes_frames_resume();
+    aes_frames_resume(global);
     return ok ? 1 : 0;
 }
 WORD mt_graf_mbox(WORD w, WORD h, WORD sx, WORD sy, WORD dx, WORD dy, AESGLOBAL *global)

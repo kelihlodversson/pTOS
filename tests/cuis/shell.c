@@ -58,8 +58,8 @@ static void save_environment(UQUAD address)
 }
 LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token) { (void)global; (void)polling; (void)token; return E_OK; }
 LONG aes_window_messages_poll(LONG session, AESGLOBAL *global) { (void)session; (void)global; return E_OK; }
-BOOL aes_frames_wait_display(void) { return FALSE; }
-BOOL aes_windows_pending(void) { return FALSE; }
+BOOL aes_frames_wait_display(AESGLOBAL *global) { (void)global; return FALSE; }
+BOOL aes_windows_pending(AESGLOBAL *global) { (void)global; return FALSE; }
 LONG aes_application_session(AESGLOBAL *global)
 { return global && global->ap_id == 7 && !registration_error ? 9 : EACCDN; }
 unsigned long __ptos_getauxval(unsigned long type)

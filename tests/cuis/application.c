@@ -4,6 +4,7 @@
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/application.h"
+#include "../../lib/aes/app_context.h"
 #include "../../lib/aes/frames.h"
 #include "../../lib/aes/desktop.h"
 #include "../../lib/aes/lifecycle.h"
@@ -17,14 +18,20 @@
 extern void *malloc(__SIZE_TYPE__ bytes);
 extern void free(void *memory);
 static BOOL region_alloc_failure;
+static ULONG region_allocations, region_releases;
 UQUAD aes_memory_call(ULONG function, UQUAD argument)
 {
     if (function == 0x48) return (uintptr_t)malloc(argument);
     if (function == 0x49) { free((void *)(uintptr_t)argument); return E_OK; }
     return (QUAD)EINVFN;
 }
-void *aes_temporary_alloc(LONG bytes) { return region_alloc_failure ? NULL : malloc(bytes); }
-WORD aes_resource_discard(void *memory) { free(memory); return 0; }
+void *aes_temporary_alloc(LONG bytes)
+{
+    void *memory = region_alloc_failure ? NULL : malloc(bytes);
+    if (memory) region_allocations++;
+    return memory;
+}
+WORD aes_resource_discard(void *memory) { if (memory) region_releases++; free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static ULONG published_tag;
 static char published_label[8];
@@ -35,8 +42,8 @@ static BOOL live;
 static LONG child_status, child_on_wait, child_publish_error;
 static ULONG starts, closes, yields, delays;
 static ULONG graphics_resets;
-void aes_graphics_reset(void) { graphics_resets++; }
-void aes_graphics_wind_new(void) { }
+void aes_graphics_reset(AESGLOBAL *global) { (void)global; graphics_resets++; }
+void aes_graphics_wind_new(AESGLOBAL *global) { (void)global; }
 static UQUAD interval;
 static UBYTE pipe_data[64];
 static ULONG pipe_count, pipe_block;
@@ -72,6 +79,7 @@ static void publish_peer_colours(void)
     colour_peer_pending = FALSE;
 }
 static ULONG background_state;
+static BOOL background_regions;
 static ULONG background_on_wait, background_only_wakes;
 static LONG background_error, reset_error;
 static ULONG desktop_paints;
@@ -227,6 +235,12 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         return E_OK;
     }
     if (fn == CUIS_BACKGROUND_REGION) {
+        if (background_regions) {
+            if (b >= region_count) return 0;
+            *(LONG *)(uintptr_t)c = region_values[b][0]; *(LONG *)(uintptr_t)d = region_values[b][1];
+            *(LONG *)(uintptr_t)e = region_values[b][2]; *(LONG *)(uintptr_t)f = region_values[b][3];
+            return 1;
+        }
         if (b) return 0;
         *(LONG *)(uintptr_t)c = 0; *(LONG *)(uintptr_t)d = 0;
         *(LONG *)(uintptr_t)e = 640; *(LONG *)(uintptr_t)f = 400;
@@ -817,14 +831,14 @@ static int frame_event_checks(void)
     pipe_count = 0;
     /* Nested overlays leave damage queued and suppress notice readiness
      * in both pre- and post-wait pumps until the outer scope ends. */
-    CHECK(aes_frames_suspend() && aes_frames_suspend());
+    CHECK(aes_frames_suspend(&aes_global) && aes_frames_suspend(&aes_global));
     notice_kind = CUIS_NOTICE_REDRAW; before = frame_paints;
     CHECK(evnt_timer(0) == 1 && notice_kind && frame_paints == before);
     CHECK(!(waited_mask & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY)));
     CHECK(appl_read(APR_NOWAIT,16,message) == 0 && notice_kind);
-    aes_frames_resume();
+    aes_frames_resume(&aes_global);
     CHECK(evnt_timer(0) == 1 && notice_kind && frame_paints == before);
-    aes_frames_resume();
+    aes_frames_resume(&aes_global);
     CHECK(evnt_timer(0) == 1 && !notice_kind && frame_paints == before+1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
@@ -902,9 +916,9 @@ static int control_api_checks(void)
     display_error = EAGAIN; pipe_count = 16; before = control_at;
     CHECK(evnt_mesag(message) == 1 && control_at == before);
     display_error = 0;
-    CHECK(aes_frames_suspend());
+    CHECK(aes_frames_suspend(&aes_global));
     CHECK(evnt_timer(0) == 1 && control_at == before && !(waited_mask & CUIS_READY_CONTROL));
-    aes_frames_resume();
+    aes_frames_resume(&aes_global);
     CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED);
     control_at = control_count = 0;
     control_event(25,35,1,1); control_event(25,35,0,1);
@@ -998,7 +1012,7 @@ static int arrow_api_checks(void)
         control_event(points[i][0],points[i][1],1,1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_ARROWED && message[3] == id && message[4] == actions[i]);
         CHECK(!message[1] && !message[2] && !message[5] && !message[6] && !message[7]);
-        CHECK(aes_controls_repeating() && control_selection);
+        CHECK(aes_controls_repeating(&aes_global) && control_selection);
         before = wait_calls;
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && wait_calls == before);
         /* Selection and original action persist when dragged outside. */
@@ -1006,7 +1020,7 @@ static int arrow_api_checks(void)
         CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == actions[i] && control_selection);
         /* A due repeat must not overtake a queued release. */
         menu_ticks += 2; control_event(300,250,0,1);
-        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating() && !control_selection);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global) && !control_selection);
     }
     /* Blocking reads repeat without pointer motion and let cooperative
      * peers run. Internal wakes never masquerade as the caller's timer. */
@@ -1027,14 +1041,14 @@ static int arrow_api_checks(void)
     CHECK(pipe_count && pipe_count <= sizeof(pipe_data));
     control_event(210,60,0,1);
     while (appl_read(APR_NOWAIT,16,message) == 1) CHECK(message[0] == WM_ARROWED);
-    CHECK(!aes_controls_repeating()); menu_test = FALSE;
+    CHECK(!aes_controls_repeating(&aes_global)); menu_test = FALSE;
     control_at = control_count = 0; menu_ticks = 0x7fffffffUL;
     control_event(210,60,1,1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1);
     menu_ticks += 2;
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == WA_UPLINE);
     control_event(210,60,0,1);
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     menu_ticks = 0;
     /* Full streams retain a single pending action and preserve ordinary
      * progress. A later release stops future repeat, not that accepted press. */
@@ -1044,15 +1058,15 @@ static int arrow_api_checks(void)
     control_event(30,180,0,1);
     for (i = 0; i < 3; i++) CHECK(appl_read(APR_NOWAIT,16,message) == 1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_ARROWED && message[4] == WA_LFLINE);
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     control_at = control_count = 0; control_event(210,60,1,1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1);
     control_read_error = ERANGE; menu_ticks += 2;
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     control_read_error = 0;
     control_at = control_count = 0; control_event(210,60,1,1);
     frame_paint_failure = TRUE;
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     frame_paint_failure = FALSE;
     CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 160);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
@@ -1075,7 +1089,7 @@ static int slider_api_checks(void)
         control_event(300,250,1,0); menu_ticks += 2;
         CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == actions[n]);
         control_event(300,250,0,1);
-        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     }
     control_at = control_count = 0;
     control_event(106,177,1,1); control_event(1000,177,0,1);
@@ -1159,7 +1173,7 @@ static int control_timer_checks(void)
     CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+3);
     control_only_wakes = 0;
     display_error = EAGAIN;
-    CHECK(aes_window_messages(handle,&aes_global) == E_OK && aes_frames_wait_display() && !aes_controls_listening());
+    CHECK(aes_window_messages(handle,&aes_global) == E_OK && aes_frames_wait_display(&aes_global) && !aes_controls_listening(&aes_global));
     release_display_on_wait = TRUE; display_release_ticks = 6; menu_ticks = 0; before = wait_calls;
     CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+2 && !display_error);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
@@ -1288,6 +1302,103 @@ static int lifecycle_poll_checks(void)
     CHECK(appl_exit()); executable_name = "GemTest.Prg";
     return 0;
 }
+/* Distinct user contexts do not share retained window metadata, even when
+ * the mocked kernel session is shared as on the current CUIS backend. */
+static int window_context_checks(void)
+{
+    AES_APP_CONTEXT left = {0}, right = {0};
+    AESGLOBAL first = {0}, second = {0}, alias = {0};
+    short a, b, kind;
+    GRECT rect;
+    OBJECT tree_a = {NIL,NIL,NIL,G_IBOX,LASTOB,NORMAL,{0},0,0,640,400};
+    OBJECT tree_b = {NIL,NIL,NIL,G_IBOX,LASTOB,NORMAL,{0},0,0,640,400};
+    OBJECT *tree;
+    void *buffer_a, *buffer_b;
+    LONG bytes_a, bytes_b;
+    ULONG allocations = region_allocations, releases = region_releases;
+    left.session = right.session = handle;
+    first.ap_id = second.ap_id = alias.ap_id = 7;
+    first.ap_3resv = alias.ap_3resv = &left;
+    second.ap_3resv = &right;
+    live = TRUE;
+    pipe_count = notice_kind = publish_failure = 0;
+    control_count = control_at = 0;
+    a = mt_wind_create(0,0,0,100,80,&first);
+    b = mt_wind_create(0,10,20,120,90,&second);
+    CHECK(a > 0 && b > 0 && a != b);
+    CHECK(mt_wind_get(a,WF_KIND,&kind,NULL,NULL,NULL,&first) == 1 && !kind);
+    CHECK(mt_wind_get(a,WF_KIND,&kind,NULL,NULL,NULL,&alias) == 1);
+    CHECK(mt_wind_get(a,WF_KIND,&kind,NULL,NULL,NULL,&second) == 0);
+    CHECK(mt_wind_get(b,WF_KIND,&kind,NULL,NULL,NULL,&first) == 0);
+    CHECK(mt_wind_get(b,WF_KIND,&kind,NULL,NULL,NULL,&second) == 1);
+    CHECK(aes_controls_listening(&first) && aes_controls_listening(&second));
+    CHECK(aes_frames_suspend(&first) && aes_frames_suspend(&alias));
+    CHECK(aes_frames_suspended(&alias) && !aes_frames_suspended(&second));
+    aes_frames_resume(&alias);
+    CHECK(aes_frames_suspended(&first));
+    aes_frames_resume(&first);
+    CHECK(!aes_frames_suspended(&alias));
+    CHECK(aes_frames_dialog(TRUE,&first) && aes_frames_dialog(TRUE,&second));
+    CHECK(aes_frames_dialog(FALSE,&alias));
+    CHECK(!aes_frames_suspended(&first) && aes_frames_suspended(&second));
+    CHECK(aes_frames_dialog(FALSE,&second) && !aes_frames_suspended(&second));
+    display_error = EAGAIN;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK);
+    CHECK(aes_frames_wait_display(&alias) && !aes_frames_wait_display(&second));
+    display_error = 0;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK && !aes_frames_wait_display(&first));
+    notice_kind = CUIS_NOTICE_REDRAW; notice_native = native_windows[a-1]; notice_id = a;
+    publish_failure = EAGAIN;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK);
+    CHECK(aes_windows_pending(&alias) && !aes_windows_pending(&second));
+    notice_kind = publish_failure = 0;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK && !aes_windows_pending(&first));
+    CHECK(mt_wind_open(a,0,0,200,160,&first) && mt_wind_open(b,0,0,200,160,&second));
+    region_count = 2;
+    region_values[0][0] = 1; region_values[0][1] = 2;
+    region_values[0][2] = 30; region_values[0][3] = 40;
+    region_values[1][0] = 10; region_values[1][1] = 20;
+    region_values[1][2] = 20; region_values[1][3] = 30;
+    CHECK(mt_wind_get_grect(a,WF_FIRSTXYWH,&rect,&first) && rect.g_x == 1);
+    CHECK(mt_wind_get_grect(b,WF_FIRSTXYWH,&rect,&second) && rect.g_x == 1);
+    CHECK(mt_wind_get_grect(a,WF_NEXTXYWH,&rect,&alias) && rect.g_x == 10);
+    CHECK(mt_wind_get_grect(b,WF_NEXTXYWH,&rect,&second) && rect.g_x == 10);
+    CHECK(aes_desktop_set(&tree_a,0,&first) && aes_desktop_registered(&alias));
+    CHECK(!aes_desktop_registered(&second) && !aes_frames_registered(&second));
+    CHECK(aes_desktop_set(&tree_b,0,&second));
+    CHECK(aes_desktop_get(&tree,NULL,&alias) && tree == &tree_a);
+    CHECK(aes_desktop_get(&tree,NULL,&second) && tree == &tree_b);
+    buffer_a = aes_screen_buffer(&bytes_a,&first);
+    buffer_b = aes_screen_buffer(&bytes_b,&second);
+    CHECK(buffer_a && buffer_b && buffer_a != buffer_b && bytes_a == bytes_b);
+    CHECK(aes_screen_buffer(&bytes_a,&alias) == buffer_a);
+    background_regions = TRUE;
+    CHECK(aes_desktop_region(TRUE,&rect,&first) && rect.g_x == 1);
+    CHECK(aes_desktop_region(TRUE,&rect,&second) && rect.g_x == 1);
+    CHECK(aes_desktop_region(FALSE,&rect,&alias) && rect.g_x == 10);
+    CHECK(aes_desktop_region(FALSE,&rect,&second) && rect.g_x == 10);
+    CHECK(aes_desktop_region(TRUE,&rect,&first) && rect.g_x == 1);
+    CHECK(aes_desktop_region(TRUE,&rect,&second) && rect.g_x == 1);
+    aes_desktop_reset(&alias);
+    CHECK(!aes_desktop_registered(&first) && aes_desktop_registered(&second));
+    CHECK(aes_screen_buffer(&bytes_b,&second) == buffer_b);
+    CHECK(aes_desktop_region(FALSE,&rect,&second) && rect.g_x == 10);
+    CHECK(aes_desktop_get(&tree,NULL,&second) && tree == &tree_b);
+    CHECK(mt_wind_close(a,&alias) && mt_wind_delete(a,&alias));
+    CHECK(aes_frames_suspend(&first) && aes_frames_suspend(&second));
+    aes_windows_reset(&alias);
+    CHECK(!aes_frames_suspended(&first) && aes_frames_suspended(&second));
+    CHECK(mt_wind_get(b,WF_KIND,&kind,NULL,NULL,NULL,&second));
+    aes_frames_resume(&second);
+    CHECK(!aes_controls_listening(&first) && aes_controls_listening(&second));
+    CHECK(mt_wind_close(b,&second) && mt_wind_delete(b,&second));
+    aes_windows_reset(&second); aes_desktop_reset(&second);
+    CHECK(region_allocations-allocations == region_releases-releases);
+    background_regions = FALSE; background_state = 0;
+    live = FALSE;
+    return 0;
+}
+
 int main(void)
 {
     AESGLOBAL other = { 0 };
@@ -1427,5 +1538,6 @@ int main(void)
         executable_name = "GemTest.Prg";
     }
     CHECK(lifecycle_poll_checks() == 0);
+    CHECK(window_context_checks() == 0);
     return 0;
 }

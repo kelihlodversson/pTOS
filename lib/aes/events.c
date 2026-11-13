@@ -43,7 +43,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     LONG session, ready, result = 0, state[4], input[5];
     ULONG mask = 0, wait_mask, elapsed, ticks;
     LONG now;
-    BOOL frame_work = aes_frames_registered(), child_failed = FALSE, retry_display = FALSE;
+    BOOL frame_work, child_failed = FALSE, retry_display = FALSE;
     LONG (*messages)(LONG,AESGLOBAL *) = ((events & MU_TIMER) && !interval) ?
         aes_window_messages_poll : aes_window_messages;
     if (!events || (events & ~(MU_KEYBD | MU_BUTTON | MU_M1 | MU_M2 | MU_MESAG | MU_TIMER)) ||
@@ -53,6 +53,7 @@ static short event_once(short events, short clicks, short button_mask, short but
         ((events & MU_M2) && (m2_leave < 0 || m2_leave > 1))) return 0;
     session = aes_application_session(global);
     if (session < 0) return 0;
+    frame_work = aes_frames_registered(global);
     if (events & MU_KEYBD) mask |= CUIS_READY_KEY;
     if (events & MU_BUTTON) {
         if (cuis_call6(CUIS_INPUT_BUTTON, session, (UWORD)button_mask, (UWORD)button_state,
@@ -76,14 +77,14 @@ static short event_once(short events, short clicks, short button_mask, short but
     }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
-    if (aes_lifecycle_listening(global) && !aes_frames_wait_display() && !aes_lifecycle_wait_display(global)) wait_mask |= CUIS_READY_COHORT;
+    if (aes_lifecycle_listening(global) && !aes_frames_wait_display(global) && !aes_lifecycle_wait_display(global)) wait_mask |= CUIS_READY_COHORT;
     /* A multi-click owns per-call accumulation until completion. Service
      * frame work afterward rather than interrupting that unfinished count. */
-    if (aes_frames_listening() && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
+    if (aes_frames_listening(global) && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
         wait_mask |= CUIS_READY_NOTICE;
-    if (aes_controls_listening()) wait_mask |= CUIS_READY_CONTROL;
-    if (aes_frames_suspended()) wait_mask &= ~CUIS_READY_NOTICE;
-    else if (aes_frames_wait_display()) {
+    if (aes_controls_listening(global)) wait_mask |= CUIS_READY_CONTROL;
+    if (aes_frames_suspended(global)) wait_mask &= ~CUIS_READY_NOTICE;
+    else if (aes_frames_wait_display(global)) {
         wait_mask &= ~(CUIS_READY_NOTICE|CUIS_READY_CONTROL); wait_mask |= CUIS_READY_DISPLAY;
     }
     if (aes_lifecycle_wait_display(global)) {
@@ -101,7 +102,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     /* Internal service wakes also work with double-click-capable calls.
      * CUIS defers them while a real multi-click is accumulating, without
      * replacing the application's independent timer deadline. */
-    if (aes_controls_repeating()) wait_mask |= CUIS_READY_SERVICE;
+    if (aes_controls_repeating(global)) wait_mask |= CUIS_READY_SERVICE;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
     if (ready & CUIS_READY_COHORT) {
@@ -123,7 +124,7 @@ static short event_once(short events, short clicks, short button_mask, short but
         child_failed = TRUE;
     }
     if (!aes_lifecycle_wait_display(global) && frame_work && !(ready & CUIS_READY_NOTICE) && messages(session,global) < 0) return 0;
-    if ((ready & CUIS_READY_NOTICE) && aes_frames_wait_display()) {
+    if ((ready & CUIS_READY_NOTICE) && aes_frames_wait_display(global)) {
         ready &= ~CUIS_READY_NOTICE;
         if (!ready) return -1;
     }
@@ -172,8 +173,8 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     session = aes_application_session(global);
     if (session < 0) return 0;
     clocked = (events & MU_TIMER) &&
-        ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered() ||
-         aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening(global));
+        ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered(global) ||
+         aes_controls_listening(global) || aes_frames_wait_display(global) || aes_lifecycle_listening(global));
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     duration = interval/5 + (interval%5 != 0) + (interval != 0);
     if (clocked) {

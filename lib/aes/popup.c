@@ -143,7 +143,7 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, AESGLOBAL *gl
     if (!buffer) goto done;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;
-    if (!aes_frames_suspend()) goto done;
+    if (!aes_frames_suspend(global)) goto done;
     overlay = TRUE;
     if (cuis_call6(CUIS_MOUSE_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     grabbed = TRUE;
@@ -163,7 +163,7 @@ done:
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (buffer && aes_resource_discard(buffer) != E_OK) ok = FALSE;
     if (tree && aes_resource_discard(tree) != E_OK) ok = FALSE;
-    if (overlay) aes_frames_resume();
+    if (overlay) aes_frames_resume(global);
     if (ok && selection > 0) { *result = output; return 1; }
     result->mn_keystate = 0;
     return 0;

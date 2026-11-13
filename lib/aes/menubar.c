@@ -309,7 +309,7 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
     bar.busy = TRUE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) { ok = FALSE; goto done; }
     locked = TRUE;
-    if (!aes_frames_suspend()) { ok = FALSE; goto done; }
+    if (!aes_frames_suspend(global)) { ok = FALSE; goto done; }
     overlay = TRUE;
     flags = cuis_call6(CUIS_SURFACE_STATUS,session,1,0,0,0,0);
     if (flags < 0) { ok = FALSE; goto done; }
@@ -385,7 +385,7 @@ done:
     if (grabbed && cuis_call6(CUIS_MOUSE_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (locked && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (buffer && aes_resource_discard(buffer) != E_OK) ok = FALSE;
-    if (overlay) aes_frames_resume();
+    if (overlay) aes_frames_resume(global);
     bar.tree = original;
     if (desk.tree) (void)aes_resource_discard(desk.tree);
     bar.busy = FALSE;

@@ -127,15 +127,31 @@ generation counter, registry, reference counting, TLS or stale-pointer check.
 Kernel process exit remains authoritative cleanup for faults, `_Exit` and
 omitted `appl_exit`; libaes has no cached-session destructor.
 
-Application session, enumeration cursor and shutdown/cohort state now live in
-the context. Windows, resources, menus, graphics, shell state and temporary
-helper pointers still need migration in subsequent #953 slices. This is not
-yet a reentrant implementation or independent application isolation. CUIS
+The context now owns these retained state groups:
+
+- Application session, enumeration cursor and shutdown/cohort state.
+- Window metadata, visible-region iterators, pending frame/control work and
+  modal overlay/dialog counters.
+- Window-zero desktop tree, background region iterator and screen buffer.
+- Cached graphics workstation/metrics, cursor forms and visibility depth,
+  and 3D style preferences. Each stack painter borrows the supplied context's
+  style state, including during nested USERDEF calls using another global.
+
+Private helpers receive the caller's global explicitly. Window, desktop and
+graphics resets clean up only that context's retained state; explicit aliases
+share it. The native `wind_new` operation still resets the kernel session's
+windows, whose identity boundary remains unchanged.
+
+Resources/failed-cleanup bookkeeping, menus, shell state and temporary helper
+pointers still need migration in subsequent #953 slices. This is not yet a
+reentrant implementation or independent application isolation. CUIS
 still returns one session per process: two fresh globals allocate distinct
 userspace contexts, but currently receive the same native session. Ending it
 through either context invalidates the other context's kernel session. Tests
-of independent enumeration/cohort state use distinct mocked session handles;
-production independent sessions require the separate CUIS identity work
+of independent enumeration/cohort state use distinct mocked session handles.
+Window/desktop/graphics tests also verify private state isolation and alias
+sharing while retaining the current shared-session constraint. Independent
+native sessions require the separate CUIS identity work
 coordinated with #896/#907/#915.
 
 ## Boot/configuration audit

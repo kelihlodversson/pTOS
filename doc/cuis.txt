@@ -14,9 +14,12 @@ The m68k trap ABI remains 30 bytes; ARM/x32 use native layout and pointers.
 Kernel AES retains its area-D use of ap_3resv. Userspace mt_appl_init now owns
 an opaque heap context through that slot: null allocates, non-null explicitly
 reuses it. Exit frees the context and clears only the supplied slot; other
-aliases become invalid. Session, enumeration and cohort state are per context.
-Remaining state migration, full reentrancy and CUIS identity changes remain
-separate #953 slices. CUIS still has one session per process; fresh userspace
+aliases become invalid. Session, enumeration, cohort, window/frame, desktop
+and graphics/cursor/style state are per context. Private helper calls pass
+the supplied global, and reset/cleanup uses that context's retained state.
+Resource/menu/shell ownership, temporary helpers, full reentrancy and CUIS
+identity changes remain separate #953 slices. CUIS still has one session per
+process; fresh userspace
 contexts do not imply independent sessions, windows or message queues. #903 is
 separate. Historical implementation notes below predate this
 binding split; see doc/libaes-compatibility.md for the current ownership and API.

@@ -1,6 +1,7 @@
 /* Public object-drawing contracts against a small independent pixel oracle. */
 #include "gem.h"
 #include "desktop.h"
+#include "app_context.h"
 #include "gemmovegeom.h"
 #include "gemframegeom.h"
 #include "gemslidegeom.h"
@@ -103,13 +104,13 @@ void gem_menubar_input_stage(short stage)
     }
 }
 static ULONG frame_overlay_depth, frame_dialog_depth, bad_overlay_scope;
-BOOL aes_frames_suspended(void) { return frame_overlay_depth != 0; }
-BOOL aes_frames_suspend(void) { frame_overlay_depth++; return TRUE; }
-void aes_frames_resume(void) { if (frame_overlay_depth) frame_overlay_depth--; else bad_overlay_scope++; }
-BOOL aes_frames_dialog(BOOL begin)
+BOOL aes_frames_suspended(AESGLOBAL *global) { (void)global; return frame_overlay_depth != 0; }
+BOOL aes_frames_suspend(AESGLOBAL *global) { (void)global; frame_overlay_depth++; return TRUE; }
+void aes_frames_resume(AESGLOBAL *global) { (void)global; if (frame_overlay_depth) frame_overlay_depth--; else bad_overlay_scope++; }
+BOOL aes_frames_dialog(BOOL begin, AESGLOBAL *global)
 {
-    if (begin) { frame_dialog_depth++; return aes_frames_suspend(); }
-    if (frame_dialog_depth) { frame_dialog_depth--; aes_frames_resume(); }
+    if (begin) { frame_dialog_depth++; return aes_frames_suspend(global); }
+    if (frame_dialog_depth) { frame_dialog_depth--; aes_frames_resume(global); }
     return TRUE;
 }
 LONG aes_application_session(AESGLOBAL *global) { return global && global->ap_id >= 0 && !session_error ? 7 : EACCDN; }
@@ -1127,19 +1128,54 @@ static int desktop_drawing_checks(void)
     VERIFY(aes_desktop_dispatch(&aes_global) == ENSMEM && background_state == 3 && !nesting);
     allocation_error = FALSE;
     before = calls;
-    VERIFY(aes_frames_suspend());
+    VERIFY(aes_frames_suspend(&aes_global));
     VERIFY(aes_desktop_dispatch(&aes_global) == E_OK && background_state == 3 && calls == before);
-    aes_frames_resume();
+    aes_frames_resume(&aes_global);
     foreign_display = TRUE;
     VERIFY(aes_desktop_dispatch(&aes_global) == EAGAIN && background_state == 3 && !nesting);
     foreign_display = FALSE;
     VERIFY(aes_desktop_dispatch(&aes_global) == E_OK && background_state == 1);
-    aes_desktop_reset(); background_state = 0;
+    aes_desktop_reset(&aes_global); background_state = 0;
+    return 0;
+}
+
+static AESGLOBAL *style_target;
+static WORD nested_style, nested_style_result;
+static WORD style_callback(PARMBLK *parameters)
+{
+    (void)parameters;
+    nested_style_result = mt_objc_sysvar(SV_SET,ACTBUTCOL,nested_style,0,NULL,NULL,style_target);
+    return 0;
+}
+static int style_context_checks(void)
+{
+    AES_APP_CONTEXT context = {0};
+    AESGLOBAL independent = {0}, alias = {0};
+    WORD original, other, changed, value;
+    USERBLK user = {style_callback,0};
+    OBJECT object = {NIL,NIL,NIL,G_USERDEF,LASTOB,NORMAL,{0},0,0,16,16};
+    independent.ap_3resv = &context;
+    alias.ap_3resv = aes_global.ap_3resv;
+    alias.ap_id = aes_global.ap_id;
+    VERIFY(objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&original,NULL));
+    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&other,NULL,&independent));
+    changed = other == 0 ? 1 : 0;
+    VERIFY(objc_sysvar(SV_SET,ACTBUTCOL,changed,0,NULL,NULL));
+    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&value,NULL,&independent) && value == other);
+    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&value,NULL,&alias) && value == changed);
+    style_target = &independent; nested_style = changed == 0 ? 1 : 0; nested_style_result = 0;
+    object.ob_spec.userblk = &user;
+    VERIFY(objc_draw(&object,0,0,0,0,16,16) && nested_style_result);
+    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&value,NULL,&independent) && value == nested_style);
+    VERIFY(objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&value,NULL) && value == changed);
+    style_target = NULL;
+    VERIFY(objc_sysvar(SV_SET,ACTBUTCOL,original,0,NULL,NULL));
     return 0;
 }
 
 int main(void)
 {
+    AES_APP_CONTEXT context = {0};
     OBJECT tree[4] = { { 0 } }, large = { 0 }, labels[3] = { { 0 } };
     WORD x,y;
     int before, axis, style;
@@ -1149,6 +1185,7 @@ int main(void)
     TEDINFO changed = { 0 };
     char raw[] = "AB", pattern[] = "__.__", big[258];
     aes_global = (AESGLOBAL){ 0 };
+    aes_global.ap_3resv = &context;
     VERIFY(tracking_checks() == 0);
     VERIFY(frame_metric_checks() == 0);
     VERIFY(frame_paint_checks() == 0);
@@ -1581,5 +1618,6 @@ int main(void)
     VERIFY(desktop_drawing_checks() == 0);
     VERIFY(opens == closes && !nesting && calls > 0 && texts >= 2);
     VERIFY(!frame_overlay_depth && !frame_dialog_depth && !bad_overlay_scope);
+    VERIFY(style_context_checks() == 0);
     return 0;
 }

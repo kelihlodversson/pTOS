@@ -3,6 +3,9 @@
 #ifndef LIBAES_APP_CONTEXT_H
 #define LIBAES_APP_CONTEXT_H
 #include "aesglobal.h"
+#include "graphics_state.h"
+#include "window_state.h"
+#include "desktop_state.h"
 typedef struct {
     BOOL accessory, coordinator, reset_wait_display;
     ULONG stale_window_bytes;
@@ -12,6 +15,9 @@ typedef struct {
 typedef struct aes_app_context {
     LONG session, search_after;
     AES_LIFECYCLE_STATE lifecycle;
+    AES_GRAPHICS_STATE graphics;
+    AES_WINDOW_STATE windows;
+    AES_DESKTOP_STATE desktop;
 } AES_APP_CONTEXT;
 
 /* A live context is a caller precondition, just as for other heap objects.

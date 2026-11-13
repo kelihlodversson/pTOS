@@ -72,9 +72,9 @@ LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQU
     return EINVFN;
 }
 void aes_menu_reset(void) { resets++; }
-void aes_windows_reset(void) { }
-void aes_desktop_reset(void) { }
-void aes_graphics_reset(void) { }
+void aes_windows_reset(AESGLOBAL *global) { (void)global; }
+void aes_desktop_reset(AESGLOBAL *global) { (void)global; }
+void aes_graphics_reset(AESGLOBAL *global) { (void)global; }
 void aes_resources_reset(void) { }
 
 int main(void)
