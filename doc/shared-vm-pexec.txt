@@ -8,32 +8,52 @@ Implementation slice (private test kernels only until independent acceptance):
 
 Workstream B status (unaccepted, test-only implementation)
 -------------------------------------------------------
-Base: integrated epic dd3ec30d307c42e528d3b82858920260ab85e5a5. The independent
-post-merge audit REJECTED this prerequisite baseline after exposing a narrow
-retained-lazy reservation defect. Its correction is isolated in #958; it is
-not bundled into this consumer. No activation or final acceptance is possible
-until that correction is independently accepted and integrated.
+Base: accepted integrated epic 5a490963f51c08d1dddcef60cfc86c2daa082e89.
+The historical dd3 prerequisite was rejected for retained-lazy authority beyond
+its exact ticket extent. Focused correction #958 is now integrated, with all
+four actual-epic workflows and native/compatibility validation accepted. This
+consumer preserves that correction; prerequisite acceptance is not Phase5
+consumer acceptance.
 
-The current source provides a test-gated static staged-ELF path for both modes,
-with independent trusted THREAD construction, guarded ordinary-heap stack,
-bounded retained physical/logical ownership and the canonical PROCESS reap.
-CONF_WITH_SHARED_VM_PEXEC_TEST defaults n and no shipped preset selects it.
+Normal merge 1903d5041ff8d3b70a8686c10dd4d191834c96f9 retains both the previous
+consumer and accepted epic histories. Fresh actual static-ELF trap suites at
+that exact reconciliation pass x32 FAT24/0, ARM FAT27/0/PFS28/0 and m68k040
+FAT26/0/PFS27/0, with five shutdown checks each. Independent review verifies
+the corrected exact backing bounds, live-ticket checks and cleanup fences
+remain unchanged. Later authored increments require their own final matrix.
+
+CONF_WITH_SHARED_VM_PEXEC_TEST defaults n; no shipped preset selects it.
 Ordinary ring-3 mode4/104 rejection remains unchanged. This test switch is
 not a production activation decision.
 
-Still incomplete: legacy PRG and interpreter policy, full exit-order/orphan
-and SAME_PROCESS worker tests, all preparation-stage failure injections,
-concurrent-wait and cancellation claim coverage, PROT_NONE reservation
-inheritance, final cross-architecture/compatibility matrix and independent
-loader/memory-owner acceptance. The permission-preparation and inactive
-reservation extensions also require focused review; successful basic execution
-is not proof of complete shared-ASPACE allocation lifetime.
+Additional draft implementation:
+- PRG borrowed-text permission preparation authenticates a live exact R1
+  allocation hold and uses the same reversible journal. Native m68k basic
+  PRG4/104 entry, shared-data write and status/reap pass in the preliminary
+  authored configuration; full final-source/PFS/pinned coverage is pending.
+- Trusted standard ELF entry preserves the argc/argv stack rather than
+  constructing a C entry frame. The x32 launcher authenticates the published
+  ELF draft's exact initial SP before using the existing16-byte ELF alignment
+  rule; public C entries retain their RSP+8 alignment requirement.
+- Interpreted images are staged transactionally in shared owner storage,
+  with rebuilt standard stack/AUXV and preserved original pending image on
+  rollback. Actual interpreted startup exposed the native entry-kind defect;
+  the scoped correction requires a fresh native rerun, not merely model tests.
+- RELRO tightening may only remove WRITE from fully preflighted private,
+  non-FILE, non-EXEC user leaves. It preserves immutable ticket ceilings while
+  checking current minimum access and updating COW logical protection. The
+  KPROC caller must authenticate only its kernel-recorded exact GNU_RELRO
+  interval, never ordinary heap/MMAP pages or a generic shared-root range.
+- Canonical PROCESS wait claims use PROCESS number/TID identity, skip another
+  waiter's claimed zombie and release before cancellation checkpoints.
 
-Preliminary authored-tree tests: x32 actual trap launch of static PIE through
-both4/104, normal return, async public wait exactly once, duplicate launch
-rejection and staged owner cleanup; complete suite24/0 plus five shutdowns.
-Production borrow/permission rollback tests pass with modeled MMU providers
-across x32/ARM/m68k, normal/ASan/fortified (prior preparation slice); those are
-not native shared-Pexec evidence on ARM/m68k. Full gate-off x32 MEMTEST/GEM/
-form/input passed before the guard refinement. Exact-commit validation will
-be recorded separately, not inferred from these work-in-progress tests.
+Still incomplete: interpreted runtime acceptance, full exit-order/orphan and
+final-THREAD tests, preparation failure injections, full wait/cancellation and
+PROT_NONE lifetime coverage, final cross-architecture/compatibility matrix and
+independent loader/memory-owner acceptance. Successful basic execution is not
+proof of complete shared-ASPACE allocation lifetime.
+
+Hosted production startup, permissions, wait claims and RELRO tests use modeled
+CPU/MMU/physical providers. Their normal/ASan/UBSan/fortified results are not
+native shared-Pexec execution evidence. No public activation, merge or Phase5
+completion follows from these incremental tests.
