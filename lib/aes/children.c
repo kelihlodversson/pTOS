@@ -1,5 +1,5 @@
 /* Translate retained native completions into ordinary GEM messages. */
-#include "gem.h"
+#include "libaes.h"
 #include "application.h"
 #include "transport.h"
 #include "gemerror.h"

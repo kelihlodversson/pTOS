@@ -7,7 +7,6 @@
 #include "mforms.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("graphics failure: %d\n",__LINE__); return __LINE__; } } while (0)
-AESGLOBAL aes_global;
 static LONG session = 7, open_error, query_error, check_error, style_error;
 static WORD next_handle = 10, closed_handle;
 static unsigned opens, closes, queries, styles;
@@ -50,6 +49,7 @@ int main(void)
     AESGLOBAL other = {0};
     MFORM custom;
     unsigned before;
+    aes_global = (AESGLOBAL){ 0 };
     CHECK(sizeof(MFORM) == 74 && __builtin_offsetof(MFORM,mf_fg) == 6 &&
         __builtin_offsetof(MFORM,mf_bg) == 8 && __builtin_offsetof(MFORM,mf_mask) == 10);
     CHECK(__builtin_types_compatible_p(__typeof__(((MFORM *)0)->mf_mask[0]),WORD));

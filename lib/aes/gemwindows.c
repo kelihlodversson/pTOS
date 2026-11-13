@@ -1,6 +1,6 @@
 /* GEM IDs and plain-window geometry are private to each application.
  * CUIS retains authoritative ownership, visibility and global stacking. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
@@ -131,7 +131,7 @@ short mt_wind_find(short x, short y, AESGLOBAL *global)
     identifier = cuis_call6(CUIS_WINDOW_AT, (QUAD)x, (QUAD)y, 0, 0, 0, 0);
     return identifier >= 0 && identifier <= 32767 ? (short)identifier : -1;
 }
-short wind_find(short x, short y) { return mt_wind_find(x,y,&aes_global); }
+
 
 short mt_wind_calc(short type, short kind, short x, short y, short w, short h,
                    short *ox, short *oy, short *ow, short *oh, AESGLOBAL *global)
@@ -155,11 +155,7 @@ short mt_wind_calc(short type, short kind, short x, short y, short w, short h,
     output(&r, ox, oy, ow, oh);
     return 1;
 }
-short wind_calc(short type, short kind, short x, short y, short w, short h,
-                short *ox, short *oy, short *ow, short *oh)
-{
-    return mt_wind_calc(type, kind, x, y, w, h, ox, oy, ow, oh, &aes_global);
-}
+
 
 static BOOL prepare_window(struct gem_window *window, const GRECT *border, WM_FRAME_STATE *state, AESGLOBAL *global)
 {
@@ -242,10 +238,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, A
     window->id = (short)identifier;
     return window->id;
 }
-short wind_create(short kind, short x, short y, short w, short h)
-{
-    return mt_wind_create(kind, x, y, w, h, &aes_global);
-}
+
 
 static BOOL configure(struct gem_window *window, short x, short y, short w, short h, AESGLOBAL *global)
 {
@@ -278,10 +271,7 @@ static short local_wind_open(short id, short x, short y, short w, short h, AESGL
     }
     return 1;
 }
-short wind_open(short id, short x, short y, short w, short h)
-{
-    return mt_wind_open(id, x, y, w, h, &aes_global);
-}
+
 static short local_wind_close(short id, AESGLOBAL *global)
 {
     struct gem_window *window = lookup(id, global);
@@ -295,7 +285,7 @@ static short local_wind_close(short id, AESGLOBAL *global)
     discard_regions(&window->regions);
     return 1;
 }
-short wind_close(short id) { return mt_wind_close(id, &aes_global); }
+
 static short local_wind_delete(short id, AESGLOBAL *global)
 {
     struct gem_window *window = lookup(id, global);
@@ -305,7 +295,7 @@ static short local_wind_delete(short id, AESGLOBAL *global)
     window->id = 0;
     return 1;
 }
-short wind_delete(short id) { return mt_wind_delete(id, &aes_global); }
+
 
 static short visible_work(struct gem_window *window, BOOL first, GRECT *out, AESGLOBAL *global)
 {
@@ -791,10 +781,7 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     output(&r, a, b, c, d);
     return 1;
 }
-short wind_get(short id, short field, short *a, short *b, short *c, short *d)
-{
-    return mt_wind_get(id, field, a, b, c, d, &aes_global);
-}
+
 static WORD *slider_field(struct gem_window *window, WORD field)
 {
     switch (field) {
@@ -871,10 +858,7 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
     }
     return 0; /* Decorated fields migrate with the frame renderer. */
 }
-short wind_set(short id, short field, short a, short b, short c, short d)
-{
-    return mt_wind_set(id, field, a, b, c, d, &aes_global);
-}
+
 
 short mt_wind_update(short code, AESGLOBAL *global)
 {
@@ -890,7 +874,7 @@ short mt_wind_update(short code, AESGLOBAL *global)
     if (code != BEG_UPDATE && code != (BEG_UPDATE | NO_BLOCK)) return 0;
     return cuis_call6(function, session, 1, !(code & NO_BLOCK), 0, 0, 0) == E_OK ? 1 : 0;
 }
-short wind_update(short code) { return mt_wind_update(code, &aes_global); }
+
 
 short mt_wind_create(short kind, short x, short y, short w, short h, AESGLOBAL *global)
 {
@@ -956,10 +940,7 @@ short mt_wind_set_str(short id, short field, const char *text, AESGLOBAL *global
     if (!mt_wind_update(END_UPDATE,global)) ok = FALSE;
     return ok ? 1 : 0;
 }
-short wind_set_str(short id, short field, const char *text)
-{
-    return mt_wind_set_str(id,field,text,&aes_global);
-}
+
 
 LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token)
 {
@@ -984,19 +965,17 @@ short mt_wind_new(AESGLOBAL *global)
 {
     return aes_windows_reset_policy(global,FALSE,0) == E_OK;
 }
-short wind_new(void) { return mt_wind_new(&aes_global); }
+
 short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, AESGLOBAL *global)
 {
     if (field == WF_NEWDESK) return id == 0 ? aes_desktop_set(pointer,value,global) : 0;
     if (field == WF_NAME || field == WF_INFO) return mt_wind_set_str(id,field,pointer,global);
     return 0;
 }
-short wind_set_ptr_int(short id, short field, void *pointer, short value)
-{ return mt_wind_set_ptr_int(id,field,pointer,value,&aes_global); }
+
 short mt_wind_set_ptr(short id, short field, void *pointer, AESGLOBAL *global)
 { return mt_wind_set_ptr_int(id,field,pointer,0,global); }
-short wind_set_ptr(short id, short field, void *pointer)
-{ return mt_wind_set_ptr(id,field,pointer,&aes_global); }
+
 short mt_wind_get_ptr(short id, short field, void **pointer, AESGLOBAL *global)
 {
     struct gem_window *window;
@@ -1015,36 +994,29 @@ short mt_wind_get_ptr(short id, short field, void **pointer, AESGLOBAL *global)
     else return 0;
     *pointer = value; return 1;
 }
-short wind_get_ptr(short id, short field, void **pointer)
-{ return mt_wind_get_ptr(id,field,pointer,&aes_global); }
+
 short mt_wind_get_int(short id, short field, short *value, AESGLOBAL *global)
 { return mt_wind_get(id,field,value,NULL,NULL,NULL,global); }
-short wind_get_int(short id, short field, short *value)
-{ return mt_wind_get_int(id,field,value,&aes_global); }
+
 short mt_wind_set_int(short id, short field, short value, AESGLOBAL *global)
 { return mt_wind_set(id,field,value,0,0,0,global); }
-short wind_set_int(short id, short field, short value)
-{ return mt_wind_set_int(id,field,value,&aes_global); }
+
 short mt_wind_get_grect(short id, short field, GRECT *rect, AESGLOBAL *global)
 {
     GRECT result = { 0,0,0,0 };
     if (!rect || !mt_wind_get(id,field,&result.g_x,&result.g_y,&result.g_w,&result.g_h,global)) return 0;
     *rect = result; return 1;
 }
-short wind_get_grect(short id, short field, GRECT *rect)
-{ return mt_wind_get_grect(id,field,rect,&aes_global); }
+
 short mt_wind_set_grect(short id, short field, const GRECT *rect, AESGLOBAL *global)
 { return rect ? mt_wind_set(id,field,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : 0; }
-short wind_set_grect(short id, short field, const GRECT *rect)
-{ return mt_wind_set_grect(id,field,rect,&aes_global); }
+
 short mt_wind_create_grect(short kind, const GRECT *rect, AESGLOBAL *global)
 { return rect ? mt_wind_create(kind,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : -1; }
-short wind_create_grect(short kind, const GRECT *rect)
-{ return mt_wind_create_grect(kind,rect,&aes_global); }
+
 short mt_wind_open_grect(short id, const GRECT *rect, AESGLOBAL *global)
 { return rect ? mt_wind_open(id,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : 0; }
-short wind_open_grect(short id, const GRECT *rect)
-{ return mt_wind_open_grect(id,rect,&aes_global); }
+
 short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, AESGLOBAL *global)
 {
     GRECT result;
@@ -1052,5 +1024,3 @@ short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, AE
         &result.g_x,&result.g_y,&result.g_w,&result.g_h,global)) return 0;
     *out = result; return 1;
 }
-short wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out)
-{ return mt_wind_calc_grect(type,kind,in,out,&aes_global); }

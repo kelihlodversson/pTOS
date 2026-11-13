@@ -1,6 +1,6 @@
 /* Standard GEM form keyboard navigation in application memory.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "application.h"
 #include "layout.h"
 #include "gemformkey.h"
@@ -30,9 +30,4 @@ short mt_form_keybd(OBJECT *tree, short object, short proposed, short key,
 {
     BOOL ok;
     return aes_form_keybd_checked(tree,object,proposed,key,next,remaining,global,&ok);
-}
-short form_keybd(OBJECT *tree, short object, short proposed, short key,
-                 short *next, short *remaining)
-{
-    return mt_form_keybd(tree,object,proposed,key,next,remaining,&aes_global);
 }

@@ -1,7 +1,7 @@
 /* Userspace binding of the original AES renderer and GSX drawing code.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
 #include "emutos.h"
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "vdi_service.h"
 #include "transport.h"
@@ -532,10 +532,7 @@ WORD mt_objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, 
     if (!tree || start < 0 || depth < 0 || depth > MAX_DEPTH) return 0;
     return render(tree,start,depth,x,y,w,h,global,FALSE,0,0,NULL,0,NULL,NULL);
 }
-WORD objc_draw(OBJECT *tree, WORD start, WORD depth, WORD x, WORD y, WORD w, WORD h)
-{
-    return mt_objc_draw(tree,start,depth,x,y,w,h,&aes_global);
-}
+
 WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h,
                     WORD state, WORD redraw, AESGLOBAL *global)
 {
@@ -551,10 +548,7 @@ WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WO
     }
     return 1;
 }
-WORD objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WORD w, WORD h, WORD state, WORD redraw)
-{
-    return mt_objc_change(tree,object,reserved,x,y,w,h,state,redraw,&aes_global);
-}
+
 
 /* The editor redraws into the same workstation and immutable update clip. */
 void aes_edit_draw(OBJECT *tree, WORD object, WORD depth)
@@ -592,10 +586,7 @@ WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, A
     *index = staged;
     return 1;
 }
-WORD objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
-{
-    return mt_objc_edit(tree,object,key,index,kind,&aes_global);
-}
+
 
 typedef struct { WORD kind; GRECT small, large; } FORM_ANIMATION;
 /* A native trajectory is linear in position/size. Validate its endpoints
@@ -807,8 +798,7 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
     }
     return result;
 }
-WORD objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2)
-{ return mt_objc_sysvar(mode,which,in1,in2,out1,out2,&aes_global); }
+
 
 /* Public graphics calls share the native XOR tracking loops. The renderer
  * lends its private workstation; whole-screen and mouse ownership span waits. */

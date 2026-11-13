@@ -1,6 +1,6 @@
 /* Standard GEM graphics setup and caller-local native cursor semantics.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
@@ -52,10 +52,7 @@ short mt_graf_handle(short *wchar, short *hchar, short *wbox, short *hbox, AESGL
     if (hbox) *hbox = graphics_metrics.hbox;
     return graphics_handle;
 }
-short graf_handle(short *wchar, short *hchar, short *wbox, short *hbox)
-{
-    return mt_graf_handle(wchar,hchar,wbox,hbox,&aes_global);
-}
+
 short mt_graf_mouse(short mode, const MFORM *form, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
@@ -85,4 +82,3 @@ short mt_graf_mouse(short mode, const MFORM *form, AESGLOBAL *global)
     mouse_depth = depth;
     return 1;
 }
-short graf_mouse(short mode, const MFORM *form) { return mt_graf_mouse(mode,form,&aes_global); }

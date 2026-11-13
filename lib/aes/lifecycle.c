@@ -1,7 +1,7 @@
 /* Standard GEM shutdown coordination. No GUI wire format crosses into the
  * native cohort implementation as anything other than bounded opaque bytes.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "application.h"
 #include "transport.h"

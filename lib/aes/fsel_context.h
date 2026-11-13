@@ -2,7 +2,7 @@
 #ifndef LIBAES_FSEL_CONTEXT_H
 #define LIBAES_FSEL_CONTEXT_H
 #include "emutos.h"
-#include "gem.h"
+#include "libaes.h"
 #include "bdosdefs.h"
 #include "layout.h"
 #include "gem_rsc.h"

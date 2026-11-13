@@ -9,7 +9,6 @@
 extern void *fopen(const char *, const char *);
 extern size_t fread(void *, size_t, size_t, void *);
 extern int fclose(void *);
-AESGLOBAL aes_global = { .ap_id = 1 };
 static UBYTE disk[16384], original[16384];
 static LONG disk_size, position;
 static int files, allocations, alloc_after = -1, reads, short_read, close_error, seek_error, graphics_error;
@@ -97,6 +96,7 @@ int main(int argc, char **argv)
     void *file, *address;
     AESGLOBAL saved = { 0 };
     int i, result, before, size;
+    aes_global = (AESGLOBAL){ .ap_id = 1 };
     VERIFY(argc == 3);
     file = fopen(argv[1],"rb"); VERIFY(file != NULL);
     disk_size = fread(disk,1,sizeof(disk),file); VERIFY(fclose(file) == 0 && disk_size > 36);

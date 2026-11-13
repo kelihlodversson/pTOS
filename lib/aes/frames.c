@@ -1,6 +1,7 @@
 /* Native GEM frame appearance; no GEM decoration state crosses CUIS.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
+#include "object_helpers.h"
 #include "gemerror.h"
 #include "application.h"
 #include "transport.h"
@@ -38,7 +39,7 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
     wm_frame_build(frame.tree,&frame.name,&frame.info,state);
     /* Later siblings win overlapping 3D hit bounds, exactly as ob_find()
      * does in the native control manager before entering gr_watchbox(). */
-    object = objc_find(frame.tree,ROOT,8,(WORD)x,(WORD)y);
+    object = aes_object_find(frame.tree,ROOT,8,(WORD)x,(WORD)y);
     return object == W_CLOSER || object == W_FULLER ||
         (object == W_NAME && (state->kind & MOVER)) ||
         (object == W_SIZER && (state->kind & SIZER)) ||

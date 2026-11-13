@@ -1,6 +1,6 @@
 /* Standard modal GEM forms in the application's address space.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "application.h"
 #include "transport.h"
@@ -75,7 +75,7 @@ WORD mt_form_do(OBJECT *tree, WORD start, AESGLOBAL *global)
     aes_frames_resume();
     return c.ok ? result : 0;
 }
-WORD form_do(OBJECT *tree, WORD start) { return mt_form_do(tree,start,&aes_global); }
+
 
 WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
                    WORD x, WORD y, WORD w, WORD h, AESGLOBAL *global)
@@ -101,8 +101,4 @@ WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (ok) (void)aes_frames_dialog(FALSE);
     return ok ? 1 : 0;
-}
-WORD form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh, WORD x, WORD y, WORD w, WORD h)
-{
-    return mt_form_dial(kind,sx,sy,sw,sh,x,y,w,h,&aes_global);
 }

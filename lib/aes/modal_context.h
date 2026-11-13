@@ -1,7 +1,7 @@
 /* Private per-call modal form adapters. */
 #ifndef LIBAES_MODAL_CONTEXT_H
 #define LIBAES_MODAL_CONTEXT_H
-#include "gem.h"
+#include "libaes.h"
 #include "layout.h"
 typedef struct {
     AESGLOBAL *global;

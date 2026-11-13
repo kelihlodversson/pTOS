@@ -1,6 +1,6 @@
 /* Standard GEM button tracking over existing CUIS/GEM input and drawing.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
@@ -136,10 +136,7 @@ short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_sta
     inside = aes_form_watch(tree,object,in_state,out_state);
     return finish(&c,saved) ? inside : 0;
 }
-short graf_watchbox(OBJECT *tree, short object, short in_state, short out_state)
-{
-    return mt_graf_watchbox(tree,object,in_state,out_state,&aes_global);
-}
+
 short aes_form_button_checked(OBJECT *tree, short object, short clicks, short *next, AESGLOBAL *global, BOOL *ok)
 {
     FORM_CONTEXT c = { 0 }, *saved = aes_form_context;
@@ -163,8 +160,4 @@ short mt_form_button(OBJECT *tree, short object, short clicks, short *next, AESG
 {
     BOOL ok;
     return aes_form_button_checked(tree,object,clicks,next,global,&ok);
-}
-short form_button(OBJECT *tree, short object, short clicks, short *next)
-{
-    return mt_form_button(tree,object,clicks,next,&aes_global);
 }

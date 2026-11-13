@@ -1,7 +1,7 @@
 /* Private caller-local resource bindings and ownership. */
 #ifndef LIBAES_RESOURCE_CONTEXT_H
 #define LIBAES_RESOURCE_CONTEXT_H
-#include "gem.h"
+#include "libaes.h"
 #include "gemrslib.h"
 #include "layout.h"
 typedef struct resource_context {

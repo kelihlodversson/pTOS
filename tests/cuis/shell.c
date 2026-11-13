@@ -6,7 +6,6 @@
 #include "string.h"
 #include "runtime.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell failure: %d\n",__LINE__); return __LINE__; } } while (0)
-AESGLOBAL aes_global = { .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
 static PD basepage;
 static DL_LAUNCH launch;
 static char environment[AES_SHELL_ENV], long_prefix[AES_SHELL_ENV];
@@ -366,6 +365,7 @@ int main(void)
     char command[AES_SHELL_PATH], tail[128], path[AES_SHELL_PATH], *value;
     AESGLOBAL global = { 0 };
     int i, before;
+    aes_global = (AESGLOBAL){ .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
     memcpy(&global,&aes_global,sizeof(global));
     memcpy(environment,env,sizeof(env)); basepage.p_env = PTR_TO_USERPTR(environment);
     initial_tail[0] = 5; memcpy(initial_tail+1,"a b c",5);
