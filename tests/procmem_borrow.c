@@ -345,6 +345,82 @@ static void shared_permission_transactions(void)
     puts("Production loader permissions: allocation prefix rollback, exact PTE/lease restore, stale lease reuse, commit and foreign-holder refusal: PASS (host MMU)");
 }
 #endif
+#if defined(TEST_SHARED_PERMISSIONS) && defined(__m68k__) && CONF_WITH_PRG_LOADER
+static void borrowed_permission_transactions(void)
+{
+    ASPACE *as=aspace_create();KASPACE *space=kaspace_adopt(as);
+    PROCMEM_HOLD hold={0},partial={0},bad;PROCMEM_HOLD_INFO info;
+    KASPACE_PERMISSION_TRANSACTION *tx=NULL;
+    KASPACE_LEASE *old=NULL,*replacement=NULL;
+    KASPACE_PROTECTION change={0};
+    void *p=procmem_alloc(2*TEST_PAGE,0),*released=NULL;
+    VADDR va=(VADDR)(uintptr_t)p;UWORD rights;PADDR physical,actual;
+    ULONG i,count,pinned;int owner;
+    CHECK(as && space && p);selected_root=aspace_root(as);
+    procmem_set_owner(p,&owner);
+    CHECK(aspace_map_procmem(as,va,2*TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    CHECK(procmem_hold_acquire(p,procmem_gen(p),&owner,0,2*TEST_PAGE,
+        ASPACE_PROT_USER,1,&owner,&hold));
+    CHECK(procmem_hold_info(&hold,&info));
+    CHECK(kaspace_lease_acquire(space,va,16,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&old)==E_OK);
+    change.address=va+256;change.bytes=TEST_PAGE;change.rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC;
+    CHECK(aspace_translate(as,va,&physical,&rights));count=metadata_live;pinned=pins(p);
+    bad=hold;bad.allocation++;
+    CHECK(kaspace_permission_prepare_procmem(space,&bad,&change,1,&tx)==EACCDN && !tx);
+    bad=hold;bad.ticket++;
+    CHECK(kaspace_permission_prepare_procmem(space,&bad,&change,1,&tx)==EACCDN && !tx);
+    change.bytes=2*TEST_PAGE;
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==EACCDN && !tx);
+    change.bytes=TEST_PAGE;
+    CHECK(procmem_hold_acquire(p,procmem_gen(p),&owner,256,TEST_PAGE,
+        ASPACE_PROT_USER,1,&owner,&partial));
+    CHECK(kaspace_permission_prepare_procmem(space,&partial,&change,1,&tx)==EACCDN && !tx);
+    CHECK(procmem_hold_release(&partial,&released) && released==&owner);released=NULL;
+    /* Full preflight includes the second page before any EXEC update. */
+    model_leaf(as->root,va+TEST_PAGE,NULL,NULL)->flags|=ASPACE_LEAF_OWNED;
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==EACCDN && !tx);
+    model_leaf(as->root,va+TEST_PAGE,NULL,NULL)->flags&=~ASPACE_LEAF_OWNED;
+    model_leaf(as->root,va+TEST_PAGE,NULL,NULL)->physical+=TEST_PAGE;
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==EACCDN && !tx);
+    model_leaf(as->root,va+TEST_PAGE,NULL,NULL)->physical-=TEST_PAGE;
+    model_leaf(as->root,va+TEST_PAGE,NULL,NULL)->prot=ASPACE_PROT_WRITE;
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==EACCDN && !tx && kaspace_lease_valid(old));
+    model_leaf(as->root,va+TEST_PAGE,NULL,NULL)->prot=ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+    for(i=1;i<=3;i++) {
+        fail_metadata=allocation_call+i;
+        CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==ENSMEM && !tx);
+        reset_failure();CHECK(metadata_live==count && kaspace_lease_valid(old));
+        CHECK(aspace_translate(as,va,&actual,&rights) && physical==actual &&
+            rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    }
+    CHECK(kaspace_lease_seal(&old,1));
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==EACCDN && !tx && kaspace_lease_valid(old));
+    kaspace_lease_release(&old);
+    CHECK(kaspace_lease_acquire(space,va,16,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&old)==E_OK);
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==E_OK && tx && !kaspace_lease_valid(old));
+    CHECK(aspace_translate(as,va,&actual,&rights) && actual==physical && rights==change.rights);
+    CHECK(pins(p)==pinned && procmem_hold_info(&hold,&info));
+    kaspace_permission_finish(&tx,FALSE);
+    CHECK(kaspace_lease_valid(old) && metadata_live==count && pins(p)==pinned);
+    CHECK(aspace_translate(as,va+TEST_PAGE,NULL,&rights) && rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==E_OK);
+    kaspace_lease_release(&old);
+    CHECK(kaspace_lease_acquire(space,va,16,ASPACE_PROT_USER,&replacement)==E_OK);
+    CHECK(kaspace_mapping_change(as,va,16) && !kaspace_lease_valid(replacement));
+    kaspace_permission_finish(&tx,FALSE);
+    CHECK(!kaspace_lease_valid(replacement));kaspace_lease_release(&replacement);
+    CHECK(kaspace_permission_prepare_procmem(space,&hold,&change,1,&tx)==E_OK);
+    kaspace_permission_finish(&tx,TRUE);
+    CHECK(aspace_translate(as,va,NULL,&rights) && rights==change.rights);
+    CHECK(procmem_hold_info(&hold,&info) && pins(p)==pinned);
+    kaspace_put(space);
+    CHECK(!pins(p) && procmem_hold_release(&hold,&released) && released==&owner);
+    bad=hold;
+    CHECK(kaspace_permission_prepare_procmem(NULL,&bad,&change,1,&tx)==EINVAL && !tx);
+    CHECK(procmem_free(p));
+    puts("Production PRG borrowed text: live R1, rounded coverage, exact frames, full preflight/OOM, sealed refusal, EXEC rollback/commit and lease identity: PASS (host m68k MMU)");
+}
+#endif
 static void duplicate_borrow_reference(void)
 {
     ASPACE *as=aspace_create();KASPACE *space=kaspace_adopt(as);
@@ -368,6 +444,9 @@ int main(void)
     failed_ownerless();overlapping_attempts();table_failures();successful_retirement();duplicate_borrow_reference();
 #if defined(TEST_SHARED_PERMISSIONS)
     shared_permission_transactions();
+#if defined(__m68k__) && CONF_WITH_PRG_LOADER
+    borrowed_permission_transactions();
+#endif
 #endif
     CHECK(!metadata_live && !physical_live && !live_allocs && free_pages==WINDOW_PAGES);
     puts("Production borrow rollback: pre-pin/map/prefix/table OOM, aliases/permissions, stale-free prevention, retries, ownerless cleanup and final hold/pin reclamation: PASS (hosted MMU providers)");

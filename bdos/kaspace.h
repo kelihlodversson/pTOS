@@ -50,6 +50,13 @@ typedef struct kaspace_permission_transaction KASPACE_PERMISSION_TRANSACTION;
 typedef struct { VADDR address,bytes; UWORD rights; } KASPACE_PROTECTION;
 LONG kaspace_permission_prepare(KASPACE *,const KASPACE_PROTECTION *,UWORD,
                                KASPACE_PERMISSION_TRANSACTION **);
+/* PRG borrowed-text variant; unsupported backends return EINVFN. The live
+ * R1 token must cover every rounded page with USER backing rights and remain
+ * owned until finish. Its nonowning journal copy never releases the token.
+ * Changes mapping rights only; no raw allocation ownership or pin changes. */
+struct procmem_hold;
+LONG kaspace_permission_prepare_procmem(KASPACE *,const struct procmem_hold *,
+        const KASPACE_PROTECTION *,UWORD,KASPACE_PERMISSION_TRANSACTION **);
 void kaspace_permission_finish(KASPACE_PERMISSION_TRANSACTION **,BOOL commit);
 #endif
 

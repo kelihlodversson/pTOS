@@ -13,6 +13,7 @@ os.environ["CONFIG_"] = ""
 parser = argparse.ArgumentParser()
 parser.add_argument("presets", nargs="*", choices=["pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"])
 parser.add_argument("--permissions", action="store_true")
+parser.add_argument("--mode", choices=["normal", "asan", "fortified"], default="normal")
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="ptos-borrow-") as directory:
     work = Path(directory)
@@ -34,6 +35,12 @@ with tempfile.TemporaryDirectory(prefix="ptos-borrow-") as directory:
         k.write_config(str(work / "config"))
         subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig", "--config", str(work / "config"), "--header", str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")], env={**os.environ, "CONFIG_": ""}, check=True)
         flags = ([] if arch == "x86_64" else ["-DBORROW_GENERIC"]) + (["-DTEST_SHARED_PERMISSIONS"] if args.permissions else [])
+        if arch == "m68k":
+            flags += ["-D__m68k__"]
+        if args.mode == "asan":
+            flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        elif args.mode == "fortified":
+            flags += ["-D_FORTIFY_SOURCE=3", "-fstack-protector-strong"]
         subprocess.run(cc + ["-std=gnu90", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-iquote", "include", "-I" + str(work), "-Iinclude/machine/" + machine, "-Iinclude/arch/" + arch, "-Ibios/machine/" + machine, "-Ibios/arch/" + arch, "-iquote", "bdos", "-iquote", "bios", "-iquote", "fs", "-idirafter", "include"] + flags + ["tests/procmem_borrow.c", "bdos/kaspace.c", "-Wl,--gc-sections", "-o", str(work / "borrow")], check=True)
         subprocess.run([str(work / "borrow")], check=True)
         print(f"Production borrow transaction ({preset}): PASS", flush=True)

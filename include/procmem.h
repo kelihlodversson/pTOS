@@ -77,7 +77,7 @@ UQUAD procmem_gen(const void *p);
  * release returns it exactly once for destruction OUTSIDE all leaf exclusion.
  * No allocation, callback or final release occurs in the publication interval.
  * These operations require cooperative owner serialization (not SMP safe). */
-typedef struct {
+typedef struct procmem_hold {
     VADDR base;
     UQUAD allocation, ticket;
 } PROCMEM_HOLD;
@@ -324,6 +324,13 @@ BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
  * No extra pin/allocation, preserves frame/ownership, checks the entire range
  * before updates. m68k has no hardware NX; granularity is an MMU page. */
 BOOL aspace_mark_procmem_text(ASPACE *as, VADDR va, VADDR bytes);
+/* Pure exact borrowed-page authentication, followed by allocation-free
+ * permission mutation. Caller retains the authenticated allocation R1 hold;
+ * mutation checks the whole page-rounded range before revoking leases/stores. */
+BOOL aspace_procmem_permission_info(const ASPACE *, const void *base, UQUAD generation,
+                                   VADDR page, PADDR *, UWORD *);
+BOOL aspace_protect_procmem(ASPACE *, const void *base, UQUAD generation,
+                           VADDR address, VADDR bytes, UWORD rights);
 #endif
 
 /*
