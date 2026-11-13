@@ -34,6 +34,7 @@ int main(int argc, char **argv, char **envp)
     ULONG i;
     (void)envp;
     id = appl_init(); VERIFY(id > 0);
+    other.ap_3resv = aes_global.ap_3resv;
     VERIFY(appl_find(NULL) == id && mt_appl_init(&other) == id);
     VERIFY(appl_getinfo(4, &a, &b, &c, &d) == 1 && !a && b == 1 && c == 1 && d == 1);
     VERIFY(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && !c && !d);

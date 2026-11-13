@@ -69,14 +69,14 @@ static short event_once(short events, short clicks, short button_mask, short but
                        (QUAD)m2_w, (QUAD)m2_h) < 0) return 0;
         mask |= CUIS_READY_RECT2;
     }
-    if (!aes_lifecycle_wait_display() && ((events & MU_MESAG) || frame_work) && messages(session, global) < 0) return 0;
+    if (!aes_lifecycle_wait_display(global) && ((events & MU_MESAG) || frame_work) && messages(session, global) < 0) return 0;
     if (events & MU_MESAG) {
         child_failed = aes_child_messages(session) < 0;
         mask |= CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD;
     }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening() ? CUIS_READY_SURFACE : 0);
-    if (aes_lifecycle_listening() && !aes_frames_wait_display() && !aes_lifecycle_wait_display()) wait_mask |= CUIS_READY_COHORT;
+    if (aes_lifecycle_listening(global) && !aes_frames_wait_display() && !aes_lifecycle_wait_display(global)) wait_mask |= CUIS_READY_COHORT;
     /* A multi-click owns per-call accumulation until completion. Service
      * frame work afterward rather than interrupting that unfinished count. */
     if (aes_frames_listening() && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
@@ -86,7 +86,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     else if (aes_frames_wait_display()) {
         wait_mask &= ~(CUIS_READY_NOTICE|CUIS_READY_CONTROL); wait_mask |= CUIS_READY_DISPLAY;
     }
-    if (aes_lifecycle_wait_display()) {
+    if (aes_lifecycle_wait_display(global)) {
         wait_mask &= ~(CUIS_READY_STREAM|CUIS_READY_NOTICE|CUIS_READY_CHILD|CUIS_READY_COHORT|
                        CUIS_READY_CONTROL|CUIS_READY_SURFACE|CUIS_READY_SERVICE);
         if (events & MU_MESAG) wait_mask |= CUIS_READY_DISPLAY;
@@ -109,7 +109,7 @@ static short event_once(short events, short clicks, short button_mask, short but
         ready &= ~CUIS_READY_COHORT;
         if (!ready) return -1;
     }
-    if (!aes_lifecycle_wait_display() && (ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) && messages(session, global) < 0) return 0;
+    if (!aes_lifecycle_wait_display(global) && (ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) && messages(session, global) < 0) return 0;
     if (mask & CUIS_READY_INPUT) {
         if (cuis_call6(CUIS_INPUT_RESULT, session, (uintptr_t)&input[0], (uintptr_t)&input[1],
                        (uintptr_t)&input[2], (uintptr_t)&input[3], (uintptr_t)&input[4]) != E_OK) return 0;
@@ -122,12 +122,12 @@ static short event_once(short events, short clicks, short button_mask, short but
         ready &= ~CUIS_READY_CHILD;
         child_failed = TRUE;
     }
-    if (!aes_lifecycle_wait_display() && frame_work && !(ready & CUIS_READY_NOTICE) && messages(session,global) < 0) return 0;
+    if (!aes_lifecycle_wait_display(global) && frame_work && !(ready & CUIS_READY_NOTICE) && messages(session,global) < 0) return 0;
     if ((ready & CUIS_READY_NOTICE) && aes_frames_wait_display()) {
         ready &= ~CUIS_READY_NOTICE;
         if (!ready) return -1;
     }
-    retry_display = (ready & CUIS_READY_DISPLAY) && aes_lifecycle_wait_display() && (events & MU_MESAG);
+    retry_display = (ready & CUIS_READY_DISPLAY) && aes_lifecycle_wait_display(global) && (events & MU_MESAG);
     if (ready & (CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) {
         ready &= ~(CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE);
         if (!ready && !retry_display) return -1;
@@ -170,7 +170,7 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     short result;
     BOOL clocked = (events & MU_TIMER) &&
         ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered() ||
-         aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening());
+         aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening(global));
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     session = aes_application_session(global);
     duration = interval/5 + (interval%5 != 0) + (interval != 0);

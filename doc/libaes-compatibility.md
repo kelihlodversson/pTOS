@@ -95,16 +95,47 @@ The header asserts each member offset, field width, total size and alignment.
 This changes the private native libaes ABI: rebuild clients with the library.
 A 15-WORD buffer is only the m68k binding representation.
 
-This slice preserves the current singleton application/session behavior.
-`ap_3resv` is reserved in userspace; explicit heap contexts, context sharing,
-and removal of mutable library state are subsequent slices of #953. Classic
-wrappers, binding globals and public rectangle helpers now belong to GEMlib.
+Classic wrappers, binding globals and public rectangle helpers belong to GEMlib.
 Internal rectangle routines remain private to libaes.
 `tools/check-libaes-elf.py` checks actual ELF exports/imports and the archive,
 including caller-owned x32 global storage. `make libaes-elf-check` runs it.
-Kernel AES retains its historical area-D use of `ap_3resv`. CUIS still returns one session per process: separate
-`AESGLOBAL` objects do not create independent queues, windows or identities.
+Kernel AES retains its historical area-D use of `ap_3resv`.
 No dependency on #903, new CUIS identity API, or 68k AESPB emulation is introduced.
+
+## Explicit application context lifetime (#953)
+
+For userspace libaes, `mt_appl_init` allocates an opaque `AES_APP_CONTEXT` when
+the supplied global's `ap_3resv` is null. It publishes the pointer only after
+session setup succeeds and rolls back normal allocation/registration failures.
+A non-null slot reuses exactly that context without opening another session,
+allocating another context, or finding a context by PID/TID. Reinitialization
+preserves that global's resource selectors; no other global's public fields
+are copied or synchronized. `ap_private` remains untouched.
+
+To share explicitly, initialize one global, assign its live `ap_3resv` to a
+second zero-initialized global, then call `mt_appl_init` on the second global.
+`mt_appl_exit` closes the session, cleans up, frees the context once and clears
+the supplied global's slot. All other aliases become invalid; the caller must
+stop using them. A failed close retains the context for retry. If freeing the
+context fails after close, retrying exit retries the free without closing or
+cleaning up twice. No other operations are valid after that partial exit.
+
+Except for initialization with a null slot, passing an uninitialized, invalid,
+mismatched, closed or freed context is undefined behavior. There is no magic,
+generation counter, registry, reference counting, TLS or stale-pointer check.
+Kernel process exit remains authoritative cleanup for faults, `_Exit` and
+omitted `appl_exit`; libaes has no cached-session destructor.
+
+Application session, enumeration cursor and shutdown/cohort state now live in
+the context. Windows, resources, menus, graphics, shell state and temporary
+helper pointers still need migration in subsequent #953 slices. This is not
+yet a reentrant implementation or independent application isolation. CUIS
+still returns one session per process: two fresh globals allocate distinct
+userspace contexts, but currently receive the same native session. Ending it
+through either context invalidates the other context's kernel session. Tests
+of independent enumeration/cohort state use distinct mocked session handles;
+production independent sessions require the separate CUIS identity work
+coordinated with #896/#907/#915.
 
 ## Boot/configuration audit
 

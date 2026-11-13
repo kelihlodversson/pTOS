@@ -7,7 +7,9 @@ int main(void)
     short id, window, x, y, buttons, mods, key, clicks, message[8];
     AESGLOBAL global = { 0 };
     short rate, events;
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&global) == id);
+    id = appl_init(); VERIFY(id > 0);
+    global.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&global) == id);
     window = wind_create(0, 0, 0, 32767, 32767);
     VERIFY(window > 0 && wind_open(window, 0, 0, 32767, 32767) == 1);
     VERIFY(graf_mkstate(&x, &y, &buttons, &mods) == 1);

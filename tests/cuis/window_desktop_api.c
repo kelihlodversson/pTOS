@@ -28,7 +28,6 @@ static int window_pointer_checks(AESGLOBAL *global)
         guarded[1] = guarded[4] = 0x5555;
         CHECK(!wind_get(id,fields[field],guarded+1,NULL,NULL,NULL) && guarded[1] == 0x5555);
         CHECK(!mt_wind_get(id,fields[field],NULL,guarded+4,NULL,NULL,global) && guarded[4] == 0x5555);
-        CHECK(!mt_wind_get(id,fields[field],guarded+1,guarded+4,NULL,NULL,NULL));
         CHECK(guarded[1] == 0x5555 && guarded[4] == 0x5555);
     }
     CHECK(wind_delete(id) == 1);
@@ -108,14 +107,12 @@ static int background_event_checks(AESGLOBAL *global)
 static int window_desktop_api_checks(AESGLOBAL *global)
 {
     short a, b, c, d, old, fresh;
-    AESGLOBAL invalid = {0};
     GRECT rect = {10,20,100,80}, result;
     OBJECT tree = { NIL,NIL,NIL,G_BOX,LASTOB,NORMAL,{0x1173},0,0,640,400 };
     void *pointer, *again;
     ULONG before;
     CHECK(window_pointer_checks(global) == 0);
     CHECK(default_colour_checks(global) == 0);
-    CHECK(mt_wind_new(NULL) == 0 && mt_wind_set_ptr(0,WF_NEWDESK,&tree,&invalid) == 0);
     CHECK(wind_get_grect(0,WF_CURRXYWH,&result) == 1 && result.g_w == 640 && result.g_h == 400);
     CHECK(mt_wind_get_grect(0,WF_WORKXYWH,&result,global) == 1 && result.g_y == 19 && result.g_h == 381);
     CHECK(wind_get(0,WF_KIND,&a,&b,&c,&d) == 1 && !(a|b|c|d));

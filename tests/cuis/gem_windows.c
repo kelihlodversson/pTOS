@@ -37,8 +37,9 @@ int main(int argc, char **argv, char **envp)
     char tail[3] = { 1, 'c', 0 };
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
-    VERIFY(wind_create(0, 0, 0, 10, 10) == -1 && wind_get(1, WF_KIND, &x, 0, 0, 0) == 0 && x == 99);
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&globals) == id);
+    id = appl_init(); VERIFY(id > 0);
+    globals.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&globals) == id);
     graphics = graf_handle(NULL,NULL,NULL,NULL) > 0;
     if (argc > 1) {
         short parent = appl_find("GEMWIN");

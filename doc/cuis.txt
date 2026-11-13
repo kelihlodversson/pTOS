@@ -11,10 +11,14 @@ direct mt_* calls initialize/clear only their supplied global, without updating
 another array or GEMlib's binding data. ap_private remains caller-owned.
 EmuDesk supplies its historical bindings and passes its own typed global.
 The m68k trap ABI remains 30 bytes; ARM/x32 use native layout and pointers.
-Kernel AES retains its area-D use of ap_3resv. Explicit heap context ownership,
-full reentrancy and CUIS identity changes remain separate #953 slices. CUIS
-still has one session per process; multiple globals do not imply independent
-sessions. #903 is separate. Historical implementation notes below predate this
+Kernel AES retains its area-D use of ap_3resv. Userspace mt_appl_init now owns
+an opaque heap context through that slot: null allocates, non-null explicitly
+reuses it. Exit frees the context and clears only the supplied slot; other
+aliases become invalid. Session, enumeration and cohort state are per context.
+Remaining state migration, full reentrancy and CUIS identity changes remain
+separate #953 slices. CUIS still has one session per process; fresh userspace
+contexts do not imply independent sessions, windows or message queues. #903 is
+separate. Historical implementation notes below predate this
 binding split; see doc/libaes-compatibility.md for the current ownership and API.
 
 

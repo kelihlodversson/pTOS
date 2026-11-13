@@ -123,6 +123,11 @@ short mt_appl_control(short id, short mode, void *output, AESGLOBAL *global_aes)
 #define APP_APPLICATION 0x02
 #define APP_ACCESSORY 0x04
 #define APP_SHELL 0x08
+/* Userspace libaes: a null ap_3resv starts a new heap-owned context.
+ * Assign an existing live ap_3resv explicitly to share it with another global.
+ * Other calls require a valid live context. Exit frees it and clears only the
+ * supplied slot; other aliases become invalid and remain the caller's concern.
+ * ap_private and each global's resource selectors remain caller-owned. */
 short mt_appl_init(AESGLOBAL *global_aes);
 short mt_appl_exit(AESGLOBAL *global_aes);
 short mt_appl_yield(AESGLOBAL *global_aes);

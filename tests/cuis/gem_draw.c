@@ -455,7 +455,9 @@ int main(int argc, char **argv, char **envp)
     char tail[3] = { 1,'f',0 };
     static const char environment[] = { 0,0 };
     (void)argv; (void)envp;
-    VERIFY(appl_init() > 0 && mt_appl_init(&global) > 0);
+    VERIFY(appl_init() > 0);
+    global.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&global) > 0);
     object(&box,G_BOX,0,0,100,100); box.ob_spec.index = 0x1170;
     if (argc > 1 && argv[1][0] == 'g') {
         short window = wind_create(0,0,0,80,70);

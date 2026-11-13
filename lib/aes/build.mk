@@ -7,6 +7,7 @@ $(LIBAES_BINDINGS): $(wildcard lib/gemlib/ptos/*.[ch]) lib/gemlib/ptos/build.mk 
 LIBAES_CFLAGS = $(LDSO_CFLAGS) -DOB_WALK_COORD=LONG -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
 LIBAES_ARCH_HEADERS-$(ARCH_X86_64) = -Iinclude/arch/x86_64
+obj/libaes/application.o obj/libaes/lifecycle.o: lib/aes/app_context.h
 obj/libaes/application.o: lib/aes/application.c lib/aes/lifecycle.h lib/aes/desktop.h lib/aes/graphics.h lib/aes/menubar.h lib/aes/application.h include/libaes.h include/aesglobal.h lib/aes/transport.h lib/aes/native_bindings.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
