@@ -858,11 +858,11 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
     return TRUE;
 }
 
-static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL lazy)
+static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL lazy, BOOL relro)
 {
     UQUAD pages, i;
 
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
+    if (!relro && !kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (X86_64_PAGE_SIZE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -877,10 +877,26 @@ static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL 
              * mapping; only genuinely absent pages count as lazy holes. */
             if (!lazy || aspace_translate(as, va + i * X86_64_PAGE_SIZE, NULL, NULL))
                 return FALSE;
-        } else if (!(*pte & X86_64_PTE_OWNED)) {
+        } else if (!(*pte & X86_64_PTE_OWNED) || (relro && (*pte & PTE_FILE))) {
             return FALSE;
         }
     }
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(relro) {
+        for(i=0;i<pages;i++) {
+            UWORD logical;
+            if(!
+#if CONF_WITH_PRIVATE_CLONE
+                aspace_logical_protection(as,va+i*X86_64_PAGE_SIZE,&logical)
+#else
+                aspace_translate(as,va+i*X86_64_PAGE_SIZE,NULL,&logical)
+#endif
+               || !(logical&ASPACE_PROT_USER) || (logical&ASPACE_PROT_EXEC) ||
+               (logical&~(ASPACE_PROT_USER|ASPACE_PROT_WRITE))) return FALSE;
+        }
+        if(!kaspace_relro_change(as,va,bytes)) return FALSE;
+    }
+#endif
     for (i = 0; i < pages; i++) {
         UQUAD *pte = x86_64_user_pte(as->pml4_phys, va + i * X86_64_PAGE_SIZE);
         UQUAD e;
@@ -913,12 +929,20 @@ static BOOL protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot, BOOL 
 
 BOOL aspace_protect_private(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
-    return protect_private(as, va, bytes, prot, FALSE);
+    return protect_private(as, va, bytes, prot, FALSE, FALSE);
 }
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+BOOL aspace_protect_relro(ASPACE *as,VADDR address,VADDR bytes)
+{
+    if((bytes&(X86_64_PAGE_SIZE-1)) || !bytes) return FALSE;
+    return protect_private(as,address,bytes,ASPACE_PROT_USER,FALSE,TRUE);
+}
+#endif
 
 BOOL aspace_protect_lazy(ASPACE *as, UQUAD va, UQUAD bytes, UWORD prot)
 {
-    return protect_private(as, va, bytes, prot, TRUE);
+    return protect_private(as, va, bytes, prot, TRUE, FALSE);
 }
 
 /*

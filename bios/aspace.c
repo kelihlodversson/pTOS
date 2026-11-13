@@ -836,11 +836,11 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD 
 /* A file page is never writable: it is shared until a write fault copies it.
  * Pages that are absent are legal only for a lazy reservation, which the
  * caller has validated and records the permissions of. */
-static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL lazy)
+static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL lazy, BOOL relro)
 {
     VADDR pages, i;
 
-    if (!kaspace_mapping_change(as, va, bytes)) return FALSE;
+    if (!relro && !kaspace_mapping_change(as, va, bytes)) return FALSE;
     if ((va & (PAGE - 1)) || !bytes || va >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - va)
         return FALSE;
@@ -852,9 +852,25 @@ static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL 
         if (!aspace_hw_lookup(as->root, va + i * PAGE, &phys, &pr, &fl)) {
             if (!lazy)
                 return FALSE;
-        } else if (!(fl & ASPACE_LEAF_OWNED))
+        } else if (!(fl & ASPACE_LEAF_OWNED) || (relro && IS_FILE_PAGE(phys)))
             return FALSE;
     }
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(relro) {
+        for(i=0;i<pages;i++) {
+            UWORD logical;
+            if(!
+#if CONF_WITH_PRIVATE_CLONE
+                aspace_logical_protection(as,va+i*PAGE,&logical)
+#else
+                aspace_translate(as,va+i*PAGE,NULL,&logical)
+#endif
+               || !(logical&ASPACE_PROT_USER) || (logical&ASPACE_PROT_EXEC) ||
+               (logical&~(ASPACE_PROT_USER|ASPACE_PROT_WRITE))) return FALSE;
+        }
+        if(!kaspace_relro_change(as,va,bytes)) return FALSE;
+    }
+#endif
     for (i = 0; i < pages; i++) {
         PADDR phys;
         UWORD pr, fl;
@@ -869,7 +885,8 @@ static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL 
             else
 #endif
             pr = IS_FILE_PAGE(phys) ? (UWORD)(prot & ~ASPACE_PROT_WRITE) : prot;
-            aspace_hw_update(as->root, va + i * PAGE, pr, fl);
+            if(!aspace_hw_update(as->root, va + i * PAGE, pr, fl) && relro)
+                panic("RELRO lost preflighted private leaf");
 #if CONF_WITH_PRIVATE_CLONE
         }
 #endif
@@ -882,12 +899,20 @@ static BOOL protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, BOOL 
 
 BOOL aspace_protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
 {
-    return protect_private(as, va, bytes, prot, FALSE);
+    return protect_private(as, va, bytes, prot, FALSE, FALSE);
 }
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+BOOL aspace_protect_relro(ASPACE *as,VADDR address,VADDR bytes)
+{
+    if((bytes&(PAGE-1)) || !bytes) return FALSE;
+    return protect_private(as,address,bytes,ASPACE_PROT_USER,FALSE,TRUE);
+}
+#endif
 
 BOOL aspace_protect_lazy(ASPACE *as, VADDR va, VADDR bytes, UWORD prot)
 {
-    return protect_private(as, va, bytes, prot, TRUE);
+    return protect_private(as, va, bytes, prot, TRUE, FALSE);
 }
 
 /*

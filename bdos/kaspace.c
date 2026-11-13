@@ -10,6 +10,7 @@
 struct kaspace {
     ASPACE *backend;
     ULONG refs;
+    BOOL resident_permissions_tightened; /* monotonic stronger capture validation */
     KASPACE_HEAP heap;
     KASPACE_LEASE *leases;
     struct kaspace *next;
@@ -304,12 +305,10 @@ UQUAD kaspace_reservation_next(void)
     return ++reservation_ids;
 }
 
-BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
-                             KASPACE_RESERVATION_INFO *result)
+static BOOL ordinary_reservation_info(KASPACE *space,VADDR address,VADDR bytes,
+                                      KASPACE_RESERVATION_INFO *result)
 {
     ULONG i;
-    if (!space || !result || !bytes || address >= USER_VA_LIMIT ||
-        bytes > USER_VA_LIMIT-address) return FALSE;
     for (i=0;i<space->heap.count;i++) {
         KASPACE_HEAP_BLOCK *block = &space->heap.blocks[i];
         VADDR length = (VADDR)block->pages*USER_PAGE_SIZE;
@@ -336,6 +335,85 @@ BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
             }
     }
 #endif
+    return FALSE;
+}
+
+/* Once initialization removes WRITE beneath retained read-only witnesses,
+ * immutable captured ceilings alone cannot authenticate a new resident grant.
+ * This never backs pages and does not change lazy/inaccessible ownership. */
+static BOOL capture_current_rights(KASPACE *space,UQUAD birth,VADDR address,VADDR bytes,
+                                   UWORD ceiling,UWORD *rights)
+{
+    VADDR page,last;UWORD current=ceiling;
+    if(!space->resident_permissions_tightened || !ceiling) {*rights=ceiling;return TRUE;}
+    {
+        KASPACE_RESERVATION_INFO ordinary;
+        /* File reservations own FILE_BACKING independently of residency;
+         * their logical WRITE may be file-COW behind a read-only PTE. */
+        if(ordinary_reservation_info(space,address,bytes,&ordinary)) {
+            if(ordinary.identity!=birth) return FALSE;
+            *rights=ceiling&ordinary.rights;return TRUE;
+        }
+    }
+    last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+    for(page=address&~(VADDR)(USER_PAGE_SIZE-1);;page+=USER_PAGE_SIZE) {
+        UWORD protection;
+        if(!
+#if CONF_WITH_PRIVATE_CLONE
+            aspace_logical_protection(space->backend,page,&protection)
+#else
+            aspace_translate(space->backend,page,NULL,&protection)
+#endif
+        ) return FALSE;
+        current &= protection;
+        if(page==last) break;
+    }
+    *rights=current;return TRUE;
+}
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Authenticated image RELRO only: private backend separately checks resident
+ * frame ownership and preserves USER/EXEC. No callbacks/allocations/yields.
+ * Every page needs a live nonlazy witness; cleanup fences grant no authority. */
+BOOL kaspace_relro_change(ASPACE *backend,VADDR address,VADDR bytes)
+{
+    KASPACE *space;KASPACE_LEASE *lease;VADDR page,last,first;
+    if(!bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address ||
+       (address&(USER_PAGE_SIZE-1)) || (bytes&(USER_PAGE_SIZE-1))) return FALSE;
+    for(space=spaces;space && space->backend!=backend;space=space->next) { }
+    if(!space) return FALSE;
+    first=address;last=address+bytes-USER_PAGE_SIZE;
+    for(page=first;;page+=USER_PAGE_SIZE) {
+        BOOL witness=FALSE;
+        for(lease=space->leases;lease;lease=lease->next) {
+            if(page<lease->first || page>lease->last) continue;
+            if(lease->sealed) return FALSE;
+            if(!lease->held) continue; /* revocable snapshots retire below */
+            if(lease->retire_bytes && !lease->reservation_ticket) continue;
+            if(!lease->reservation_ticket || !lease->captured || lease->revoked ||
+               (lease->reservation_flags&KASPACE_RESERVATION_LAZY) ||
+               (lease->access&~ASPACE_PROT_USER)) return FALSE;
+            if(reservation_backing_contains(lease,page,page)) witness=TRUE;
+        }
+        if(!witness) return FALSE;
+        if(page==last) break;
+    }
+    for(lease=space->leases;lease;lease=lease->next)
+        if(!lease->held && !lease->sealed && first<=lease->last && lease->first<=last)
+            lease->revoked=TRUE;
+    /* Backend has completed its whole-range/frame preflight. The following
+     * leaf/COW permission stores are infallible and cannot yield. */
+    space->resident_permissions_tightened=TRUE;
+    return TRUE;
+}
+#endif
+
+BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
+                             KASPACE_RESERVATION_INFO *result)
+{
+    if (!space || !result || !bytes || address >= USER_VA_LIMIT ||
+        bytes > USER_VA_LIMIT-address) return FALSE;
+    if(ordinary_reservation_info(space,address,bytes,result)) return TRUE;
     {
         KASPACE_LEASE *lease;
         for (lease=space->leases;lease;lease=lease->next)
@@ -346,6 +424,10 @@ BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
                 result->bytes = lease->exact_bytes;
                 result->identity = lease->reservation_id;
                 result->rights = lease->reservation_rights;
+                if(!(lease->reservation_flags&KASPACE_RESERVATION_LAZY) && space->resident_permissions_tightened) {
+                    if(!capture_current_rights(space,lease->reservation_id,address,bytes,result->rights,&result->rights)) return FALSE;
+                    result->address=address;result->bytes=bytes; /* only this extent was revalidated */
+                }
                 result->flags = lease->reservation_flags|KASPACE_RESERVATION_CAPTURED;
                 return TRUE;
             }
@@ -368,6 +450,11 @@ static LONG reservation_install(KASPACE *space, const KASPACE_RESERVATION_INFO *
         (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC)) ||
         (info->flags & ~(KASPACE_RESERVATION_LAZY|KASPACE_RESERVATION_CAPTURED|KASPACE_RESERVATION_INACCESSIBLE))) return EINVAL;
     if ((info->rights & rights) != rights) return EACCDN;
+    if((info->flags&KASPACE_RESERVATION_CAPTURED) && !(info->flags&KASPACE_RESERVATION_LAZY) && rights) {
+        UWORD current;
+        if(!capture_current_rights(space,info->identity,address,bytes,info->rights,&current) ||
+           (current&rights)!=rights) return EACCDN;
+    }
     if (reservation_tickets == ~(UQUAD)0) return ENSMEM;
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_lease_after && !--fail_lease_after) return ENSMEM;
@@ -626,6 +713,7 @@ KASPACE *kaspace_adopt(ASPACE *backend)
     if (!space) return NULL;
     space->backend = backend;
     space->refs = 1;
+    space->resident_permissions_tightened=FALSE;
     space->leases = NULL;
     space->next = spaces;
     spaces = space;
@@ -845,6 +933,7 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result)
     error = aspace_clone(source->backend, &copy->backend);
     if (error) goto failed;
     copy->next = spaces; spaces = copy;
+    copy->resident_permissions_tightened=source->resident_permissions_tightened;
     *result = copy;
     return E_OK;
 failed:

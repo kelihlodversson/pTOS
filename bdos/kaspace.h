@@ -62,6 +62,11 @@ void kaspace_permission_finish(KASPACE_PERMISSION_TRANSACTION **,BOOL commit);
 
 /* Logical reservation-preserving lazy/file backing only. This cannot authorize
  * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Backend-only, after complete resident private-frame preflight; only image
+ * write removal which preserves all retained minimum-access obligations. */
+BOOL kaspace_relro_change(struct aspace *,VADDR,VADDR);
+#endif
 BOOL kaspace_materialization_change(struct aspace *backend, VADDR address,
                                    VADDR bytes, UWORD logical_rights);
 
