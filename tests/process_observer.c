@@ -229,3 +229,9 @@ int main(void)
     puts("Production KPROC observation: full status/fault, retirement, PD reuse, multiple references and rollback: PASS");
     return 0;
 }
+
+/* Compatibility mappings are absent from this observer CPU/MMU model. */
+BOOL kaspace_retire_borrow(KASPACE *space,VADDR address,VADDR bytes)
+{ (void)space;(void)address;(void)bytes;abort();return FALSE; }
+BOOL kaspace_retire_private(KASPACE *space,VADDR address,VADDR bytes)
+{ (void)space;(void)address;(void)bytes;abort();return FALSE; }

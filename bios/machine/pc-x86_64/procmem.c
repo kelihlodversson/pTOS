@@ -45,11 +45,15 @@ typedef char stack_below_limit[
      USER_STACK_SIZE <= USER_STACK_TOP &&   /* before subtracting: no wrap */
      USER_IMAGE_BASE + USER_IMAGE_SIZE <= USER_STACK_TOP - USER_STACK_SIZE) ? 1 : -1];
 
+struct allocation_hold;
 struct alloc {
     struct alloc *next;
     UQUAD va;
     ULONG pages;
     const void *owner;          /* identity of the owning process, or NULL */
+    struct allocation_hold *holds;
+    ULONG hold_count;
+    BOOL cleanup_owned; /* one-way canonical disposal owner, never a user grant */
     ULONG pins;                 /* live address-space mappings of this block */
     void (*notify)(void *);
     void *notify_token;
@@ -146,7 +150,7 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     ULONG pages, first;
     UQUAD va;
 
-    if (!bytes || !window_phys ||
+    if (next_gen == ~(UQUAD)0 || !bytes || !window_phys ||
         bytes > X86_64_LOW_TPA_BYTES)       /* also rules out overflow below */
         return NULL;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
@@ -162,6 +166,9 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     a->pages = pages;
     a->owner = NULL;
     a->pins = 0;
+    a->holds = NULL;
+    a->hold_count = 0;
+    a->cleanup_owned = FALSE;
     a->reclaim = FALSE;
     a->notify = NULL;
     a->notify_token = NULL;
@@ -206,6 +213,11 @@ static void release(struct alloc **link)
     if (notify) notify(token);
 }
 
+#define HOLD_PAGE X86_64_PAGE_SIZE
+#define HOLD_WINDOW X86_64_LOW_TPA_VIRT_BASE
+#define HOLD_PIN_PAGE X86_64_PAGE_SIZE
+#include "../../procmem_hold.h"
+
 /* A deferred decision belongs to this allocation record, not its former
  * owner's reusable basepage address. */
 static void reclaim_unpinned(void)
@@ -213,7 +225,7 @@ static void reclaim_unpinned(void)
     struct alloc **link = &allocs;
 
     while (*link) {
-        if ((*link)->reclaim && !(*link)->pins)
+        if ((*link)->reclaim && !(*link)->pins && !(*link)->hold_count)
             release(link);
         else
             link = &(*link)->next;
@@ -237,7 +249,7 @@ BOOL procmem_free(void *p)
         bad_frees++;
         return FALSE;
     }
-    if ((*link)->pins)          /* still mapped into a live address space */
+    if ((*link)->cleanup_owned || (*link)->pins || (*link)->hold_count) /* mapped or explicitly retained */
         return FALSE;
     release(link);
     return TRUE;
@@ -254,7 +266,7 @@ ULONG procmem_free_ownerless_since(UQUAD gen)
     struct alloc **link = &allocs;
 
     while (*link) {
-        if ((*link)->gen >= gen && !(*link)->owner && !(*link)->pins && !(*link)->reclaim) {
+        if ((*link)->gen >= gen && !(*link)->owner && !(*link)->pins && !(*link)->hold_count && !(*link)->reclaim) {
             release(link);              /* unlinks, so *link is the next one */
             freed++;
         } else {
@@ -329,14 +341,14 @@ const void *procmem_owner(const void *p)
     return link ? (*link)->owner : NULL;
 }
 
-void procmem_set_owner(const void *p, const void *owner)
+BOOL procmem_set_owner(const void *p, const void *owner)
 {
     struct alloc **link = find_link(p);
 
-    if (link) {
-        (*link)->owner = owner;
-        (*link)->reclaim = FALSE; /* transfer or make permanent */
-    }
+    if (!link || (*link)->cleanup_owned || ((*link)->hold_count && ((*link)->owner != owner || (*link)->reclaim))) return FALSE;
+    (*link)->owner = owner;
+    (*link)->reclaim = FALSE; /* transfer or make permanent */
+    return TRUE;
 }
 
 /* Callbacks can unpin or free allocation records, or leave through a disk
@@ -374,7 +386,7 @@ void procmem_free_owned(const void *owner, void (*pre_free)(void *base))
     link = &allocs;
     while (*link) {
         if ((*link)->owner == owner) {
-            if (!(*link)->pins) {
+            if (!(*link)->pins && !(*link)->hold_count) {
                 release(link);
                 continue;
             }
@@ -406,7 +418,7 @@ void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *ba
              * space can still reach it */
             ULONG keep = (ULONG)((keep_bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE);
 
-            if (keep_bytes && keep && keep < a->pages && !a->pins) {
+            if (keep_bytes && keep && keep < a->pages && !a->pins && !a->hold_count) {
                 set_pages((ULONG)((a->va - X86_64_LOW_TPA_VIRT_BASE) / X86_64_PAGE_SIZE) + keep,
                           a->pages - keep, FALSE);
                 free_pages += a->pages - keep;

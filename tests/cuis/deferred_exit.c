@@ -279,3 +279,10 @@ void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }
 ULONG kthread_tid(const KTHREAD *t) { (void)t; abort(); }
 
 KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }
+
+/* The architecture regression executes this MMU/allocator probe; this hosted
+ * scheduler fixture models CPU and memory ownership instead. */
+void kproc_region_selftest(void) {}
+
+BOOL kproc_prepare_discard(KPROC *process) { (void)process;abort();return FALSE; }
+void kproc_finish_discard_allocations(KPROC *process) { (void)process; }

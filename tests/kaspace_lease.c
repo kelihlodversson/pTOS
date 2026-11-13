@@ -1,6 +1,7 @@
 /* Generic lease policy, host execution under all three user-ABI configs.
  * Backend mutation hooks themselves are exercised by target runtime tests. */
 #include "emutos.h"
+#include "biosext.h"
 #include "procmem.h"
 #include "kheap.h"
 #include "kaspace.h"
@@ -59,6 +60,10 @@ int main(void)
     a.protection[1] = 0; a.protection[1] = ASPACE_PROT_USER;
     assert(!kaspace_lease_valid(leases[1]));
     assert(!kaspace_lease_seal(leases,2));
+    /* Whole-operation preflight is observational: it must not revoke an
+     * earlier valid preparation while checking another held region/root. */
+    assert(kaspace_mapping_can_change(&a,0x1000,4096));
+    assert(kaspace_lease_valid(leases[0]));
     /* Failed group seal must not seal the earlier, still-valid lease. */
     assert(kaspace_mapping_change(&a,0x1000,1));
     kaspace_lease_release(&leases[0]); kaspace_lease_release(&leases[1]);
@@ -120,3 +125,15 @@ int main(void)
     assert(allocations == frees);
     return 0;
 }
+
+void panic(const char *format, ...) { (void)format; abort(); }
+
+BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }

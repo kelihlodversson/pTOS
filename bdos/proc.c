@@ -260,6 +260,13 @@ static long proc_mfree(void *addr, BOOL trusted)
     if (procmem_pins(addr) > 0)
         return EACCDN;
 #endif
+    {
+        ULONG bytes = procmem_size(addr);
+        if (bytes && !procmem_mutation_allowed(addr,procmem_gen(addr),0,bytes)) return EACCDN;
+    }
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_allocation_disposal_allowed(addr)) return EACCDN;
+#endif
     proc_release_block(addr);     /* also returns it if it was borrowed */
     return procmem_free(addr) ? E_OK : EIMBA;
 }
@@ -1162,7 +1169,7 @@ static char *alloc_env(ULONG flags, char *env)
     /* built below under the launcher's page tables: lend it to a launcher
      * with an address space of its own */
     if (new_env && !kproc_borrow(run, new_env)) {
-        procmem_free(new_env);
+        if (!procmem_free(new_env)) panic("failed environment borrow retained allocation");
         new_env = NULL;
     }
 #endif
@@ -1235,7 +1242,7 @@ static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail)
 
 #if CONF_WITH_USER_ASPACE
         if (low && !kproc_borrow(run, low)) {   /* see alloc_env() */
-            procmem_free(low);
+            if (!procmem_free(low)) panic("failed TPA borrow retained allocation");
             low = NULL;
         }
 #endif
@@ -1417,13 +1424,24 @@ LONG proc_start_accessory(PD *p)
 #if ARCH_X86_64 || CONF_WITH_NATIVE_SCHED
 void proc_discard_scheduled(PD *p)
 {
-    if (!kproc_unlaunched(p))
-        return;
-    set_owner(p, p);
-    set_owner(USERPTR_TO_PTR(p->p_env), p);
 #if CONF_WITH_USER_ASPACE
-    proc_dispose_retained(p);
+    KPROC *process;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    process=kproc_unlaunched(p)?kproc_retain(p):NULL;
+    if (process) {
+        if (!kproc_prepare_discard(process)) panic("unstarted allocation disposal authentication failed");
+        proc_dispose_process(process);
+        kproc_release(process);
+    }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope); /* enclosing launch cleanup owns the checkpoint */
+#endif
 #else
+    if (!kproc_unlaunched(p)) return;
+    set_owner(p,p);set_owner(USERPTR_TO_PTR(p->p_env),p);
     proc_dispose_detached(p);
 #endif
 }
@@ -1473,6 +1491,7 @@ void proc_dispose_process(KPROC *process)
 #endif
     }
     proc_release_resources(p, FALSE);
+    kproc_finish_discard_allocations(process);
 #if CONF_WITH_NATIVE_SCHED
     if (complete)
         ksched_exited_identity(process, p);

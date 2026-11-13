@@ -64,6 +64,7 @@
 #include "../../../bdos/ssystem.h"
 #endif
 #if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
 #include "../../../bdos/arch/x86_64/thread_return_x32.h"
 #include "../../../bdos/thread_startup_backend.h"
@@ -71,7 +72,6 @@
 #include "../../../bdos/proc.h"
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
-#include "ksched.h"
 #include "process.h"
 #include "ikbd.h"
 #include "iorec.h"
@@ -1219,6 +1219,223 @@ static void test_isolation(void)
         same(&s, "table rollback");
     }
     CHECK(failed >= 4, "table-rollback failures were exercised");
+}
+
+/* Actual allocation/ASPACE/KPROC retirement, not a hosted CPU model.
+ * This proves allocation holds only; lazy reservation/Pexec4 remains gated. */
+static void test_allocation_holds(void)
+{
+    unsigned mode;
+    for (mode=0;mode<2;mode++) {
+        SNAP baseline;
+        PD *pd, *replacement;
+        void *env, *base, *replacement_env;
+        KPROC_ALLOCATION_HOLD first = {{0}}, second = {{0}}, stale;
+        PROCMEM_HOLD_INFO info;
+        UQUAD generation, number;
+        snap(&baseline);
+        pd = new_basepage();
+        if (!pd) return;
+        env = USERPTR_TO_PTR(pd->p_env);
+        CHECK(procmem_set_owner(pd,pd) && procmem_set_owner(env,pd),"assign allocation-hold source ownership");
+        CHECK(kproc_prepare_user(pd,run),"prepare actual allocation-hold source root");
+        base = mode ? env : (void *)pd;
+        generation = procmem_gen(base);
+        CHECK(kproc_allocation_hold(pd,base,generation+1,0,2,ASPACE_PROT_USER,&first)==EIMBA &&
+              !first.token.ticket,"stale allocation generation has no retained owner/output");
+        CHECK(kproc_allocation_hold(pd,base,generation,0,2,ASPACE_PROT_USER,&first)==E_OK &&
+              kproc_allocation_hold(pd,base,generation,0,2,ASPACE_PROT_USER,&second)==E_OK,
+              "independent actual allocation holds acquire canonical identities");
+        CHECK(procmem_hold_info(&first.token,&info),"read authenticated hold identity");
+        number = info.owner_number;
+        CHECK(!procmem_free(base),"held allocation cannot be explicitly freed");
+        if (mode) CHECK(kproc_allocation_release(&first),"borrower-first release preserves original owner");
+        proc_free_owned(pd);
+        {
+            KPROC *retired = kproc_retain(pd);
+            CHECK(!retired,"retired allocation holder has no live PD registry entry");
+            kproc_release(retired);
+        }
+        CHECK(procmem_size(base) && !procmem_owner(base) &&
+              procmem_hold_info(&second.token,&info) &&
+              kproc_ref_number(info.owner_identity)==number && !kproc_ref_has_basepage(info.owner_identity),
+              "retirement leaves exact allocation plus metadata identity, no live PD/root");
+        replacement = new_basepage();
+        if (!replacement) return;
+        replacement_env = USERPTR_TO_PTR(replacement->p_env);
+        {
+            KPROC *identity = kproc_retain(replacement);
+            CHECK(identity && kproc_ref_number(identity)!=number,"PD churn cannot substitute canonical allocation owner");
+            kproc_release(identity);
+        }
+        {
+            KPROC_ALLOCATION_HOLD descendant = {{0}};
+            CHECK(kproc_allocation_duplicate(&second,&descendant)==E_OK,
+                  "orphan holder can duplicate canonical ownership without retired PD lookup");
+            CHECK(kproc_allocation_release(&descendant),"descendant returns exactly one metadata reference");
+        }
+        stale = second;
+        if (!mode) CHECK(kproc_allocation_release(&first),"parent-first first hold releases independently");
+        CHECK(kproc_allocation_release(&second) && !procmem_size(base),"final hold triggers deferred allocation reclamation");
+        CHECK(!kproc_allocation_release(&stale),"copied spent ticket cannot release a replacement owner");
+        set_owner(replacement,replacement); set_owner(replacement_env,replacement);
+        proc_free_owned(replacement);
+        same(&baseline,"actual allocation holds and canonical retirement reclaim all resources");
+    }
+    kcprintf("native authenticated allocation hold/retirement/release: PASS\n");
+}
+
+#if CONF_WITH_MMAP
+/* Real KPROC/allocator/MMU owners; not a public shared-Pexec execution test. */
+static void test_reservation_holds(void)
+{
+    SNAP baseline;
+    PD *pd;
+    void *env;
+    KPROC *identity;
+    KASPACE *space;
+    ASPACE *backend;
+    KASPACE_RESERVATION_INFO first, last;
+    KASPACE_RESERVATION_HOLD held = {0}, orphan = {0}, stale;
+    LONG a, b;
+    ULONG value = 0x8941234UL, readback = 0;
+    snap(&baseline);
+    pd = new_basepage(); if (!pd) return;
+    env = USERPTR_TO_PTR(pd->p_env); set_owner(pd,pd); set_owner(env,pd);
+    CHECK(kproc_prepare_user(pd,run),"prepare real reservation-hold root");
+    identity = kproc_retain(pd); space = kproc_active_space(identity);
+    backend = kaspace_backend(space); kproc_release(identity);
+    a = kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    b = kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    CHECK(a>0 && b==a+PAGE && kaspace_reservation_info(space,a,PAGE,&first) &&
+          kaspace_reservation_info(space,b,PAGE,&last) && first.identity!=last.identity,
+          "adjacent real mappings have independent reservation identities");
+    CHECK(kproc_demand_page(pd,a,ASPACE_PROT_WRITE)==1 &&
+          aspace_copy_to_user(backend,a,&value,sizeof(value)),"back earlier range before preflight rejection");
+    CHECK(kproc_reservation_hold(pd,b,PAGE,last.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&held)==E_OK &&
+          !aspace_translate(backend,b,NULL,NULL),"holding lazy reservation does not materialize backing");
+    CHECK(kproc_munmap(pd,a,2*PAGE)==EACCDN && kproc_mprot(pd,a,2*PAGE,PROT_READ)==EACCDN &&
+          aspace_copy_from_user(backend,&readback,a,sizeof(readback)) && readback==value &&
+          kaspace_reservation_info(space,a,PAGE,&first) && first.rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE),
+          "held late region rejects entire unmap/protect before earlier metadata or page mutation");
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        KASPACE *child = NULL;
+        CHECK(kaspace_clone(space,&child)==E_OK,"independent COW root coexists with logical reservation hold");
+        if (child) {
+            ULONG changed = 0x55555555UL;
+            CHECK(aspace_cow_fault(kaspace_backend(child),a,ASPACE_PROT_USER|ASPACE_PROT_WRITE)==1 &&
+                  aspace_copy_to_user(kaspace_backend(child),a,&changed,sizeof(changed)) &&
+                  aspace_copy_from_user(backend,&readback,a,sizeof(readback)) && readback==value,
+                  "child COW write preserves retained parent contents");
+            kaspace_put(child);
+        }
+    }
+#endif
+    {
+        LONG c=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        LONG d=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        CHECK(c>0 && d==c+PAGE && kproc_demand_page(pd,c,ASPACE_PROT_WRITE)==1 &&
+              aspace_copy_to_user(backend,c,&value,sizeof(value)) &&
+              aspace_map_page(backend,d,0xfee00000UL,ASPACE_PROT_USER|ASPACE_PROT_WRITE),
+              "install late borrowed device leaf without accessing device memory");
+        CHECK(kproc_munmap(pd,c,2*PAGE)==EINTRN &&
+              aspace_copy_from_user(backend,&readback,c,sizeof(readback)) && readback==value &&
+              kaspace_reservation_info(space,c,PAGE,&first) && kaspace_reservation_info(space,d,PAGE,&last),
+              "whole-range ownership preflight rejects late foreign leaf before changing earlier range");
+    }
+    proc_free_owned(pd);
+    CHECK(kproc_reservation_duplicate(&held,&orphan)==E_OK && kproc_reservation_release(&held),
+          "orphan holder duplicates/releases independently of retired PD");
+    x86_64_pmem_test_fail_after(1);
+    CHECK(kaspace_mmap_demand_page(space,b,ASPACE_PROT_WRITE)==2 && !aspace_translate(backend,b,NULL,NULL),
+          "held lazy allocation failure leaves no partial mapping");
+    x86_64_pmem_test_fail_after(0);
+    CHECK(kaspace_mmap_demand_page(space,b,ASPACE_PROT_WRITE)==1 &&
+          aspace_copy_to_user(backend,b,&value,sizeof(value)),"retained reservation materializes after original PROCESS retirement");
+    stale = orphan;
+    CHECK(kproc_reservation_release(&orphan) && !kproc_reservation_release(&stale),"final reservation release reclaims once");
+    same(&baseline,"actual lazy reservation, COW and orphan ownership release");
+    kcprintf("native authenticated lazy reservation/mutation/orphan: PASS\n");
+}
+#endif
+
+static void test_captured_reservations(void)
+{
+    SNAP baseline;
+    PD *pd;
+    void *env;
+    KPROC *identity;
+    KASPACE *space;
+    ASPACE *backend;
+    PROG_LAYOUT layout;
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_RESERVATION_HOLD holds[4] = {{0}}, stale;
+    KPROC_ALLOCATION_HOLD allocation = {{0}};
+    VADDR entry, page;
+    ULONG i, value=0x8945678UL;
+    snap(&baseline);
+    pd=new_basepage(); if (!pd) return;
+    env=USERPTR_TO_PTR(pd->p_env); set_owner(pd,pd); set_owner(env,pd);
+    if (!image_layout(testprobe_image(),&layout) || !kproc_set_image(pd,testprobe_image()) ||
+        !kproc_prepare_user(pd,run)) {
+        CHECK(FALSE,"prepare actual loaded image for reservation capture");
+        proc_free_owned(pd); return;
+    }
+    identity=kproc_retain(pd); space=kproc_active_space(identity);
+    backend=kaspace_backend(space); kproc_release(identity);
+    entry=kproc_user_entry(pd);
+    CHECK(kproc_reservation_info(pd,(VADDR)(uintptr_t)pd,sizeof(PD),&info)==E_OK &&
+          kproc_reservation_hold(pd,(VADDR)(uintptr_t)pd,sizeof(PD),info.identity,ASPACE_PROT_USER,&holds[0])==E_OK,
+          "capture actual basepage reservation from trusted metadata");
+    CHECK(kproc_reservation_info(pd,(VADDR)(uintptr_t)env,2,&info)==E_OK,"authenticate environment before failed acquisition");
+    kaspace_test_fail_lease_after(1);
+    CHECK(kproc_reservation_hold(pd,(VADDR)(uintptr_t)env,2,info.identity,ASPACE_PROT_USER,&holds[1])==ENSMEM &&
+          !holds[1].ticket,"partial capture failure leaves existing basepage hold and output unchanged");
+    CHECK(kproc_reservation_info(pd,(VADDR)(uintptr_t)env,2,&info)==E_OK &&
+          kproc_reservation_hold(pd,(VADDR)(uintptr_t)env,2,info.identity,ASPACE_PROT_USER,&holds[1])==E_OK &&
+          kproc_allocation_hold(pd,env,procmem_gen(env),0,2,ASPACE_PROT_USER,&allocation)==E_OK,
+          "independent environment mapping and allocation owners");
+    CHECK(kproc_reservation_info(pd,entry,1,&info)==E_OK &&
+          kproc_reservation_hold(pd,entry,1,info.identity,ASPACE_PROT_USER|ASPACE_PROT_EXEC,&holds[2])==E_OK,
+          "capture immutable loaded-image EXEC reservation");
+    CHECK(!kaspace_mapping_can_change(backend,entry,1),"held image cannot be unmapped or reprotected");
+#if CONF_WITH_DEMAND_PAGING
+    for (page=USER_STACK_TOP-PAGE;page>=USER_STACK_TOP-USER_STACK_SIZE;page-=PAGE)
+        if (kproc_reservation_info(pd,page,PAGE,&info)==E_OK && !aspace_translate(backend,page,NULL,NULL)) break;
+    CHECK(page>=USER_STACK_TOP-USER_STACK_SIZE &&
+          kproc_reservation_hold(pd,page+8,16,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&holds[3])==E_OK &&
+          !aspace_translate(backend,page,NULL,NULL),"capture exact partial lazy-stack extent without materializing it");
+#else
+    page=USER_STACK_TOP-PAGE;
+    CHECK(kproc_reservation_info(pd,page,PAGE,&info)==E_OK &&
+          kproc_reservation_hold(pd,page,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&holds[3])==E_OK,
+          "capture eager-stack reservation");
+#endif
+    /* A borrowed device leaf inside a known segment still has no RAM owner. */
+    for (i=0;i<layout.nseg;i++) if ((layout.seg[i].flags&2) && !(layout.seg[i].flags&1)) {
+        VADDR data=layout.seg[i].vaddr&~(VADDR)(PAGE-1);
+        CHECK(aspace_unmap_private(backend,data,PAGE) &&
+              aspace_map_page(backend,data,0xfee00000UL,ASPACE_PROT_USER|ASPACE_PROT_WRITE) &&
+              kproc_reservation_info(pd,data,1,&info)==EACCDN,
+              "image metadata cannot authorize a borrowed device/ROM-window leaf");
+        break;
+    }
+    CHECK(i<layout.nseg,"native image includes a separate non-executable data fixture");
+    proc_free_owned(pd);
+#if CONF_WITH_DEMAND_PAGING
+    CHECK(aspace_fault_in(backend,page,ASPACE_PROT_USER|ASPACE_PROT_WRITE) &&
+          aspace_copy_to_user(backend,page+8,&value,sizeof(value)),
+          "captured lazy stack materializes after original PROCESS metadata is retired");
+#else
+    CHECK(aspace_copy_to_user(backend,page+8,&value,sizeof(value)),"captured eager stack remains writable after owner retirement");
+#endif
+    CHECK(kproc_allocation_release(&allocation) && procmem_size(env),"mapping owner remains after allocation token release");
+    stale=holds[2];
+    for (i=0;i<4;i++) CHECK(kproc_reservation_release(&holds[i]),"release each captured region once");
+    CHECK(!kproc_reservation_release(&stale),"captured-image ticket cannot resurrect retired storage");
+    same(&baseline,"captured image/basepage/environment/stack lifetime and final reclamation");
+    kcprintf("native captured image/basepage/environment/stack ownership: PASS\n");
 }
 
 /* The user-pointer checks the system calls use are made against the
@@ -5004,6 +5221,7 @@ static void test_mmap(void)
 
 static void test_file_mmap(void)
 {
+    KASPACE_RESERVATION_HOLD file_owner_hold = {0};
     static char path[] = "C:\\MMAP.TMP";
     char block[64], value, readback;
     PD *a = NULL, *b = NULL, *c = NULL, *parent = run;
@@ -5039,6 +5257,15 @@ static void test_file_mmap(void)
     CHECK(kproc_mmap(a, 0, PAGE, PROT_READ | PROT_WRITE,
           MAP_PRIVATE | MAP_ANONYMOUS, 0, 0) == PTOS_MMAP_BASE + 5 * PAGE,
           "reserve anonymous mapping alongside retained file mapping");
+    {
+        KASPACE_RESERVATION_INFO reservation;
+        KPROC *identity = kproc_retain(a);
+        CHECK(kaspace_reservation_info(kproc_active_space(identity),PTOS_MMAP_BASE,5*PAGE,&reservation) &&
+              kproc_reservation_hold(a,PTOS_MMAP_BASE,5*PAGE,reservation.identity,
+                  ASPACE_PROT_USER|ASPACE_PROT_WRITE,&file_owner_hold)==E_OK,
+              "hold real lazy FAT reservation before materialization");
+        kproc_release(identity);
+    }
     CHECK(aspace_file_pages() == 0 && kproc_demand_page(a, PTOS_MMAP_BASE, 0) == 1 &&
           kproc_demand_page(b, PTOS_MMAP_BASE, 0) == 1, "file mappings fault lazily");
     CHECK(aspace_translate(as, PTOS_MMAP_BASE, &pa, NULL) &&
@@ -5048,6 +5275,10 @@ static void test_file_mmap(void)
     CHECK(DISK_CALL(xlseek(0, fd, 1)) == 257 * 64 &&
           kproc_user_access(b, PTOS_MMAP_BASE, 1, TRUE), "fault preserves file position and logical write access");
     getofd(fd)->o_dfd->o_flag |= O_MEDIA_LOST;
+    CHECK(kproc_demand_page(a,PTOS_MMAP_BASE+PAGE,0)==3 &&
+          !aspace_translate(as,PTOS_MMAP_BASE+PAGE,NULL,NULL) &&
+          aspace_file_pages()==1 && aspace_file_references()==2,
+          "held lazy file backing failure retains reservation without partial page/cache ownership");
     CHECK(kproc_demand_page(b, PTOS_MMAP_BASE + PAGE, 0) == 3 &&
           !aspace_translate(bs, PTOS_MMAP_BASE + PAGE, NULL, NULL) &&
           aspace_file_pages() == 1 && aspace_file_references() == 2,
@@ -5075,6 +5306,7 @@ static void test_file_mmap(void)
     value = 'Z';
     CHECK(aspace_copy_to_user(as, PTOS_MMAP_BASE, &value, 1) &&
           aspace_copy_from_user(bs, &readback, PTOS_MMAP_BASE, 1) && readback == 'A', "COW preserves peer contents");
+    CHECK(kproc_reservation_release(&file_owner_hold),"release real file reservation after held COW and OOM checks");
     CHECK(kproc_mprot(b, PTOS_MMAP_BASE, PAGE, PROT_READ) == 0 &&
           kproc_demand_page(b, PTOS_MMAP_BASE, ASPACE_PROT_WRITE) == 0 &&
           kproc_mprot(b, PTOS_MMAP_BASE, PAGE, PROT_READ | PROT_WRITE) == 0 &&
@@ -6630,6 +6862,11 @@ void x86_64_memtest_run(void)
     test_aspace();
     test_isolation();
     test_process_validation();
+    test_allocation_holds();
+    test_captured_reservations();
+#if CONF_WITH_MMAP
+    test_reservation_holds();
+#endif
     test_kthread_relationships();
     test_proc_clone();
     test_proc_clone_invalidation();

@@ -1,5 +1,6 @@
 /* Real KASPACE implementation with a counted fake backend and allocator. */
 #include "emutos.h"
+#include "biosext.h"
 #include "procmem.h"
 #include "kheap.h"
 #include "gemerror.h"
@@ -48,3 +49,15 @@ int main(void)
     kaspace_put(NULL);
     return 0;
 }
+
+void panic(const char *format, ...) { (void)format; abort(); }
+
+BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }

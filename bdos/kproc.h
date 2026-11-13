@@ -22,6 +22,7 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length);
 LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection);
 #endif
 #include "procmem.h"      /* ASPACE */
+#include "kaspace.h"      /* reservation-hold token, internal only */
 #include "progimage.h"
 #endif
 
@@ -160,7 +161,15 @@ BOOL kproc_discard(PD *pd);
 #if CONF_WITH_USER_ASPACE
 void kproc_discard_after_free(PD *pd);
 #endif
-BOOL kproc_unlaunched(PD *pd);          /* has a record and was never launched */
+BOOL kproc_unlaunched(PD *pd);
+#if CONF_WITH_USER_ASPACE
+/* Retained unstarted identity: checked no-allocation disposal ownership for
+ * its recorded compatibility allocations, then final release after ixterm.
+ * The finalizer identity stays owned through any pending THREAD retirement. */
+BOOL kproc_prepare_discard(KPROC *process);
+void kproc_finish_discard_allocations(KPROC *process);
+#endif
+          /* has a record and was never launched */
 #endif
 #if CONF_WITH_USER_ASPACE
 struct kthread;
@@ -348,6 +357,8 @@ BOOL kproc_borrow(PD *launcher, void *block);
 void kproc_set_creator(PD *pd, PD *creator);
 void kproc_hand_over(PD *caller, PD *child);
 LONG kproc_check_launch(PD *pd, PD *caller);
+/* Pure allocation/borrow/staged-image mutation check, before any disposal. */
+BOOL kproc_allocation_disposal_allowed(const void *base);
 /* CUIS-only: identify a live unlaunched image belonging to this caller. */
 LONG kproc_child_image_pid(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
@@ -419,6 +430,25 @@ BOOL kproc_validate_user_exec(VADDR address);
 /* the same question for Maccess()/Mvalidate(): the process's own access, with
  * no page backed for the answer */
 BOOL kproc_user_access(PD *pd, VADDR address, ULONG size, BOOL write);
+/* Allocation owner references retain canonical identity only after retirement,
+ * never PD/execution resources. Move-only; release outside leaf/GUI exclusion.
+ * No lazy backing is materialized by acquisition. */
+typedef struct { PROCMEM_HOLD token; } KPROC_ALLOCATION_HOLD;
+LONG kproc_allocation_hold(PD *owner, const void *base, UQUAD generation,
+        VADDR offset, VADDR bytes, UWORD rights, KPROC_ALLOCATION_HOLD *result);
+BOOL kproc_allocation_release(KPROC_ALLOCATION_HOLD *hold);
+/* A non-owning snapshot; acquisition always revalidates its birth and rights. */
+LONG kproc_reservation_info(PD *owner, VADDR address, VADDR bytes,
+                            KASPACE_RESERVATION_INFO *result);
+LONG kproc_reservation_hold(PD *owner, VADDR address, VADDR bytes,
+        UQUAD reservation, UWORD rights, KASPACE_RESERVATION_HOLD *result);
+LONG kproc_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
+                                KASPACE_RESERVATION_HOLD *result);
+BOOL kproc_reservation_release(KASPACE_RESERVATION_HOLD *hold);
+
+LONG kproc_allocation_duplicate(const KPROC_ALLOCATION_HOLD *source,
+                                KPROC_ALLOCATION_HOLD *result);
+
 BOOL kproc_validate_user_write(VADDR address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);

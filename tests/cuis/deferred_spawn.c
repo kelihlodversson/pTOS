@@ -247,3 +247,7 @@ ULONG kthread_tid(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner || t==(KTHREAD 
 KPROC *kthread_process(const KTHREAD *t) { CHECK(t==(KTHREAD *)&owner); return (KPROC *)&owner; }
 
 KPROC *kproc_retain_identity(KPROC *p) { return kproc_retain((PD *)p); }
+
+/* The architecture regression executes this MMU/allocator probe; this hosted
+ * scheduler fixture models CPU and memory ownership instead. */
+void kproc_region_selftest(void) {}

@@ -35,7 +35,18 @@ KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold); /* borrowed */
  * FALSE means a sealed lease or durable hold rejects it, nothing revoked.
  * TRUE revokes overlapping preparation leases even if the mutation later fails.
  * Inputs are rounded out to pages. Backend lifetime is retained by each lease. */
+/* Pure admission check for a whole multi-root mutation; never revokes. */
+BOOL kaspace_mapping_can_change(const struct aspace *backend, VADDR address, VADDR bytes);
+/* Pure first busy interval within [from,to), clipped to that gap. Includes
+ * durable/sealed views and pending retirement fences in the existing ledger. */
+BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end);
+
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
+/* Logical reservation-preserving lazy/file backing only. This cannot authorize
+ * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */
+BOOL kaspace_materialization_change(struct aspace *backend, VADDR address,
+                                   VADDR bytes, UWORD logical_rights);
+
 #if CONF_WITH_PRIVATE_CLONE
 /* Physical COW preserves logical VA/rights and durable stack holds. Reject
  * preparation/sealed leases that may retain a cached physical write alias. */
@@ -46,6 +57,7 @@ BOOL kaspace_cow_change(struct aspace *backend, VADDR address, VADDR bytes);
 typedef struct {
     VADDR va;
     ULONG pages;
+    UQUAD reservation; /* immutable birth identity; not a physical frame */
 } KASPACE_HEAP_BLOCK;
 typedef struct {
     KASPACE_HEAP_BLOCK *blocks;
@@ -62,6 +74,7 @@ typedef struct mmap_region {
     UWORD prot;
     FILE_BACKING *backing;
     ULONG offset;
+    UQUAD reservation; /* split fragments preserve this original identity */
     struct mmap_region *next;
 } MMAP_REGION;
 typedef struct {
@@ -81,6 +94,45 @@ int kaspace_mmap_fault(KASPACE *space, UQUAD address, UWORD access);
 /* Complete mmap fault dispatch: -1 means it is not an mmap reservation. */
 int kaspace_mmap_demand_page(KASPACE *space, UQUAD address, UWORD access);
 #endif
+
+/* Reservation ownership, including absent/lazy pages. The authoritative
+ * ledger is the existing heap/mmap metadata; no page is faulted in. */
+typedef struct { UQUAD ticket; } KASPACE_RESERVATION_HOLD;
+typedef struct {
+    VADDR address, bytes;
+    UQUAD identity;
+    UWORD rights, flags;
+} KASPACE_RESERVATION_INFO;
+#define KASPACE_RESERVATION_LAZY 1
+#define KASPACE_RESERVATION_CAPTURED 2
+UQUAD kaspace_reservation_next(void); /* 0 on permanent exhaustion */
+BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
+                             KASPACE_RESERVATION_INFO *result);
+LONG kaspace_reservation_hold(KASPACE *space, UQUAD identity,
+        VADDR address, VADDR bytes, UWORD rights, UQUAD owner_number,
+        void *owner_identity, KASPACE_RESERVATION_HOLD *result);
+/* Trusted KPROC capture only: descriptor is freshly authenticated against
+ * its live image/basepage/environment/stack/staging owner before this call.
+ * A copied descriptor is NOT authority; the upper owner revalidates it. */
+LONG kaspace_reservation_hold_captured(KASPACE *space,
+        const KASPACE_RESERVATION_INFO *description, VADDR address, VADDR bytes,
+        UWORD rights, UQUAD owner_number, void *owner_identity,
+        KASPACE_RESERVATION_HOLD *result);
+BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *rights);
+/* Borrowed canonical owner; source ticket must stay owned across duplication. */
+void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold);
+LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
+        void *owner_identity, KASPACE_RESERVATION_HOLD *result);
+BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_identity);
+/* Stopped/unstarted owner only. Transfer cleanup into an existing blocking
+ * reservation lease without allocation; release after its last conflicting
+ * owner, outside exclusion. These are not public destructive-mutation bypasses. */
+BOOL kaspace_retire_private(KASPACE *space, VADDR address, VADDR bytes);
+BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes);
+/* Backend-only: requires an exact published, consumed, in-flight retirement
+ * owner and no live conflicting holder. Ordinary mutations cannot use this. */
+BOOL kaspace_retirement_change(struct aspace *backend,VADDR address,VADDR bytes,BOOL private);
+
 
 /* backend must be exclusively owned by the caller and not previously adopted.
  * On success transfers ownership; on failure ownership stays with the caller.

@@ -70,6 +70,43 @@ ULONG procmem_size(const void *p);
  * block" from "someone else's block that reused the space". */
 UQUAD procmem_gen(const void *p);
 
+/* Internal allocation ownership, distinct from resident mapping pins. A token
+ * is move-only; copies are non-owning and cannot release a later ticket. The
+ * owner_identity reference is prepared/retained by the canonical owner before
+ * acquire. Success transfers that reference; failure transfers nothing.
+ * release returns it exactly once for destruction OUTSIDE all leaf exclusion.
+ * No allocation, callback or final release occurs in the publication interval.
+ * These operations require cooperative owner serialization (not SMP safe). */
+typedef struct {
+    VADDR base;
+    UQUAD allocation, ticket;
+} PROCMEM_HOLD;
+typedef struct {
+    VADDR offset, bytes;
+    UWORD rights;
+    UQUAD owner_number;
+    void *owner_identity; /* borrowed while the authenticated hold stays owned */
+} PROCMEM_HOLD_INFO;
+BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
+        const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
+        UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
+BOOL procmem_hold_info(const PROCMEM_HOLD *hold, PROCMEM_HOLD_INFO *result);
+/* An already-owned hold may be duplicated after original PROCESS retirement.
+ * The supplied reference must duplicate the same canonical owner identity. */
+BOOL procmem_hold_duplicate(const PROCMEM_HOLD *source, void *owner_identity,
+                           PROCMEM_HOLD *result);
+BOOL procmem_hold_release(PROCMEM_HOLD *hold, void **owner_identity);
+/* Whole-range, non-mutating check before any metadata/leaf/owner change. */
+BOOL procmem_mutation_allowed(const void *base, UQUAD allocation,
+                             VADDR offset, VADDR bytes);
+/* Unstarted-image finalizer only: consume the current owner into an already
+ * retained canonical cleanup identity. Not a normal ownership transfer or
+ * user grant. Preflight every allocation before any no-fail pair publication;
+ * free_owned(cleanup_owner) after resource cleanup, while identity stays owned. */
+BOOL procmem_cleanup_allowed(const void *base,UQUAD generation,const void *expected_owner,const void *cleanup_owner);
+BOOL procmem_cleanup_transfer(const void *base,UQUAD generation,const void *expected_owner,const void *cleanup_owner);
+
+
 /*
  * For tests that make memory permanent on purpose (Ptermres): the generation
  * the next allocation will get, and a release of every unpinned allocation
@@ -97,6 +134,8 @@ BOOL procmem_range_live(VADDR va, VADDR bytes);
  */
 BOOL procmem_pinned(const void *p);
 ULONG procmem_pins(const void *p);      /* the pin count itself */
+/* Acquire only if every overlapping live reference count can increment. */
+BOOL procmem_try_pin(VADDR va,VADDR bytes);
 void procmem_pin(VADDR va, VADDR bytes, int delta);   /* +1 / -1 */
 
 /* Physical address backing window address va (which must be inside it). */
@@ -117,7 +156,9 @@ PADDR procmem_phys_of(VADDR va);
  * same kind of per-address cleanup.  `owner` is only an identity, never
  * dereferenced.
  */
-void procmem_set_owner(const void *p, const void *owner);
+/* FALSE leaves ownership/reclamation unchanged when a hold excludes transfer.
+ * Trusted no-fail callers must preflight before reaching their commit point. */
+BOOL procmem_set_owner(const void *p, const void *owner);
 const void *procmem_owner(const void *p);   /* NULL: no live owner, or not allocated */
 void procmem_free_owned(const void *owner, void (*pre_free)(void *base));
 void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));
@@ -300,7 +341,15 @@ void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes);
  * takes it away again (and unpins), exactly once per borrow.  See aspace.c.
  */
 BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+void aspace_test_borrow_failure(ASPACE *as,LONG after);
+LONG aspace_test_borrow_pending(const ASPACE *as);
+UQUAD aspace_test_table_hash(const ASPACE *as);
+#endif
 void aspace_unborrow(ASPACE *as, VADDR va, VADDR bytes);
+/* Mark an existing exact pin; no allocation/refcount change or callback. */
+BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes);
+void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes);
 /* Re-maps an already borrowed block with other permissions (the user bit
  * included): the block a ring-3 caller is handed. Still released by unborrow. */
 BOOL aspace_regrant(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
@@ -355,7 +404,12 @@ BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
  * that is there is not one of its private pages.
  */
 BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot);
+/* Pure whole-range ownership/barrier check; no leaf or metadata mutation. */
+BOOL aspace_release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes);
 BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes);
+/* Existing KASPACE retirement owner only; exact range/kind authenticated at
+ * the bounded leaf commit, before any pin-release callback can reenter. */
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes);
 #endif
 
 /*

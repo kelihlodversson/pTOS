@@ -22,8 +22,15 @@ for demand in 0 1; do
         -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
         tests/clone/exec_permissions.c -Wl,--gc-sections -o "$work/exec-permissions"
     "$work/exec-permissions"
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
+        -ffunction-sections -fdata-sections -fno-pie -no-pie \
+        -iquote include -I"$work" -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
+        -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
+        tests/clone/reservation_permissions.c -Wl,--gc-sections -o "$work/reservation-permissions"
+    "$work/reservation-permissions"
 done
 echo 'Production KPROC staged-image/heap entry permissions (host page-table model): PASS'
+echo 'Production KPROC reservation exact bounds and broad/narrow rights order (host MMU model): PASS'
 
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
     -ffunction-sections -fdata-sections -fno-pie -no-pie \

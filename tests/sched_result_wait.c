@@ -124,3 +124,7 @@ int main(void)
     puts("Managed result wait: cancel before/after readiness, unchanged outputs, cleanup before checkpoint, IRQ restore and nested isolation: PASS (host CPU model)");
     return 0;
 }
+
+/* The architecture regression executes this MMU/allocator probe; this hosted
+ * scheduler fixture models CPU and memory ownership instead. */
+void kproc_region_selftest(void) {}

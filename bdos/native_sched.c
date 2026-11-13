@@ -27,6 +27,9 @@
 #include "../aes/cuis.h"
 #endif
 extern PD *run;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+#include "region_selftest.h"
+#endif
 
 typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
@@ -1252,6 +1255,7 @@ LONG ksched_yield(void)
 #endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
     sequence_probe_on_yield();
+    kproc_region_selftest(); /* managed process context, outside runqueue exclusion */
     wait_probe_on_yield();
 #endif
     flags = native_sched_irq_save();

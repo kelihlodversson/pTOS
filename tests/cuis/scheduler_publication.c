@@ -475,3 +475,7 @@ int main(void)
 ULONG kthread_tid(const KTHREAD *t) { (void)t; return 17; }
 
 KPROC *kthread_process(const KTHREAD *t) { (void)t; abort(); }
+
+/* The architecture regression executes this MMU/allocator probe; this hosted
+ * scheduler fixture models CPU and memory ownership instead. */
+void kproc_region_selftest(void) {}

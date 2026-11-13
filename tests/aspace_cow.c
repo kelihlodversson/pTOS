@@ -1,6 +1,7 @@
 /* Production anonymous-COW/metadata code with modeled leaves and RAM.
  * This is NOT native MMU/fault/TLB evidence. */
 #include "emutos.h"
+#include "biosext.h"
 #include "gemerror.h"
 #include "procmem.h"
 #include "kheap.h"
@@ -219,7 +220,7 @@ int main(void)
     }
     one=kaspace_adopt(parent);assert(one);
     heap=kaspace_heap(one);heap->blocks=kalloc(sizeof(*heap->blocks));
-    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2};heap->count=heap->capacity=1;
+    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2,kaspace_reservation_next()};heap->count=heap->capacity=1;
     before=allocations-frees;
     for(n=1;n<32;n++) {
         LONG result;
@@ -229,6 +230,8 @@ int main(void)
         assert(!two && allocations-frees==before);
     }
     assert(two && kaspace_heap(two)->blocks!=heap->blocks);
+    assert(heap->blocks[0].reservation && kaspace_heap(two)->blocks[0].reservation &&
+           heap->blocks[0].reservation!=kaspace_heap(two)->blocks[0].reservation);
     kaspace_heap(two)->blocks[0].pages=1;
     assert(heap->blocks[0].pages==2);
     kaspace_put(one); /* parent-first final release */
@@ -272,3 +275,13 @@ int main(void)
     puts("Production COW metadata/refcount/rollback with modeled MMU: PASS");
     return 0;
 }
+
+BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort();return FALSE; }
+
+void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }

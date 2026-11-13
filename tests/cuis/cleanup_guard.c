@@ -61,3 +61,7 @@ int main(void)
     puts("Production cleanup guard: pending latch, nested PROCESS, sibling THREAD, identity/LIFO rejection and explicit checkpoint: PASS");
     return 0;
 }
+
+/* The architecture regression executes this MMU/allocator probe; this hosted
+ * scheduler fixture models CPU and memory ownership instead. */
+void kproc_region_selftest(void) {}

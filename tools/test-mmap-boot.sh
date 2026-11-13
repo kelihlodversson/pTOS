@@ -270,6 +270,7 @@ if grep -q '^CONF_WITH_NATIVE_SCHED *= *y' obj/auto.conf &&
     grep -q 'native scheduler durable controller/completion abandonment: PASS' "$log"
     grep -q 'native managed TID admission wait/resume: PASS' "$log"
     grep -q 'native quiescent waiter retirement: PASS' "$log"
+    grep -q 'native allocation/reservation ownership and orphan reclamation: PASS' "$log"
 fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"
