@@ -1,4 +1,5 @@
 /* Real loader/KPROC staging and MMU/allocator, with hosted physical providers. */
+#define TEST_PHYSICAL_PAGES 2048 /* actual 8 MiB RAM, including production reserve */
 #define main borrow_regression_main
 #include "procmem_borrow.c"
 #undef main
@@ -6,11 +7,9 @@
 WORD bootdev=2;
 #if CONF_WITH_MMAP
 void fileback_put(FILE_BACKING *backing) { (void)backing;abort(); }
+void fileback_hold(FILE_BACKING *backing) { (void)backing;abort(); }
 #endif
-#if !defined(BORROW_GENERIC)
-UQUAD pmem_free_bytes(void) { return 0x10000000ULL; }
-#else
-ULONG pmem32_free_bytes(void) { return 0x10000000UL; }
+#if defined(BORROW_GENERIC)
 void aspace_hw_drop_tables(PADDR root,const PADDR *pages,ULONG count)
 {
     struct modeled_root *r=(void *)(uintptr_t)root;ULONG i,j;
@@ -37,12 +36,17 @@ int main(void)
     ULONG i;LONG error;VADDR ordinary;static UBYTE environment[2]={0,0};
     PROG_LAYOUT original_layout={0};
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
+    source.number=123;
     source.pd=&source_pd;source.aspace=aspace_create();source.active_space=kaspace_adopt(source.aspace);
     source.legacy=TRUE;target.pd=&target_pd;
     original=aspace_create();pending=kaspace_adopt(original);target.pending_space=pending;target.pending_as=original;
     memset(&recipe,0,sizeof(recipe));stage_plan(&recipe.program,2*TEST_PAGE,2*TEST_PAGE);
     stage_plan(&recipe.interpreter,TEST_PAGE,TEST_PAGE);recipe.bias=USER_IMAGE_BASE;recipe.ibias=INTERPRETER_BASE;
     strcpy(recipe.filename,"demo.elf");target.env_start=environment;target.env_end=environment+2;
+    recipe.program.relro=TEST_PAGE;recipe.program.relro_size=TEST_PAGE;
+    recipe.program.nload=2;recipe.program.loads[1].address=TEST_PAGE;
+    recipe.program.loads[1].filesz=64;recipe.program.loads[1].memsz=TEST_PAGE;
+    recipe.program.loads[1].flags=DL_PF_R|DL_PF_W;
     target.shared_interp_recipe=&recipe;target.standard_entry=target.has_image=TRUE;
     target.layout=original_layout;target.initial_rsp=USER_STACK_TOP-32;target.interp_entry=INTERPRETER_BASE+16;
     target_pd.p_tbase=PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)(USER_IMAGE_BASE+16));
@@ -72,6 +76,62 @@ int main(void)
         UWORD rights;VADDR tail=target.load_va+(VADDR)target.load_pages*TEST_PAGE-TEST_PAGE;
         CHECK(aspace_translate(source.aspace,tail,NULL,&rights) && !rights);
     }
+    {
+        KASPACE_RESERVATION_INFO info={0};void *released=NULL;UQUAD ticket,birth;
+        VADDR relro=set.relro_address[0];
+        info.address=set.provisional_va;info.bytes=(VADDR)set.provisional_pages*TEST_PAGE;
+        info.identity=set.provisional_birth;info.flags=KASPACE_RESERVATION_CAPTURED|KASPACE_RESERVATION_INACCESSIBLE;
+        CHECK(kaspace_reservation_hold_captured(set.space,&info,info.address,info.bytes,0,
+                    source.number,&source,&set.logical[0])==E_OK);
+        set.nlogical=1;set.image_hold=0;target.shared_exec=&set;
+        target.active_space=set.space;target.aspace=source.aspace;target.started=TRUE;
+        CHECK(!kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));
+        set.committed=TRUE;
+        CHECK(kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));
+        /* Exercise the actual current-PROCESS syscall owner as well as the
+         * pure provenance projection; general image/heap/mmap stay excluded. */
+        kproc_list=&target;
+        CHECK(kproc_mprot(target.pd,relro,TEST_PAGE,PROT_READ)==E_OK);
+        CHECK(kproc_mprot(target.pd,relro,TEST_PAGE,PROT_READ|PROT_WRITE)==EACCDN);
+        CHECK(kproc_mprot(target.pd,relro-TEST_PAGE,TEST_PAGE,PROT_READ)==EACCDN);
+        CHECK(aspace_map_private(source.aspace,PTOS_MMAP_BASE,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+        CHECK(kproc_mprot(target.pd,PTOS_MMAP_BASE,TEST_PAGE,PROT_READ)==EIMBA);
+        CHECK(aspace_unmap_private(source.aspace,PTOS_MMAP_BASE,TEST_PAGE));
+        kproc_list=NULL;
+        CHECK(!kproc_shared_exec_relro_range(&target,relro-TEST_PAGE,TEST_PAGE));
+        CHECK(!kproc_shared_exec_relro_range(&target,relro,2*TEST_PAGE));
+        ticket=set.logical[0].ticket;set.logical[0].ticket++;
+        CHECK(!kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));set.logical[0].ticket=ticket;
+        birth=set.provisional_birth;set.provisional_birth++;
+        CHECK(!kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));set.provisional_birth=birth;
+        {
+            KASPACE_RESERVATION_HOLD saved=set.logical[0],wrong={0};
+            KASPACE_RESERVATION_INFO other=info;
+            KASPACE *peer=kaspace_adopt(aspace_create());CHECK(peer);
+            other.address+=TEST_PAGE;other.bytes=TEST_PAGE;
+            CHECK(kaspace_reservation_hold_captured(set.space,&other,other.address,other.bytes,0,
+                    source.number,&source,&wrong)==E_OK);
+            set.logical[0]=wrong;CHECK(!kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));
+            set.logical[0]=saved;released=NULL;CHECK(kaspace_reservation_release(&wrong,&released));
+            other=info;other.identity=kaspace_reservation_next();
+            CHECK(kaspace_reservation_hold_captured(set.space,&other,other.address,other.bytes,0,
+                    source.number,&source,&wrong)==E_OK);
+            set.logical[0]=wrong;CHECK(!kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));
+            set.logical[0]=saved;released=NULL;CHECK(kaspace_reservation_release(&wrong,&released));
+            CHECK(kaspace_reservation_hold_captured(peer,&info,info.address,info.bytes,0,
+                    source.number,&source,&wrong)==E_OK);
+            set.logical[0]=wrong;CHECK(!kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));
+            set.logical[0]=saved;released=NULL;CHECK(kaspace_reservation_release(&wrong,&released));
+            kaspace_put(peer);released=NULL;
+        }
+        source.pd=NULL;CHECK(kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));
+        kproc_list=&target;CHECK(kproc_mprot(target.pd,relro,TEST_PAGE,PROT_READ)==E_OK);kproc_list=NULL;
+        source.pd=&source_pd;
+        CHECK(kaspace_reservation_release(&set.logical[0],&released) && released==&source);
+        CHECK(!kproc_shared_exec_relro_range(&target,relro,TEST_PAGE));
+        set.nlogical=0;set.committed=FALSE;target.shared_exec=NULL;
+        target.active_space=NULL;target.aspace=NULL;target.started=FALSE;
+    }
     set.stack_bytes=DL_START_CAPACITY+64UL*1024UL;
     ordinary=heap_alloc(&source,set.stack_bytes,UH_MALLOC,NULL,TRUE);CHECK(ordinary);
     fail_metadata=allocation_call+1;CHECK(shared_interp_stack(&target,&set,ordinary)==ENSMEM);reset_failure();
@@ -89,7 +149,8 @@ int main(void)
     shared_interp_abort(&target,&set);
     /* Fixed ET_EXEC collision is atomic, leaves original pending image retryable. */
     recipe.program.type=2;recipe.program.base=USER_IMAGE_BASE;recipe.program.entry+=USER_IMAGE_BASE;
-    recipe.program.loads[0].address=USER_IMAGE_BASE;recipe.bias=0;
+    recipe.program.loads[0].address=USER_IMAGE_BASE;recipe.program.loads[1].address+=USER_IMAGE_BASE;
+    recipe.program.relro+=USER_IMAGE_BASE;recipe.bias=0;
     CHECK(aspace_map_private(source.aspace,USER_IMAGE_BASE,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
     memset(&set,0,sizeof(set));set.space=source.active_space;set.parent=&source;
     CHECK(shared_interp_prepare(&source,&target,&set)==EACCDN);shared_interp_abort(&target,&set);
@@ -109,6 +170,6 @@ int main(void)
     CHECK(aspace_unmap_private(original,INTERPRETER_BASE,TEST_PAGE));
     kaspace_put(pending);kaspace_put(source.active_space);kfree(source.heap);
     CHECK(!metadata_live && !physical_live);
-    puts("Production interpreted staging: copy/rebase, protected holes, allocation rollback, pending root/PD retry, rebuilt argc/argv/auxv, ET_EXEC collision and fixed-record heap gaps: PASS (host MMU)");
+    puts("Production interpreted staging: copy/rebase, protected holes, allocation rollback, pending root/PD retry, rebuilt argc/argv/auxv, exact RELRO authority after owner retirement, ET_EXEC collision and fixed-record heap gaps: PASS (host MMU)");
     return 0;
 }

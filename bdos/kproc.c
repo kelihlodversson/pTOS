@@ -92,6 +92,8 @@ struct shared_exec_regions {
     UQUAD original_initial_rsp,original_interp_entry,original_interp_bytes,original_stack_low;
     VADDR original_entry,original_stack_top,initial_sp;
     VADDR provisional_va;ULONG provisional_pages;
+    UQUAD provisional_birth,image_owner;
+    UWORD image_hold;
     VADDR relro_address[2],relro_bytes[2];
 #endif
     ULONG stack_bytes;
@@ -1183,7 +1185,9 @@ void kproc_destroy(PD *pd)
             kproc_load_leave();             /* (a disk error jumped out of a load) */
 #if CONF_WITH_NATIVE_SCHED
             kproc_clone_drop_compat(kproc);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
             kproc_shared_exec_abort(kproc);
+#endif
 #endif
 #if KPROC_SHARED_INTERP
             kfree(kproc->shared_interp_recipe);
@@ -2933,6 +2937,15 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
     rc = mapping_protection(protection, &prot);
     if (rc)
         return rc;
+#if KPROC_SHARED_INTERP
+    /* Only the current interpreted PROCESS's captured GNU_RELRO allocation
+     * may initialize beneath non-WRITE lifetime witnesses. General image,
+     * heap and mmap protection retains the ordinary mutation barrier. */
+    if(kproc->shared_exec && kproc->standard_entry && standard_image_range(kproc,address,length)) {
+        if(prot!=ASPACE_PROT_USER || !kproc_shared_exec_relro_range(kproc,address,length)) return EACCDN;
+        return aspace_protect_relro(kproc->aspace,address,length)?E_OK:EACCDN;
+    }
+#endif
     if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
     if (!mapping_range(address, length)) {
 #if CONF_WITH_ELF_SHARED

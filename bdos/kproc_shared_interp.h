@@ -92,6 +92,7 @@ static LONG shared_interp_prepare(KPROC *source,KPROC *target,struct shared_exec
     block=heap_find(source,va);
     if(!block) panic("interpreted provisional image missing");
     set->provisional_va=va;set->provisional_pages=block->pages;
+    set->provisional_birth=block->reservation;set->image_owner=kproc_ref_number(source);
     at=(UQUAD)program->base+bias+program->size;
     if(at<interp->base) at=interp->base;
     ibias=(at-interp->base+interp->align-1)&~(UQUAD)(interp->align-1);

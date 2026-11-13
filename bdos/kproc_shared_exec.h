@@ -181,6 +181,9 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
                               (VADDR)(target->user_end-target->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)target->env_start,
                               (VADDR)(target->env_end-target->env_start),ASPACE_PROT_USER));
+#if KPROC_SHARED_INTERP
+    if(interpreted) set->image_hold=set->nlogical;
+#endif
     if(!legacy) SHARED_TRY(shared_logical(set,source,target->load_va,(VADDR)target->load_pages*USER_PAGE_SIZE,
                                                interpreted?0:ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->user_start,
@@ -312,10 +315,22 @@ VADDR kproc_shared_exec_initial_sp(const KPROC *process)
 BOOL kproc_shared_exec_relro_range(const KPROC *process,VADDR address,VADDR bytes)
 {
 #if KPROC_SHARED_INTERP
-    ULONG i;const struct shared_exec_regions *set=process?process->shared_exec:NULL;
+    ULONG i;KPROC *owner;VADDR image_bytes;
+    const struct shared_exec_regions *set=process?process->shared_exec:NULL;
     if(!set || !set->committed || !set->interpreted || !process->standard_entry ||
         !process->started || process->completed || process->active_space!=set->space ||
-        !bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address) return FALSE;
+        process->aspace!=kaspace_backend(set->space) || !bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address ||
+        set->image_hold>=set->nlogical || !set->provisional_birth) return FALSE;
+    image_bytes=(VADDR)set->provisional_pages*USER_PAGE_SIZE;
+    if(address<set->provisional_va || address-set->provisional_va>=image_bytes ||
+        bytes>image_bytes-(address-set->provisional_va)) return FALSE;
+    /* The exact ownership ticket survives original owner retirement. Its
+     * identity prefix and canonical birth authenticate this allocation without
+     * requiring a live source PD or changing any immutable reservation grant. */
+    owner=kaspace_reservation_owner(&set->logical[set->image_hold]);
+    if(!owner || kproc_ref_number(owner)!=set->image_owner ||
+        !kaspace_reservation_matches(&set->logical[set->image_hold],set->space,
+                    set->provisional_birth,set->provisional_va,image_bytes)) return FALSE;
     for(i=0;i<2;i++) if(address>=set->relro_address[i] &&
         address-set->relro_address[i]<set->relro_bytes[i] &&
         bytes<=set->relro_bytes[i]-(address-set->relro_address[i])) return TRUE;
