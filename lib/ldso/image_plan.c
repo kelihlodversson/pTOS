@@ -219,7 +219,19 @@ int dl_image_read(DL_IMAGE *out, const unsigned char *file, uint32_t length,
         uint32_t first = relro_va & ~(page - 1);
         uint32_t last = (relro_va + relro_size) & ~(page - 1);
 
-        if (!covered(&p, relro_va, relro_size, DL_PF_R | DL_PF_W, 0))
+        /* GNU ld may extend RELRO through the mapped last-page padding of
+         * a LOAD with no BSS. Require a real writable start, and admit only
+         * that LOAD's page tail; ordinary image/data ranges stay strict. */
+        for (i = 0; i < p.nload; i++) {
+            const DL_LOAD *a = &p.loads[i];
+            uint32_t mapped_end = (a->address + a->memsz + page - 1) & ~(page - 1);
+
+            if ((a->flags & (DL_PF_R | DL_PF_W)) == (DL_PF_R | DL_PF_W) &&
+                contains(a->address, a->memsz, relro_va, 1) &&
+                contains(a->address, mapped_end - a->address, relro_va, relro_size))
+                break;
+        }
+        if (i == p.nload)
             return DL_BAD_ELF;
         if (relro_fs) {
             for (i = 0; i < p.nload; i++) {

@@ -91,7 +91,6 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         if (nested_search) {
             DTA saved_dta = *(DTA *)current_dta;
             void *saved_current = current_dta;
-            SHELL_CONTEXT *saved_shell = aes_shell;
             const char *saved_found = found;
             char path[AES_SHELL_PATH] = "INNER.TXT";
             int saved_attempts = attempts;
@@ -101,7 +100,7 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
             nested_result = mt_shel_find(path,nested_global) && !strcmp(path,nested_hit);
             fail_allocation = saved_failure;
             nested_restored = current_dta == saved_current &&
-                !memcmp(&saved_dta,saved_current,sizeof(DTA)) && aes_shell == saved_shell;
+                !memcmp(&saved_dta,saved_current,sizeof(DTA));
             nested_active = FALSE; found = saved_found; attempts = saved_attempts;
         }
         if (attempts < 16) strcpy(tried[attempts],(char *)(uintptr_t)a);
@@ -174,15 +173,13 @@ static int search(const char *input, const char *hit, const char *result, int co
 {
     char path[AES_SHELL_PATH];
     DTA saved_dta;
-    SHELL_CONTEXT sentinel;
     int before = cwd_calls;
     strcpy(path,input); found = hit; attempts = 0; saved_dta = caller_dta;
-    aes_shell = &sentinel;
     VERIFY(mt_shel_find(path,&aes_global) == (result != NULL));
     VERIFY(!strcmp(path,result ? result : input) && attempts == count);
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved_dta,sizeof(DTA)));
-    VERIFY(aes_shell == &sentinel && cwd_calls == before);
-    aes_shell = NULL; return 0;
+    VERIFY(cwd_calls == before);
+    return 0;
 }
 /* Unsupported standard/vendor selectors must reject before interpreting
  * their different command structures, tail buffers or output arguments. */
@@ -389,7 +386,6 @@ static int context_checks(void)
     AES_APP_CONTEXT late = { 0 }, other = { 0 }, early = { 0 };
     AESGLOBAL second = { .ap_id = 7, .ap_3resv = &late }, alias = aes_global;
     DL_LAUNCH other_launch = launch;
-    SHELL_CONTEXT sentinel;
     char command[AES_SHELL_PATH], tail[128], path[AES_SHELL_PATH], *value;
     int i, before = cwd_calls;
     /* Registration from a preinitializer precedes libptos auxiliary access.
@@ -432,12 +428,11 @@ static int context_checks(void)
         nested_hit = i ? "C:\\START\\APP\\INNER.TXT" : "D:\\OTHER\\INNER.TXT";
         nested_search = TRUE; nested_result = 0; nested_restored = FALSE;
         nested_no_memory = i == 1;
-        aes_shell = &sentinel; found = "C:\\START\\APP\\OUTER.TXT";
+        found = "C:\\START\\APP\\OUTER.TXT";
         strcpy(path,"OUTER.TXT");
         VERIFY(mt_shel_find(path,&aes_global) && !strcmp(path,found) && nested_result == (i != 1));
         VERIFY(nested_restored && (i != 3 || allocation_attempts == allocations_before));
-        VERIFY(current_dta == &caller_dta && aes_shell == &sentinel && !nested_search);
-        aes_shell = NULL;
+        VERIFY(current_dta == &caller_dta && !nested_search);
     }
     nested_global = NULL; nested_hit = NULL;
     fail_release = TRUE;

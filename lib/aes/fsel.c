@@ -11,7 +11,6 @@
 #include "gemerror.h"
 #include "string.h"
 
-FSEL_CONTEXT *aes_fsel;
 static BOOL checked_string(const char *text, ULONG size)
 {
     ULONG i;
@@ -19,17 +18,17 @@ static BOOL checked_string(const char *text, ULONG size)
     for (i = 0; i < size; i++) if (!text[i]) return TRUE;
     return FALSE;
 }
-void aes_fsel_draw(OBJECT *tree, WORD object, WORD depth)
+void aes_fsel_draw(FSEL_CONTEXT *aes_fsel, OBJECT *tree, WORD object, WORD depth)
 {
     FSEL_CONTEXT *c = aes_fsel;
     if (c->ok && !mt_objc_draw(tree,object,depth,c->clip.g_x,c->clip.g_y,c->clip.g_w,c->clip.g_h,c->global)) c->ok = FALSE;
 }
-void aes_fsel_change(OBJECT *tree, WORD object, UWORD state, WORD redraw)
+void aes_fsel_change(FSEL_CONTEXT *aes_fsel, OBJECT *tree, WORD object, UWORD state, WORD redraw)
 {
     FSEL_CONTEXT *c = aes_fsel;
     if (c->ok && !mt_objc_change(tree,object,0,c->clip.g_x,c->clip.g_y,c->clip.g_w,c->clip.g_h,state,redraw,c->global)) c->ok = FALSE;
 }
-void aes_fsel_rect(OBJECT *tree, WORD object, GRECT *rect)
+void aes_fsel_rect(FSEL_CONTEXT *aes_fsel, OBJECT *tree, WORD object, GRECT *rect)
 {
     LONG x, y, width, height;
     ob_offset(tree,object,&rect->g_x,&rect->g_y);
@@ -41,23 +40,23 @@ void aes_fsel_rect(OBJECT *tree, WORD object, GRECT *rect)
     }
     rect->g_x = x; rect->g_y = y; rect->g_w = width; rect->g_h = height;
 }
-void aes_fsel_clip(const GRECT *rect) { aes_fsel->clip = *rect; }
-void aes_fsel_get_clip(GRECT *rect) { *rect = aes_fsel->clip; }
-void aes_fsel_pointer(WORD *x, WORD *y)
+void aes_fsel_clip(FSEL_CONTEXT *aes_fsel, const GRECT *rect) { aes_fsel->clip = *rect; }
+void aes_fsel_get_clip(FSEL_CONTEXT *aes_fsel, GRECT *rect) { *rect = aes_fsel->clip; }
+void aes_fsel_pointer(FSEL_CONTEXT *aes_fsel, WORD *x, WORD *y)
 {
     if (aes_fsel->ok && !mt_graf_mkstate(x,y,NULL,NULL,aes_fsel->global)) aes_fsel->ok = FALSE;
 }
-void aes_fsel_cursor(WORD mode)
+void aes_fsel_cursor(FSEL_CONTEXT *aes_fsel, WORD mode)
 {
     if (aes_fsel->ok && !mt_graf_mouse(mode,NULL,aes_fsel->global)) aes_fsel->ok = FALSE;
 }
-WORD aes_fsel_form(OBJECT *tree, WORD start)
+WORD aes_fsel_form(FSEL_CONTEXT *aes_fsel, OBJECT *tree, WORD start)
 {
     WORD object = aes_fsel->ok ? mt_form_do(tree,start,aes_fsel->global) : 0;
     if (!object) aes_fsel->ok = FALSE;
     return object ? object : FSCANCEL;
 }
-WORD aes_fsel_dial(WORD kind, GRECT *small, GRECT *large)
+WORD aes_fsel_dial(FSEL_CONTEXT *aes_fsel, WORD kind, GRECT *small, GRECT *large)
 {
     WORD result;
     if (kind == FMD_FINISH && !aes_fsel->dial) return 1;
@@ -72,19 +71,19 @@ WORD aes_fsel_dial(WORD kind, GRECT *small, GRECT *large)
     }
     return result;
 }
-WORD aes_fsel_slide(OBJECT *tree, WORD parent, WORD child, WORD vertical)
+WORD aes_fsel_slide(FSEL_CONTEXT *aes_fsel, OBJECT *tree, WORD parent, WORD child, WORD vertical)
 {
     WORD value = aes_fsel->ok ? mt_graf_slidebox(tree,parent,child,vertical,aes_fsel->global) : -1;
     if (value < 0) { aes_fsel->ok = FALSE; return 0; }
     return value;
 }
-WORD aes_fsel_error(WORD error)
+WORD aes_fsel_error(FSEL_CONTEXT *aes_fsel, WORD error)
 {
     WORD result = aes_fsel->ok ? mt_form_error(error,aes_fsel->global) : 0;
     if (!result) aes_fsel->ok = FALSE;
     return result;
 }
-WORD aes_fsel_show(WORD string, WORD *number, WORD button)
+WORD aes_fsel_show(FSEL_CONTEXT *aes_fsel, WORD string, WORD *number, WORD button)
 {
     WORD result;
     (void)number;
@@ -93,34 +92,34 @@ WORD aes_fsel_show(WORD string, WORD *number, WORD button)
     if (!result) aes_fsel->ok = FALSE;
     return result;
 }
-WORD aes_fsel_drive(void)
+WORD aes_fsel_drive(FSEL_CONTEXT *aes_fsel)
 {
     LONG result = (LONG)aes_gemdos_call(0x19,0,0,0);
     if (result < 0 || result > 25) { aes_fsel->ok = FALSE; return 0; }
     return result;
 }
-void *aes_fsel_get_dta(void)
+void *aes_fsel_get_dta(FSEL_CONTEXT *aes_fsel)
 {
     UQUAD result = aes_gemdos_call(0x2f,0,0,0);
     if ((QUAD)result < 0) { aes_fsel->ok = FALSE; return NULL; }
     return (void *)(uintptr_t)result;
 }
-void aes_fsel_set_dta(void *dta)
+void aes_fsel_set_dta(FSEL_CONTEXT *aes_fsel, void *dta)
 {
     if (!aes_fsel->ok) return;
     /* Fsetdta has no defined scalar result. Verify through its getter. */
     (void)aes_gemdos_call(0x1a,(uintptr_t)dta,0,0);
     if (aes_gemdos_call(0x2f,0,0,0) != (uintptr_t)dta) aes_fsel->ok = FALSE;
 }
-WORD aes_fsel_first(char *path, WORD attributes)
+WORD aes_fsel_first(FSEL_CONTEXT *aes_fsel, char *path, WORD attributes)
 {
     return aes_fsel->ok ? (WORD)aes_gemdos_call(0x4e,(uintptr_t)path,attributes,0) : EACCDN;
 }
-WORD aes_fsel_next(void)
+WORD aes_fsel_next(FSEL_CONTEXT *aes_fsel)
 {
     return aes_fsel->ok ? (WORD)aes_gemdos_call(0x4f,0,0,0) : EACCDN;
 }
-void aes_fsel_copy_screen(WORD sx, WORD sy, WORD dx, WORD dy, WORD width, WORD height)
+void aes_fsel_copy_screen(FSEL_CONTEXT *aes_fsel, WORD sx, WORD sy, WORD dx, WORD dy, WORD width, WORD height)
 {
     FSEL_CONTEXT *c = aes_fsel;
     VDI_SERVICE_SCREEN_REQUEST request = { 0 };
@@ -140,7 +139,8 @@ void aes_fsel_copy_screen(WORD sx, WORD sy, WORD dx, WORD dy, WORD width, WORD h
 
 WORD mt_fsel_exinput(char *path, char *selection, WORD *button, const char *title, AESGLOBAL *global)
 {
-    FSEL_CONTEXT c = { 0 }, *saved = aes_fsel;
+    FSEL_CONTEXT c = { 0 };
+    FSEL_CONTEXT *aes_fsel = &c;
     VDI_SERVICE_WORKSTATION ws;
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, count, i, result = 0, pressed = 0;
     char staged_path[MAXPATHLEN], staged_selection[LEN_ZFNAME];
@@ -158,11 +158,10 @@ WORD mt_fsel_exinput(char *path, char *selection, WORD *button, const char *titl
         rs_obfix_metrics(c.objects,i,c.metrics.wchar,c.metrics.hchar,c.metrics.width);
     c.screen.g_w = c.metrics.width; c.screen.g_h = c.metrics.height;
     c.center.g_x = c.metrics.width/2; c.center.g_y = c.metrics.height/2;
-    aes_fsel = &c;
-    aes_fsel_start();
+    aes_fsel_start(aes_fsel);
     if (c.bounds.g_x < 0 || c.bounds.g_y < 0 || c.bounds.g_w <= 0 || c.bounds.g_h <= 0 ||
         (LONG)c.bounds.g_x+c.bounds.g_w > c.metrics.width || (LONG)c.bounds.g_y+c.bounds.g_h > c.metrics.height) goto done;
-    original_dta = aes_fsel_get_dta(); dta = c.ok;
+    original_dta = aes_fsel_get_dta(aes_fsel); dta = c.ok;
     c.drives = aes_drive_map();
     if (!c.ok || c.drives < 0) goto done;
     bytes = (ULONG)((c.bounds.g_w+15)&~15)*c.bounds.g_h*4;
@@ -181,10 +180,10 @@ WORD mt_fsel_exinput(char *path, char *selection, WORD *button, const char *titl
     opened = TRUE; c.handle = ws.handle;
     if (aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&c.bounds,(uintptr_t)snapshot,0) != E_OK) goto done;
     copied = TRUE;
-    result = aes_fsel_core(staged_path,staged_selection,&pressed,(char *)title);
+    result = aes_fsel_core(aes_fsel, staged_path,staged_selection,&pressed,(char *)title);
     if (!c.ok) result = 0;
 done:
-    if (c.dial) (void)aes_fsel_dial(FMD_FINISH,&c.center,&c.bounds);
+    if (c.dial) (void)aes_fsel_dial(aes_fsel, FMD_FINISH,&c.center,&c.bounds);
     if (dta) {
         (void)aes_gemdos_call(0x1a,(uintptr_t)original_dta,0,0);
         if (aes_gemdos_call(0x2f,0,0,0) != (uintptr_t)original_dta) c.ok = FALSE;
@@ -196,7 +195,6 @@ done:
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,c.session,0,0,0,0,0) != E_OK) c.ok = FALSE;
     if (snapshot) (void)aes_resource_discard(snapshot);
     if (overlay) aes_frames_resume(global);
-    aes_fsel = saved;
     if (!result || !c.ok || (pressed != 0 && pressed != 1)) return 0;
     strcpy(path,staged_path); strcpy(selection,staged_selection); *button = pressed;
     return 1;

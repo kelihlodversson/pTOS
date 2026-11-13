@@ -5,17 +5,14 @@
 #include "menu_bindings.h"
 #include "string.h"
 
-AESGLOBAL *aes_menu_global;
 
 static WORD change(OBJECT *tree, WORD item, UWORD bit, WORD set,
                    WORD draw, WORD check_disabled, AESGLOBAL *global)
 {
-    AESGLOBAL *saved = aes_menu_global;
+    AESGLOBAL *aes_menu_global = global;
     WORD result;
     if (!tree || item < 0 || aes_application_session(global) < 0) return 0;
-    aes_menu_global = global;
-    result = aes_menu_change_core(tree,item,bit,set,draw,check_disabled);
-    aes_menu_global = saved;
+    result = aes_menu_change_core(aes_menu_global, tree,item,bit,set,draw,check_disabled);
     return result;
 }
 WORD mt_menu_icheck(OBJECT *tree, WORD item, WORD check, AESGLOBAL *global)

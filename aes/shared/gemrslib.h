@@ -6,7 +6,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #ifndef GEMRSLIB_H
 #define GEMRSLIB_H
 
@@ -28,7 +28,7 @@ WORD rs_load(AESGLOBAL *pglobal, BYTE *rsfname);
 void rs_cicon_pack(const WORD *data, void *pixels, WORD planes, WORD w, WORD h, WORD pixel_size);
 #endif
 #if !CONF_WITH_LEGACY_RSC_LOAD
-OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size);
+OBJECT *rs_loadmem(AES_RESOURCE_PARAM AESGLOBAL *pglobal, const void *rsmem, LONG size);
 #endif
 
 #endif

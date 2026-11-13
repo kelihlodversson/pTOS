@@ -109,9 +109,14 @@ consumes it when each context is initialized, without a DT_INIT cache. Shell
 search work buffers and saved-DTA state are per-call. Reusable context-owned
 DTAs keep kernel search-cache addresses stable; nested calls borrow separate
 slots, released with the context.
-This does not change CUIS's current one-session-per-PD identity or make the
-remaining shared temporary libaes helper pointers concurrent. See
-libaes-compatibility.md for the lifetime contract and remaining #953 work.
+All temporary libaes helper contexts now travel through explicit parameters,
+including painter/tracker, form, alert/error, selector, resource, shell and
+menu calls. Nested object callbacks carry their painter as a callback cookie,
+without publishing an active context globally. The ELF ownership check also
+rejects mutable data outside RELRO and TLS; constant resource tables remain
+read-only after relocation. This preserves CUIS's one-session-per-PD identity;
+independent concurrent native AES sessions still require the separate kernel
+identity work. See libaes-compatibility.md for the #953 lifetime contract.
 
 Current sources expose the migration points: gemaplib/gemevlib/gemasync and
 aes_service.c combine registration, scheduling, GEM messages and waits;

@@ -75,7 +75,14 @@ static void *numconv(char *p, unsigned long value, int radix, int precision, uns
     return p;
 }
 
+#ifdef LIBAES_CONTEXTS
+#define OUTPUT_CHARACTER(c) outc(context, (c))
+int doprintf_context(void (*outc)(void *, int), void *context, const char *RESTRICT fmt, va_list ap)
+#else
+/* Keep the direct sink ABI compact for size-limited classic ROMs. */
+#define OUTPUT_CHARACTER(c) outc(c)
 int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
+#endif
 {
     char *p, *bufstart, buf[MAXNUMLEN];
     long longval;
@@ -96,7 +103,7 @@ int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
                 return length;
             if (c == '%')
                 break;
-            (*outc)(c);
+            OUTPUT_CHARACTER(c);
             length++;
         }
 
@@ -206,8 +213,8 @@ int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
             /* pointers are always long & zero-filled to a width of 8 */
             flags |= FLAG_WIDTH|FLAG_LONG|FLAG_ZERO;
             width = 8;
-            outc('0');
-            outc((flags&FLAG_CAPS)?'X':'x');
+            OUTPUT_CHARACTER('0');
+            OUTPUT_CHARACTER((flags&FLAG_CAPS)?'X':'x');
             length += 2;
             longval = va_arg(ap, long);
             p = numconv(p, longval, 16, precision, flags);
@@ -263,20 +270,34 @@ int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
         {
             if ((*p == '-') && (fill == '0'))
             {
-                (*outc)(*p++);
+                OUTPUT_CHARACTER(*p++);
                 length++;
                 n--;
             }
             for ( ; fill_len; fill_len--, length++)
-                (*outc)(fill);
+                OUTPUT_CHARACTER(fill);
         }
         /* output the item */
         for ( ; n; n--, length++)
-            (*outc)(*p++);
+            OUTPUT_CHARACTER(*p++);
         /* output fill characters, if any */
         for ( ; fill_len; fill_len--, length++)
-            (*outc)(fill);
+            OUTPUT_CHARACTER(fill);
     }
 
     return length;
 }
+
+#ifdef LIBAES_CONTEXTS
+/* Preserve the legacy sink ABI for context-aware library callers. */
+static void legacy_outc(void *context, int character)
+{
+    void (**sink)(int) = context;
+    (*sink)(character);
+}
+
+int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
+{
+    return doprintf_context(legacy_outc,&outc,fmt,ap);
+}
+#endif

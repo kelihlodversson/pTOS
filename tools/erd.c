@@ -1625,7 +1625,7 @@ PRIVATE int write_h_extern(FILE *fp)
 #ifdef GEM_RSC
     fprintf(fp,"/* The following arrays live in RAM */\n");
     fprintf(fp,"extern OBJECT  %srs_obj[];\n",prefix);
-    fprintf(fp,"extern TEDINFO %srs_tedinfo[];\n\n",prefix);
+    fprintf(fp,"#ifdef AES_RESOURCE_FSEL\nextern const TEDINFO %srs_tedinfo[];\n#else\nextern TEDINFO %srs_tedinfo[];\n#endif\n\n",prefix,prefix);
 
     fprintf(fp,"/* This array lives in ROM and points to RAM data */\n");
     fprintf(fp,"extern OBJECT * const %srs_trees[];\n\n",prefix);
@@ -1746,10 +1746,18 @@ unsigned long offset;
     if (rsh.nted == 0)      /* don't generate TEDINFO stuff if not needed */
         return 0;
 
+#ifdef GEM_RSC
+    fprintf(fp,"/* FSEL copies/rebases these immutable offset bases into its call. */\n");
+    fprintf(fp,"#ifdef AES_RESOURCE_FSEL\n#define RSC_SCRATCH const\n#else\n#define RSC_SCRATCH\n#endif\n");
+    if (te_ptext_len != 0)
+        fprintf(fp,"static RSC_SCRATCH char %srs_te_text[%lu];\n\n",prefix,te_ptext_len);
+    fprintf(fp,"RSC_SCRATCH TEDINFO %srs_tedinfo[RS_NTED];\n\n",prefix);
+#else
     if (te_ptext_len != 0)
         fprintf(fp,"static char %srs_te_text[%lu];\n\n",prefix,te_ptext_len);
 
     fprintf(fp,"TEDINFO %srs_tedinfo[RS_NTED];\n\n",prefix);
+#endif
 
     fprintf(fp,"static const TEDINFO %srs_tedinfo_rom[] = {\n",prefix);
     nted = rsh.nted;
@@ -1760,7 +1768,7 @@ unsigned long offset;
         if (offset == 0xffffffffUL)
             fprintf(fp,"    {0L,\n");
         else
-            fprintf(fp,"    {&%srs_te_text[%lu],\n",prefix,offset);
+            fprintf(fp,"    {CONST_CAST(char *, &%srs_te_text[%lu]),\n",prefix,offset);
         p = base + get_offset(&ted->te_ptmplt);
         if (isshared(p)) {
             fixshared(temp,p);
@@ -2077,8 +2085,8 @@ int butoff = 0;
 
 #ifdef GEM_RSC
     fprintf(fp,"/* Strings for the alert box */\n");
-    fprintf(fp,"static char msg_str[MAX_LINENUM][MAX_LINELEN+1];\n");
-    fprintf(fp,"static char msg_but[MAX_BUTNUM][MAX_BUTLEN+1];\n\n");
+    fprintf(fp,"static RSC_SCRATCH char msg_str[MAX_LINENUM][MAX_LINELEN+1];\n");
+    fprintf(fp,"static RSC_SCRATCH char msg_but[MAX_BUTNUM][MAX_BUTLEN+1];\n\n");
 #endif
 
     fprintf(fp,"static const OBJECT %srs_obj_rom[] = {\n",prefix);
@@ -2139,11 +2147,11 @@ int butoff = 0;
             found_butoff = 1;
         }
         if (msgoff) {
-            fprintf(fp,"     { .free_string = msg_str[%d] },\n",MAX_LINENUM-msgoff);
+            fprintf(fp,"     { .free_string = CONST_CAST(char *, msg_str[%d]) },\n",MAX_LINENUM-msgoff);
             msgoff--;
         } else if (butoff)
         {
-            fprintf(fp,"     { .free_string = msg_but[%d] },\n",MAX_BUTNUM-butoff);
+            fprintf(fp,"     { .free_string = CONST_CAST(char *, msg_but[%d]) },\n",MAX_BUTNUM-butoff);
             butoff--;
         } else
 #endif
@@ -2309,6 +2317,7 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"        if (type == G_TEXT || type == G_BOXTEXT || type == G_FTEXT || type == G_FBOXTEXT)\n");
     fprintf(fp,"            objects[i].ob_spec.tedinfo = teds + (objects[i].ob_spec.tedinfo-rs_tedinfo);\n");
     fprintf(fp,"    }\n    return TR1-TR0;\n}\n#endif\n\n");
+    fprintf(fp,"#ifndef AES_RESOURCE_FSEL\n");
     fprintf(fp,"void gem_rsc_init(void)\n");
     fprintf(fp,"{\n");
     fprintf(fp,"    /* Copy data from ROM to RAM: */\n");
@@ -2338,6 +2347,7 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"    for (i = 0, p = tree+BUTOFF; i < MAX_BUTNUM; i++, p++)\n");
     fprintf(fp,"        p->ob_spec.free_string = msg_but[i];\n");
     fprintf(fp,"}\n");
+    fprintf(fp,"#endif\n");
 #endif
 
     return ferror(fp) ? -1 : 0;
@@ -2696,12 +2706,12 @@ char *base = (char *)rschdr;
          */
         error("TEXT/BOXTEXT objects not allowed in EmuDesk resource",inrsc);
 #endif
-        fprintf(fp,"{ .tedinfo = &%srs_tedinfo[%ld] },\n",prefix,
+        fprintf(fp,"{ .tedinfo = CONST_CAST(TEDINFO *, &%srs_tedinfo[%ld]) },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.tedinfo)/sizeof(TEDINFO));
         break;
     case G_FTEXT:
     case G_FBOXTEXT:
-        fprintf(fp,"{ .tedinfo = &%srs_tedinfo[%ld] },\n",prefix,
+        fprintf(fp,"{ .tedinfo = CONST_CAST(TEDINFO *, &%srs_tedinfo[%ld]) },\n",prefix,
             (get_offset(&obj->ob_spec)-rsh.tedinfo)/sizeof(TEDINFO));
         break;
     case G_IMAGE:

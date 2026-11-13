@@ -7,7 +7,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesdefs.h"
@@ -86,7 +86,7 @@ static const char gl_fsobj[4] = {FTITLE, FILEBOX, SCRLBAR, 0x0};
 /*
  *  initialise the file selector
  */
-void fs_start(void)
+void fs_start(AES_FSEL_PARAM0)
 {
 #if FSEL_3D
     OBJECT *obj, *tree = rs_trees[FSELECTR];
@@ -206,7 +206,7 @@ void fs_start(void)
 /*
  *  centre specified G_STRING in the root object
  */
-static void centre_title(OBJECT *tree,WORD objnum)
+static void centre_title(AES_FSEL_PARAM OBJECT *tree,WORD objnum)
 {
     OBJECT *root = tree;
     OBJECT *str = root+objnum;
@@ -276,7 +276,7 @@ static WORD fs_comp(char *name1, char *name2)
 }
 
 
-static LONG fs_add(WORD thefile, LONG fs_index)
+static LONG fs_add(AES_FSEL_PARAM WORD thefile, LONG fs_index)
 {
     WORD len;
 
@@ -295,7 +295,7 @@ static LONG fs_add(WORD thefile, LONG fs_index)
  *
  *  Returns FALSE iff error occurred
  */
-static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
+static WORD fs_active(AES_FSEL_PARAM char *ppath, char *pspec, WORD *pcount)
 {
     WORD ret;
     LONG thefile, fs_index, temp;
@@ -312,9 +312,9 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
     fname = fs_pspec(allpath,NULL);
     set_all_files(fname);
 
-    user_dta = dos_gdta();          /* remember user's DTA */
-    dos_sdta(&fs_dta);
-    ret = dos_sfirst(allpath, FA_SUBDIR);
+    user_dta = dos_gdta(AES_FSEL_ARG0);          /* remember user's DTA */
+    dos_sdta(AES_FSEL_ARG &fs_dta);
+    ret = dos_sfirst(AES_FSEL_ARG allpath, FA_SUBDIR);
 
     /*
      * like Atari TOS, we silently ignore any filenames that we don't
@@ -329,15 +329,15 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
         {
             if ((fs_dta.d_attrib & FA_SUBDIR) || (wildcmp(pspec, fs_dta.d_fname)))
             {
-                fs_index = fs_add(thefile, fs_index);
+                fs_index = fs_add(AES_FSEL_ARG thefile, fs_index);
                 thefile++;
             }
         }
-        ret = dos_snext();
+        ret = dos_snext(AES_FSEL_ARG0);
     }
 
     *pcount = thefile;
-    dos_sdta(user_dta);             /* restore user DTA */
+    dos_sdta(AES_FSEL_ARG user_dta);             /* restore user DTA */
 
     /* sort files using shell sort from page 108 of K&R C Prog. Lang. */
     for (gap = thefile/2; gap > 0; gap /= 2)
@@ -361,7 +361,7 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
         return TRUE;
 
     if (!IS_BIOS_ERROR(ret))    /* if BDOS error, issue message via form_error(): */
-        fm_error(-ret-31);      /* (need to convert to 'MS-DOS error code')       */
+        fm_error(AES_FSEL_ARG -ret-31);      /* (need to convert to 'MS-DOS error code')       */
 
     return FALSE;
 }
@@ -390,7 +390,7 @@ static WORD fs_1scroll(WORD curr, WORD count, WORD touchob)
  *  based on the current scrolled position, and point at them
  *  with the sub-tree of G_STRINGs that makes up the window box.
  */
-static void fs_format(OBJECT *tree, WORD currtop, WORD count)
+static void fs_format(AES_FSEL_PARAM OBJECT *tree, WORD currtop, WORD count)
 {
     WORD i, cnt;
     WORD y, h, th;
@@ -440,10 +440,10 @@ static void fs_format(OBJECT *tree, WORD currtop, WORD count)
 /*
  *  Routine to select or deselect a file name in the scrollable list.
  */
-static void fs_sel(WORD sel, WORD state)
+static void fs_sel(AES_FSEL_PARAM WORD sel, WORD state)
 {
     if (sel)
-        ob_change(rs_trees[FSELECTR], F1NAME + sel - 1, state, TRUE);
+        ob_change(AES_FSEL_ARG rs_trees[FSELECTR], F1NAME + sel - 1, state, TRUE);
 }
 
 
@@ -451,7 +451,7 @@ static void fs_sel(WORD sel, WORD state)
  *  Routine to handle scrolling the directory window a certain number
  *  of file names.
  */
-static WORD fs_nscroll(OBJECT *tree, WORD *psel, WORD curr, WORD count,
+static WORD fs_nscroll(AES_FSEL_PARAM OBJECT *tree, WORD *psel, WORD curr, WORD count,
                        WORD touchob, WORD n)
 {
     WORD i, newcurr, diffcurr;
@@ -468,11 +468,11 @@ static WORD fs_nscroll(OBJECT *tree, WORD *psel, WORD curr, WORD count,
     if (diffcurr)
     {
         curr = newcurr;
-        fs_sel(*psel, NORMAL);
+        fs_sel(AES_FSEL_ARG *psel, NORMAL);
         *psel = 0;
-        fs_format(tree, curr, count);
-        gsx_gclip(&r[1]);
-        ob_actxywh(tree, F1NAME, r);
+        fs_format(AES_FSEL_ARG tree, curr, count);
+        gsx_gclip(AES_FSEL_ARG &r[1]);
+        ob_actxywh(AES_FSEL_ARG tree, F1NAME, r);
 
         if ((neg = (diffcurr < 0)) != 0)
             diffcurr = -diffcurr;
@@ -488,7 +488,7 @@ static WORD fs_nscroll(OBJECT *tree, WORD *psel, WORD curr, WORD count,
                 sy = r[0].g_y;
             }
 
-            bb_screen(r[0].g_x, sy, r[0].g_x, dy, r[0].g_w, r[0].g_h * (NM_NAMES - diffcurr) );
+            bb_screen(AES_FSEL_ARG r[0].g_x, sy, r[0].g_x, dy, r[0].g_w, r[0].g_h * (NM_NAMES - diffcurr) );
             if (!neg)
                 r[0].g_y += r[0].g_h * (NM_NAMES - diffcurr);
         }
@@ -499,8 +499,8 @@ static WORD fs_nscroll(OBJECT *tree, WORD *psel, WORD curr, WORD count,
 
         for (i = 0; i < 2; i++)
         {
-            gsx_sclip(&r[i]);
-            ob_draw(tree, ((i) ? FSVSLID : FILEBOX), MAX_DEPTH);
+            gsx_sclip(AES_FSEL_ARG &r[i]);
+            ob_draw(AES_FSEL_ARG tree, ((i) ? FSVSLID : FILEBOX), MAX_DEPTH);
         }
     }
 
@@ -514,7 +514,7 @@ static WORD fs_nscroll(OBJECT *tree, WORD *psel, WORD curr, WORD count,
  *
  *  Returns FALSE iff error occurred
  */
-static WORD fs_newdir(char *fpath, char *pspec, OBJECT *tree, WORD *pcount)
+static WORD fs_newdir(AES_FSEL_PARAM char *fpath, char *pspec, OBJECT *tree, WORD *pcount)
 {
     const char *ptmp;
     OBJECT *obj;
@@ -523,11 +523,11 @@ static WORD fs_newdir(char *fpath, char *pspec, OBJECT *tree, WORD *pcount)
     /* load the filenames matching pspec, sort them, and insert
      * the names in the file selector scroll box
      */
-    ob_draw(tree, FSDIRECT, MAX_DEPTH);
-    if (!fs_active(fpath, pspec, pcount))
+    ob_draw(AES_FSEL_ARG tree, FSDIRECT, MAX_DEPTH);
+    if (!fs_active(AES_FSEL_ARG fpath, pspec, pcount))
         return FALSE;           /* e.g. path does not exist */
 
-    fs_format(tree, 0, *pcount);
+    fs_format(AES_FSEL_ARG tree, 0, *pcount);
 
     obj = tree + FTITLE;        /* update FTITLE with ptr to mask */
     tedinfo = obj->ob_spec.tedinfo;
@@ -535,7 +535,7 @@ static WORD fs_newdir(char *fpath, char *pspec, OBJECT *tree, WORD *pcount)
 
     ptmp = gl_fsobj;            /* redraw file selector objects */
     while(*ptmp)
-        ob_draw(tree, *ptmp++, MAX_DEPTH);
+        ob_draw(AES_FSEL_ARG tree, *ptmp++, MAX_DEPTH);
 
     return TRUE;
 }
@@ -567,7 +567,7 @@ static void set_mask(char *mask, char *path)
  *  and all others as deselected.  Optionally, if the selected
  *  drive has changed, the affected drive buttons are redrawn.
  */
-static void select_drive(OBJECT *treeaddr, WORD drive, WORD redraw)
+static void select_drive(AES_FSEL_PARAM OBJECT *treeaddr, WORD drive, WORD redraw)
 {
     WORD i, olddrive = -1;
     OBJECT *obj, *start = treeaddr+DRIVE_OFFSET;
@@ -588,8 +588,8 @@ static void select_drive(OBJECT *treeaddr, WORD drive, WORD redraw)
     if (redraw && (drive != olddrive))
     {
         if (olddrive >= 0)
-            ob_draw(treeaddr,olddrive+DRIVE_OFFSET,MAX_DEPTH);
-        ob_draw(treeaddr,drive+DRIVE_OFFSET,MAX_DEPTH);
+            ob_draw(AES_FSEL_ARG treeaddr,olddrive+DRIVE_OFFSET,MAX_DEPTH);
+        ob_draw(AES_FSEL_ARG treeaddr,drive+DRIVE_OFFSET,MAX_DEPTH);
     }
 }
 
@@ -599,7 +599,7 @@ static void select_drive(OBJECT *treeaddr, WORD drive, WORD redraw)
  *  returns 1 iff it is different in the first n characters,
  *  where n is the maximum text length from the TEDINFO.
  */
-static WORD path_changed(char *path)
+static WORD path_changed(AES_FSEL_PARAM char *path)
 {
     OBJECT *obj;
     TEDINFO *ted;
@@ -617,7 +617,7 @@ static WORD path_changed(char *path)
 /*
  *  get drive number from specified path (if possible) or default
  */
-static WORD get_drive(char *path)
+static WORD get_drive(AES_FSEL_PARAM char *path)
 {
     WORD drive;
 
@@ -625,7 +625,7 @@ static WORD get_drive(char *path)
     if (drive >= 0)
         return drive;
 
-    return dos_gdrv();
+    return dos_gdrv(AES_FSEL_ARG0);
 }
 
 
@@ -636,7 +636,7 @@ static WORD get_drive(char *path)
  *  or change of path, and returns to the application with
  *  the selected path, filename, and exit button.
  */
-WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
+WORD fs_input(AES_FSEL_PARAM char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 {
     BOOL cont, newlist, newsel, newdrive;
     WORD drive, dclkret, error;
@@ -677,7 +677,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     if (*pipath == '\0')
     {
         strcpy(pipath,"A:\\*.*");
-        *pipath += dos_gdrv();
+        *pipath += dos_gdrv(AES_FSEL_ARG0);
     }
 
     /* get memory for the filename buffer & for the array that points to
@@ -692,7 +692,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     }
     if (!ad_fsnames)
     {
-        fm_show(ALFSMEM, NULL, 1);
+        fm_show(AES_FSEL_ARG ALFSMEM, NULL, 1);
         return FALSE;
     }
 
@@ -729,7 +729,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 
     obj = tree + FSTITLE;
     obj->ob_spec.free_string = pilabel ? pilabel : rs_str(ITEMSLCT);
-    centre_title(tree,FSTITLE);
+    centre_title(AES_FSEL_ARG tree,FSTITLE);
 
     /* set drive buttons */
     obj = tree + DRIVE_OFFSET;
@@ -740,12 +740,12 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
         else
             obj->ob_state |= DISABLED;
     }
-    select_drive(tree,get_drive(locstr),0);
+    select_drive(AES_FSEL_ARG tree,get_drive(AES_FSEL_ARG locstr),0);
 
     /* set clip and start form fill-in by drawing the form */
-    gsx_sclip(&gl_rfs);
-    fm_dial(FMD_START, &gl_rcenter, &gl_rfs);
-    ob_draw(tree, ROOT, 2);
+    gsx_sclip(AES_FSEL_ARG &gl_rfs);
+    fm_dial(AES_FSEL_ARG FMD_START, &gl_rcenter, &gl_rfs);
+    ob_draw(AES_FSEL_ARG tree, ROOT, 2);
 
     /* init for while loop by forcing initial fs_newdir call */
     sel = 0;
@@ -754,19 +754,19 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     error = 0;      /* consecutive error count */
     while(cont && FSEL_OK())
     {
-        touchob = (newlist) ? 0x0 : fm_do(tree, FSSELECT);
-        gsx_mxmy(&mx, &my);
+        touchob = (newlist) ? 0x0 : fm_do(AES_FSEL_ARG tree, FSSELECT);
+        gsx_mxmy(AES_FSEL_ARG &mx, &my);
 
         if (newlist)
         {
-            fs_sel(sel, NORMAL);
+            fs_sel(AES_FSEL_ARG sel, NORMAL);
             inf_sset(tree, FSDIRECT, locstr);
             pstr = fs_pspec(locstr, NULL);
             strcpy(pstr, mask);
             curr = 0;
             sel = 0;
             newlist = FALSE;
-            if (fs_newdir(locstr, mask, tree, &count))  /* ok reading dir */
+            if (fs_newdir(AES_FSEL_ARG locstr, mask, tree, &count))  /* ok reading dir */
                 error = 0;
             else ++error;
             if (error == 1)     /* only retry once; this avoids continual retries */
@@ -786,10 +786,10 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Wrestrict"
-                    sprintf(locstr,"%c:\\%s",'A'+dos_gdrv(),mask);
+                    sprintf(locstr,"%c:\\%s",'A'+dos_gdrv(AES_FSEL_ARG0),mask);
 #pragma GCC diagnostic pop
                 }
-                select_drive(tree,get_drive(locstr),TRUE);
+                select_drive(AES_FSEL_ARG tree,get_drive(AES_FSEL_ARG locstr),TRUE);
             }
             strcpy(locold,locstr);
         }
@@ -799,9 +799,9 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
         switch(touchob &= 0x7fff)
         {
         case FSOK:
-            if (path_changed(locstr))   /* just like TOS, if user has edited */
+            if (path_changed(AES_FSEL_ARG locstr))   /* just like TOS, if user has edited */
             {                           /*  the mask, 'OK' does not exit     */
-                ob_change(tree,FSOK,NORMAL,TRUE);/* (so deselect the button) */
+                ob_change(AES_FSEL_ARG tree,FSOK,NORMAL,TRUE);/* (so deselect the button) */
                 break;
             }
             FALLTHROUGH;
@@ -813,7 +813,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
             value = 1;
             break;
         case FSVSLID:
-            ob_actxywh(tree, FSVELEV, &pt);
+            ob_actxywh(AES_FSEL_ARG tree, FSVELEV, &pt);
             /* anemic slidebars
                 pt.g_x -= 3;
                 pt.g_w += 6;
@@ -827,7 +827,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
             FALLTHROUGH;
         case FSVELEV:
             fm_own(TRUE);
-            value = gr_slidebox(tree, FSVSLID, FSVELEV, TRUE);
+            value = gr_slidebox(AES_FSEL_ARG tree, FSVSLID, FSVELEV, TRUE);
             fm_own(FALSE);
             value = curr - mul_div_round(value, count-NM_NAMES, 1000);
             if (value >= 0)
@@ -851,11 +851,11 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
             if (fnum > count)
                 break;
             if (sel && (sel != fnum))
-                fs_sel(sel, NORMAL);
+                fs_sel(AES_FSEL_ARG sel, NORMAL);
             if (sel != fnum)
             {
                 sel = fnum;
-                fs_sel(sel, SELECTED);
+                fs_sel(AES_FSEL_ARG sel, SELECTED);
             }
             /* get string and see if file or folder */
             inf_sget(tree, touchob, selname);
@@ -878,7 +878,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
                 if ((dirlen >= LEN_ZPATH) ||
                     (dirlen+strlen(mask) >= LEN_FSPATH))
                 {
-                    fm_error(3);
+                    fm_error(AES_FSEL_ARG 3);
                     break;
                 }
                 strcpy(pstr, folder);
@@ -902,9 +902,9 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
             drive = touchob - DRIVE_OFFSET;
             if ((drive < 0) || (drive >= NM_DRIVES))/* not for us */
                 break;
-            if (drive == get_drive(locstr))         /* no change */
+            if (drive == get_drive(AES_FSEL_ARG locstr))         /* no change */
                 break;
-            if (path_changed(locstr))       /* like TOS, if user edited mask, */
+            if (path_changed(AES_FSEL_ARG locstr))       /* like TOS, if user edited mask, */
                 break;                      /*  ignore drive change           */
             obj = tree + touchob;
             if (obj->ob_state & DISABLED)           /* non-existent drive */
@@ -922,9 +922,9 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
         if (touchob == FSCANCEL)
             break;
 
-        if (!newlist && !newdrive && path_changed(locstr))  /* path changed manually */
+        if (!newlist && !newdrive && path_changed(AES_FSEL_ARG locstr))  /* path changed manually */
         {
-            if (get_drive(ad_fpath) != get_drive(locstr))   /* drive has changed */
+            if (get_drive(AES_FSEL_ARG ad_fpath) != get_drive(AES_FSEL_ARG locstr))   /* drive has changed */
                 newdrive = TRUE;
             else
                 newlist = TRUE;
@@ -933,7 +933,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 
         if (newdrive)
         {
-            select_drive(tree, touchob-DRIVE_OFFSET,1);
+            select_drive(AES_FSEL_ARG tree, touchob-DRIVE_OFFSET,1);
             newdrive = FALSE;
             newlist = TRUE;
         }
@@ -952,18 +952,18 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
         if (newsel)
         {
             strcpy(ad_fname, selname + 1);
-            ob_draw(tree, FSSELECT, MAX_DEPTH);
+            ob_draw(AES_FSEL_ARG tree, FSSELECT, MAX_DEPTH);
             if (!cont)
-                ob_change(tree, FSOK, SELECTED, TRUE);
+                ob_change(AES_FSEL_ARG tree, FSOK, SELECTED, TRUE);
             newsel = FALSE;
         }
 
         if (value)
-            curr = fs_nscroll(tree, &sel, curr, count, touchob, value);
+            curr = fs_nscroll(AES_FSEL_ARG tree, &sel, curr, count, touchob, value);
     }
 
     if (!FSEL_OK()) {
-        fm_dial(FMD_FINISH, &gl_rcenter, &gl_rfs);
+        fm_dial(AES_FSEL_ARG FMD_FINISH, &gl_rcenter, &gl_rfs);
         dos_free(ad_fsnames);
         return FALSE;
     }
@@ -974,7 +974,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     strcpy(pisel, selname);
 
     /* start the redraw */
-    fm_dial(FMD_FINISH, &gl_rcenter, &gl_rfs);
+    fm_dial(AES_FSEL_ARG FMD_FINISH, &gl_rcenter, &gl_rfs);
 
     /* return exit button */
     *pbutton = inf_what(tree, FSOK);

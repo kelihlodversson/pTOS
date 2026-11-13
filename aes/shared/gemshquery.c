@@ -1,6 +1,7 @@
 /* Native AES startup, environment and file lookup; shared with libaes.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
@@ -33,7 +34,7 @@
 #endif
 #include "gemshquery.h"
 
-void sh_read(char *pcmd, char *ptail)
+void sh_read(AES_SHELL_PARAM char *pcmd, char *ptail)
 {
     strcpy(pcmd, SH_COMMAND);
     memcpy(ptail, SH_TAIL, PDCLSIZE);
@@ -66,7 +67,7 @@ char *sh_name(char *ppath)
  *  is found, the value is a pointer to the first character after the
  *  string; otherwise it is a NULL pointer.
  */
-void sh_envrn(char **ppath, const char *psrch)
+void sh_envrn(AES_SHELL_PARAM char **ppath, const char *psrch)
 {
     char *p;
     WORD len;
@@ -152,7 +153,7 @@ static char *sh_path(char *src, char *dest, char *pname)
  *          return the fully-qualified name.
  *      (5) if still not found, return with error.
  */
-static WORD findfile(char *pspec)
+static WORD findfile(AES_SHELL_PARAM char *pspec)
 {
     char *path;
     char *pname;
@@ -160,14 +161,14 @@ static WORD findfile(char *pspec)
     KDEBUG(("sh_find(): input pspec='%s'\n",pspec));
     pname = sh_name(pspec);                 /* get ptr to name      */
 
-    dos_sdta(&SH_DTA);
+    dos_sdta(AES_SHELL_ARG &SH_DTA);
 
     /* (1) search in the application directory */
     if (SH_APPDIR[0] != '\0')
     {
         if (SH_COPY(SH_WORK, SH_APPDIR, SH_WORK_BYTES) &&
             SH_APPEND(SH_WORK, pname, SH_WORK_BYTES) &&
-            dos_sfirst(SH_WORK, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
+            dos_sfirst(AES_SHELL_ARG SH_WORK, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
         {
             strcpy(pspec, SH_WORK);
             KDEBUG(("sh_find(1): returning pspec='%s'\n",pspec));
@@ -177,7 +178,7 @@ static WORD findfile(char *pspec)
 
     /* (2) search in the current directory */
     /* Fsfirst reads its filespec; no work-buffer copy is needed here. */
-    if (dos_sfirst(pspec, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
+    if (dos_sfirst(AES_SHELL_ARG pspec, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
     {
         KDEBUG(("sh_find(2): returning pspec='%s'\n",pspec));
         return 1;
@@ -186,7 +187,7 @@ static WORD findfile(char *pspec)
     /* (3) search in the root directory of the current drive */
     SH_WORK[0] = PATHSEP;
     if (SH_COPY(SH_WORK+1, pname, SH_WORK_BYTES-1) &&
-        dos_sfirst(SH_WORK, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
+        dos_sfirst(AES_SHELL_ARG SH_WORK, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
     {
         strcpy(pspec, SH_WORK);
         KDEBUG(("sh_find(3): returning pspec='%s'\n",pspec));
@@ -194,7 +195,7 @@ static WORD findfile(char *pspec)
     }
 
     /* (4) search in the AES path */
-    sh_envrn(&path, PATH_ENV);      /* find PATH= in the command tail */
+    sh_envrn(AES_SHELL_ARG &path, PATH_ENV);      /* find PATH= in the command tail */
     if (!path)
     {
         KDEBUG(("sh_find(): no AES path, '%s' not found\n",pspec));
@@ -208,7 +209,7 @@ static WORD findfile(char *pspec)
         path = sh_path(path, SH_WORK, pname);
         if (!path)                  /* end of PATH= */
             break;
-        if (dos_sfirst(SH_WORK, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
+        if (dos_sfirst(AES_SHELL_ARG SH_WORK, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
         {
             strcpy(pspec, SH_WORK);
             KDEBUG(("sh_find(4): returning pspec='%s'\n",pspec));
@@ -220,14 +221,14 @@ static WORD findfile(char *pspec)
     return 0;
 }
 
-WORD sh_find(char *pspec)
+WORD sh_find(AES_SHELL_PARAM char *pspec)
 {
     DTA *save_dta;
     WORD ret;
 
     save_dta = dos_gdta();      /* save, findfile() modifies it */
-    ret = findfile(pspec);      /* do the actual shel_find() */
-    dos_sdta(save_dta);         /* restore */
+    ret = findfile(AES_SHELL_ARG pspec);      /* do the actual shel_find() */
+    dos_sdta(AES_SHELL_ARG save_dta);         /* restore */
 
     return ret;
 }
