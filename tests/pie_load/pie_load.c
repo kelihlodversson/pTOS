@@ -67,6 +67,15 @@ static void shared_vm_prg(void)
 }
 #endif
 #if defined(TEST_WITH_ELF_SHARED)
+static void shared_vm_interpreted_result(unsigned mode,long result)
+{
+    char text[]="shared interpreter result mode=0 value=00000000\r\n";
+    static const char hex[]="0123456789abcdef";
+    unsigned i;unsigned long value=(unsigned long)result;
+    text[31]=(char)('0'+mode);
+    for(i=0;i<8;i++) text[39+i]=hex[(value>>(28-4*i))&15];
+    conws(text);
+}
 static void shared_vm_interpreted(void)
 {
     static const char envspec[]="CHECK=phase5\0\0";
@@ -76,10 +85,12 @@ static void shared_vm_interpreted(void)
         char *env;long rc;
         ptest_assert_msg((long)bp>0,"shared interpreter: PE_LOAD");if((long)bp<=0) continue;
         env=bp->p_env;rc=Pexec(mode?104:4,0,bp,0);
+        shared_vm_interpreted_result(mode,rc);
         if(rc<0) {conws("shared interpreter launch error\r\n");}
         ptest_assert_msg(mode?rc>0:rc==77,"shared interpreter: auxv, relocation, RELRO and fini");
         if(mode && rc>0) {
             long waited=Pwaitpid(rc,0,0);
+            shared_vm_interpreted_result(mode,waited);
             ptest_assert_msg((waited>>16)==rc && (waited&65535)==77,"shared interpreter: canonical PROCESS wait");
             ptest_assert_msg(Pwaitpid(rc,1,0)==-33,"shared interpreter: exactly one reap");
         }
