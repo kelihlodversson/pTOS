@@ -182,6 +182,39 @@ static void shared_vm_tail(char *tail,char role,struct shared_vm_probe *probe)
     for(i=0;i<8;i++) tail[3+i]="0123456789abcdef"[(address>>(28-4*i))&15];
     tail[11]=0;
 }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+static void shared_vm_constructor_rollback(void)
+{
+    unsigned asynchronous,stage;
+    for(asynchronous=0;asynchronous<2;asynchronous++) for(stage=1;stage<=6;stage++) {
+        BASEPAGE *image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",0);
+        void *env,*entry;long result,control;
+        ptest_assert_msg((long)image>0,"shared rollback: original caller-owned PE_LOAD");
+        if((long)image<=0) continue;
+        env=image->p_env;entry=image->p_tbase;
+        ptest_assert_msg(Pwaitpid(-1,1,0)==-33,"shared rollback: no public child before injection");
+        control=stage==6?0xc8920600UL:0xc8920400UL+stage;
+        ptest_assert_msg(trap_1_wll(GEMDOS_PCLONE,0,control)==0,"shared rollback: arm existing private factory injection");
+        result=Pexec(asynchronous?104:4,0,image,0);
+        if(result!=(stage==6?-326:-39)) shared_vm_diagnostic("shared rollback unexpected result=",result);
+        ptest_assert_msg(result==(stage==6?-326:-39),"shared rollback: exact preparation error before publication");
+        (void)trap_1_wll(GEMDOS_PCLONE,0,0xc8920400UL);
+        ptest_assert_msg(image->p_env==env && image->p_tbase==entry &&
+            Mvalidate(0,image,256,0)==0 && Mvalidate(0,entry,1,0)==0,
+            "shared rollback: staged image and compatibility ownership preserved");
+        ptest_assert_msg(Pwaitpid(-1,1,0)==-33,"shared rollback: no uncommitted PROCESS completion");
+        result=Pexec(asynchronous?104:4,0,image,0);
+        if(asynchronous && result>0) {
+            long pid=result;result=Pwaitpid(pid,0,0);
+            ptest_assert_msg((result>>16)==pid && !(result&65535),"shared rollback: same staged child executes after retry");
+            ptest_assert_msg(Pwaitpid(pid,1,0)==-33,"shared rollback: retry reaped once");
+        } else ptest_assert_msg(!asynchronous && result==0,"shared rollback: synchronous staged retry executes");
+        ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared rollback: original owner finally reclaims image/env");
+    }
+    conws("native shared-VM constructor/observer/prepublication rollback and retry: tested\r\n");
+}
+#endif
+
 static void shared_vm_limits(void)
 {
     static struct shared_vm_probe probe;
@@ -515,6 +548,9 @@ void test_pie_load(void)
     shared_vm_orphan('g');
 #endif
     shared_vm_limits();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    shared_vm_constructor_rollback();
+#endif
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
     shared_vm_managed_worker();
 #endif
