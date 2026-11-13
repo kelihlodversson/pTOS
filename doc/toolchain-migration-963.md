@@ -4,7 +4,9 @@ pTOS now defaults to the SDKs from the signed apt.ptos.dev repository on
 Linux and the pTOS Homebrew tap on macOS. The validation SDK is 0.2.0,
 GCC 16.2.0 and Binutils 2.45. Local APT installation used the checksum-verified
 official release packages in Ubuntu 24.04 because the managed environment
-blocks apt.ptos.dev. CI exercises the public signed repository directly.
+blocks apt.ptos.dev. Kernel builds and QEMU runs use the same verified SDK
+payload relocated under the managed Debian 13 workspace. CI exercises the
+public signed repository directly.
 Homebrew installation and all three target builds run on Apple Silicon macOS 26.
 
 ## m68k correctness workaround and measured cost
@@ -43,3 +45,20 @@ comparison passed.
 | `atari512-low-noblitter` | -2.99% | -10.84% |
 | `atari512-med-blitter` | -3.60% | -11.97% |
 | `atari512-med-noblitter` | -3.00% | -10.84% |
+
+## Local checks
+
+- Actual APT installation of all three SDK 0.2.0 packages in Ubuntu 24.04,
+  followed by all three installed SDK smoke tests: passed.
+- Host metadata/admission suite using real SDK x32/ARM/m68k objects: 52 passed.
+- m68k address-space QEMU regression: 25 suites passed, zero failed; shutdown
+  and scalable-system-font replay checks passed.
+- ARM shared-address-space interpreter/binfmt boot: passed after increasing
+  the feature's BDOS stack budget from the classic 2000 bytes to 8192 bytes.
+- 256 KiB Vampire ROM with LTO: passed with 7822 bytes free.
+- Native x32 interactive boot with ELF/shared libraries, libaes, VDI, callbacks
+  and mapping tests: passed, including the ring-3 memtest.
+
+CI additionally covers the complete configuration/release matrix, ARM and m68k
+runtime suites, native desktop consumers, Hatari, Amiberry, pBench and the macOS
+Homebrew installation/build job. Final check results are linked from the PR.
