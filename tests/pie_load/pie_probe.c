@@ -33,7 +33,9 @@ int main(void)
 #if defined(__x86_64__)
         __asm__ volatile("ud2");
 #elif defined(__arm__)
-        __asm__ volatile("udf #0");
+        /* UDF encodings are pTOS's emulated Line-A namespace. Use a
+         * genuinely undefined ARM instruction outside that reserved pattern. */
+        __asm__ volatile(".word 0xe6000010");
 #elif defined(__mc68000__)
         __asm__ volatile("illegal");
 #endif
