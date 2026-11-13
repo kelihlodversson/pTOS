@@ -86,6 +86,9 @@ int main(void)
     short type, id;
     first.ap_private = 0x12345678;
     CHECK(mt_appl_init(NULL) == -1);
+    CHECK(!mt_appl_exit(NULL) && !mt_appl_exit(&first) && !releases);
+    CHECK(!aes_lifecycle_write(SWM_NEWMSG,NM_APTERM,0,NULL,NULL));
+    CHECK(!aes_lifecycle_write(SWM_SHUTDOWN,0,SD_ABORT,NULL,&first));
     fail_allocate = TRUE;
     CHECK(mt_appl_init(&first) == -1 && !first.ap_3resv && !allocations && !opens);
     fail_allocate = FALSE;
@@ -124,6 +127,9 @@ int main(void)
     CHECK(aes_lifecycle_listening(&alias) && !aes_lifecycle_listening(&second));
     before = releases;
     cleanup_before = resets;
+    alias.ap_id = 0;
+    CHECK(!mt_appl_exit(&alias) && alias.ap_3resv == context && releases == before && resets == cleanup_before);
+    alias.ap_id = 7;
     fail_close = TRUE;
     CHECK(!mt_appl_exit(&alias) && alias.ap_3resv == context && releases == before && resets == cleanup_before);
     fail_close = FALSE;

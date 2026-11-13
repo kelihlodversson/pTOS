@@ -98,7 +98,9 @@ short mt_appl_init(AESGLOBAL *global)
 
 short mt_appl_exit(AESGLOBAL *global)
 {
-    AES_APP_CONTEXT *context = aes_app_context(global);
+    AES_APP_CONTEXT *context;
+    if (!global || global->ap_id <= 0) return 0;
+    context = aes_app_context(global);
     if (context->session >= 0) {
         if (aes_session_close(context->session) != E_OK) return 0;
         context->session = -1;

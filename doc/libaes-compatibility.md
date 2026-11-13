@@ -116,7 +116,8 @@ To share explicitly, initialize one global, assign its live `ap_3resv` to a
 second zero-initialized global, then call `mt_appl_init` on the second global.
 `mt_appl_exit` closes the session, cleans up, frees the context once and clears
 the supplied global's slot. All other aliases become invalid; the caller must
-stop using them. A failed close retains the context for retry. If freeing the
+stop using them. Reset a retired alias's slot to null before starting a new
+context. A failed close retains the context for retry. If freeing the
 context fails after close, retrying exit retries the free without closing or
 cleaning up twice. No other operations are valid after that partial exit.
 

@@ -1299,6 +1299,7 @@ int main(void)
     CHECK(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1 && !window_at_calls);
     CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
     CHECK(wind_get(1, WF_KIND, &a, &b, &c, &d) == 0 && a == 1 && !window_calls);
+    CHECK(appl_exit() == 0 && appl_yield() == 0 && evnt_timer(0) == 0);
     CHECK(mt_appl_init(NULL) == -1);
     CHECK(mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,0,
                         NULL,NULL,NULL,NULL,NULL,NULL,&aes_global) == 0);

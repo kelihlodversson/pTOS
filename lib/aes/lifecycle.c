@@ -178,12 +178,13 @@ LONG aes_lifecycle_read(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pollin
 
 WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command, AESGLOBAL *global)
 {
-    AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
+    AES_LIFECYCLE_STATE *state;
     LONG session = aes_application_session(global), token, peer, after, tag, result;
     WORD data[CUIS_COHORT_BYTES/2], completion[8] = { SHUT_COMPLETED,0,0,0,0,0,0,0 };
     ULONG slot, used;
     BOOL acc;
     if (session < 0) return 0;
+    state = &aes_app_context(global)->lifecycle;
     if (mode == SWM_REZCHANGE) return 0; /* x32 has no live mode-switch backend. */
     if (mode == SWM_NEWMSG) {
         if ((UWORD)flags & ~NM_APTERM) return 0;
