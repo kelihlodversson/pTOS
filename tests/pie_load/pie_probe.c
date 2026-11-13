@@ -70,7 +70,7 @@ int main(void)
 {
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     if(_base->p_cmdlin[0]==10 && (_base->p_cmdlin[1]=='s' || _base->p_cmdlin[1]=='o' ||
-        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p')) {
+        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g')) {
         uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
         for(i=3;i<11;i++) {
             unsigned char c=(unsigned char)_base->p_cmdlin[i];
@@ -111,8 +111,17 @@ int main(void)
             probe->grand_environment=(uint32_t)(uintptr_t)grandchild->p_env;
             probe->done=1;Pterm(0x33);
         }
-        if(_base->p_cmdlin[1]=='o') {
+        if(_base->p_cmdlin[1]=='o' || _base->p_cmdlin[1]=='g') {
             char tail[12];BASEPAGE *staged;
+            if(_base->p_cmdlin[1]=='g') {
+                unsigned spin;void *stack=(void *)Malloc(16384);long tid;
+                probe->pid=(uint32_t)Pgetpid();probe->worker_stack=(uint32_t)(uintptr_t)stack;
+                if((long)stack<=0) {probe->error=41;Pterm(94);}
+                tid=probe_thread(surviving_worker,probe,stack);probe->worker_tid=(uint32_t)tid;
+                if(tid<=0) {probe->error=42;(void)Mfree(stack);probe->worker_stack=0;Pterm(94);}
+                for(spin=0;spin<512 && !probe->worker_started;spin++) (void)Syield();
+                if(!probe->worker_started) {probe->error=43;Pterm(94);}
+            }
             probe_tail(tail,'b',probe);staged=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
             if((long)staged<=0) {probe->error=13;Pterm(94);}
             probe->staged=(uint32_t)(uintptr_t)staged;
@@ -121,6 +130,10 @@ int main(void)
                 long pid=Pexec(104,0,staged,0);
                 if(pid<=0) {probe->error=14;Pterm(94);}
                 probe->child_pid=(uint32_t)pid;
+            }
+            if(_base->p_cmdlin[1]=='g') {
+                (void)trap_1_ww(GEMDOS_PTERMGRP,0x63);
+                probe->error=44;Pterm(94);
             }
             Pterm(0x32);
         }

@@ -159,7 +159,10 @@ static void shared_vm_status(void)
         if(mode) {
             ptest_assert_msg(rc>0,"shared104 status: PID");
             if(rc>0) {
-                long waited=Pwaitpid(rc,0,0);
+                long waited;
+                ptest_assert_msg(Pwaitpid(rc,0,(long *)bp->p_tbase)==-40,
+                    "shared104: read-only usage copyout does not consume completion");
+                waited=Pwaitpid(rc,0,0);
                 expected=kind?0x0400:0x00ff;
                 ptest_assert_msg((waited>>16)==rc && (waited&65535)==expected,
                     "shared104: normal ffff and SIGILL use canonical distinct encoding");
@@ -210,15 +213,15 @@ static void shared_vm_limits(void)
     conws("native shared-VM inherited limits and exact stack authority: tested\r\n");
 }
 
-static void shared_vm_orphan(void)
+static void shared_vm_orphan(char role)
 {
     static struct shared_vm_probe probe;
     char tail[12];BASEPAGE *image;char *env;long result;unsigned spin;
-    memset(&probe,0,sizeof(probe));shared_vm_tail(tail,'o',&probe);
+    memset(&probe,0,sizeof(probe));shared_vm_tail(tail,role,&probe);
     image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
     ptest_assert_msg((long)image>0,"shared orphan: source PE_LOAD");if((long)image<=0) return;
     env=image->p_env;result=Pexec(4,0,image,0);
-    ptest_assert_msg(result==0x32 && probe.child_pid && !probe.error,
+    ptest_assert_msg(result==(role=='g'?0x63:0x32) && probe.child_pid && !probe.error,
         "shared orphan: source returns after independently publishing child");
     for(spin=0;spin<512 && !probe.started && !probe.error;spin++) (void)Syield();
     ptest_assert_msg(probe.started && !probe.done && !probe.error,"shared orphan: child runs after source PROCESS retirement");
@@ -242,6 +245,13 @@ static void shared_vm_orphan(void)
     ptest_assert_msg(Pwaitpid(probe.child_pid,1,0)==-33,"shared orphan: unrelated PROCESS cannot consume an orphan result");
     ptest_assert_msg(Mfree(image)==0,"shared orphan: source image final release");
     ptest_assert_msg(Mfree(env)==0,"shared orphan: source environment final release");
+    if(role=='g') {
+        ptest_assert_msg(probe.worker_started && probe.steps==0 && !probe.second_tid,
+            "shared group: cancellation stops own worker without running its continuation");
+        if(probe.worker_stack) ptest_assert_msg(Mfree((void *)(uintptr_t)probe.worker_stack)==0,
+            "shared group: stopped worker stack released after independent child");
+        conws("native shared-VM PROCESS-local group cancellation and orphan survival: tested\r\n");
+    }
     conws("native shared-VM running orphan and nested unstarted cleanup: tested\r\n");
 }
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
@@ -500,7 +510,10 @@ void test_pie_load(void)
     shared_vm_basic();
     shared_vm_status();
     shared_vm_staged_retirement();
-    shared_vm_orphan();
+    shared_vm_orphan('o');
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN) && defined(TEST_WITH_PTERMGRP)
+    shared_vm_orphan('g');
+#endif
     shared_vm_limits();
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
     shared_vm_managed_worker();
