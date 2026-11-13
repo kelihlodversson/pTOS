@@ -25,6 +25,9 @@
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
 #include "shared_vm_probe.h"
+#include "../../include/pclone.h"
+#include "../../include/threadcalls.h"
+#include "../../include/mman.h"
 static void shared_vm_diagnostic(const char *label,long value)
 {
     char number[11];unsigned i;
@@ -169,6 +172,127 @@ static void shared_vm_status(void)
     }
     conws("native shared-VM full-status/fault and canonical wait: tested\r\n");
 }
+static void shared_vm_tail(char *tail,char role,struct shared_vm_probe *probe)
+{
+    unsigned i;uintptr_t address=(uintptr_t)probe;
+    tail[0]=10;tail[1]=role;tail[2]=' ';
+    for(i=0;i<8;i++) tail[3+i]="0123456789abcdef"[(address>>(28-4*i))&15];
+    tail[11]=0;
+}
+static void shared_vm_orphan(void)
+{
+    static struct shared_vm_probe probe;
+    char tail[12];BASEPAGE *image;char *env;long result;unsigned spin;
+    memset(&probe,0,sizeof(probe));shared_vm_tail(tail,'o',&probe);
+    image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+    ptest_assert_msg((long)image>0,"shared orphan: source PE_LOAD");if((long)image<=0) return;
+    env=image->p_env;result=Pexec(4,0,image,0);
+    ptest_assert_msg(result==0x32 && probe.child_pid && !probe.error,
+        "shared orphan: source returns after independently publishing child");
+    for(spin=0;spin<512 && !probe.started && !probe.error;spin++) (void)Syield();
+    ptest_assert_msg(probe.started && !probe.done && !probe.error,"shared orphan: child runs after source PROCESS retirement");
+    if(probe.started && !probe.done) {
+        ptest_assert_msg(Mvalidate(0,(void *)(uintptr_t)probe.staged,256,0)==0 &&
+            Mvalidate(0,(void *)(uintptr_t)probe.environment,1,0)==0,
+            "shared orphan: child basepage/environment survive source retirement");
+        ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,
+            "shared orphan: source compatibility allocations retained while child executes");
+    }
+    probe.gate=1;
+    for(spin=0;spin<512 && !probe.done && !probe.error;spin++) (void)Syield();
+    for(spin=0;spin<8;spin++) (void)Syield();
+    ptest_assert_msg(probe.done && !probe.error,"shared orphan: child stages a further image and exits independently");
+    if(probe.staged) ptest_assert_msg(Mvalidate(0,(void *)(uintptr_t)probe.staged,256,0)==-25 &&
+        Mvalidate(0,(void *)(uintptr_t)probe.environment,1,0)==-25,
+        "shared orphan: child allocations reclaimed before shared root dies");
+    if(probe.grandchild) ptest_assert_msg(Mvalidate(0,(void *)(uintptr_t)probe.grandchild,256,0)==-25 &&
+        Mvalidate(0,(void *)(uintptr_t)probe.grand_environment,1,0)==-25,
+        "shared orphan: unstarted grandchild allocations reclaimed exactly once");
+    ptest_assert_msg(Pwaitpid(probe.child_pid,1,0)==-33,"shared orphan: unrelated PROCESS cannot consume an orphan result");
+    ptest_assert_msg(Mfree(image)==0,"shared orphan: source image final release");
+    ptest_assert_msg(Mfree(env)==0,"shared orphan: source environment final release");
+    conws("native shared-VM running orphan and nested unstarted cleanup: tested\r\n");
+}
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
+static void shared_vm_controller(void *argument)
+{
+    struct shared_vm_probe *probe=argument;unsigned spin;long result;
+    for(spin=0;spin<512 && !probe->worker_started;spin++) (void)Syield();
+    if(!probe->worker_started) {probe->error=31;probe->gate=1;return;}
+    result=Pwaitpid(probe->pid,1,0);probe->controller_result=(uint32_t)result;
+    if(result!=-36) probe->error=32; /* another TID owns mode4's completion */
+    probe->gate=1;
+}
+static void shared_vm_last_thread(void)
+{
+    static struct shared_vm_probe probe;
+    unsigned asynchronous;
+    for(asynchronous=0;asynchronous<2;asynchronous++) {
+        char tail[12];BASEPAGE *image;char *env;void *controller=NULL;
+        long result,controller_tid=0;unsigned spin;int32_t status=-1;
+        memset(&probe,0,sizeof(probe));shared_vm_tail(tail,'l',&probe);
+        image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+        ptest_assert_msg((long)image>0,"shared THREAD lifetime: source PE_LOAD");if((long)image<=0) continue;
+        env=image->p_env;
+        if(!asynchronous) {
+            struct ptos_clone_args args={0};controller=(void *)Malloc(16384);
+            ptest_assert_msg((long)controller>0,"shared THREAD lifetime: waiter-controller stack");
+            if((long)controller<=0) { (void)Mfree(image);(void)Mfree(env);continue; }
+            args.flags=CLONE_VM|CLONE_SAME_PROCESS;args.entry=shared_vm_controller;args.argument=&probe;
+            args.stack_base=controller;args.stack_size=16384;
+            controller_tid=trap_1_wll(GEMDOS_PCLONE,(long)&args,sizeof(args));
+            ptest_assert_msg(controller_tid>0,"shared THREAD lifetime: independent managed waiter controller");
+            if(controller_tid<=0) {(void)Mfree(controller);(void)Mfree(image);(void)Mfree(env);continue;}
+        }
+        result=Pexec(asynchronous?104:4,0,image,0);
+        if(asynchronous && result>0) {
+            for(spin=0;spin<512 && !probe.worker_started;spin++) (void)Syield();
+            ptest_assert_msg(probe.worker_started && !probe.done && !probe.error,
+                "shared THREAD lifetime: leader gone and worker still executing");
+            ptest_assert_msg(Pwaitpid(result,1,0)==0,"shared THREAD lifetime: initial THREAD exit is not PROCESS completion");
+            ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,
+                "shared THREAD lifetime: image/env cannot be freed under surviving worker");
+#if defined(TEST_WITH_MMAP)
+            ptest_assert_msg(trap_1_wlll(GEMDOS_MPROT,(long)((uintptr_t)image->p_tbase&~4095UL),4096,PROT_READ)==-36,
+                "shared THREAD lifetime: retained image protection cannot be revoked");
+            {
+                long unmap=trap_1_wll(GEMDOS_MUNMAP,(long)((uintptr_t)image->p_tbase&~4095UL),4096);
+                shared_vm_diagnostic("shared THREAD retained-image Munmap=",unmap);
+                /* Loader images lie outside the public mmap window. That
+                 * namespace rejection precedes the retained-range preflight. */
+                ptest_assert_msg(unmap==-40,
+                    "shared THREAD lifetime: loader image is outside Munmap namespace");
+            }
+#endif
+            probe.gate=1;
+            {
+                long pid=result;result=Pwaitpid(pid,0,0);
+                ptest_assert_msg((result>>16)==pid && (result&65535)==0x42,
+                    "shared THREAD lifetime: final worker alone completes async PROCESS");
+                ptest_assert_msg(Pwaitpid(pid,1,0)==-33,"shared THREAD lifetime: async PROCESS reaped once");
+            }
+        } else if(!asynchronous) ptest_assert_msg(result==0x42,
+            "shared THREAD lifetime: mode4 waits past leader for final THREAD");
+        else ptest_assert_msg(0,"shared THREAD lifetime: async launch succeeds");
+        if(controller_tid>0) {
+            ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,controller_tid,(long)&status)==0 && !status &&
+                (long)(int32_t)probe.controller_result==-36,
+                "shared THREAD lifetime: competing PROCESS wait cannot steal mode4 result");
+            ptest_assert_msg(Mfree(controller)==0,"shared THREAD lifetime: waiter-controller stack released");
+        }
+        if(probe.error) shared_vm_diagnostic("shared THREAD lifetime error=",probe.error);
+        ptest_assert_msg(!probe.error && probe.done && probe.steps==2 && probe.worker_tid>0 &&
+            probe.second_tid>0 && probe.second_tid!=probe.worker_tid,
+            "shared THREAD lifetime: surviving worker creates and joins a further THREAD");
+        for(spin=0;spin<8;spin++) (void)Syield();
+        if(probe.worker_stack) ptest_assert_msg(Mfree((void *)(uintptr_t)probe.worker_stack)==0,
+            "shared THREAD lifetime: stopped worker user stack released");
+        ptest_assert_msg(Mfree(image)==0,"shared THREAD lifetime: source image final release");
+        ptest_assert_msg(Mfree(env)==0,"shared THREAD lifetime: source environment final release");
+    }
+    conws("native shared-VM final-THREAD completion and competing waiter: tested\r\n");
+}
+#endif
 static void shared_vm_staged_retirement(void)
 {
     static struct shared_vm_probe probe;
@@ -324,6 +448,10 @@ void test_pie_load(void)
     shared_vm_basic();
     shared_vm_status();
     shared_vm_staged_retirement();
+    shared_vm_orphan();
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
+    shared_vm_last_thread();
+#endif
 #if defined(TEST_WITH_ELF_SHARED)
     shared_vm_interpreted();
     shared_vm_interpreted_peers();
