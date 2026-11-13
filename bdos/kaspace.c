@@ -222,11 +222,11 @@ static BOOL independent_backing_owner(KASPACE *space, VADDR address,
     KASPACE_LEASE *lease;
     VADDR first=address&~(VADDR)(USER_PAGE_SIZE-1);
     VADDR last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
-    /* Live ordinary metadata can independently own a page within a broader
-     * retirement fence. Captured fallback is checked by exact ticket below. */
+    /* Live ordinary metadata owns its backing, including FILE_BACKING for
+     * a file mapping. Captured fallback is checked by exact lazy ticket below;
+     * an immutable captured description alone cannot retain a file backend. */
     if (kaspace_reservation_info(space,address,bytes,&info) &&
-        !(info.flags&KASPACE_RESERVATION_CAPTURED) &&
-        (info.flags&KASPACE_RESERVATION_LAZY) && rights==info.rights) return TRUE;
+        !(info.flags&KASPACE_RESERVATION_CAPTURED) && rights==info.rights) return TRUE;
     for (lease=space->leases;lease;lease=lease->next)
         if (reservation_backing_contains(lease,first,last) &&
             (lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&

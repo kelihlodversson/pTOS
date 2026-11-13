@@ -46,6 +46,23 @@ int main(void)
     CHECK(kaspace_retained_lazy_protection(space,0x90000,&rights) && rights==ASPACE_PROT_USER);
     CHECK(kaspace_materialization_change(&backend,0x90000,4096,rights));
     CHECK(!kaspace_mapping_can_change(&backend,0x92000,4096));
+#if CONF_WITH_MMAP
+    {
+        /* Authoritative ordinary metadata retains its real backing. Unlike
+         * captured fallback it need not be anonymous/zero-fill LAZY. */
+        MMAP_REGION *region=kalloc(sizeof(*region));CHECK(region);
+        region->address=0x91000;region->length=4096;
+        region->reservation=kaspace_reservation_next();
+        region->prot=ASPACE_PROT_USER;region->backing=(FILE_BACKING *)1;
+        region->next=NULL;space->mmap.regions=region;
+        CHECK(kaspace_reservation_info(space,0x91000,4096,&info) && !info.flags);
+        CHECK(kaspace_materialization_change(&backend,0x91000,4096,ASPACE_PROT_USER));
+        CHECK(!kaspace_materialization_change(&backend,0x91000,4096,captured.rights));
+        CHECK(!kaspace_retained_lazy_protection(space,0x91000,&rights));
+        space->mmap.regions=NULL;fileback_put(region->backing);kfree(region);
+        CHECK(backing_puts==1 && !kaspace_materialization_change(&backend,0x91000,4096,ASPACE_PROT_USER));
+    }
+#endif
     CHECK(kaspace_reservation_release(&outside,&owner) && owner==&canonical);owner=NULL;
     CHECK(retired_private==1 && !kaspace_reservation_release(&narrow,&owner));
     CHECK(!kaspace_retained_lazy_protection(space,0x90000,&rights));
