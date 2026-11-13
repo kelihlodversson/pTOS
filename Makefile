@@ -2246,11 +2246,25 @@ obj/ldso/runtime/SHRINT.ELF: obj/ldso/test/soapp-pie.elf
 	cp $< $@
 ifdef ARCH_X86_64
 # The existing runtime fixture exercises a nested ordinary isolated launch.
-LDSO_TEST_APP += obj/ldso/runtime/LDSOAPP.ELF
+LDSO_TEST_APP += obj/ldso/runtime/LDSOAPP.ELF obj/ldso/runtime/NEEDMISS.ELF \
+                 obj/ldso/runtime/NEEDBAD.ELF obj/ldso/runtime/NOINTRP.ELF
+obj/ldso/runtime/NEEDMISS.ELF: obj/ldso/test/needmiss.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/NEEDBAD.ELF: obj/ldso/test/needbad.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/NOINTRP.ELF: obj/ldso/test/nointrp.elf
+	@mkdir -p $(@D)
+	cp $< $@
 obj/ldso/runtime/LDSOAPP.ELF: obj/ldso/test/soapp.elf
 	@mkdir -p $(@D)
 	cp $< $@
-LDSO_RUNTIME_FILES += $(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO
+LDSO_RUNTIME_FILES += $(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO \
+                      $(LDSO_RUNTIME_DIR)/LIB/X32/LIBBAD.SO
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBBAD.SO: obj/ldso/test/libbad.so
+	@mkdir -p $(@D)
+	head -c 100 $< > $@
 $(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO: obj/ldso/test/librt.so
 	@mkdir -p $(@D)
 	cp $< $@
