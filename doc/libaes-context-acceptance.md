@@ -44,7 +44,7 @@ prefixes, not the parked SDK migration branch. Initialize the submodules first.
 ```sh
 python3 tools/test-cuis.py
 python3 tools/test-elf-shared.py
-HOSTCC='cc -fsanitize=address,undefined -fno-omit-frame-pointer -no-pie' \
+HOSTCC='cc -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -no-pie' \
     python3 tools/test-cuis.py
 ```
 

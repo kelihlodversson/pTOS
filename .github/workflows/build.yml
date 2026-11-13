@@ -66,7 +66,7 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test AES context ownership and reentrancy with ASan and UBSan
         env:
-          HOSTCC: cc -fsanitize=address,undefined -fno-omit-frame-pointer -no-pie
+          HOSTCC: cc -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -no-pie
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
