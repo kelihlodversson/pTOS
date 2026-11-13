@@ -74,3 +74,18 @@ reservations. Callback stack bounds use the actual body. Querying the stack cap
 and setting the same normalized cap succeed; relocating/resizing this sealed
 stack returns EACCDN. Nested shared launches duplicate existing reservation holds
 rather than inventing a new default-stack owner.
+
+Launch cleanup and ordinary mapping ownership
+--------------------------------------------
+A rejected launch grants no cleanup right over an existing target attachment.
+The launch scope may abort only preparation it successfully acquired. In the
+supported cooperative no-yield preparation/abort path, constructor rollback and
+scope cleanup are idempotent; committed sets with resumable THREADs remain
+protected by the existing fatal invariant.
+
+Ordinary KASPACE heap/mmap reservations use the canonical reservation-hold API.
+In particular, file-backed mmap retains its live region birth, exact bounds,
+logical rights and independent FILE_BACKING owner; missing pages and file-COW
+remain materializable through that authenticated owner. KPROC-only image/raw/
+stack views retain captured receipts. No cleanup fence, broad source image hold
+or merely readable PTE grants new file-backing authority.

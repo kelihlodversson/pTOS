@@ -102,6 +102,25 @@ int main(void)
         CHECK(free_pages==before && source.stack_size==1024UL*1024);
         kproc_list=NULL;source.shared_exec=NULL;source.stack_size=0;
     }
+#if CONF_WITH_MMAP
+    {
+        struct shared_exec_regions retained={0};void *identity=NULL;
+        MMAP_REGION *region=kalloc(sizeof(*region));UWORD rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+        CHECK(region);memset(region,0,sizeof(*region));
+        region->address=PTOS_MMAP_BASE;region->length=TEST_PAGE;region->prot=rights;
+        region->backing=(FILE_BACKING *)1;region->reservation=kaspace_reservation_next();
+        kaspace_mmap(source.active_space)->regions=region;kaspace_mmap(source.active_space)->bytes=TEST_PAGE;
+        source.references=1;kproc_list=&source;retained.space=source.active_space;
+        CHECK(shared_logical(&retained,&source,region->address,TEST_PAGE,ASPACE_PROT_USER)==E_OK);
+        CHECK(retained.nlogical==1 && source.references==2);
+        CHECK(kaspace_materialization_change(source.aspace,region->address,TEST_PAGE,rights));
+        CHECK(!kaspace_materialization_change(source.aspace,region->address,TEST_PAGE,ASPACE_PROT_USER));
+        CHECK(!kaspace_mapping_can_change(source.aspace,region->address,TEST_PAGE));
+        CHECK(kaspace_reservation_release(&retained.logical[0],&identity) && identity==&source);
+        kproc_release(&source);CHECK(source.references==1);kproc_list=NULL;
+        kaspace_mmap(source.active_space)->regions=NULL;kaspace_mmap(source.active_space)->bytes=0;kfree(region);
+    }
+#endif
     source.legacy=TRUE;target.pd=&target_pd;
     original=aspace_create();pending=kaspace_adopt(original);target.pending_space=pending;target.pending_as=original;
     memset(&recipe,0,sizeof(recipe));stage_plan(&recipe.program,2*TEST_PAGE,2*TEST_PAGE);

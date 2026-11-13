@@ -182,6 +182,79 @@ static void shared_vm_tail(char *tail,char role,struct shared_vm_probe *probe)
     for(i=0;i<8;i++) tail[3+i]="0123456789abcdef"[(address>>(28-4*i))&15];
     tail[11]=0;
 }
+#if defined(TEST_WITH_MMAP)
+static void shared_vm_file_mapping(void)
+{
+    static struct shared_vm_probe probe;static uint32_t contents[1024];
+    long fd,first,second,result;BASEPAGE *image;void *env;char tail[12];
+    contents[0]=0x12345678UL;
+    fd=Fcreate("C:\\SHRMEM.BIN",0);
+    ptest_assert_msg(fd>=0,"shared file: create backing");if(fd<0) return;
+    ptest_assert_msg(Fwrite(fd,sizeof(contents),contents)==sizeof(contents) && Fclose(fd)==0,
+        "shared file: complete backing contents");
+    fd=Fopen("C:\\SHRMEM.BIN",0);ptest_assert_msg(fd>=0,"shared file: open mapping source");if(fd<0) return;
+    first=trap_1_wllllll(GEMDOS_MMAP,0,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE,fd,0);
+    second=trap_1_wllllll(GEMDOS_MMAP,0,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE,fd,0);
+    ptest_assert_msg(Fclose(fd)==0,"shared file: caller descriptor closes before launch");
+    ptest_assert_msg(first>0 && second>0,"shared file: independent file reservations");
+    if(first>0 && second>0) {
+        ptest_assert_msg(*(volatile uint32_t *)(uintptr_t)first==0x12345678UL,
+            "shared file: resident clean file-COW witness");
+        memset(&probe,0,sizeof(probe));probe.staged=(uint32_t)first;probe.environment=(uint32_t)second;
+        shared_vm_tail(tail,'m',&probe);image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+        ptest_assert_msg((long)image>0,"shared file: stage child");
+        if((long)image>0) {
+            env=image->p_env;result=Pexec(4,0,image,0);
+            shared_vm_diagnostic("shared file child status=",result);
+            ptest_assert_msg(result==0x34 && probe.done && !probe.error,
+                "shared file: child materializes absent file page and writes file-COW");
+            ptest_assert_msg(*(volatile uint32_t *)(uintptr_t)first==0x89400001UL &&
+                *(volatile uint32_t *)(uintptr_t)second==0x89400002UL,
+                "shared file: shared ASPACE observes both private file-COW writes");
+            ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared file: reclaim child image");
+        }
+    }
+    if(first>0) ptest_assert_msg(trap_1_wll(GEMDOS_MUNMAP,first,4096)==0,"shared file: retire first mapping");
+    if(second>0) ptest_assert_msg(trap_1_wll(GEMDOS_MUNMAP,second,4096)==0,"shared file: retire second mapping");
+    fd=Fopen("C:\\SHRMEM.BIN",0);
+    ptest_assert_msg(fd>=0,"shared file: backing survives descriptor retirement");
+    if(fd>=0) {
+        uint32_t word=0;
+        ptest_assert_msg(Fread(fd,sizeof(word),&word)==sizeof(word) && word==0x12345678UL,
+            "shared file: private writes never modify backing file");
+        ptest_assert_msg(Fclose(fd)==0,"shared file: close verification descriptor");
+    }
+    ptest_assert_msg(Fdelete("C:\\SHRMEM.BIN")==0,"shared file: final backing cleanup");
+    conws("native shared-VM absent file backing and resident file-COW: tested\r\n");
+}
+#endif
+
+static void shared_vm_relaunch_rejection(void)
+{
+    static struct shared_vm_probe probe;
+    BASEPAGE *image;void *env;char tail[12];long pid,result;unsigned spin;
+    memset(&probe,0,sizeof(probe));shared_vm_tail(tail,'r',&probe);
+    image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+    ptest_assert_msg((long)image>0,"shared relaunch: stage target");if((long)image<=0) return;
+    env=image->p_env;pid=Pexec(104,0,image,0);
+    ptest_assert_msg(pid>0,"shared relaunch: publish original live child");
+    if(pid>0) {
+        ptest_assert_msg(Pexec(4,0,image,0)==-40 && Pexec(104,0,image,0)==-40,
+            "shared relaunch: reject both modes without aborting live child's set");
+        for(spin=0;spin<512 && !probe.started && !probe.error;spin++) (void)Syield();
+        ptest_assert_msg(probe.started && !probe.error && !probe.done &&
+            (int32_t)probe.controller_result==-40 && (int32_t)probe.resize_limit==-40,
+            "shared relaunch: live child rejects self launch and remains runnable");
+        ptest_assert_msg(Pwaitpid(pid,1,0)==0,"shared relaunch: failed launch does not fabricate completion");
+        probe.gate=1;result=Pwaitpid(pid,0,0);
+        ptest_assert_msg((result>>16)==pid && (result&65535)==0x33 && probe.done && !probe.error,
+            "shared relaunch: original child still executes and completes");
+        ptest_assert_msg(Pwaitpid(pid,1,0)==-33,"shared relaunch: original completion reaped once");
+    }
+    ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared relaunch: original owner finally frees image");
+    conws("native shared-VM live-target and self-relaunch ownership rejection: tested\r\n");
+}
+
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static void shared_vm_constructor_rollback(void)
 {
@@ -548,6 +621,10 @@ void test_pie_load(void)
     shared_vm_orphan('g');
 #endif
     shared_vm_limits();
+#if defined(TEST_WITH_MMAP)
+    shared_vm_file_mapping();
+#endif
+    shared_vm_relaunch_rejection();
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     shared_vm_constructor_rollback();
 #endif

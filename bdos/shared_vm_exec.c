@@ -23,7 +23,7 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
     KASPACE_PERMISSION_TRANSACTION *permissions=NULL;
     PROCESS_COMPLETION completed;
     PD *controller;
-    LONG error;UWORD stage=0;
+    LONG error;UWORD stage=0;BOOL prepared=FALSE;
     ksched_cleanup_begin(&scope);
     source=kproc_retain(run);target=kproc_retain(staged);
     if(!source || !ksched_loaded_clone_context(source,&controller)) {error=EINVFN;goto done;}
@@ -31,6 +31,7 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
     if(ksched_cancellation_pending()) {error=EACCDN;goto done;}
     stage=1;error=kproc_shared_exec_prepare(source,target,&startup,&permissions);
     if(error) goto done;
+    prepared=TRUE;
     stage=2;error=proc_clone_loaded_shared(source,target,&tx);
     if(!error) {
         stage=3;
@@ -53,7 +54,10 @@ done:
     UNUSED(stage);
 #endif
     proc_clone_abort(&tx);
-    if(error && target) kproc_shared_exec_abort(target);
+    /* A rejected live/foreign/self target may already own a committed set.
+     * Only successful preparation by this invocation grants abort authority.
+     * The constructor abort is idempotent with this scope's own cleanup. */
+    if(error && prepared) kproc_shared_exec_abort(target);
     proc_clone_observer_release(&observer);
     kproc_release(target);kproc_release(source);
     ksched_cleanup_end(&scope); /* no checkpoint with references still owned */

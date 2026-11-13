@@ -70,7 +70,7 @@ int main(void)
 {
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     if(_base->p_cmdlin[0]==10 && (_base->p_cmdlin[1]=='s' || _base->p_cmdlin[1]=='o' ||
-        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g')) {
+        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m')) {
         uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
         for(i=3;i<11;i++) {
             unsigned char c=(unsigned char)_base->p_cmdlin[i];
@@ -80,6 +80,13 @@ int main(void)
             address=(address<<4)|c;
         }
         probe=(struct shared_vm_probe *)address;
+        if(_base->p_cmdlin[1]=='m') {
+            volatile uint32_t *resident=(volatile uint32_t *)(uintptr_t)probe->staged;
+            volatile uint32_t *absent=(volatile uint32_t *)(uintptr_t)probe->environment;
+            if(*absent!=0x12345678UL || *resident!=0x12345678UL) {probe->error=51;Pterm(94);}
+            *resident=0x89400001UL;*absent=0x89400002UL;
+            probe->done=1;Pterm(0x34);
+        }
         if(_base->p_cmdlin[1]=='p') {
             probe->core_limit=(uint32_t)Psetlimit(2,-1);
             probe->data_limit=(uint32_t)Psetlimit(3,-1);
@@ -100,8 +107,12 @@ int main(void)
             if(tid<=0) {probe->error=28;(void)Mfree(stack);probe->worker_stack=0;Pterm(94);}
             Pterm(0x41);
         }
-        if(_base->p_cmdlin[1]=='b') {
+        if(_base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='r') {
             unsigned spin;BASEPAGE *grandchild;
+            if(_base->p_cmdlin[1]=='r') {
+                probe->controller_result=(uint32_t)Pexec(4,0,_base,0);
+                probe->resize_limit=(uint32_t)Pexec(104,0,_base,0);
+            }
             probe->started=1;
             for(spin=0;spin<512 && !probe->gate;spin++) (void)Syield();
             if(!probe->gate) {probe->error=11;Pterm(94);}

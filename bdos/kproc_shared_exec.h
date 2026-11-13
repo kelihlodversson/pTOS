@@ -16,8 +16,14 @@ static LONG shared_logical(struct shared_exec_regions *set,KPROC *source,VADDR v
         }
 #endif
         if(!owner) return ENSMEM;
-        error=kaspace_reservation_hold_captured(set->space,&info,va,bytes,access,
-                    kproc_ref_number(owner),owner,&set->logical[set->nlogical]);
+        /* Ordinary heap/mmap metadata owns its logical reservation in this
+         * KASPACE, including FILE_BACKING and file-COW materialization. Only
+         * KPROC-specific views require an immutable captured receipt. */
+        if(info.flags&KASPACE_RESERVATION_CAPTURED)
+            error=kaspace_reservation_hold_captured(set->space,&info,va,bytes,access,
+                        kproc_ref_number(owner),owner,&set->logical[set->nlogical]);
+        else error=kaspace_reservation_hold(set->space,info.identity,va,bytes,access,
+                        kproc_ref_number(owner),owner,&set->logical[set->nlogical]);
         if(error) kproc_release(owner);else set->nlogical++;
     }
     return error;

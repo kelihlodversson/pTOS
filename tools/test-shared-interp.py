@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-interp-") as directory:
         k.syms["CONF_WITH_SHARED_VM_PEXEC_TEST"].set_value(2)
         k.syms["CONF_WITH_ELF_SHARED"].set_value(2)
         k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(0)
-        k.syms["CONF_WITH_MMAP"].set_value(0)
+        k.syms["CONF_WITH_MMAP"].set_value(2)
         k.syms["CONF_WITH_PRIVATE_CLONE"].set_value(0)
         assert k.syms["CONF_WITH_PRIVATE_CLONE"].str_value == "n"
         for name in ["CONF_WITH_NATIVE_SCHED", "CONF_WITH_SHARED_VM_PEXEC_TEST", "CONF_WITH_ELF_SHARED"]:
