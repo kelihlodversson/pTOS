@@ -206,6 +206,38 @@ BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
         if (first <= lease->last && lease->first <= last) lease->revoked = TRUE;
     return TRUE;
 }
+/* Retirement may widen a destruction fence, never an owner's backing
+ * authority. Page materialization uses the immutable exact hold, rounded only
+ * to the hardware page granularity. A consumed ticket is cleanup ownership. */
+static BOOL reservation_backing_contains(const KASPACE_LEASE *lease,
+                                         VADDR first, VADDR last)
+{
+    return lease->reservation_ticket && lease->captured && lease->held &&
+           !lease->revoked && lease->exact_bytes &&
+           first >= (lease->exact_address & ~(VADDR)(USER_PAGE_SIZE-1)) &&
+           last <= ((lease->exact_address+lease->exact_bytes-1) &
+                    ~(VADDR)(USER_PAGE_SIZE-1));
+}
+
+static BOOL independent_backing_owner(KASPACE *space, VADDR address,
+                                     VADDR bytes, UWORD rights)
+{
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_LEASE *lease;
+    VADDR first=address&~(VADDR)(USER_PAGE_SIZE-1);
+    VADDR last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+    /* Live ordinary metadata owns its backing, including FILE_BACKING for
+     * a file mapping. Captured fallback is checked by exact lazy ticket below;
+     * an immutable captured description alone cannot retain a file backend. */
+    if (kaspace_reservation_info(space,address,bytes,&info) &&
+        !(info.flags&KASPACE_RESERVATION_CAPTURED) && rights==info.rights) return TRUE;
+    for (lease=space->leases;lease;lease=lease->next)
+        if (reservation_backing_contains(lease,first,last) &&
+            (lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
+            rights==lease->reservation_rights) return TRUE;
+    return FALSE;
+}
+
 BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
                                    VADDR bytes, UWORD rights)
 {
@@ -219,6 +251,13 @@ BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
     if (!space) return TRUE;
     for (lease=space->leases;lease;lease=lease->next) {
         if (first > lease->last || lease->first > last) continue;
+        if (lease->retire_bytes &&
+            !reservation_backing_contains(lease,first,last)) {
+            /* This overlap is only a cleanup fence. It supplies no rights,
+             * and must not veto a different, independently retained owner. */
+            if (!independent_backing_owner(space,address,bytes,rights)) return FALSE;
+            continue;
+        }
         if (lease->reservation_ticket) {
             KASPACE_RESERVATION_INFO info;
             if (!kaspace_lease_valid(lease)) return FALSE;
@@ -234,7 +273,8 @@ BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
     /* Physical translations can change; unsealed alias snapshots are revoked.
      * Reservation holds retain logical birth/rights, never a physical alias. */
     for (lease=space->leases;lease;lease=lease->next)
-        if (!lease->reservation_ticket && first <= lease->last && lease->first <= last)
+        if (!lease->reservation_ticket && !lease->retire_bytes &&
+            first <= lease->last && lease->first <= last)
             lease->revoked=TRUE;
     return TRUE;
 }
@@ -299,7 +339,7 @@ BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
     {
         KASPACE_LEASE *lease;
         for (lease=space->leases;lease;lease=lease->next)
-            if (lease->captured && lease->held && !lease->revoked &&
+            if (lease->reservation_ticket && lease->captured && lease->held && !lease->revoked &&
                 address >= lease->exact_address && address-lease->exact_address < lease->exact_bytes &&
                 bytes <= lease->exact_bytes-(address-lease->exact_address)) {
                 result->address = lease->exact_address;
@@ -378,9 +418,9 @@ BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *righ
     if (!space || !rights) return FALSE;
     /* Page backing is deliberately separate from exact reservation authority. */
     for (lease=space->leases;lease;lease=lease->next)
-        if (lease->captured && lease->held && !lease->revoked &&
-            (lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
-            address>=lease->first && address-lease->first<lease->last-lease->first+USER_PAGE_SIZE) {
+        if (reservation_backing_contains(lease,address&~(VADDR)(USER_PAGE_SIZE-1),
+                                        address&~(VADDR)(USER_PAGE_SIZE-1)) &&
+            (lease->reservation_flags&KASPACE_RESERVATION_LAZY)) {
             *rights=lease->reservation_rights; return TRUE;
         }
     return FALSE;

@@ -38,6 +38,27 @@ lookup is used ONLY for lazy page backing and mutation exclusion. Fresh live
 subrange permissions take precedence over a broad conservative witness, so
 RX/RW acquisition does not depend on broad/narrow hold order.
 
+Post-merge retained-backing correction
+-------------------------------------
+The original #952 integration at dd3ec30d307c42e528d3b82858920260ab85e5a5
+passed its broad native/CI matrix but missed an exact-extent regression:
+a narrow captured lazy hold acquired backing authority over its broader
+retirement cleanup fence. Cleanup/mutation bounds and backing bounds are
+now explicitly separate. Backing uses only a live unconsumed captured
+hold's immutable exact bytes, rounded to hardware pages. A consumed
+cleanup record is not a reservation identity or a source of access rights.
+A different live lazy owner may still materialize its own page within that
+fence with its own rights. Destructive mutations remain blocked over the
+whole retirement extent until the last conflicting owner releases.
+
+The durable host test runs production KASPACE with modeled backend cleanup;
+it fails against the original merged source. The managed native self-test
+also invokes the actual MMU fault-in path: an outside page fails before
+RAM/table allocation, the exact page is backed, an independently held
+read-only page survives consumption of the cleanup carrier, and final
+release removes both translations. This is a prerequisite kernel probe,
+not public shared-VM Pexec execution or preemption/SMP acceptance.
+
 Stopped clone compatibility borrows and discarded loader staging transfer
 pending cleanup into an existing overlapping reservation lease, without an
 allocation or second registry. The cleanup owner protects the complete retired
