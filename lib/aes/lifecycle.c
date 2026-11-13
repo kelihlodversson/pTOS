@@ -4,21 +4,31 @@
 #include "libaes.h"
 #include "gemerror.h"
 #include "application.h"
+#include "app_context.h"
 #include "transport.h"
 #include "lifecycle.h"
 #include "string.h"
 
 #define DELIVERY_DEFERRED 1L
-static BOOL accessory, coordinator, reset_wait_display;
-static ULONG stale_window_bytes;
-static WORD capabilities;
-static LONG reset_token, request_token, owner_token;
-void aes_lifecycle_reset(BOOL acc)
+void aes_lifecycle_reset(BOOL acc, AESGLOBAL *global)
 {
-    accessory = acc; coordinator = reset_wait_display = FALSE; stale_window_bytes = 0; capabilities = 0; reset_token = request_token = owner_token = 0;
+    AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
+    state->accessory = acc;
+    state->coordinator = state->reset_wait_display = FALSE;
+    state->stale_window_bytes = 0;
+    state->capabilities = 0;
+    state->reset_token = state->request_token = state->owner_token = 0;
 }
-BOOL aes_lifecycle_wait_display(void) { return reset_wait_display; }
-BOOL aes_lifecycle_listening(void) { return accessory || coordinator || (capabilities & NM_APTERM); }
+BOOL aes_lifecycle_wait_display(AESGLOBAL *global)
+{
+    AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
+    return state->reset_wait_display;
+}
+BOOL aes_lifecycle_listening(AESGLOBAL *global)
+{
+    AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
+    return state->accessory || state->coordinator || (state->capabilities & NM_APTERM);
+}
 
 static LONG reject(LONG session, LONG token)
 {
@@ -27,17 +37,18 @@ static LONG reject(LONG session, LONG token)
 }
 LONG aes_lifecycle_messages(AESGLOBAL *global)
 {
+    AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
     WORD data[CUIS_COHORT_BYTES/2];
     LONG session, token, work, bytes, result, phase;
     ULONG i, entries = 0;
     BOOL term = FALSE;
-    if (!aes_lifecycle_listening()) return E_OK;
+    if (!aes_lifecycle_listening(global)) return E_OK;
     session = aes_application_session(global);
     if (session < 0) return session;
     token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
-    if (token == EFILNF) { coordinator = reset_wait_display = FALSE; return E_OK; }
+    if (token == EFILNF) { state->coordinator = state->reset_wait_display = FALSE; return E_OK; }
     if (token < 0) return token;
-    if (reset_wait_display && token != request_token) reset_wait_display = FALSE;
+    if (state->reset_wait_display && token != state->request_token) state->reset_wait_display = FALSE;
     work = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_WORK,0,0,0,0);
     if (work < 0) return work == EACCDN ? E_OK : work;
     if (!work) return E_OK;
@@ -54,14 +65,14 @@ LONG aes_lifecycle_messages(AESGLOBAL *global)
                 if (data[i+2] || term) { (void)reject(session,token); return E_OK; }
                 if (data[i] == AC_CLOSE) {
                     WORD slot = data[i+3];
-                    if (!accessory || slot < 0 || slot >= 6 || (entries & (1UL << slot)) ||
+                    if (!state->accessory || slot < 0 || slot >= 6 || (entries & (1UL << slot)) ||
                         cuis_call6(CUIS_ENTRY_OWNER,session,slot,0,0,0,0) != session) {
                         (void)reject(session,token); return E_OK;
                     }
                     entries |= 1UL << slot;
                 } else if (data[i] == AP_TERM) {
-                    if (!(capabilities & NM_APTERM) || data[i+1] != -1 || data[i+5] != AP_TERM ||
-                        (accessory && !entries)) { (void)reject(session,token); return E_OK; }
+                    if (!(state->capabilities & NM_APTERM) || data[i+1] != -1 || data[i+5] != AP_TERM ||
+                        (state->accessory && !entries)) { (void)reject(session,token); return E_OK; }
                     term = TRUE;
                 } else { (void)reject(session,token); return E_OK; }
             }
@@ -80,7 +91,7 @@ LONG aes_lifecycle_messages(AESGLOBAL *global)
                 result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,(uintptr_t)data,16,0,0);
             } else result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
         } else result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
-        if (result == E_OK && work == CUIS_COHORT_REQUEST) request_token = token;
+        if (result == E_OK && work == CUIS_COHORT_REQUEST) state->request_token = token;
     }
     return result == EAGAIN || result == EACCDN ? E_OK : result;
 }
@@ -89,6 +100,7 @@ LONG aes_lifecycle_messages(AESGLOBAL *global)
  * arbitrary byte transfers retain the ordinary appl_read stream contract. */
 LONG aes_lifecycle_deliver(void *buffer, LONG bytes, AESGLOBAL *global, BOOL polling)
 {
+    AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
     WORD message[8];
     LONG session, token, offset, length, result;
     if (bytes != 16) return E_OK;
@@ -101,32 +113,32 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pol
         token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_ID,0,0,0,0);
         offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_OFFSET,0,0,0,0);
         length = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_BYTES,0,0,0,0);
-        if (token <= 0 || token != owner_token || offset != 0 || length != 16) return EAGAIN;
+        if (token <= 0 || token != state->owner_token || offset != 0 || length != 16) return EAGAIN;
         if (message[0] == SHUT_COMPLETED && cuis_call6(CUIS_COHORT_QUERY,session,
             CUIS_COHORT_STATE,0,0,0,0) != CUIS_COHORT_FINISHED) {
             /* A native rejection is opaque; its bytes cannot assert success. */
             memset(message,0,sizeof(message)); message[0] = AP_TFAIL; message[1] = 1;
             memcpy(buffer,message,sizeof(message));
         }
-        if (message[0] == AP_TFAIL) { coordinator = FALSE; owner_token = 0; }
+        if (message[0] == AP_TFAIL) { state->coordinator = FALSE; state->owner_token = 0; }
         return E_OK;
     }
     token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
-    if (token <= 0 || token != request_token) return EAGAIN;
+    if (token <= 0 || token != state->request_token) return EAGAIN;
     offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_OFFSET,0,0,0,0);
     length = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_BYTES,0,0,0,0);
     if (offset < 0 || offset % 16 || length != 16) return EAGAIN;
-    if (message[0] == AC_CLOSE && reset_token != token) {
+    if (message[0] == AC_CLOSE && state->reset_token != token) {
         /* Earlier queued AC_OPEN and window messages have now been delivered.
          * Reset immediately before the first actual AC_CLOSE reaches the app. */
         result = aes_windows_reset_policy(global,polling,token);
-        if (result == EAGAIN) { reset_wait_display = TRUE; return DELIVERY_DEFERRED; }
-        reset_wait_display = FALSE;
+        if (result == EAGAIN) { state->reset_wait_display = TRUE; return DELIVERY_DEFERRED; }
+        state->reset_wait_display = FALSE;
         if (result != E_OK) { (void)reject(session,token); return EAGAIN; }
-        reset_token = token;
+        state->reset_token = token;
         result = cuis_call6(CUIS_STREAM_PENDING,session,0,0,0,0,0);
         if (result < 0) return result;
-        stale_window_bytes = (ULONG)result;
+        state->stale_window_bytes = (ULONG)result;
     }
     return E_OK;
 }
@@ -136,17 +148,18 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pol
  * trusted read metadata used by the desktop's lifecycle checks. */
 LONG aes_lifecycle_read(void *buffer, LONG bytes, AESGLOBAL *global, BOOL polling)
 {
+    AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
     WORD message[8], consumed[8];
     LONG session = aes_application_session(global), result, policy = E_OK;
     if (session < 0) return session;
-    reset_wait_display = FALSE;
+    state->reset_wait_display = FALSE;
     if (bytes == 16) {
         /* Preserve the native whole-buffer validation of appl_read: an
          * invalid destination must fail before cleanup or consumption. */
         result = cuis_call6(CUIS_STREAM_PEEK,session,(uintptr_t)buffer,16,0,0,0);
         if (result != 16) return result;
         memcpy(message,buffer,sizeof(message));
-        if (stale_window_bytes && message[0] >= WM_REDRAW && message[0] <= WM_MOVED && message[3] > 0)
+        if (state->stale_window_bytes && message[0] >= WM_REDRAW && message[0] <= WM_MOVED && message[3] > 0)
             policy = EAGAIN;
         else policy = aes_lifecycle_deliver(message,16,global,polling);
         if (policy == DELIVERY_DEFERRED) return EAGAIN; /* Deferred; do not consume the head. */
@@ -154,7 +167,7 @@ LONG aes_lifecycle_read(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pollin
         result = cuis_call6(CUIS_STREAM_READ,session,(uintptr_t)consumed,16,0,0,0);
     } else result = cuis_call6(CUIS_STREAM_READ,session,(uintptr_t)buffer,bytes,0,0,0);
     if (result > 0) {
-        stale_window_bytes = (ULONG)result >= stale_window_bytes ? 0 : stale_window_bytes-(ULONG)result;
+        state->stale_window_bytes = (ULONG)result >= state->stale_window_bytes ? 0 : state->stale_window_bytes-(ULONG)result;
         if (bytes == 16) {
             if (policy == EAGAIN) return 0; /* Obsolete/internal packet consumed. */
             memcpy(buffer,message,sizeof(message));
@@ -165,11 +178,13 @@ LONG aes_lifecycle_read(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pollin
 
 WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command, AESGLOBAL *global)
 {
+    AES_LIFECYCLE_STATE *state;
     LONG session = aes_application_session(global), token, peer, after, tag, result;
     WORD data[CUIS_COHORT_BYTES/2], completion[8] = { SHUT_COMPLETED,0,0,0,0,0,0,0 };
     ULONG slot, used;
     BOOL acc;
     if (session < 0) return 0;
+    state = &aes_app_context(global)->lifecycle;
     if (mode == SWM_REZCHANGE) return 0; /* x32 has no live mode-switch backend. */
     if (mode == SWM_NEWMSG) {
         if ((UWORD)flags & ~NM_APTERM) return 0;
@@ -177,7 +192,7 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
         if (tag < 0) return 0;
         tag = (tag & 255) | ((LONG)flags << 8);
         if (cuis_call6(CUIS_SESSION_TAG,session,tag,0,0,0,0) != E_OK) return 0;
-        capabilities = flags; return 1;
+        state->capabilities = flags; return 1;
     }
     if (mode == SWM_AESMSG) {
         if (!command) return 0;
@@ -190,11 +205,11 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
     if (action == SD_ABORT) {
         token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
         if (token <= 0 || cuis_call6(CUIS_COHORT_CANCEL,session,token,0,0,0,0) != E_OK) return 0;
-        coordinator = FALSE; owner_token = 0; return 1;
+        state->coordinator = FALSE; state->owner_token = 0; return 1;
     }
     token = cuis_call6(CUIS_COHORT_BEGIN,session,0,0,0,0,0);
     if (token <= 0) return 0;
-    coordinator = TRUE; owner_token = token; after = -1;
+    state->coordinator = TRUE; state->owner_token = token; after = -1;
     for (;;) {
         peer = cuis_call6(CUIS_PEER_NEXT,session,(QUAD)after,0,0,0,0);
         if (peer == EFILNF) break;
@@ -213,7 +228,7 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
                 if (result == peer) { data[used] = AC_CLOSE; data[used+3] = slot; used += 8; }
                 else if (result < 0 && result != EFILNF) goto failed;
             }
-            if (!used) goto failed; /* An accessory is still starting up. */
+            if (!used) goto failed; /* The peer accessory has no Desk entry. */
         }
         if (!acc || action == SD_COMPLETE) {
             data[used] = AP_TERM; data[used+1] = -1; data[used+5] = AP_TERM; used += 8;
@@ -225,5 +240,5 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
     return 1;
 failed:
     (void)cuis_call6(CUIS_COHORT_CANCEL,session,token,0,0,0,0);
-    coordinator = FALSE; owner_token = 0; return 0;
+    state->coordinator = FALSE; state->owner_token = 0; return 0;
 }

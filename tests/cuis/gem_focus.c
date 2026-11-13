@@ -70,7 +70,9 @@ int main(int argc, char **argv, char **envp)
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1);
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&global) == id);
+    id = appl_init(); VERIFY(id > 0);
+    global.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&global) == id);
     VERIFY(pointer_checks(&global) == 0);
     graphics = gem_probe_open(&graphic_handle,&width,&height) == 0;
     VERIFY(wind_get(0,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 0 && y == 0 && w > 0 && h > 0);

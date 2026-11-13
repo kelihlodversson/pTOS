@@ -42,7 +42,9 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 6; i++) state[i] = 99;
     VERIFY(multi(MU_TIMER, 0, NULL, state, NULL) == 0 && state[0] == 99);
     VERIFY(graf_mkstate(&state[0], &state[1], &state[2], &state[3]) == 0 && state[0] == 99);
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&global) == id);
+    id = appl_init(); VERIFY(id > 0);
+    global.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&global) == id);
     VERIFY(graf_mkstate(&state[0], &state[1], &state[2], &state[3]) == 1);
     if (argc > 1) {
         if (argv[1][0] == 'f') {

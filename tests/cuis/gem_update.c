@@ -47,7 +47,9 @@ int main(int argc, char **argv, char **envp)
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_update(BEG_UPDATE) == 0);
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&global) == id);
+    id = appl_init(); VERIFY(id > 0);
+    global.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&global) == id);
     VERIFY(wind_update(END_UPDATE) == 0 && wind_update(4) == 0);
     if (argc > 1) {
         short parent = appl_find("GEMUPD");

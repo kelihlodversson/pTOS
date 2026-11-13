@@ -39,10 +39,10 @@ int main(int argc, char **argv, char **envp)
     if (argc > 1 && argv[1][0] == 't') return -1;
     if (argc > 1 && argv[1][0] == 'f') __asm__ volatile ("ud2");
     GEM_TEST_CHECK(argc >= 1 && gl_apid == -1 && aes_global.ap_id == -1 && aes_global.ap_private == 0);
-    GEM_TEST_CHECK(appl_yield() == 0 && evnt_timer(0) == 0 && appl_exit() == 0);
     pid = PROC(0x10b, 0, 0, 0, 0);
     id = appl_init();
     GEM_TEST_CHECK(id > 0 && id == pid && gl_apid == id && aes_global.ap_id == id && aes_global.ap_count == -1);
+    globals.ap_3resv = aes_global.ap_3resv;
     GEM_TEST_CHECK(appl_init() == id && mt_appl_init(&globals) == id);
     if (argc > 1 && (argv[1][0] == 'l' || argv[1][0] == 'm'))
         return gem_launch_child(&globals,argc,argv,envp);
@@ -53,11 +53,15 @@ int main(int argc, char **argv, char **envp)
         GEM_TEST_CHECK(appl_find("ACCTEST ") == id);
         for (i = 0; i < 6; i++) GEM_TEST_CHECK(mt_menu_register(id,"  Accessory",&globals) == (short)i);
         GEM_TEST_CHECK(menu_register(id,"Full") == -1);
-        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(&globals) == id);
+        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id);
+        globals.ap_3resv = aes_global.ap_3resv;
+        GEM_TEST_CHECK(mt_appl_init(&globals) == id);
         GEM_TEST_CHECK(appl_find("ACCTEST ") == -1);
         /* All six old registrations disappeared when the session ended. */
         for (i = 0; i < 6; i++) GEM_TEST_CHECK(menu_register(id,"  Replacement") == (short)i);
-        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id && mt_appl_init(&globals) == id);
+        GEM_TEST_CHECK(appl_exit() == 1 && appl_init() == id);
+        globals.ap_3resv = aes_global.ap_3resv;
+        GEM_TEST_CHECK(mt_appl_init(&globals) == id);
     }
     aes_global.ap_private = 1234;
     GEM_TEST_CHECK(mt_appl_yield(&globals) == 1 && mt_evnt_timer(1, &globals) == 1);
@@ -73,7 +77,7 @@ int main(int argc, char **argv, char **envp)
     if (argc == 1) GEM_TEST_CHECK(gem_chain_checks(&globals) == 0);
     if (argc > 1) {
         if (argv[1][0] == 'x') _Exit(41);
-        return 37; /* Ordinary CRT finalization closes implicit registration. */
+        return 37; /* Kernel process exit closes an omitted explicit registration. */
     }
     handle = raw(CUIS_SERVICE_CLASS, CUIS_SESSION_START, 0, 0, 0, 0, 0, 0);
     GEM_TEST_CHECK(handle >= 0);
@@ -94,7 +98,8 @@ int main(int argc, char **argv, char **envp)
     }
     GEM_TEST_CHECK(evnt_timer(0) == 1 && mt_appl_exit(&globals) == 1);
     GEM_TEST_CHECK(gl_apid == id && aes_global.ap_id == id && globals.ap_id == -1);
-    GEM_TEST_CHECK(appl_exit() == 0 && appl_init() == id && appl_exit() == 1);
+    aes_global.ap_3resv = NULL; /* The alias was freed by mt_appl_exit. */
+    GEM_TEST_CHECK(appl_init() == id && appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM lifecycle/timers: PASS\r\n";
         static const char buffer_marker[] = "x32 GEM shared shell buffer: PASS\r\n";

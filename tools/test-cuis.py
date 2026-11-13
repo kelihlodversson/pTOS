@@ -204,6 +204,14 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     compile_native(command)
     subprocess.run([str(work / "objects")], check=True)
     command = shlex.split(os.environ.get("HOSTCC", "cc"))
+    command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror", "-fno-builtin",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-I" + temp, "-Iinclude", "tests/cuis/app_context.c",
+                "lib/aes/application.c", "lib/aes/session.c", "lib/aes/lifecycle.c",
+                "-o", str(work / "app-context")]
+    compile_native(command)
+    subprocess.run([str(work / "app-context")], check=True)
+    command = shlex.split(os.environ.get("HOSTCC", "cc"))
     command += ["-std=gnu90", "-O2", "-Wall", "-Wextra", "-Werror",
                 # Scalar GEM pointer halves require 32-bit fixture addresses.
                 "-fno-pie", "-no-pie", "-fno-builtin", "-I" + temp, "-Iinclude", "-Ilib/aes", "-Iaes/shared",

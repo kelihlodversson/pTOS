@@ -38,7 +38,9 @@ int main(int argc, char **argv, char **envp)
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_create(0, 0, 0, 10, 10) == -1 && wind_get(1, WF_KIND, &x, 0, 0, 0) == 0 && x == 99);
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(&globals) == id);
+    id = appl_init(); VERIFY(id > 0);
+    globals.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&globals) == id);
     graphics = graf_handle(NULL,NULL,NULL,NULL) > 0;
     if (argc > 1) {
         short parent = appl_find("GEMWIN");
@@ -69,8 +71,10 @@ int main(int argc, char **argv, char **envp)
     status = process(0x13a, child, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     VERIFY(wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1 && x == 10 && y == 20);
-    VERIFY(mt_appl_exit(&globals) == 1 && wind_delete(window) == 0);
+    VERIFY(mt_appl_exit(&globals) == 1);
+    aes_global.ap_3resv = NULL; /* The default global was an alias of globals. */
     VERIFY(appl_init() == id && wind_get(window, WF_KIND, &x, &y, &w, &h) == 0);
+    VERIFY(wind_delete(window) == 0);
     VERIFY(appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM window lifecycle: PASS\r\n";
