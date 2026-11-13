@@ -88,8 +88,9 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         memcpy((void *)(uintptr_t)c,disk+position,bytes); position += bytes;
         return bytes;
     case 0x42:
+        if (b < 3 || b >= 19 || !open_handles[b-3]) return (QUAD)EIHNDL;
         if (seek_error) return (UQUAD)(QUAD)EACCDN;
-        position = (LONG)a;
+        position = (c == 1 ? position : c == 2 ? disk_size : 0)+(LONG)a;
         return position;
     default: return (UQUAD)(QUAD)EINVFN;
     }
@@ -142,6 +143,18 @@ static int context_checks(void)
     VERIFY(aes_resources_reset(&second) && !allocations && files == 1);
     close_keeps_handle = 0; stuck_handle = -1;
     VERIFY(aes_resources_reset(&first) && !files && !allocations);
+    /* First close keeps A's descriptor; retry releases it but returns an
+     * error. B reuses it and its own close then persistently fails. */
+    close_keeps_handle = 1; close_error = 1;
+    VERIFY(!mt_rsrc_load("GEMTEST.RSC",&first) && !files && !left.resources.close_pending);
+    close_error = 0; close_keeps_handle = -1;
+    VERIFY(!mt_rsrc_load("GEMTEST.RSC",&second) && files == 1 && right.resources.close_pending);
+    calls = close_calls;
+    VERIFY(aes_resources_reset(&first) && close_calls == calls && files == 1);
+    seek_error = 1;
+    VERIFY(!aes_resources_reset(&second) && files == 1 && right.resources.close_pending);
+    seek_error = 0; close_keeps_handle = 0;
+    VERIFY(aes_resources_reset(&second) && !files && !allocations);
     return 0;
 }
 int main(int argc, char **argv)

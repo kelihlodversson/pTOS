@@ -114,7 +114,12 @@ static BOOL retry_resource_close(AES_RESOURCE_STATE *owner)
     LONG result;
     if (!owner->close_pending) return TRUE;
     result = (LONG)aes_gemdos_call(0x3e,(UWORD)owner->pending_close,0,0);
-    if (result != E_OK && result != EIHNDL) return FALSE;
+    if (result != E_OK && result != EIHNDL) {
+        /* A close can release the descriptor and still report a flush error.
+         * Probe before returning control to a caller that could reopen it.
+         * Only EIHNDL proves release; other seek errors retain ownership. */
+        if (aes_resource_seek((WORD)owner->pending_close,1,0) != EIHNDL) return FALSE;
+    }
     owner->close_pending = FALSE;
     return TRUE;
 }
