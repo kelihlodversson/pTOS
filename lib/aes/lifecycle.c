@@ -228,7 +228,7 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
                 if (result == peer) { data[used] = AC_CLOSE; data[used+3] = slot; used += 8; }
                 else if (result < 0 && result != EFILNF) goto failed;
             }
-            if (!used) goto failed; /* An state->accessory is still starting up. */
+            if (!used) goto failed; /* The peer accessory has no Desk entry. */
         }
         if (!acc || action == SD_COMPLETE) {
             data[used] = AP_TERM; data[used+1] = -1; data[used+5] = AP_TERM; used += 8;
