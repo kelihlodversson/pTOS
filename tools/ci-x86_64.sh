@@ -4,8 +4,7 @@
 #
 # Usage: tools/ci-x86_64.sh CONFIG       (products/CONFIG/ gets the image)
 #
-# Builds with the host's gcc (CROSS_COMPILE=), as CI does instead of the
-# x86_64-elf- cross toolchain of the developer default, checks the x32 VDI
+# Builds with the packaged pTOS cross compiler, checks the x32 VDI
 # parameter contract and, for the configurations that boot or run something,
 # boots it under QEMU/OVMF (tools/ci-x86_64-boot.sh) or runs the external
 # desktop tests.  QEMU and OVMF have to be installed.
@@ -16,10 +15,10 @@ config=$1
 
 make distclean >/dev/null 2>&1
 make "${config}_defconfig" 2>&1 | tee build.log
-make CROSS_COMPILE= 2>&1 | tee -a build.log
+make 2>&1 | tee -a build.log
 tools/check-build-warnings.sh build.log
 
-make CROSS_COMPILE= vdi-contract-test
+make vdi-contract-test
 
 # The PE32+ EFI application, plus the map file with its symbols.
 mkdir -p "products/$config"
@@ -51,7 +50,7 @@ esac
 
 case $config in
     pc-x86_64-desktop-tests*)
-        make CROSS_COMPILE= -j2 x32-desktop-test
+        make -j2 x32-desktop-test
         console_args=()
         if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
             console_args+=(--embedded-console)

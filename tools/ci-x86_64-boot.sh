@@ -40,7 +40,7 @@ cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
 cp cli/emucon.tos esp/EMUCON.TOS
 # a real x32 ELF on the boot drive: the self-test runs it through
 # Pexec() from a ring-3 process (nested launch), as EmuCON does
-make CROSS_COMPILE= x32test x32-vdi-import-test
+make x32test x32-vdi-import-test
 cp obj/x32/VDI*.TOS esp/
 cp obj/x32/x32probe.elf esp/X32CB.TOS
 cp x32hello.elf esp/X32HELLO.TOS

@@ -1,212 +1,48 @@
 Installing:
 
-You will need a (cross-)GCC toolchain for the machine you are building for:
+Install the packaged pTOS SDKs used by local builds and CI:
 
-  Atari, ARAnyM, Amiga, ColdFire (m68k)
-      Vincent Rivière's m68k-atari-mintelf ELF-based tools, which is what
-      the build expects by default:
-      http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
+    bash tools/install-ptos-toolchain.sh all
 
-      On Debian and Ubuntu they are packaged, which is by far the quickest
-      way to get a working toolchain:
+Pass m68k, arm or x86_64 for just one architecture. On Debian/Ubuntu the
+installer adds https://apt.ptos.dev as a signed APT source and installs
+ptos-sdk-m68k, ptos-sdk-arm and ptos-sdk-x86-64. The published packages run
+on amd64 hosts and are validated on Ubuntu 24.04 and 26.04. On macOS it
+uses the kelihlodversson/ptos-toolchain Homebrew tap; the individual
+formulae are ptos-m68k, ptos-arm and ptos-x86_64. Homebrew bottles are
+published on GitHub Releases, currently for Apple Silicon macOS 26.
+See .claude/skills/toolchain-install/SKILL.md for manual installation,
+restricted environments, host support and verification commands.
 
-          sudo add-apt-repository ppa:vriviere/mintelf
-          sudo apt-get update
-          sudo apt-get install cross-mintelf-essential
+  Target                         Default compiler prefix
+  Atari, ARAnyM, Amiga, ColdFire  m68k-unknown-ptos-prgelf-
+  Raspberry Pi, virt-arm         arm-unknown-ptos-elf-
+  PC UEFI kernel and x32 apps    x86_64-unknown-ptos-elfx32-
 
-      That PPA's gcc has no -mfastcall, which the CONF_WITH_MFASTCALL
-      configurations need.  The CI build therefore uses only Thorsten
-      Otto's prebuilt m68k-atari-mintelf toolchain (gcc, binutils and
-      mintlib from https://tho-otto.m68k.eu/crossmint.php), see
-      .github/actions/setup-toolchain/action.yml; it works for every
-      m68k configuration.
+The m68k SDK supports ELF, MiNT PRG, fastcall and GOT/PLT PIC. The build
+selects -mmintelf for ordinary TOS programs; the runtime linker and its
+libraries use the same SDK in ELF/PIC mode. No separate m68k Linux
+compiler or MiNT headers package is needed. Legacy MiNT and bare
+m68k-elf toolchain choices remain available in the Toolchain menu.
 
-      Three m68k toolchains are offered, chosen under "m68k toolchain"
-      in the Toolchain menu:
+The PC SDK supplies both x32 userspace and the LP64 no-red-zone kernel
+runtime. Its linker supports the i386pep PE32+ emulation needed for UEFI,
+as well as elf32_x86_64 for programs. Build it normally on either host:
 
-          m68k-atari-mintelf    the newer ELF based tools, the default,
-                                http://vincent.riviere.free.fr/soft/m68k-atari-mintelf/
-          m68k-atari-mint       the older cross-mint a.out tools,
-                                http://vincent.riviere.free.fr/soft/m68k-atari-mint/
-          bare m68k-elf         a plain m68k-elf toolchain, no MiNT at all
+    make pc-x86_64_defconfig
+    make
 
-      Picking one selects both the compiler prefix and the flags it needs;
-      there is nothing else to set.  The two ELF toolchains are built with
-       --register-prefix-optional and -DELF_TOOLCHAIN, which cross-mint does
-       not want.
+On macOS use gmake. The native host compiler is used only for build tools
+and host tests; do not clear CROSS_COMPILE for ordinary PC builds.
 
-      Other toolchains, such as the old one from SpareMiNT, may also work.
+The address-space configurations with CONF_WITH_ELF_SHARED also build
+LD.SO, shared libraries and test programs under obj/ldso/. They use the
+corresponding pTOS SDK. doc/elf-shared.txt describes their paths and ABI.
 
-  Raspberry Pi, QEMU 'virt' (ARM)
-      Any bare metal arm-none-eabi toolchain, for example the one Debian
-      and Ubuntu ship:
-
-          sudo apt-get install gcc-arm-none-eabi
-
-  PC (x86-64, UEFI boot)
-      This target needs a toolchain whose *linker* supports the PE32+
-      ("i386pep") emulation, not just ELF: the final link step runs
-      "ld -m i386pep" directly (see the ARCH_X86_64 rule in the top level
-      Makefile) to produce the PE32+ image UEFI firmware itself loads. A
-      plain ELF-only cross binutils -- for example a from-source
-      x86_64-elf toolchain built the way most "OS dev" GCC cross-compiler
-      guides describe, with a bare --target=x86_64-elf and no extra
-      --enable-targets -- does *not* include that emulation and fails
-      with "unrecognized emulation mode: i386pep" at link time. Always
-      confirm before relying on one:
-
-          <prefix>ld --help | grep i386pep
-
-      The pc-x86_64 configuration defaults to the x86_64-elf- prefix, so
-      it never relies on the host compiler.  Override CROSS_COMPILE when
-      your compatible toolchain uses another prefix.  On a Linux/x86-64
-      host, the system gcc/binutils can be selected explicitly:
-
-          make CROSS_COMPILE= pc-x86_64_defconfig && make CROSS_COMPILE=
-
-      On any other host, two toolchains are known to work:
-
-      * a Debian/Ubuntu-packaged x86_64-linux-gnu cross toolchain (built
-        from the same binutils source as the native x86-64 package, just
-        cross-hosted, so it keeps the same PE emulations):
-
-            sudo apt-get install gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu
-
-      * an x86_64-w64-mingw32 (MinGW-w64) cross toolchain, which is
-        PE-native and therefore always has i386pep support. Its GCC
-        defaults every function to the Microsoft x64 calling convention
-        (it targets Windows), which conflicts with the SysV AMD64
-        convention this port's hand-written assembly (relocate.S)
-        assumes for ordinary internal calls -- add "-mabi=sysv" to
-        CPUFLAGS (Kconfig) to restore that default globally, leaving
-        only the functions efi.h explicitly marks "ms_abi" using the
-        Microsoft convention.
-
-      Either way, set "Cross compiler prefix override" (below) to the
-      toolchain's prefix. To boot-test the image, you will also need
-      QEMU and an OVMF UEFI firmware build:
-
-          sudo apt-get install qemu-system-x86 ovmf
-
-  PC (x86-64, EmuCON)
-      On x86-64 EmuCON is not linked into the 64-bit kernel: "make" also
-      builds it as an x32 ELF executable (obj/x32/emucon.elf, from the
-      shared cli/ sources, in their standalone-console mode, with the small
-      runtime in cli/x32/).  By default (CONF_EXTERNAL_CLI) it is copied to
-      cli/emucon.tos and has to be on the boot drive, as EMUCON.TOS in the
-      root directory of the EFI system partition; the kernel loads it from
-      there and runs it as an ordinary ring-3 process.  Without the option
-      the EFI image embeds it instead.  The boot self-test's probe program
-      (tests/x32_probe/) is built and embedded the same way.  The compiler
-      therefore needs the same x32 support described for the test program
-      below; on Debian/Ubuntu that is the gcc-multilib package.  It uses
-      the same cross compiler prefix as the kernel by default.  Set
-      X32_CROSS_COMPILE explicitly only when the x32 compiler differs.
-      The AES and EmuDesk are not available on this machine yet.
-
-  PC (x86-64, running an x32 program from EmuCON)
-      EmuCON runs a program by its ".tos" (".prg", ...) name whatever its
-      executable format: the loader recognises an ELF by its contents.  To
-      try the x32 test program, installed as X32HELLO.TOS, under QEMU/OVMF:
-
-          make pc-x86_64_defconfig && make && make x32test
-          mkdir -p esp/EFI/BOOT
-          cp pc-x86_64.efi esp/EFI/BOOT/BOOTX64.EFI
-          cp x32hello.elf esp/X32HELLO.TOS
-          cp /usr/share/OVMF/OVMF_VARS_4M.fd .
-          qemu-system-x86_64 -machine pc -m 256 -cpu qemu64,+pdpe1gb \
-            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-            -drive if=pflash,format=raw,file=OVMF_VARS_4M.fd \
-            -drive format=raw,file=fat:rw:esp -serial stdio -display none
-
-      then type "x32hello.tos" at the EmuCON prompt: the program runs in ring
-      3, calls GEMDOS, exits, and the prompt comes back (it prints nothing on
-      success).  The same file on the boot drive makes the boot self-test run
-      it from a ring-3 process and print "x86-64 nested pexec: PASS"; CI does
-      exactly that.
-
-  PC (x86-64, x32 userspace test program)
-      "make x32test" builds tests/x32_hello/x32_hello.c, the minimal x32
-      psABI (ELFCLASS32 program headers, genuine EM_X86_64 long-mode
-      instructions -- see issue #334) userspace test program, into
-      x32hello.elf. This is a *separate* build from the kernel image
-      above and needs a different toolchain: an ordinary ELF
-      x86_64-linux-gnu (or x86_64-linux-gnux32) gcc with x32 multilib
-      support, not the PE32+-capable one the kernel itself links with --
-      neither of the two toolchains doc/install.txt recommends above for
-      the kernel is guaranteed to have this (a MinGW-w64 cross toolchain
-      has no x32 codegen at all; a distribution's x86_64-linux-gnu
-      package may or may not ship the x32 multilib alongside it).
-
-      On a Debian/Ubuntu x86-64 host, the native gcc/binutils already
-      include x32 multilib support, so nothing extra needs installing
-      there beyond the ordinary "gcc binutils" from the kernel's own
-      section above -- confirm with:
-
-          gcc -print-multi-lib | grep x32
-
-      If it is missing, install it explicitly:
-
-          sudo apt-get install gcc-multilib
-
-      On any other host, point "x32 test-program cross compiler prefix"
-      (below, in the Toolchain menu) at a cross toolchain with x32
-      support instead -- for example a x86_64-linux-gnux32 triplet. This
-      setting is independent of "Cross compiler prefix override" above:
-      the two need not be, and often are not, the same toolchain.
-
-      On macOS, Homebrew's x86_64-elf toolchain provides both the x32
-      codegen and the x32 linker emulation:
-
-          brew install x86_64-elf-gcc
-
-      then build the complete EFI image with:
-
-          make pc-x86_64_defconfig && make
-
-      Note that the host "gcc" on macOS cannot build this at all: "-mx32"
-      is an x86-64-ELF feature, so the compile fails on the 64-bit
-      register names ("unknown register name 'rax'"). The prefix is
-      therefore required rather than merely optional on that host. The
-      build system already passes "-Wl,-m,elf32_x86_64" to name the
-      linker's x32 output emulation explicitly, so no further flags are
-      needed; without it a cross toolchain's driver can default to
-      "i386:x86-64" and reject the x32 input with "i386:x64-32
-      architecture of input file ... is incompatible with i386:x86-64
-      output", even though the linker does support x32. You can check
-      for that emulation with:
-
-          x86_64-elf-ld -V | grep elf32_x86_64
-
-      A successful link leaves one warning, "has a LOAD segment with RWX
-      permissions". That is expected: the image is a single flat
-      read/write/execute segment, which is what keeps the program down
-      to the one PT_LOAD segment bdos/elfld.c maps.
-
-  Shared libraries and the runtime linker (CONF_WITH_ELF_SHARED)
-      The address-space configurations that have it build the interpreter
-      LD.SO, and libraries and test programs for it, in obj/ldso/ in addition
-      to the kernel.  That userspace is freestanding (no libc) and needs:
-
-        x32     the native gcc with -mx32 (gcc-multilib on Ubuntu), as for the
-                x32 test program above
-        ARM     arm-none-eabi-gcc, the one of the kernel; the userland is built
-                for ARMv6K with VFP, whatever the kernel is built for
-        m68k    m68k-linux-gnu-gcc (Ubuntu: gcc-m68k-linux-gnu) IN ADDITION to
-                the m68k toolchain of the kernel: the MiNT compilers cannot
-                make position-independent code.  LDSO_M68K_PREFIX names another
-                prefix.  Without sudo, see .claude/skills/toolchain-install
-
-      The build stops with the name of the missing compiler.  doc/elf-shared.txt
-      has the format, the paths and the relocation types of each.
-
-If your toolchain is installed under a name other than the one that goes
-with the choice above, fill in "Cross compiler prefix override" in the same
-menu.  It renames the executables only; the flags keep following the
-toolchain you picked.  A one-off build can override it without touching the
-configuration at all:
-
-    make CROSS_COMPILE=m68k-atari-mintelf-
+CROSS_COMPILE renames the selected compiler/binutils; X32_CROSS_COMPILE
+can select a separate x32 compiler, and LDSO_M68K_PREFIX can select a
+separate m68k PIC compiler. Leave these unset for the packaged SDKs.
+Run make distclean before deliberately changing toolchains.
 
 You will also need:
 

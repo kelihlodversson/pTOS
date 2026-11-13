@@ -18,7 +18,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CC = shlex.split(os.environ.get("CC_HOST", "cc"))
-X32_CC = shlex.split(os.environ.get("X32_CC", "gcc"))
+X32_CC = shlex.split(os.environ.get("X32_CC", "x86_64-unknown-ptos-elfx32-gcc"))
 
 
 def run(args):
@@ -1154,7 +1154,7 @@ class Metadata(unittest.TestCase):
         self.assertEqual(info[0], 4)
         self.assertEqual(kind(8, C.byref(info)), -2)
 
-    @unittest.skipUnless(shutil.which("arm-none-eabi-gcc"), "needs an ARM cross compiler")
+    @unittest.skipUnless(shutil.which("arm-unknown-ptos-elf-gcc"), "needs an ARM cross compiler")
     def test_real_arm_objects(self):
         """DT_REL tables of the ARM linker (#693): implicit addends, the ARM formulas."""
         armlib = self.path / "arm-backend.so"
@@ -1166,7 +1166,7 @@ class Metadata(unittest.TestCase):
         abi = ImageAbi.in_dll(arm, "dl_image_abi")
         self.assertEqual((backend.rel, abi.machine, abi.eflags_required), (1, 40, 0x05000400))
 
-        arm_cc = ["arm-none-eabi-gcc", "-march=armv6k", "-marm", "-mfpu=vfp", "-mfloat-abi=hard",
+        arm_cc = ["arm-unknown-ptos-elf-gcc", "-march=armv6k", "-marm", "-mfpu=vfp", "-mfloat-abi=hard",
                   "-ffreestanding", "-fno-stack-protector", "-nostdlib", "-fPIC"]
         armdir = self.path / "arm"
         armdir.mkdir()

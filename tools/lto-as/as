@@ -49,7 +49,7 @@ def rename_reserved(path):
 
 def main():
     args = sys.argv[1:]
-    real = os.environ.get("LTO_REAL_AS", "m68k-atari-mintelf-as")
+    real = os.environ.get("LTO_REAL_AS", "m68k-unknown-ptos-prgelf-as")
     fixed = None
     for i, arg in enumerate(args):
         if arg.endswith(".s") and os.path.isfile(arg) \

@@ -177,8 +177,9 @@ OBJECTS = $(CORE_OBJ) $(OPTIONAL_OBJ)
 # configuration; CROSS_COMPILE is only an override for a toolchain
 # installed under a different name, and is left unset unless the user
 # filled it in.  A command line CROSS_COMPILE= still wins over both.
-CROSS_COMPILE-$(ARCH_ARM) = arm-none-eabi-
-CROSS_COMPILE-$(ARCH_X86_64) = x86_64-elf-
+CROSS_COMPILE-$(ARCH_ARM) = arm-unknown-ptos-elf-
+CROSS_COMPILE-$(ARCH_X86_64) = x86_64-unknown-ptos-elfx32-
+CROSS_COMPILE-$(BUILD_TOOLCHAIN_PTOS) = m68k-unknown-ptos-prgelf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINT) = m68k-atari-mint-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINTELF) = m68k-atari-mintelf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_ELF) = m68k-elf-
@@ -321,15 +322,12 @@ endif
 endif
 endif
 
-# CONF_WITH_MFASTCALL selects -mfastcall above, but neither of the toolchains
-# offered in the "m68k toolchain" choice (Kconfig.machine) support it -- only
-# a patched GCC does (Thorsten Otto's fork, see the option's help text).  Fail
-# now with an actionable message instead of letting every compile fail later
-# with a generic "unrecognized command-line option '-mfastcall'".
+# The pTOS SDK supports fastcall. Check overrides and legacy toolchains too,
+# so an incompatible compiler fails before any objects are built.
 ifdef CONFIGURED
 ifdef CONF_WITH_MFASTCALL
 ifeq (,$(shell echo 'void f(void){}' | $(CC) $(CPUFLAGS) -x c -mfastcall -c -o /dev/null - >/dev/null 2>&1 && echo y))
-$(error $(CC) does not support -mfastcall. Install a patched toolchain (e.g. Thorsten Otto's m68k-atari-mint-gcc fork, https://tho-otto.m68k.eu/crossmint.php) and point CROSS_COMPILE at it, or disable CONF_WITH_MFASTCALL in "make menuconfig")
+$(error $(CC) does not support -mfastcall. Install ptos-sdk-m68k from https://apt.ptos.dev or the ptos-m68k Homebrew formula; see .claude/skills/toolchain-install/SKILL.md)
 endif
 endif
 endif
@@ -1649,14 +1647,14 @@ TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 LIBCMINI_DIR  = lib/libcmini
 LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
-LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR)
+LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) \
+    CROSSPREFIX=$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
 ifdef ARCH_X86_64
 # libcmini's x86-64 port is the x32 userland: built with the same compiler and
 # flags as the other x32 programs (X32_CROSS_COMPILE/X32_CFLAGS), not the
 # x86_64-linux-gnux32- prefix its own Makefile assumes.  -ffreestanding is
 # left out: libcmini's abort() must stay noreturn for -Werror.
-LIBCMINI_MAKE += CROSSPREFIX=$(X32_CROSS_COMPILE) \
-    ARCH_CFLAGS="-fno-pie -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector"
+LIBCMINI_MAKE += ARCH_CFLAGS="-fno-pie -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector"
 endif
 LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
@@ -1756,7 +1754,7 @@ else
 # stamp) and its own dependencies; the file's time only changes when it builds.
 $(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
 	@echo '  EMUCON'
-	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) M68K_PRG_FLAGS="$(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf)" CROSS_COMPILE=$(CROSS_COMPILE) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
 endif
 endif
 
@@ -1963,7 +1961,7 @@ TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 else ifdef ARCH_X86_64
 TEST_LDFLAGS = $(X32_LDFLAGS) -Wl,-e_start
 else
-TEST_LDFLAGS = -Wl,-e_start
+TEST_LDFLAGS = $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) -Wl,-e_start
 endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
@@ -2158,7 +2156,7 @@ relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
+	$(CROSS_COMPILE)ld $(if $(BUILD_TOOLCHAIN_PTOS),-m m68kmintelf) --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
 	  $(TEST_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 endif

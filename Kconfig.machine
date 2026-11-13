@@ -534,11 +534,18 @@ menu "Toolchain"
 choice
 	prompt "m68k toolchain"
 	depends on ARCH_M68K
-	default BUILD_TOOLCHAIN_MINTELF
+	default BUILD_TOOLCHAIN_PTOS
 	help
 	  Which of the m68k toolchains to build with.  This selects the
 	  compiler prefix and the flags the toolchain needs; both can still
 	  be overridden below.
+
+config BUILD_TOOLCHAIN_PTOS
+	bool "pTOS SDK (m68k-unknown-ptos-prgelf)"
+	help
+	  The default pTOS toolchain, with ELF, MiNT PRG, PIC and fastcall
+	  support. Install ptos-sdk-m68k from https://apt.ptos.dev on
+	  Debian/Ubuntu, or the ptos-m68k Homebrew formula on macOS.
 
 config BUILD_TOOLCHAIN_MINT
 	bool "m68k-atari-mint (cross-mint)"
@@ -558,7 +565,7 @@ config BUILD_TOOLCHAIN_MINT
 config BUILD_TOOLCHAIN_MINTELF
 	bool "m68k-atari-mintelf"
 	help
-	  Vincent Rivière's newer ELF based toolchain for MiNT, the default.
+	  The legacy ELF based MiNT toolchain, retained as an explicit choice.
 	  Being an ELF toolchain it is built with the same flags as the bare
 	  m68k-elf one below: --register-prefix-optional to let it write d0 rather
 	  than %d0, and -DELF_TOOLCHAIN for the parts of the sources and of
@@ -579,11 +586,11 @@ endchoice
 # ELF-specific source and linker-script behavior.
 config BUILD_TOOLCHAIN_IS_ELF
 	bool
-	default y if BUILD_TOOLCHAIN_MINTELF || BUILD_TOOLCHAIN_ELF
+	default y if BUILD_TOOLCHAIN_PTOS || BUILD_TOOLCHAIN_MINTELF || BUILD_TOOLCHAIN_ELF
 
 config BUILD_LTO
 	bool "Link-time optimization (-flto)"
-	depends on BUILD_TOOLCHAIN_MINTELF && ARCH_M68K_CLASSIC
+	depends on (BUILD_TOOLCHAIN_PTOS || BUILD_TOOLCHAIN_MINTELF) && ARCH_M68K_CLASSIC
 	default y if TARGET_CART || TARGET_192 || TARGET_256
 	help
 	  Build the kernel with GCC's link-time optimization, which lets the
@@ -591,8 +598,8 @@ config BUILD_LTO
 	  the image several KB smaller, so it is on by default for the ROM
 	  images of 256 KB and less, which need the space.
 
-	  Only the m68k-atari-mintelf toolchain is supported: the final code
-	  is generated at link time, so tools/lto-as/as puts the assembly
+	  The pTOS SDK and m68k-atari-mintelf toolchains are supported.
+	  Final code is generated at link time, so tools/lto-as/as puts the assembly
 	  through tools/fix-m68k-local-labels.py on the way to gas, as the
 	  Makefile does for every source file otherwise.
 
@@ -604,7 +611,8 @@ config CROSS_COMPILE
 	  example "m68k-atari-mint-".
 
 	  Leave this empty, which is the usual case, to get the prefix that
-	  goes with the toolchain selected above, or arm-none-eabi- on ARM.
+	  goes with the toolchain selected above, arm-unknown-ptos-elf- on
+	  ARM, or x86_64-unknown-ptos-elfx32- on the PC.
 	  Fill it in when your toolchain is installed under a different name;
 	  the flags still follow the toolchain chosen above, not the prefix.
 
@@ -616,24 +624,10 @@ config X32_CROSS_COMPILE
 	  Prefix for the separate GCC used to build the ILP32 ("x32" psABI:
 	  ELFCLASS32 program headers, but genuine EM_X86_64 long-mode code --
 	  see issue #334) userspace test program under tests/x32_hello/.
-	  Kept apart from CROSS_COMPILE above because the two toolchains are
-	  usually different binaries entirely: the kernel itself needs a
-	  linker with PE32+ ("i386pep") support (see the "PC (x86-64, UEFI
-	  boot)" entry in doc/install.txt), which an ordinary Linux
-	  x86_64-linux-gnu toolchain has but whose gcc may or may not carry
-	  x32 multilib support depending on distribution, while a
-	  MinGW-w64 cross toolchain has the PE32+ linker but no x32 codegen
-	  at all.
-
-	  Leave empty, the usual case, to use the host's own "gcc"/"ld" --
-	  x32 multilib support is part of the ordinary gcc/binutils packages
-	  on a Debian/Ubuntu x86-64 host (see doc/install.txt), which is
-	  where this is meant to run: unlike CROSS_COMPILE, this is never
-	  needed to cross the *host*, only ever to point at a different
-	  installed gcc on the same machine.
-
-	  It does have to be set on macOS, whose host "gcc" cannot compile
-	  "-mx32" at all; "x86_64-elf-" from Homebrew works (doc/install.txt).
+	  Leave empty to use CROSS_COMPILE, normally the pTOS SDK's
+	  x86_64-unknown-ptos-elfx32-. The same SDK supports the LP64 UEFI
+	  kernel and x32 userspace on Linux and macOS. Override this only
+	  when intentionally using a separate compiler for the test programs.
 
 config CPUFLAGS
 	string "Compiler flags describing the target CPU"
@@ -683,14 +677,9 @@ config CONF_WITH_MFASTCALL
 	  unconditionally off the classic stack frame too, and has likewise
 	  never been audited for -mfastcall.
 
-	  This requires a GCC build with -mfastcall support, which neither
-	  of Vincent Riviere's toolchains (the ones normally installed for
-	  this project, see the choice above) has. Thorsten Otto's fork
-	  (https://github.com/th-otto/m68k-atari-mint-gcc, prebuilt at
-	  https://tho-otto.m68k.eu/crossmint.php) does. The build fails
-	  with a clear error at compile time if the configured compiler
-	  does not support the flag, rather than accepting this option and
-	  failing later with an unrecognised-option error.
+	  The pTOS SDK includes the patched GCC and fastcall runtime variants.
+	  A deliberately overridden compiler must support the same flag;
+	  the build checks it before compiling any objects.
 
 	  GEMDOS/BIOS/XBIOS/AES trap entry points are unaffected either
 	  way: they always explicitly construct the fixed TOS wire-format

@@ -60,7 +60,7 @@ are in the sections named; everything not in the table is the same.
                                            rpi2-aspace
     CPU             x86-64, ILP32 user     ARMv6K up, ARM state,  68020 and up
                                            hard-float EABI5       (the 68040 MMU)
-    compiler        native gcc -mx32       arm-none-eabi-gcc      m68k-linux-gnu-gcc
+    compiler        pTOS x32 SDK           pTOS ARM SDK          pTOS m68k SDK
     object          ELF32 EM_X86_64        ELF32 EM_ARM           ELF32 EM_68K
                     little endian          little endian          big endian
     e_flags         0                      0x05000400             0
@@ -597,13 +597,13 @@ On ARM and m68k the option is already on in the address-space configurations
 (virt-arm-aspace, rpi2-aspace, virt-m68k-aspace): "make <config>_defconfig",
 "make", "make test-dir", then tools/run-regression-tests.sh virt-arm,
 raspi2b-aspace or virt-m68k-aspace, whose suite includes ldso_dynamic.  The
-m68k build needs m68k-linux-gnu-gcc as well (see "m68k"); the host checks of
+m68k build uses the pTOS m68k SDK for both kernel and PIC (see "m68k"); the host checks of
 tools/test-elf-shared.py cover the ARM and m68k formulas without any cross
-compiler, and real ARM objects when arm-none-eabi-gcc is there.  Objects of
+compiler, and real ARM objects when arm-unknown-ptos-elf-gcc is there.  Objects of
 one architecture are rebuilt when the configuration changes.
 
 To build the x32 userspace core, select pc-x86_64_defconfig, enable
-CONF_WITH_ELF_SHARED in menuconfig, then make CROSS_COMPILE= on Linux.
+CONF_WITH_ELF_SHARED in menuconfig, then make with the packaged pTOS SDK.
 Disabling the option leaves ordinary static builds unchanged.  An archive
 build alone is not proof of runtime behavior. With shared support enabled,
 tools/test-mmap-boot.sh also requires the ring-3 relocation PASS marker.
@@ -658,7 +658,7 @@ page up from the headers (-Wl,-Ttext-segment=0x401000), with PT_INTERP
 /GEMSYS/LIB/ARM/LD.SO, and the libraries it needs are looked up in
 \GEMSYS\LIB\ARM\ of the boot drive.  Programs and libraries are built with
 -fPIC and linked with --hash-style=sysv; the bare-metal GNU toolchain
-(arm-none-eabi-) does.  The libraries are compiled for ARMv6K with VFP, the
+(arm-unknown-ptos-elf-) does.  The libraries are compiled for ARMv6K with VFP, the
 oldest core the system runs on, so that the same files go on every card.
 
 The initial stack is the one of the standard entry, with the finalizer in r0
@@ -694,7 +694,7 @@ between the two address spaces (shared_cross), and the writable data of each
 its own.  Three more programs fail on purpose (a missing library, a cut-short
 one, a missing interpreter); each must be refused, with no process record or
 page left behind.  tools/test-elf-shared.py relocates real ARM objects (DT_REL)
-on the host when an arm-none-eabi- compiler is there.
+on the host when an arm-unknown-ptos-elf- compiler is there.
 
 
 m68k (#694)
@@ -703,16 +703,12 @@ m68k (#694)
 The m68k backend is lib/ldso/arch/m68k, for the address-space configurations
 (virt-m68k-aspace, 68040).
 
-The compiler.  The MiNT compilers (m68k-atari-mintelf-, -mint-) cannot make
-position-independent code: -fPIC is refused ("not supported on this target"),
-and -mpcrel leaves every reference to another object as a PC-relative text
-relocation (DT_TEXTREL), which cannot be shared and which the linker refuses.
-The runtime linker and the libraries and programs that use it are therefore
-built with GNU/Linux's m68k-linux-gnu-gcc, whose -fPIC uses a GOT and a PLT
-(Ubuntu: gcc-m68k-linux-gnu; LDSO_M68K_PREFIX names another).  Nothing of the
-GNU/Linux system is used: -ffreestanding -nostdlib, no libc, only libgcc.  The
-kernel and the rest are built as before; CI installs the compiler with the
-m68k toolchain (.github/actions/setup-toolchain).
+The pTOS m68k SDK (m68k-unknown-ptos-prgelf-) supports ordinary GOT/PLT
+PIC as well as MiNT PRG output and fastcall. The kernel, runtime linker and
+libraries use the same SDK. LDSO_M68K_PREFIX remains an explicit override
+for another compiler. Userspace is freestanding: -ffreestanding -nostdlib,
+no host libc, only the target libgcc. Legacy MiNT compilers lack ordinary
+PIC, so selecting one for the kernel still needs a PIC-capable SDK for LD.SO.
 
 Objects are ELF32 EM_68K, big endian, e_flags 0 (the 68020 and later), linked
 with -z max-page-size=4096 and --build-id=none.  A program is a fixed-address

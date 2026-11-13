@@ -46,10 +46,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: all
       - name: Install the host and x32 test packages
         uses: ./.github/actions/apt-install
         with:
-          packages: gcc-multilib qemu-system-x86 ovmf dosfstools mtools
+          packages: qemu-system-x86 ovmf dosfstools mtools
       - name: Install the test tools for Python
         run: |
           python3 -m venv /tmp/elf-shared-venv
@@ -77,14 +80,14 @@ jobs:
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
           config.write_config()
           PY
-          make CROSS_COMPILE= obj/ldso/libldso.a
+          make obj/ldso/libldso.a
           ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
           test -z "$(nm -u /tmp/ldso-core.o)"
       - name: Build and boot-test enabled mapping syscalls
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
-          make CROSS_COMPILE= -j2
-          make CROSS_COMPILE= x32test x32-vdi-import-test
+          make -j2
+          make x32test x32-vdi-import-test
           sh tools/test-mmap-boot.sh
       - name: Boot-test standard GEM shared libraries, VDI, callbacks and CUIS
         run: |
@@ -97,8 +100,8 @@ jobs:
               config.syms[name].set_value(2)
           config.write_config()
           PY
-          make CROSS_COMPILE= -j2
-          make CROSS_COMPILE= x32test x32-vdi-import-test
+          make -j2
+          make x32test x32-vdi-import-test
           readelf -d obj/libaes/CUIS.TOS | grep 'libaes.so'
           readelf -l obj/libaes/CUIS.TOS | grep '/GEMSYS/LIB/X32/LD.SO'
           python3 tools/check-libaes-elf.py obj/libaes/libaes.so obj/gemlib/libgem.a obj/libaes/GEM.TOS
@@ -121,8 +124,8 @@ jobs:
           config.syms["CONF_WITH_SHUTDOWN"].set_value(2)
           config.write_config()
           PY
-            make CROSS_COMPILE= -j2
-            make CROSS_COMPILE= x32-desktop-test
+            make -j2
+            make x32-desktop-test
             readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
             readelf -d emudesk.prg | grep 'libptos.so'
             readelf -d emudesk.prg | grep 'libaes.so'
@@ -457,11 +460,36 @@ jobs:
           path: sdcard/
           retention-days: 14
 
+  homebrew:
+    name: Homebrew SDKs and builds (macOS)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: all
+      - name: Test all installed SDKs together
+        run: |
+          for formula in ptos-m68k ptos-arm ptos-x86_64; do
+            brew test "kelihlodversson/ptos-toolchain/$formula"
+          done
+      - name: Build m68k, ARM and UEFI with the default prefixes
+        run: |
+          for config in virt-m68k-aspace virt-arm-aspace pc-x86_64; do
+            make distclean
+            make "${config}_defconfig"
+            make -j3
+            make -j3 runtests.tos
+          done
+
   # A single job to require in the branch protection rules, so that the list
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, x86_64, regression, pmmu-check, release-archives, raspi-sdcard]
+    needs: [build, x86_64, regression, pmmu-check, release-archives, raspi-sdcard, homebrew]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -486,6 +514,8 @@ jobs:
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
+          echo "Homebrew SDKs/builds:    ${{ needs.homebrew.result }}"
+
           ok=true
           [ '${{ needs.build.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
@@ -493,6 +523,7 @@ jobs:
           [ '${{ needs.pmmu-check.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
+          [ '${{ needs.homebrew.result }}' = success ] || ok=false
 
           if ! $ok; then
             echo "::error::at least one required job failed (configuration build, regression suite, release archives or SD card image): see the results above"

@@ -68,27 +68,24 @@ make menuconfig          # optional: adjust it
 make                     # build the image named in the "is ready" line
 ```
 
-Requirements: GNU make, `pip3 install kconfiglib`, and a cross toolchain —
-`arm-none-eabi-*` for the Raspberry Pi, and for everything else one of the
-three offered under "m68k toolchain" in the Toolchain menu: `m68k-atari-mintelf-`
-(the default), `m68k-atari-mint-` (cross-mint), or a bare `m68k-elf-`.  That
-choice sets both the prefix and the flags; `doc/install.txt` says where to get
-them.
+Requirements are GNU Make 4.3+, Python with kconfiglib, a native C compiler,
+and the packaged pTOS SDK for the target. Install the SDKs with
+`bash tools/install-ptos-toolchain.sh all`: it uses the signed
+`https://apt.ptos.dev` APT repository on Debian/Ubuntu and the
+`kelihlodversson/ptos-toolchain` Homebrew tap on macOS.
+
+The default prefixes are `m68k-unknown-ptos-prgelf-`,
+`arm-unknown-ptos-elf-`, and `x86_64-unknown-ptos-elfx32-`. The m68k SDK
+supports fastcall and PIC; the PC SDK builds both the LP64 UEFI kernel and
+x32 programs. No `CROSS_COMPILE=` override is needed for PC builds. On
+macOS use Homebrew's `gmake`, not Apple's old system Make.
 
 **A missing or unsuitable toolchain is never a reason to skip a
-configuration.** Every one of them can be built on this machine without sudo.
-When a build stops on `x86_64-elf-gcc: No such file or directory`,
-`... does not support -mfastcall`, `arm-none-eabi-gcc: not found`, or any
-other "compiler missing" error, follow the `toolchain-install` skill
-(`.claude/skills/toolchain-install/SKILL.md`) before you report anything as
-unbuildable. The two cases that trip agents most often:
-
-- pc-x86_64 uses the host's native gcc: `make CROSS_COMPILE=`.
-- `CONF_WITH_MFASTCALL=y` configs (amiga, amiga-kickdisk, the `*-fastcall`
-  ones) need Thorsten Otto's toolchain, because the PPA's
-  `m68k-atari-mintelf-gcc` has no `-mfastcall`. CI uses his toolchain for
-  every m68k job. The skill shows how to install it into a user directory
-  and put it first on `PATH`.
+configuration.** Follow the toolchain-install skill
+(`.claude/skills/toolchain-install/SKILL.md`) before reporting a compiler
+or configuration as unavailable. Use the pTOS SDK for migration validation;
+legacy Kconfig toolchain choices and explicit compiler overrides remain
+available for deliberate compatibility builds.
 
 `make clean` keeps `.config`; `make distclean` removes it too. Changing
 `.config` rebuilds everything, which is intended.

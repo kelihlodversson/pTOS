@@ -8,15 +8,15 @@ layout=${2:-private}
 suffix=
 case $arch in
     arm)
-        config=virt-arm-aspace; prefix=arm-none-eabi-; libc_config=ptos_arm_defconfig
+        config=virt-arm-aspace; prefix=arm-unknown-ptos-elf-; libc_config=ptos_arm_defconfig
         flags='-march=armv6 -marm -mfpu=vfp -mfloat-abi=hard -mword-relocations'
         libs=-lgcc ;;
     x32)
-        config=pc-x86_64; prefix=; libc_config=ptos_x86_64_defconfig
+        config=pc-x86_64; prefix=x86_64-unknown-ptos-elfx32-; libc_config=ptos_x86_64_defconfig
         flags='-mx32 -march=x86-64 -fcf-protection=none'
         libs= ;;
     m68k)
-        config=virt-m68k-aspace; prefix=m68k-atari-mintelf-; libc_config=mintelf_defconfig
+        config=virt-m68k-aspace; prefix=m68k-unknown-ptos-prgelf-; libc_config=mintelf_defconfig
         flags=-m68000; libs=-lgcc ;;
     *) echo "unknown architecture: $arch" >&2; exit 2 ;;
 esac

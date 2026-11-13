@@ -118,6 +118,10 @@ What is changed
       (tools/ci-x86_64.sh and tools/ci-x86_64-boot.sh: the build, the VDI
       contract, the boot under QEMU/OVMF or the desktop tests), the last one
       also running the regression suite of pc-x86_64
+    build.yml, Homebrew SDKs and builds: 1 Apple Silicon macOS 26 job,
+      installing and testing all three pTOS SDK formulae together, then
+      building m68k/ARM address-space and PC UEFI configurations with
+      their default cross compiler prefixes
     build.yml, regression suites: 2 jobs, "regression arm" (virt-arm, its
       traditional FAT variant, raspi2b) and "regression m68k" (virt-m68k and
       its fastcall build), tools/ci-regression.sh
@@ -287,3 +291,14 @@ Not done (needs a decision)
 - The x32 job ("x32 ELF shared-library metadata") is not in the roll-up: a
   pull request can be green in "All builds" with it red.  Whether it should
   block a merge is a decision, not an audit finding.
+
+Toolchain installation
+----------------------
+
+The shared setup-toolchain action calls tools/install-ptos-toolchain.sh.
+Linux jobs install the signed SDK packages from https://apt.ptos.dev;
+macOS installs the SDK formulae from kelihlodversson/ptos-toolchain with
+Homebrew. Compiler and package versions are recorded in the job logs.
+The kernel and userspace use pTOS compiler prefixes on both platforms;
+CI does not silently fall back to a distro or native target compiler.
+The native host compiler remains responsible for build tools and host tests.

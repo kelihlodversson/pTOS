@@ -7,12 +7,10 @@ LDSO_ARCH-$(ARCH_X86_64) = x32
 # programs go on the card of every Raspberry Pi, as for EmuDesk).
 LDSO_CFLAGS-$(ARCH_ARM) = -march=armv6k -mtune=arm1176jzf-s -marm -mfpu=vfp -mfloat-abi=hard
 LDSO_ARCH-$(ARCH_ARM) = arm
-# m68k: the MiNT compilers cannot make PIC (-fPIC is refused; -mpcrel leaves the
-# references to other objects as text relocations), so this is the one place
-# where a second compiler is needed: GNU/Linux's m68k-linux-gnu-gcc, whose
-# -fPIC uses a GOT and a PLT.  It makes freestanding code with -ffreestanding
-# -nostdlib, so any build of it will do (Ubuntu: gcc-m68k-linux-gnu).
-LDSO_M68K_PREFIX ?= m68k-linux-gnu-
+# The pTOS m68k SDK provides ordinary GOT/PLT PIC as well as PRG output.
+# Reuse the kernel prefix for the SDK choice, retaining a separate override
+# for developers who select a legacy kernel compiler.
+LDSO_M68K_PREFIX ?= $(if $(BUILD_TOOLCHAIN_PTOS),$(CROSS_COMPILE),m68k-unknown-ptos-prgelf-)
 LDSO_CFLAGS-$(ARCH_M68K) = -m68020 -fno-asynchronous-unwind-tables -fno-unwind-tables
 LDSO_LDFLAGS-$(ARCH_M68K) = -Wl,-z,max-page-size=4096,-z,common-page-size=4096,--build-id=none
 LDSO_ARCH-$(ARCH_M68K) = m68k
@@ -27,7 +25,7 @@ LDSO_AR = $(LDSO_AR-y)
 ifeq ($(ARCH_M68K),y)
 ifeq ($(shell command -v $(LDSO_M68K_PREFIX)gcc 2>/dev/null),)
 $(error CONF_WITH_ELF_SHARED on m68k needs $(LDSO_M68K_PREFIX)gcc, a compiler that makes position-independent code, \
-        for the runtime linker and its libraries.  On Ubuntu: sudo apt-get install gcc-m68k-linux-gnu \
+        for the runtime linker and its libraries.  Install ptos-sdk-m68k from https://apt.ptos.dev (or ptos-m68k with Homebrew) \
         (or set LDSO_M68K_PREFIX); see .claude/skills/toolchain-install and doc/elf-shared.txt)
 endif
 endif
