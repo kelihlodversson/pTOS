@@ -24,9 +24,9 @@ BOOL aes_layout_metrics(LAYOUT_METRICS *m, AESGLOBAL *global)
     m->width = 640; m->height = 480; m->wchar = 8; m->hchar = 16; m->hbox = 19;
     return TRUE;
 }
-BOOL aes_frames_dialog(BOOL begin) { dialogs += begin ? 1 : -1; return TRUE; }
-BOOL aes_frames_suspend(void) { overlays++; return TRUE; }
-void aes_frames_resume(void) { overlays--; }
+BOOL aes_frames_dialog(BOOL begin, AESGLOBAL *global) { (void)global; dialogs += begin ? 1 : -1; return TRUE; }
+BOOL aes_frames_suspend(AESGLOBAL *global) { (void)global; overlays++; return TRUE; }
+void aes_frames_resume(AESGLOBAL *global) { (void)global; overlays--; }
 void *aes_temporary_alloc(LONG bytes)
 {
     void *memory;

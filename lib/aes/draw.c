@@ -6,6 +6,7 @@
 #include "vdi_service.h"
 #include "transport.h"
 #include "application.h"
+#include "app_context.h"
 #include "../../aes/shared/gemobjtree.h"
 #include "../../aes/gemobjop.h"
 #include "../../aes/gemoblib.h"
@@ -37,7 +38,6 @@ WORD aes_edit_core(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
 
 /* Save/restore around nested USERDEF calls. */
 PAINTER *aes_painter;
-AES_3D_STYLE aes_3d_style;
 
 
 /* Only these low-level GSX bindings differ from the native renderer. They
@@ -488,10 +488,11 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
      * to whole-screen ownership or changing its lifetime. */
     if (lock != E_OK && lock != EAGAIN) return 0;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
+    p.style = &aes_app_context(global)->graphics.style;
     opened = TRUE; aes_painter = &p; p.handle = ws.handle; p.ok = TRUE;
     memcpy(&p.workstation,ws.intout,sizeof(ws.intout));
     memcpy((WORD *)&p.workstation+45,ws.ptsout,sizeof(ws.ptsout));
-    if (!aes_3d_style.ready) { aes_init_3d(); aes_3d_style.ready = TRUE; }
+    if (!p.style->ready) { aes_init_3d(); p.style->ready = TRUE; }
     p.mode = p.text_color = p.line_color = p.interior = p.pattern = p.font = -1;
     p.clip.g_x = cx < 0 ? 0 : cx; p.clip.g_y = cy < 0 ? 0 : cy;
     right = (LONG)cx+cw; bottom = (LONG)cy+ch;
@@ -788,8 +789,9 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) return 0;
     if (aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK ||
         ws.intout[13] <= 0 || ws.intout[13] > 256) return 0;
+    p.style = &aes_app_context(global)->graphics.style;
     p.workstation.ws_ncolors = ws.intout[13]; aes_painter = &p;
-    if (!aes_3d_style.ready) { aes_init_3d(); aes_3d_style.ready = TRUE; }
+    if (!p.style->ready) { aes_init_3d(); p.style->ready = TRUE; }
     result = aes_sysvar_core(mode,which,in1,in2,&first,&second);
     aes_painter = saved;
     if (result && !mode) {
@@ -872,7 +874,7 @@ BOOL aes_graphics_track(AES_TRACK *t)
     OBJECT dummy = { 0 };
     LONG session = aes_application_session(t->global);
     BOOL mouse = FALSE, ok = FALSE;
-    if (session < 0 || !aes_frames_suspend()) return FALSE;
+    if (session < 0 || !aes_frames_suspend(t->global)) return FALSE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto resume;
     /* Do not wait on another client's gesture while excluding its drawing. */
     mouse = cuis_call6(CUIS_MOUSE_LOCK,session,1,0,0,0,0) == E_OK;
@@ -892,6 +894,6 @@ BOOL aes_graphics_track(AES_TRACK *t)
     if (mouse && cuis_call6(CUIS_MOUSE_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
 resume:
-    aes_frames_resume();
+    aes_frames_resume(t->global);
     return ok;
 }

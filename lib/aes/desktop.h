@@ -2,8 +2,8 @@
 #ifndef LIBAES_DESKTOP_H
 #define LIBAES_DESKTOP_H
 #include "libaes.h"
-BOOL aes_desktop_registered(void);
-void aes_desktop_reset(void);
+BOOL aes_desktop_registered(AESGLOBAL *global);
+void aes_desktop_reset(AESGLOBAL *global);
 WORD aes_desktop_set(OBJECT *tree, WORD root, AESGLOBAL *global);
 WORD aes_desktop_get(OBJECT **tree, WORD *root, AESGLOBAL *global);
 BOOL aes_desktop_geometry(GRECT *rect, BOOL work, AESGLOBAL *global);

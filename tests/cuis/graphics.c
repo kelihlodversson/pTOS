@@ -3,6 +3,7 @@
 #include "gemerror.h"
 #include "vdi_service.h"
 #include "graphics.h"
+#include "app_context.h"
 #include "cuis.h"
 #include "mforms.h"
 #undef CHECK
@@ -45,11 +46,14 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 }
 int main(void)
 {
-    WORD w = 99, h = 99, bw = 99, bh = 99, handle;
-    AESGLOBAL other = {0};
+    WORD w = 99, h = 99, bw = 99, bh = 99, handle, independent_handle;
+    AESGLOBAL other = {0}, independent = {0};
+    AES_APP_CONTEXT primary = {0}, secondary = {0};
     MFORM custom;
     unsigned before;
     aes_global = (AESGLOBAL){ 0 };
+    aes_global.ap_3resv = other.ap_3resv = &primary;
+    independent.ap_3resv = &secondary;
     CHECK(sizeof(MFORM) == 74 && __builtin_offsetof(MFORM,mf_fg) == 6 &&
         __builtin_offsetof(MFORM,mf_bg) == 8 && __builtin_offsetof(MFORM,mf_mask) == 10);
     CHECK(__builtin_types_compatible_p(__typeof__(((MFORM *)0)->mf_mask[0]),WORD));
@@ -91,14 +95,44 @@ int main(void)
     check_error = EIHNDL;
     CHECK(graf_handle(NULL,NULL,NULL,NULL) != handle); check_error = 0;
     CHECK(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1 && hidden == 2);
-    aes_graphics_wind_new();
+    aes_graphics_wind_new(&aes_global);
     CHECK(graf_mouse(M_OFF,NULL) == 1 && hidden == 1);
-    aes_graphics_reset(); CHECK(closed_handle > 0);
+    aes_graphics_reset(&aes_global); CHECK(closed_handle > 0);
     pixel_y = 2;
     CHECK(graf_handle(&w,&h,&bw,&bh) > 0 && bw == 38);
-    aes_graphics_reset(); pixel_y = 1; pixel_x = 3;
+    aes_graphics_reset(&aes_global); pixel_y = 1; pixel_x = 3;
     CHECK(graf_handle(&w,&h,&bw,&bh) > 0 && bw == 12);
-    aes_graphics_reset(); char_h = 32765; w = 99;
+    aes_graphics_reset(&aes_global); char_h = 32765; w = 99;
     CHECK(!graf_handle(&w,NULL,NULL,NULL) && w == 99);
+    char_h = 16; pixel_x = pixel_y = 1;
+    handle = graf_handle(NULL,NULL,NULL,NULL);
+    independent_handle = mt_graf_handle(NULL,NULL,NULL,NULL,&independent);
+    CHECK(handle > 0 && independent_handle > 0 && independent_handle != handle);
+    CHECK(mt_graf_handle(NULL,NULL,NULL,NULL,&other) == handle);
+    CHECK(graf_mouse(USER_DEF,&custom) == 1 && graf_mouse(M_SAVE,NULL) == 1);
+    CHECK(graf_mouse(M_OFF,NULL) == 1 && hidden == 1);
+    CHECK(mt_graf_mouse(M_OFF,NULL,&independent) == 1 && hidden == 1);
+    CHECK(mt_graf_mouse(M_RESTORE,NULL,&independent) == 1 &&
+          !__builtin_memcmp(&installed,mform_rs_data[ARROW],sizeof(installed)));
+    CHECK(mt_graf_mouse(M_OFF,NULL,&other) == 1 && hidden == 2);
+    style_error = EACCDN;
+    CHECK(!graf_mouse(M_OFF,NULL)); style_error = 0;
+    CHECK(mt_graf_mouse(M_ON,NULL,&other) == 1 && hidden == 1);
+    CHECK(mt_graf_mouse(M_ON,NULL,&independent) == 1 && hidden == 0);
+    CHECK(graf_mouse(M_RESTORE,NULL) == 1 && installed.mf_mask[3] == (WORD)0xffff);
+    CHECK(mt_graf_mouse(M_OFF,NULL,&independent) == 1 && hidden == 1);
+    aes_graphics_wind_new(&aes_global);
+    CHECK(mt_graf_mouse(M_OFF,NULL,&independent) == 1 && hidden == 2);
+    CHECK(graf_mouse(M_OFF,NULL) == 1 && hidden == 1);
+    before = opens;
+    aes_graphics_reset(&independent);
+    CHECK(closed_handle == independent_handle);
+    CHECK(graf_handle(NULL,NULL,NULL,NULL) == handle && opens == before);
+    CHECK(mt_graf_mouse(M_OFF,NULL,&other) == 1 && hidden == 2);
+    CHECK(mt_graf_mouse(M_OFF,NULL,&independent) == 1 && hidden == 1);
+    CHECK(mt_graf_mouse(M_RESTORE,NULL,&independent) == 1 &&
+          !__builtin_memcmp(&installed,mform_rs_data[ARROW],sizeof(installed)));
+    aes_graphics_reset(&aes_global);
+    aes_graphics_reset(&independent);
     return 0;
 }

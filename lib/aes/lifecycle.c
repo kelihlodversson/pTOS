@@ -80,7 +80,7 @@ LONG aes_lifecycle_messages(AESGLOBAL *global)
         if (work == CUIS_COHORT_REQUEST) {
             result = aes_window_messages_poll(session,global);
             if (result < 0) return result;
-            if (aes_frames_wait_display() || aes_windows_pending()) return E_OK;
+            if (aes_frames_wait_display(global) || aes_windows_pending(global)) return E_OK;
         }
         if (work == CUIS_COHORT_RESULT) {
             phase = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_STATE,0,0,0,0);

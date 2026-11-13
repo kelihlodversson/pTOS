@@ -47,7 +47,7 @@ WORD mt_form_alert(WORD button, const char *text, AESGLOBAL *global)
     if ((QUAD)memory <= 0) { memory = 0; goto done; }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;
-    if (!aes_frames_suspend()) goto done;
+    if (!aes_frames_suspend(global)) goto done;
     overlay = TRUE;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
     opened = TRUE;
@@ -63,7 +63,7 @@ done:
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (memory && (LONG)aes_memory_call(0x49,memory) != E_OK) ok = FALSE;
     aes_alert_context = saved;
-    if (overlay) aes_frames_resume();
+    if (overlay) aes_frames_resume(global);
     return ok ? selection : 0;
 }
 

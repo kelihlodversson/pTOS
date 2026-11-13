@@ -7,5 +7,4 @@ typedef struct {
     WORD indicator_colour, activator_colour, background;
     BOOL ready;
 } AES_3D_STYLE;
-extern AES_3D_STYLE aes_3d_style;
 #endif

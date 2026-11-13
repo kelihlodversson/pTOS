@@ -155,7 +155,7 @@ static int window_desktop_api_checks(AESGLOBAL *global)
     region_alloc_failure = FALSE;
     CHECK(mt_wind_set_ptr_int(0,WF_NEWDESK,&tree,0,global) == 1);
     CHECK(wind_get_ptr(0,WF_NEWDESK,&pointer) == 1 && pointer == &tree);
-    CHECK(aes_desktop_registered());
+    CHECK(aes_desktop_registered(global));
     before = desktop_paints;
     CHECK(evnt_timer(0) == 1 && desktop_paints > before && !(background_state & 2));
     CHECK(background_event_checks(global) == 0);
@@ -172,6 +172,6 @@ static int window_desktop_api_checks(AESGLOBAL *global)
     CHECK(!wind_get(old,WF_KIND,&a,&b,&c,&d) && !wind_get(fresh,WF_KIND,&a,&b,&c,&d));
     CHECK(appl_find(NULL) == gl_apid && wind_create_grect(0,NULL) == -1);
     CHECK(wind_create_grect(0,&rect) > 0 && wind_new() == 1);
-    aes_desktop_reset(); background_state = 0;
+    aes_desktop_reset(global); background_state = 0;
     return 0;
 }

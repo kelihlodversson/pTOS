@@ -19,6 +19,7 @@ typedef struct painter {
     VDICONTROL control;
     WORD input[128], points[20], output[45], outpoints[12];
     struct { char g_rawstr[MAX_LEN], g_tmpstr[MAX_LEN], g_fmtstr[MAX_LEN], g_valstr[MAX_LEN]; } scratch;
+    AES_3D_STYLE *style;
 } PAINTER;
 
 extern PAINTER *aes_painter;

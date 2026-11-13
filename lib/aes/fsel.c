@@ -67,7 +67,7 @@ WORD aes_fsel_dial(WORD kind, GRECT *small, GRECT *large)
     if (!result) aes_fsel->ok = FALSE;
     if (result && kind == FMD_START) aes_fsel->dial = TRUE;
     if (kind == FMD_FINISH) {
-        if (!result) (void)aes_frames_dialog(FALSE);
+        if (!result) (void)aes_frames_dialog(FALSE,aes_fsel->global);
         aes_fsel->dial = FALSE;
     }
     return result;
@@ -175,7 +175,7 @@ WORD mt_fsel_exinput(char *path, char *selection, WORD *button, const char *titl
     mouse = TRUE;
     if (cuis_call6(CUIS_KEYBOARD_LOCK,c.session,1,0,0,0,0) != E_OK) goto done;
     keyboard = TRUE;
-    if (!aes_frames_suspend()) goto done;
+    if (!aes_frames_suspend(global)) goto done;
     overlay = TRUE;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
     opened = TRUE; c.handle = ws.handle;
@@ -195,7 +195,7 @@ done:
     if (mouse && cuis_call6(CUIS_MOUSE_LOCK,c.session,0,0,0,0,0) != E_OK) c.ok = FALSE;
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,c.session,0,0,0,0,0) != E_OK) c.ok = FALSE;
     if (snapshot) (void)aes_resource_discard(snapshot);
-    if (overlay) aes_frames_resume();
+    if (overlay) aes_frames_resume(global);
     aes_fsel = saved;
     if (!result || !c.ok || (pressed != 0 && pressed != 1)) return 0;
     strcpy(path,staged_path); strcpy(selection,staged_selection); *button = pressed;
