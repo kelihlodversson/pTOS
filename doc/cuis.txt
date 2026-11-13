@@ -17,11 +17,15 @@ reuses it. Exit frees the context and clears only the supplied slot; other
 aliases become invalid. Session, enumeration, cohort, window/frame, desktop
 and graphics/cursor/style state are per context. Private helper calls pass
 the supplied global, and reset/cleanup uses that context's retained state.
-Resource/menu/shell ownership, temporary helpers, full reentrancy and CUIS
-identity changes remain separate #953 slices. CUIS still has one session per
-process; fresh userspace
-contexts do not imply independent sessions, windows or message queues. #903 is
-separate. Historical implementation notes below predate this
+Resources, menu and shell state are also context-owned. Painter/tracker,
+modal, form, alert, file-selector, resource and shell helper chains receive
+explicit call arguments; libaes has no mutable globals or TLS. The ELF audit
+permits relocated constant tables only in sealed RELRO. The acceptance map
+and validation commands are in libaes-context-acceptance.md.
+CUIS identity remains separate work coordinated with #896/#907/#915. It still
+has one session per process: fresh userspace contexts do not imply independent
+sessions, windows or message queues. Ending their shared session invalidates
+all its users. #903 is separate. Historical implementation notes below predate this
 binding split; see doc/libaes-compatibility.md for the current ownership and API.
 
 

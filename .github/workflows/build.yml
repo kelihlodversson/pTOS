@@ -64,6 +64,10 @@ jobs:
           BINFMT_SANITIZE=1 /tmp/elf-shared-venv/bin/python tools/test-binfmt-io.py
       - name: Test CUIS ownership and caller-local AES object contracts
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
+      - name: Test AES context ownership and reentrancy with ASan and UBSan
+        env:
+          HOSTCC: cc -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -no-pie
+        run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
       - name: Build the enabled freestanding x32 core

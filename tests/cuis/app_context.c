@@ -1,4 +1,5 @@
 /* Explicit userspace context ownership, independent of kernel session policy. */
+#include <pthread.h>
 #include "libaes.h"
 #include "gemerror.h"
 #include "../../lib/aes/application.h"
@@ -89,6 +90,63 @@ BOOL aes_resources_reset(AESGLOBAL *global)
     (void)global; resource_cleanups++; return !fail_resource_cleanup;
 }
 
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    unsigned waiting, generation;
+} SEARCH_GATE;
+typedef struct {
+    AESGLOBAL *global;
+    SEARCH_GATE *gate;
+    BOOL failed;
+} SEARCH_TASK;
+
+static void search_gate(SEARCH_GATE *gate)
+{
+    unsigned generation;
+    pthread_mutex_lock(&gate->mutex);
+    generation = gate->generation;
+    if (++gate->waiting == 2) {
+        gate->waiting = 0;
+        gate->generation++;
+        pthread_cond_broadcast(&gate->condition);
+    } else {
+        while (generation == gate->generation)
+            pthread_cond_wait(&gate->condition,&gate->mutex);
+    }
+    pthread_mutex_unlock(&gate->mutex);
+}
+
+static void *parallel_search(void *argument)
+{
+    SEARCH_TASK *task = argument;
+    unsigned i;
+    char name[9];
+    short type, id;
+    for (i = 0; i < 128; i++) {
+        if (mt_appl_search(APP_FIRST,name,&type,&id,task->global) != 1) task->failed = TRUE;
+        search_gate(task->gate); /* Both cursors must survive the other's FIRST. */
+        if (mt_appl_search(APP_NEXT,name,&type,&id,task->global) != 1 ||
+            mt_appl_search(APP_NEXT,name,&type,&id,task->global) != 0) task->failed = TRUE;
+        search_gate(task->gate);
+    }
+    return NULL;
+}
+
+static int parallel_checks(AESGLOBAL *first, AESGLOBAL *second)
+{
+    SEARCH_GATE gate = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0 };
+    SEARCH_TASK tasks[2] = { { first,&gate,FALSE }, { second,&gate,FALSE } };
+    pthread_t threads[2];
+    CHECK(!pthread_create(&threads[0],NULL,parallel_search,&tasks[0]));
+    CHECK(!pthread_create(&threads[1],NULL,parallel_search,&tasks[1]));
+    CHECK(!pthread_join(threads[0],NULL) && !pthread_join(threads[1],NULL));
+    CHECK(!tasks[0].failed && !tasks[1].failed);
+    CHECK(!pthread_cond_destroy(&gate.condition) && !pthread_mutex_destroy(&gate.mutex));
+    __builtin_printf("AES independent contexts on concurrent host threads: PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     AESGLOBAL first = { 0 }, alias = { 0 }, second = { 0 };
@@ -138,6 +196,7 @@ int main(void)
     CHECK(mt_appl_search(APP_NEXT,name,&type,&id,&first) == 1);
     CHECK(mt_appl_search(APP_NEXT,name,&type,&id,&second) == 1);
     CHECK(mt_appl_search(APP_NEXT,name,&type,&id,&alias) == 0);
+    CHECK(parallel_checks(&first,&second) == 0);
     CHECK(!aes_lifecycle_listening(&first) && !aes_lifecycle_listening(&second));
     CHECK(aes_lifecycle_write(SWM_NEWMSG,NM_APTERM,0,NULL,&first) == 1);
     CHECK(aes_lifecycle_listening(&alias) && !aes_lifecycle_listening(&second));

@@ -23,7 +23,10 @@ with tempfile.TemporaryDirectory(prefix="libaes-state-") as temp:
         path = work / (name + ".c")
         path.write_text(source)
         library = work / (name + ".so")
-        subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) + ["-fPIC", "-shared", "-nostdlib", "-Wl,-z,relro,-z,now" if name != "unsealed" else "-Wl,-z,norelro,-z,now", str(path), "-o", str(library)], check=True)
+        # These fixtures test exact ELF sections, never execute. Sanitizer
+        # instrumentation introduces its own mutable state into read-only
+        # inputs; behavioral CUIS/AES fixtures still inherit HOSTCC unchanged.
+        subprocess.run(shlex.split(os.environ.get("HOSTCC", "cc")) + ["-fno-sanitize=all", "-fPIC", "-shared", "-nostdlib", "-Wl,-z,relro,-z,now" if name != "unsealed" else "-Wl,-z,norelro,-z,now", str(path), "-o", str(library)], check=True)
         try:
             aes_elf.check_mutable_state(library)
         except AssertionError:
