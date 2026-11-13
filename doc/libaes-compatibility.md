@@ -199,6 +199,13 @@ isolation and alias sharing while retaining the current shared-session constrain
 native sessions require the separate CUIS identity work
 coordinated with #896/#907/#915.
 
+The native GEM regression also creates two fresh contexts in one real process,
+checks explicit aliasing and per-array fields, and verifies that closing the
+shared kernel session retires it for both. It never calls AES with the other
+context after that retirement. The process then exits to reclaim the remaining
+allocation. [The acceptance map](libaes-context-acceptance.md) distinguishes this
+integration test from host fixtures that supply distinct mock sessions.
+
 ## Boot/configuration audit
 
 Kconfig excludes kernel AES whenever CUIS or per-process address spaces are

@@ -12,6 +12,7 @@
 #include "gem_argv.h"
 #include "gem_lifecycle.h"
 #include "gem_explicit.h"
+#include "../../lib/aes/app_context.h"
 #define GEM_TEST_CHECK(c) do { if (!(c)) return 0x7000 | __LINE__; } while (0)
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
@@ -22,6 +23,41 @@ static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e
     return (LONG)ax;
 }
 #define PROC(fn,a,b,c,d) raw(1,fn,a,b,c,d,0,0)
+
+/* Integration coverage of the current kernel boundary, not a claim of
+ * independent AES identities. Host fixtures separately inject distinct
+ * sessions to exercise independent private-state cleanup. */
+static int context_checks(void)
+{
+    AESGLOBAL first = { 0 }, alias = { 0 }, second = { 0 };
+    OBJECT *trees[1] = { NULL };
+    void *context;
+    LONG session;
+    short id;
+    first.ap_private = 123;
+    id = mt_appl_init(&first);
+    GEM_TEST_CHECK(id > 0 && first.ap_3resv && first.ap_private == 123);
+    context = first.ap_3resv;
+    session = ((AES_APP_CONTEXT *)context)->session;
+    alias.ap_3resv = context;
+    alias.ap_private = 456;
+    alias.ap_ptree = trees;
+    alias.ap_rsclen = 17;
+    GEM_TEST_CHECK(mt_appl_init(&alias) == id && alias.ap_3resv == context);
+    GEM_TEST_CHECK(alias.ap_private == 456 && alias.ap_ptree == trees && alias.ap_rsclen == 17);
+    GEM_TEST_CHECK(!first.ap_ptree && !first.ap_rsclen);
+    GEM_TEST_CHECK(mt_appl_init(&second) == id && second.ap_3resv && second.ap_3resv != context);
+    GEM_TEST_CHECK(((AES_APP_CONTEXT *)second.ap_3resv)->session == session);
+    GEM_TEST_CHECK(mt_appl_yield(&first) && mt_appl_yield(&alias) && mt_appl_yield(&second));
+    GEM_TEST_CHECK(gl_apid == -1 && aes_global.ap_id == -1 && !aes_global.ap_3resv);
+    GEM_TEST_CHECK(mt_appl_exit(&alias) && !alias.ap_3resv && alias.ap_private == 456);
+    GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS,CUIS_SESSION_QUERY,session,0,0,0,0,0) == EACCDN);
+    /* first is a dangling alias; second's kernel session has ended. Neither
+     * may be passed to AES again. Process exit reclaims second's allocation;
+     * there is deliberately no public orphan-context cleanup API. */
+    return 0;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     short id, a = 1, b = 2, c = 3, d = 4;
@@ -104,7 +140,9 @@ int main(int argc, char **argv, char **envp)
     GEM_TEST_CHECK(gl_apid == id && aes_global.ap_id == id && globals.ap_id == -1);
     aes_global.ap_3resv = NULL; /* The alias was freed by mt_appl_exit. */
     GEM_TEST_CHECK(appl_init() == id && appl_exit() == 1);
+    GEM_TEST_CHECK(context_checks() == 0);
     {
+        static const char context_marker[] = "x32 AES explicit contexts and shared CUIS boundary: PASS\r\n";
         static const char marker[] = "x32 GEM lifecycle/timers: PASS\r\n";
         static const char buffer_marker[] = "x32 GEM shared shell buffer: PASS\r\n";
         static const char metadata_marker[] = "x32 GEM desktop/clipboard metadata: PASS\r\n";
@@ -114,6 +152,7 @@ int main(int argc, char **argv, char **envp)
         static const char shell_marker[] = "x32 GEM shell queries: PASS\r\n";
         static const char accessory_marker[] = "x32 GEM accessory registration: PASS\r\n";
         ptos_write(1, marker, sizeof(marker)-1);
+        ptos_write(1, context_marker, sizeof(context_marker)-1);
         ptos_write(1, shell_marker, sizeof(shell_marker)-1);
         ptos_write(1, accessory_marker, sizeof(accessory_marker)-1);
         ptos_write(1, buffer_marker, sizeof(buffer_marker)-1);
