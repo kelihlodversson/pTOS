@@ -21,6 +21,13 @@ typedef struct {
  * Calls are serialized/no-yield. Unsupported backends return EINVFN. */
 LONG thread_startup_prepare(struct kaspace *space, const THREAD_STARTUP_ARGS *args,
                             THREAD_STARTUP_DRAFT **draft);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Trusted loader-only standard ELF entry. initial_sp addresses argc in the
+ * already-built resident stack; publication never inserts a C return frame.
+ * This is not a public clone option or arbitrary saved CPU-state restore. */
+LONG thread_startup_prepare_elf(struct kaspace *,const THREAD_STARTUP_ARGS *,
+                              VADDR initial_sp,THREAD_STARTUP_DRAFT **);
+#endif
 /* Public void entry returns through the kernel-selected zero-status stub. */
 LONG thread_startup_prepare_public(struct kaspace *, const THREAD_STARTUP_ARGS *, THREAD_STARTUP_DRAFT **);
 #if CONF_WITH_PRIVATE_CLONE

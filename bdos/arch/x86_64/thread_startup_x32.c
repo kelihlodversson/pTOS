@@ -54,6 +54,27 @@ LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS
     return E_OK;
 }
 
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG thread_startup_arch_validate_elf(const ASPACE *space,const THREAD_STARTUP_ARGS *args,VADDR initial_sp)
+{
+    LONG error=thread_startup_arch_validate(space,args);
+    if(error) return error;
+    if(!initial_sp || initial_sp%16 || initial_sp<args->stack_base ||
+        initial_sp-args->stack_base<128 ||
+        initial_sp-args->stack_base>=args->stack_size ||
+        args->stack_size-(initial_sp-args->stack_base)<4) return EINVAL;
+    return E_OK;
+}
+LONG thread_startup_arch_elf_entry(ASPACE *space,const THREAD_STARTUP_ARGS *args,VADDR initial_sp,void *image)
+{
+    LONG error;
+    if(!image) return EINVAL;
+    error=thread_startup_arch_validate_elf(space,args,initial_sp);
+    if(error) return error;
+    ((X32_THREAD_STARTUP_DRAFT *)image)->user.rsp=initial_sp;
+    return E_OK;
+}
+#endif
 void thread_startup_arch_abort(void *resource)
 {
     X32_THREAD_STARTUP_DRAFT *draft = resource;

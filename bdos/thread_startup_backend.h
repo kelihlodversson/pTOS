@@ -18,6 +18,11 @@ void thread_startup_arch_bridge_release(void **bridge);
 LONG thread_startup_arch_prepare(struct aspace *space, const THREAD_STARTUP_ARGS *args, const void *return_bridge,
                                  void **image);
 LONG thread_startup_arch_validate(const struct aspace *space, const THREAD_STARTUP_ARGS *args);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG thread_startup_arch_validate_elf(const struct aspace *,const THREAD_STARTUP_ARGS *,VADDR initial_sp);
+/* Validates before touching the unpublished CPU image; changes only SP. */
+LONG thread_startup_arch_elf_entry(struct aspace *,const THREAD_STARTUP_ARGS *,VADDR initial_sp,void *image);
+#endif
 void thread_startup_arch_abort(void *image);
 LONG thread_startup_arch_public_return(void *image, const void *bridge);
 void *thread_startup_arch_frame_alias(struct aspace *, const void *image);
