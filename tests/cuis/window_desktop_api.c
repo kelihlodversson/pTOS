@@ -1,5 +1,5 @@
 /* Standard window helpers, colours and desktop contracts over failing transport. */
-static int window_pointer_checks(short *global)
+static int window_pointer_checks(AESGLOBAL *global)
 {
     static const char title[] = "A title longer than one WORD";
     static const char info[] = "An info line longer than one WORD";
@@ -35,7 +35,7 @@ static int window_pointer_checks(short *global)
     return 0;
 }
 
-static int default_colour_checks(short *global)
+static int default_colour_checks(AESGLOBAL *global)
 {
     short gadget, top, bottom, flags, slot;
     CHECK(wind_set(0,WF_DCOLOR,W_NAME,0x11a1,0x1101,0) == 1);
@@ -67,7 +67,7 @@ static int default_colour_checks(short *global)
     return 0;
 }
 
-static int background_event_checks(short *global)
+static int background_event_checks(AESGLOBAL *global)
 {
     short message[8], saved[8], key = 99, clicks = 99, x = 99, y = 99, buttons = 99, modifiers = 99;
     ULONG before;
@@ -105,16 +105,17 @@ static int background_event_checks(short *global)
     return 0;
 }
 
-static int window_desktop_api_checks(short *global)
+static int window_desktop_api_checks(AESGLOBAL *global)
 {
-    short a, b, c, d, old, fresh, invalid[15] = {0};
+    short a, b, c, d, old, fresh;
+    AESGLOBAL invalid = {0};
     GRECT rect = {10,20,100,80}, result;
     OBJECT tree = { NIL,NIL,NIL,G_BOX,LASTOB,NORMAL,{0x1173},0,0,640,400 };
     void *pointer, *again;
     ULONG before;
     CHECK(window_pointer_checks(global) == 0);
     CHECK(default_colour_checks(global) == 0);
-    CHECK(mt_wind_new(NULL) == 0 && mt_wind_set_ptr(0,WF_NEWDESK,&tree,invalid) == 0);
+    CHECK(mt_wind_new(NULL) == 0 && mt_wind_set_ptr(0,WF_NEWDESK,&tree,&invalid) == 0);
     CHECK(wind_get_grect(0,WF_CURRXYWH,&result) == 1 && result.g_w == 640 && result.g_h == 400);
     CHECK(mt_wind_get_grect(0,WF_WORKXYWH,&result,global) == 1 && result.g_y == 19 && result.g_h == 381);
     CHECK(wind_get(0,WF_KIND,&a,&b,&c,&d) == 1 && !(a|b|c|d));

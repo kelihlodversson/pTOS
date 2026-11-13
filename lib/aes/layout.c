@@ -29,7 +29,7 @@ BOOL aes_workstation_metrics(WORD handle, const WORD device[45], LAYOUT_METRICS 
     }
     return TRUE;
 }
-static BOOL layout_metrics(LAYOUT_METRICS *m, WORD *wbox, WORD *global)
+static BOOL layout_metrics(LAYOUT_METRICS *m, WORD *wbox, AESGLOBAL *global)
 {
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 };
     VDI_SERVICE_WORKSTATION ws;
@@ -40,11 +40,11 @@ static BOOL layout_metrics(LAYOUT_METRICS *m, WORD *wbox, WORD *global)
     return aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) == E_OK && ok;
 }
 
-BOOL aes_layout_metrics(LAYOUT_METRICS *m, WORD *global)
+BOOL aes_layout_metrics(LAYOUT_METRICS *m, AESGLOBAL *global)
 {
     return layout_metrics(m,NULL,global);
 }
-BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *screen_width, WORD *screen_height, WORD *global)
+BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *screen_width, WORD *screen_height, AESGLOBAL *global)
 {
     LAYOUT_METRICS m;
     WORD width;
@@ -55,14 +55,14 @@ BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *screen_width, WORD *screen_
     return TRUE;
 }
 
-short mt_rsrc_obfix(OBJECT *tree, short object, short *global)
+short mt_rsrc_obfix(OBJECT *tree, short object, AESGLOBAL *global)
 {
     LAYOUT_METRICS m;
     if (!tree || object < 0 || !aes_layout_metrics(&m,global)) return 0;
     rs_obfix_metrics(tree,object,m.wchar,m.hchar,m.width);
     return 1;
 }
-short rsrc_obfix(OBJECT *tree, short object) { return mt_rsrc_obfix(tree,object,aes_global); }
+short rsrc_obfix(OBJECT *tree, short object) { return mt_rsrc_obfix(tree,object,&aes_global); }
 
 /* Overflow rejection belongs to the userspace adapter. The native shared
  * painter keeps its original WORD behavior and pays no ROM cost for this. */
@@ -79,7 +79,7 @@ static BOOL center_extent(OBJECT *root)
     return (LONG)root->ob_width+extra <= 32767 && (LONG)root->ob_height+extra <= 32767;
 }
 
-short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global)
+short mt_form_center_grect(OBJECT *tree, GRECT *rect, AESGLOBAL *global)
 {
     LAYOUT_METRICS m;
     OBJECT root;
@@ -95,8 +95,8 @@ short mt_form_center_grect(OBJECT *tree, GRECT *rect, short *global)
     *rect = bounds;
     return 1;
 }
-short form_center_grect(OBJECT *tree, GRECT *rect) { return mt_form_center_grect(tree,rect,aes_global); }
-short mt_form_center(OBJECT *tree, short *x, short *y, short *w, short *h, short *global)
+short form_center_grect(OBJECT *tree, GRECT *rect) { return mt_form_center_grect(tree,rect,&aes_global); }
+short mt_form_center(OBJECT *tree, short *x, short *y, short *w, short *h, AESGLOBAL *global)
 {
     GRECT bounds;
     if (!x || !y || !w || !h || !mt_form_center_grect(tree,&bounds,global)) return 0;
@@ -105,5 +105,5 @@ short mt_form_center(OBJECT *tree, short *x, short *y, short *w, short *h, short
 }
 short form_center(OBJECT *tree, short *x, short *y, short *w, short *h)
 {
-    return mt_form_center(tree,x,y,w,h,aes_global);
+    return mt_form_center(tree,x,y,w,h,&aes_global);
 }

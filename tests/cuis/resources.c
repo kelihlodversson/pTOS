@@ -9,7 +9,7 @@
 extern void *fopen(const char *, const char *);
 extern size_t fread(void *, size_t, size_t, void *);
 extern int fclose(void *);
-short aes_global[15] = { 0,0,1 };
+AESGLOBAL aes_global = { .ap_id = 1 };
 static UBYTE disk[16384], original[16384];
 static LONG disk_size, position;
 static int files, allocations, alloc_after = -1, reads, short_read, close_error, seek_error, graphics_error;
@@ -20,8 +20,8 @@ static int free_after = -1;
 static const char *available = "C:\\START\\APP\\GEMTEST.RSC";
 static char tried[16][128];
 static int attempts;
-LONG aes_application_session(short *global) { return global && global[2] == 1 && !registration_error ? 7 : EACCDN; }
-BOOL aes_layout_metrics(LAYOUT_METRICS *metrics, WORD *global)
+LONG aes_application_session(AESGLOBAL *global) { return global && global->ap_id == 1 && !registration_error ? 7 : EACCDN; }
+BOOL aes_layout_metrics(LAYOUT_METRICS *metrics, AESGLOBAL *global)
 {
     if (graphics_error || aes_application_session(global) < 0) return FALSE;
     metrics->wchar = 8; metrics->hchar = 16; metrics->hbox = 19;
@@ -95,7 +95,7 @@ static void disk_long(int offset, unsigned long value) { disk_word(offset,value>
 int main(int argc, char **argv)
 {
     void *file, *address;
-    WORD saved[15];
+    AESGLOBAL saved = { 0 };
     int i, result, before, size;
     VERIFY(argc == 3);
     file = fopen(argv[1],"rb"); VERIFY(file != NULL);
@@ -118,12 +118,12 @@ int main(int argc, char **argv)
     if (result) __builtin_printf("GEM resource failure: %x\n",result);
     VERIFY(result == 0 && !files && !allocations);
     /* All allocation failures retain a previously selected resource. */
-    VERIFY(rsrc_load("GEMTEST.RSC") == 1); memcpy(saved,aes_global,sizeof(saved));
+    VERIFY(rsrc_load("GEMTEST.RSC") == 1); memcpy(&saved,&aes_global,sizeof(saved));
     before = allocations;
     for (i = 0; i < 4; i++) {
         alloc_after = i;
         VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
-        VERIFY(!memcmp(saved,aes_global,sizeof(saved)) && rsrc_gaddr(R_TREE,0,&address) == 1);
+        VERIFY(!memcmp(&saved,&aes_global,sizeof(saved)) && rsrc_gaddr(R_TREE,0,&address) == 1);
     }
     alloc_after = -1;
     for (i = 1; i <= 2; i++) {
@@ -136,7 +136,7 @@ int main(int argc, char **argv)
      * Also exercise an interrupted close that leaves the handle live. */
     close_error = 0; close_keeps_handle = 1; close_calls = 0;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && close_calls == 2 && !files && allocations == before);
-    VERIFY(!memcmp(saved,aes_global,sizeof(saved)));
+    VERIFY(!memcmp(&saved,&aes_global,sizeof(saved)));
     /* Persistent close errors retain one handle and prevent further opens. */
     close_keeps_handle = -1; close_calls = 0;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && close_calls == 2 && files == 1 && allocations == before);
@@ -144,11 +144,11 @@ int main(int argc, char **argv)
         int opens = attempts;
         VERIFY(rsrc_load("GEMTEST.RSC") == 0 && attempts == opens && files == 1 && allocations == before);
     }
-    VERIFY(!memcmp(saved,aes_global,sizeof(saved)));
+    VERIFY(!memcmp(&saved,&aes_global,sizeof(saved)));
     close_keeps_handle = 0;
     VERIFY(rsrc_load("GEMTEST.RSC") == 1 && !files);
     VERIFY(rsrc_free() == 1 && allocations == before);
-    memcpy(aes_global,saved,sizeof(saved));
+    memcpy(&aes_global,&saved,sizeof(saved));
     /* Session cleanup retries a retained handle, even after an earlier
      * cleanup attempt failed, without discarding its ownership record. */
     close_keeps_handle = -1;
@@ -157,13 +157,13 @@ int main(int argc, char **argv)
     close_keeps_handle = 0;
     aes_resources_reset(); VERIFY(!files && !allocations);
     VERIFY(rsrc_load("GEMTEST.RSC") == 1);
-    memcpy(saved,aes_global,sizeof(saved)); before = allocations;
+    memcpy(&saved,&aes_global,sizeof(saved)); before = allocations;
     seek_error = 1;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
     seek_error = 0; invalidate_on_close = TRUE;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && allocations == before && !files);
     invalidate_on_close = registration_error = FALSE;
-    VERIFY(!memcmp(saved,aes_global,sizeof(saved)));
+    VERIFY(!memcmp(&saved,&aes_global,sizeof(saved)));
     present = FALSE;
     VERIFY(rsrc_load("GEMTEST.RSC") == 0 && rsrc_gaddr(R_TREE,0,&address) == 1);
     present = TRUE;
@@ -193,13 +193,13 @@ int main(int argc, char **argv)
     VERIFY(rsrc_load("GEMTEST.RSC") == 1);
     VERIFY(rsrc_gaddr(R_STRING,1,&address) == 1 && !strcmp(address,"Intact"));
     VERIFY(rsrc_gaddr(R_TREE,0,&address) == 0 && rsrc_free() == 1 && allocations == before);
-    memcpy(aes_global,saved,sizeof(saved)); memcpy(disk,original,sizeof(disk));
-    VERIFY(!memcmp(saved,aes_global,sizeof(saved)));
+    memcpy(&aes_global,&saved,sizeof(saved)); memcpy(disk,original,sizeof(disk));
+    VERIFY(!memcmp(&saved,&aes_global,sizeof(saved)));
     free_after = 0;
-    VERIFY(rsrc_free() == 0 && allocations == before && !memcmp(saved,aes_global,sizeof(saved)));
+    VERIFY(rsrc_free() == 0 && allocations == before && !memcmp(&saved,&aes_global,sizeof(saved)));
     free_after = -1;
     /* Header changes must not turn bounds checks into arbitrary table reads. */
-    memcpy(&address,aes_global+7,4);
+    address = aes_global.ap_rscmem;
     if (sizeof(void *) == 4) {
         RSHDR *header = address;
         header->rsh_nobs++;
@@ -245,19 +245,19 @@ int main(int argc, char **argv)
     /* Failed reset releases retain ownership, but never remain selectable.
      * Cover an image pinned across resets, then a metadata-only failure. */
     for (i = 0; i < 2; i++) {
-        WORD stale[15];
+        AESGLOBAL stale = { 0 };
         VERIFY(rsrc_load("GEMTEST.RSC") == 1);
-        memcpy(stale,aes_global,sizeof(stale));
+        memcpy(&stale,&aes_global,sizeof(stale));
         free_after = i;
         aes_resources_reset();
         VERIFY(allocations == 2-i && !files);
-        VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,stale) == 0 &&
-            mt_rsrc_free(stale) == 0);
+        VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&stale) == 0 &&
+            mt_rsrc_free(&stale) == 0);
         aes_resources_reset(); VERIFY(allocations == 2-i);
         free_after = -1;
         if (!i) {
             aes_resources_reset(); VERIFY(!allocations);
-            VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,stale) == 0);
+            VERIFY(mt_rsrc_gaddr(R_TREE,0,&address,&stale) == 0);
         }
         /* A new load also retries retired metadata without selecting it. */
         VERIFY(rsrc_load("GEMTEST.RSC") == 1 && allocations == 2);

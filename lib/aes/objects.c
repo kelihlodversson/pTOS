@@ -65,27 +65,27 @@ WORD objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my)
     return object;
 }
 
-WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, WORD *global)
+WORD mt_objc_add(OBJECT *tree, WORD parent, WORD child, AESGLOBAL *global)
 {
     (void)global;
     return objc_add(tree, parent, child);
 }
-WORD mt_objc_delete(OBJECT *tree, WORD object, WORD *global)
+WORD mt_objc_delete(OBJECT *tree, WORD object, AESGLOBAL *global)
 {
     (void)global;
     return objc_delete(tree, object);
 }
-WORD mt_objc_order(OBJECT *tree, WORD object, WORD position, WORD *global)
+WORD mt_objc_order(OBJECT *tree, WORD object, WORD position, AESGLOBAL *global)
 {
     (void)global;
     return objc_order(tree, object, position);
 }
-WORD mt_objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y, WORD *global)
+WORD mt_objc_offset(OBJECT *tree, WORD object, WORD *x, WORD *y, AESGLOBAL *global)
 {
     (void)global;
     return objc_offset(tree, object, x, y);
 }
-WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, WORD *global)
+WORD mt_objc_find(OBJECT *tree, WORD start, WORD depth, WORD mx, WORD my, AESGLOBAL *global)
 {
     (void)global;
     return objc_find(tree, start, depth, mx, my);

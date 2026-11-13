@@ -10,35 +10,41 @@
 #include "lifecycle.h"
 #include "string.h"
 
-short aes_global[AES_GLOBMAX] = { 0, 0, -1 };
+AESGLOBAL aes_global = { .ap_id = -1 };
 short gl_apid = -1, gl_ap_version;
 static LONG application_session = -1;
 static short application_id = -1;
 static LONG search_after = -1;
 static BOOL application_accessory;
 
-static void clear_global(short *global)
+static void clear_global(AESGLOBAL *global)
 {
-    WORD i;
-    for (i = 0; i < AES_GLOBMAX; i++) global[i] = 0;
-    global[2] = -1;
+    global->ap_version = 0;
+    global->ap_count = 0;
+    global->ap_id = -1;
+    global->ap_ptree = NULL;
+    global->ap_rscmem = NULL;
+    global->ap_rsclen = 0;
+    global->ap_planes = 0;
+    global->ap_3resv = NULL;
+    global->ap_4resv = 0;
 }
 
-static void sync_global(short *global)
+static void sync_global(AESGLOBAL *global)
 {
-    if (global == aes_global) {
-        gl_apid = global[2];
-        gl_ap_version = global[0];
+    if (global == &aes_global) {
+        gl_apid = global->ap_id;
+        gl_ap_version = global->ap_version;
     }
 }
 
-static BOOL registered(short *global)
+static BOOL registered(AESGLOBAL *global)
 {
     return global && application_session >= 0 && application_id > 0 &&
-           global[2] == application_id && aes_session_query(application_session) == E_OK;
+           global->ap_id == application_id && aes_session_query(application_session) == E_OK;
 }
 
-LONG aes_application_session(short *global)
+LONG aes_application_session(AESGLOBAL *global)
 {
     return registered(global) ? application_session : EACCDN;
 }
@@ -70,7 +76,7 @@ static BOOL publish_label(LONG handle)
     return TRUE;
 }
 
-short mt_appl_init(short *global)
+short mt_appl_init(AESGLOBAL *global)
 {
     LONG pid, handle;
     if (!global) return -1;
@@ -84,23 +90,23 @@ short mt_appl_init(short *global)
         aes_menu_reset(); aes_windows_reset(); aes_desktop_reset(); aes_graphics_reset();
         aes_resources_reset();
         application_session = -1; application_id = -1;
-        if (global != aes_global) clear_global(aes_global);
-        sync_global(aes_global);
+        if (global != &aes_global) clear_global(&aes_global);
+        sync_global(&aes_global);
         sync_global(global); return -1;
     }
     if (handle != application_session) { aes_lifecycle_reset(application_accessory); search_after = -1; aes_menu_reset(); aes_windows_reset(); aes_desktop_reset(); aes_graphics_reset(); aes_resources_reset(); }
     application_session = handle;
     application_id = (short)pid;
-    global[0] = 0x0400; /* AES global-array ABI, not a claim of complete AES coverage. */
-    global[1] = -1; /* GEM multitasking sentinel. */
-    global[2] = application_id;
+    global->ap_version = 0x0400; /* AES global-array ABI, not a claim of complete AES coverage. */
+    global->ap_count = -1; /* GEM multitasking sentinel. */
+    global->ap_id = application_id;
     sync_global(global);
     return application_id;
 }
 
-short appl_init(void) { return mt_appl_init(aes_global); }
+short appl_init(void) { return mt_appl_init(&aes_global); }
 
-short mt_appl_exit(short *global)
+short mt_appl_exit(AESGLOBAL *global)
 {
     if (!registered(global) || aes_session_close(application_session) != E_OK) return 0;
     aes_menu_reset(); aes_windows_reset(); aes_desktop_reset(); aes_graphics_reset();
@@ -110,20 +116,20 @@ short mt_appl_exit(short *global)
     search_after = -1;
     aes_lifecycle_reset(FALSE);
     clear_global(global);
-    if (global != aes_global) clear_global(aes_global);
+    if (global != &aes_global) clear_global(&aes_global);
     sync_global(global);
-    sync_global(aes_global);
+    sync_global(&aes_global);
     return 1;
 }
-short appl_exit(void) { return mt_appl_exit(aes_global); }
+short appl_exit(void) { return mt_appl_exit(&aes_global); }
 
-short mt_appl_yield(short *global)
+short mt_appl_yield(AESGLOBAL *global)
 {
     return registered(global) && aes_process_call(0xff) == E_OK ? 1 : 0;
 }
-short appl_yield(void) { return mt_appl_yield(aes_global); }
+short appl_yield(void) { return mt_appl_yield(&aes_global); }
 
-short mt_evnt_timer(unsigned long interval, short *global)
+short mt_evnt_timer(unsigned long interval, AESGLOBAL *global)
 {
     if (!registered(global) || interval > 0xffffffffUL) return 0;
     if (!aes_menu_registered() && !aes_frames_registered() &&
@@ -132,9 +138,9 @@ short mt_evnt_timer(unsigned long interval, short *global)
     return mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,interval,
                          NULL,NULL,NULL,NULL,NULL,NULL,global) == MU_TIMER;
 }
-short evnt_timer(unsigned long interval) { return mt_evnt_timer(interval, aes_global); }
+short evnt_timer(unsigned long interval) { return mt_evnt_timer(interval, &aes_global); }
 
-short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, short *global)
+short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, AESGLOBAL *global)
 {
     /* Advertise only implemented extensions, using the standard AES query. */
     if (a) *a = 0;
@@ -169,10 +175,10 @@ short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, short 
 }
 short appl_getinfo(short type, short *a, short *b, short *c, short *d)
 {
-    return mt_appl_getinfo(type, a, b, c, d, aes_global);
+    return mt_appl_getinfo(type, a, b, c, d, &aes_global);
 }
 
-short mt_appl_find(const char *name, short *global)
+short mt_appl_find(const char *name, AESGLOBAL *global)
 {
     uintptr_t value = (uintptr_t)name;
     LONG handle, pid;
@@ -189,9 +195,9 @@ short mt_appl_find(const char *name, short *global)
     pid = cuis_call6(CUIS_PEER_PID, handle, 0, 0, 0, 0, 0);
     return pid > 0 && pid <= 32767 ? (short)pid : -1;
 }
-short appl_find(const char *name) { return mt_appl_find(name, aes_global); }
+short appl_find(const char *name) { return mt_appl_find(name, &aes_global); }
 
-short mt_appl_search(short mode, char *name, short *type, short *id, short *global)
+short mt_appl_search(short mode, char *name, short *type, short *id, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), peer, after, bytes, tag, pid, desktop;
     char label[CUIS_LABEL_MAX];
@@ -221,9 +227,9 @@ short mt_appl_search(short mode, char *name, short *type, short *id, short *glob
     }
 }
 short appl_search(short mode, char *name, short *type, short *id)
-{ return mt_appl_search(mode,name,type,id,aes_global); }
+{ return mt_appl_search(mode,name,type,id,&aes_global); }
 
-short mt_appl_control(short id, short mode, void *output, short *global)
+short mt_appl_control(short id, short mode, void *output, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), peer, state;
     if (session < 0 || (mode != APC_TOP && mode != APC_INFO) || (mode == APC_INFO && !output)) return 0;
@@ -240,9 +246,9 @@ short mt_appl_control(short id, short mode, void *output, short *global)
     return 1;
 }
 short appl_control(short id, short mode, void *output)
-{ return mt_appl_control(id,mode,output,aes_global); }
+{ return mt_appl_control(id,mode,output,&aes_global); }
 
-short mt_menu_register(short id, const char *text, short *global)
+short mt_menu_register(short id, const char *text, AESGLOBAL *global)
 {
     ULONG length, slot;
     LONG result;
@@ -265,9 +271,9 @@ short mt_menu_register(short id, const char *text, short *global)
     }
     return -1;
 }
-short menu_register(short id, const char *text) { return mt_menu_register(id,text,aes_global); }
+short menu_register(short id, const char *text) { return mt_menu_register(id,text,&aes_global); }
 
-short mt_appl_write(short id, short length, void *buffer, short *global)
+short mt_appl_write(short id, short length, void *buffer, AESGLOBAL *global)
 {
     LONG peer;
     if (!registered(global) || id <= 0 || length < 0 || (length && !buffer)) return 0;
@@ -275,9 +281,9 @@ short mt_appl_write(short id, short length, void *buffer, short *global)
     if (peer < 0) return 0;
     return cuis_call6(CUIS_STREAM_WRITE, peer, (uintptr_t)buffer, length, 1, 0, 0) == length ? 1 : 0;
 }
-short appl_write(short id, short length, void *buffer) { return mt_appl_write(id, length, buffer, aes_global); }
+short appl_write(short id, short length, void *buffer) { return mt_appl_write(id, length, buffer, &aes_global); }
 
-short mt_appl_read(short id, short length, void *buffer, short *global)
+short mt_appl_read(short id, short length, void *buffer, AESGLOBAL *global)
 {
     if (!registered(global) || (id != APR_NOWAIT && id != application_id) ||
         length < 0 || (length && !buffer)) return 0;
@@ -303,9 +309,9 @@ short mt_appl_read(short id, short length, void *buffer, short *global)
         }
     }
 }
-short appl_read(short id, short length, void *buffer) { return mt_appl_read(id, length, buffer, aes_global); }
-short mt_evnt_mesag(short message[8], short *global)
+short appl_read(short id, short length, void *buffer) { return mt_appl_read(id, length, buffer, &aes_global); }
+short mt_evnt_mesag(short message[8], AESGLOBAL *global)
 {
-    return global ? mt_appl_read(global[2], 16, message, global) : 0;
+    return global ? mt_appl_read(global->ap_id, 16, message, global) : 0;
 }
-short evnt_mesag(short message[8]) { return mt_evnt_mesag(message, aes_global); }
+short evnt_mesag(short message[8]) { return mt_evnt_mesag(message, &aes_global); }

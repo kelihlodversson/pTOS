@@ -17,7 +17,8 @@ static int equal(const char *a, const char *b)
 }
 int gem_selector_checks(short handle)
 {
-    short global[15], button, before[3], i, stage;
+    short button, before[3], i, stage;
+    AESGLOBAL global = { 0 };
     short points[3][2] = { {400,300},{500,350},{600,400} };
     char path[128], selection[13], cwd[128], again[128];
     UBYTE dta[64], expected[64];
@@ -26,7 +27,7 @@ int gem_selector_checks(short handle)
         "x32 GEM file selector 0: READY\r\n", "x32 GEM file selector 1: READY\r\n",
         "x32 GEM file selector 2: READY\r\n"
     };
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
+    global = aes_global;
     for (i = 0; i < 64; i++) dta[i] = expected[i] = (UBYTE)(i+30);
     VERIFY((LONG)file_call(0x47,(uintptr_t)cwd,0) == 0);
     (void)file_call(0x1a,(uintptr_t)dta,0);
@@ -42,7 +43,7 @@ int gem_selector_checks(short handle)
             ptos_write(1,markers[stage],length);
         }
         for (i = 0; i < 3; i++) before[i] = gem_probe_pixel(handle,points[i][0],points[i][1]);
-        if (stage == 0) VERIFY(mt_fsel_exinput(path,selection,&button,"Pick a text file",global) == 1);
+        if (stage == 0) VERIFY(mt_fsel_exinput(path,selection,&button,"Pick a text file",&global) == 1);
         else if (stage == 1) VERIFY(fsel_input(path,selection,&button) == 1);
         else VERIFY(fsel_exinput(path,selection,&button,"Again") == 1);
         VERIFY(button == (stage != 1) && equal(path,initial_path) && equal(selection,initial_name));

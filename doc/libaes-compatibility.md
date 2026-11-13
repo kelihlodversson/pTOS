@@ -1,8 +1,10 @@
 # External libaes compatibility and cutover
 
 This is the current **x32 `CONF_WITH_LIBAES`** source API inventory for #661.
-Applications use normal GEMlib headers and `libaes.so`, without CUIS setup or
-a userspace AES server. The earlier typed x32 kernel AES service and its
+Native applications use pTOS `gem.h` and `libaes.so`, without CUIS setup or
+a userspace AES server. The native `mt_*` interface takes `AESGLOBAL *`;
+upstream GEMlib's `short *` global-array bindings must be adapted to this
+pTOS backend before use. The earlier typed x32 kernel AES service and its
 client ABI have been retired; classic kernel AES remains for single-address-
 space systems.
 
@@ -66,6 +68,33 @@ GEM exports and `gem.h`/GEMlib; `aes_global`, `gl_apid` and `gl_ap_version` are
 standard binding state, not CUIS session handles. Raw ownership/fault/scheduling
 probes use `tests/cuis/native_probe.h` with direct syscalls, while ordinary GEM
 clients import only standard bindings. The API inventory rejects private exports.
+
+## Typed global state (first slice of #953)
+
+`include/aesglobal.h` is the canonical public definition, independent of kernel
+headers. Native `aes_global` is an `AESGLOBAL` object; pass `&aes_global` or the
+address of another `AESGLOBAL` to `mt_*`. Use named fields instead of word
+indices, pointer-word copies, or casts between global representations.
+`ap_private` belongs to the caller, including across `mt_appl_init` and
+`mt_appl_exit`. Resource selectors `ap_ptree`, `ap_rscmem` and `ap_rsclen` are
+authoritative for the supplied global. Resource ownership records retain image
+metadata, without a shadow `AESGLOBAL`. EmuDesk passes its own typed global to
+libaes directly.
+
+m68k keeps the classic big-endian, 15-WORD/30-byte layout and two-byte alignment.
+ARM and x32 use their native byte order, pointer representation and alignment:
+32 bytes for 32-bit pointers; the 64-bit kernel/host representation is 56 bytes.
+The header asserts each member offset, field width, total size and alignment.
+This changes the private native libaes ABI: rebuild clients with the library.
+A 15-WORD buffer is only the m68k binding representation.
+
+This slice preserves the current singleton application/session behavior.
+`ap_3resv` is reserved in userspace; explicit heap contexts, context sharing,
+removal of mutable library state, and GEMlib ownership of classic wrappers and
+binding globals are subsequent slices of #953. Kernel AES retains its historical
+area-D use of `ap_3resv`. CUIS still returns one session per process: separate
+`AESGLOBAL` objects do not create independent queues, windows or identities.
+No dependency on #903, new CUIS identity API, or 68k AESPB emulation is introduced.
 
 ## Boot/configuration audit
 

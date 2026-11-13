@@ -33,7 +33,7 @@ void aes_desktop_reset(void)
     screen_buffer = NULL; screen_bytes = 0;
     desktop_tree = NULL; desktop_root = 0; installed = painting = FALSE;
 }
-BOOL aes_desktop_geometry(GRECT *rect, BOOL work, WORD *global)
+BOOL aes_desktop_geometry(GRECT *rect, BOOL work, AESGLOBAL *global)
 {
     LONG width, height, top = 0;
     if (aes_application_session(global) < 0) return FALSE;
@@ -52,7 +52,7 @@ BOOL aes_desktop_geometry(GRECT *rect, BOOL work, WORD *global)
     return TRUE;
 }
 /* Capture the complete native list before replacing the caller's iterator. */
-static BOOL collect_regions(DESKTOP_REGION **head, WORD *global)
+static BOOL collect_regions(DESKTOP_REGION **head, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), state[4], result;
     ULONG index;
@@ -73,7 +73,7 @@ static BOOL collect_regions(DESKTOP_REGION **head, WORD *global)
         *tail = item; tail = &item->next;
     }
 }
-WORD aes_desktop_region(BOOL first, GRECT *rect, WORD *global)
+WORD aes_desktop_region(BOOL first, GRECT *rect, AESGLOBAL *global)
 {
     DESKTOP_REGION *snapshot = NULL, *item;
     if (first) {
@@ -91,7 +91,7 @@ WORD aes_desktop_region(BOOL first, GRECT *rect, WORD *global)
     } else rect->g_x = rect->g_y = rect->g_w = rect->g_h = 0;
     return 1;
 }
-LONG aes_desktop_dispatch(WORD *global)
+LONG aes_desktop_dispatch(AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), status, result = E_OK;
     DESKTOP_REGION *snapshot = NULL, *item;
@@ -125,7 +125,7 @@ LONG aes_desktop_dispatch(WORD *global)
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) result = EACCDN;
     return result;
 }
-WORD aes_desktop_set(OBJECT *tree, WORD root, WORD *global)
+WORD aes_desktop_set(OBJECT *tree, WORD root, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), result;
     if (session < 0 || painting || (tree && root < 0) ||
@@ -139,7 +139,7 @@ WORD aes_desktop_set(OBJECT *tree, WORD root, WORD *global)
     if (!mt_wind_update(END_UPDATE,global)) result = EACCDN;
     return result == E_OK;
 }
-WORD aes_desktop_get(OBJECT **tree, WORD *root, WORD *global)
+WORD aes_desktop_get(OBJECT **tree, WORD *root, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global), status;
     if (session < 0) return 0;
@@ -150,7 +150,7 @@ WORD aes_desktop_get(OBJECT **tree, WORD *root, WORD *global)
     if (root) *root = desktop_root;
     return 1;
 }
-void *aes_screen_buffer(LONG *bytes, WORD *global)
+void *aes_screen_buffer(LONG *bytes, AESGLOBAL *global)
 {
     LAYOUT_METRICS m;
     LONG size;

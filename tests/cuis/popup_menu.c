@@ -1,13 +1,14 @@
-/* Standard popup-menu source, shared by host and real GEMlib-header clients. */
+/* Standard popup-menu source, shared by host and native pTOS clients. */
 #include <gem.h>
 #include "gem_draw_probe.h"
 #include "popup_menu.h"
 #define VERIFY(c) do { if (!(c)) return 0x7d00 | __LINE__; } while (0)
 int gem_popup_checks(short handle)
 {
-    OBJECT tree[3] = { { 0 } }, original[3];
+    OBJECT tree[3] = { 0 }, original[3];
     MENU input, output;
-    short global[15], i;
+    short i;
+    AESGLOBAL global = { 0 };
     int pixel;
     tree[0].ob_next = -1; tree[0].ob_head = 1; tree[0].ob_tail = 2;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0xff1170;
@@ -31,11 +32,11 @@ int gem_popup_checks(short handle)
         VERIFY(tree[i].ob_state == original[i].ob_state && tree[i].ob_x == original[i].ob_x && tree[i].ob_y == original[i].ob_y);
         VERIFY(tree[i].ob_next == original[i].ob_next && tree[i].ob_head == original[i].ob_head);
     }
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
+    global = aes_global;
     output.mn_item = 123; output.mn_keystate = 123;
     gem_popup_input_stage(1);
     pixel = gem_probe_pixel(handle,35,35);
-    VERIFY(mt_menu_popup(&input,20,30,&output,global) == 0 && !output.mn_keystate && output.mn_item == 123);
+    VERIFY(mt_menu_popup(&input,20,30,&output,&global) == 0 && !output.mn_keystate && output.mn_item == 123);
     VERIFY(gem_probe_pixel(handle,35,35) == pixel);
     tree[1].ob_state = OS_DISABLED;
     gem_popup_input_stage(2);
@@ -43,7 +44,7 @@ int gem_popup_checks(short handle)
     VERIFY(menu_popup(&input,20,30,&output) == 0 && !output.mn_keystate && tree[1].ob_state == OS_DISABLED);
     VERIFY(gem_probe_pixel(handle,35,35) == pixel);
     {
-        OBJECT nested[5] = { { 0 } };
+        OBJECT nested[5] = { 0 };
         MENU alias;
         nested[0].ob_next = -1; nested[0].ob_head = nested[0].ob_tail = 1;
         nested[1] = original[0]; nested[1].ob_next = 0;
@@ -64,11 +65,11 @@ int gem_popup_checks(short handle)
     VERIFY(menu_popup(&input,20,30,&output) == 0);
     input.mn_item = 1; tree[2].ob_next = 1;
     VERIFY(menu_popup(&input,20,30,&output) == 0);
-    tree[2].ob_next = 0; global[2] = -1;
+    tree[2].ob_next = 0; global.ap_id = -1;
     output.mn_keystate = 123; output.mn_item = 456;
-    VERIFY(mt_menu_popup(&input,20,30,&output,global) == 0 && !output.mn_keystate && output.mn_item == 456);
+    VERIFY(mt_menu_popup(&input,20,30,&output,&global) == 0 && !output.mn_keystate && output.mn_item == 456);
     input.mn_keystate = 123;
-    VERIFY(mt_menu_popup(&input,20,30,&input,global) == 0 && !input.mn_keystate && input.mn_item == 1);
+    VERIFY(mt_menu_popup(&input,20,30,&input,&global) == 0 && !input.mn_keystate && input.mn_item == 1);
     output.mn_keystate = 123;
     VERIFY(menu_popup(0,20,30,&output) == 0 && !output.mn_keystate && output.mn_item == 456);
     VERIFY(menu_popup(&input,20,30,0) == 0);

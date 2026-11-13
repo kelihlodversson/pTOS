@@ -23,8 +23,9 @@ static short move_sibling(PARMBLK *parameters)
 }
 int gem_3d_checks(short handle)
 {
-    OBJECT box = { 0 }, tree[2] = { { 0 } };
-    short a = -1, b = -1, global[15], i;
+    OBJECT box = { 0 }, tree[2] = { 0 };
+    short a = -1, b = -1;
+    AESGLOBAL global = { 0 };
     int white, black, light, dark, red;
     white = swatch(handle,0); black = swatch(handle,1);
     light = swatch(handle,8); dark = swatch(handle,9); red = swatch(handle,2);
@@ -57,11 +58,11 @@ int gem_3d_checks(short handle)
     VERIFY(objc_sysvar(SV_SET,ACTBUTCOL,256,0,&a,&b) == 0 && a == 123 && b == 456);
     VERIFY(objc_sysvar(SV_SET,INDBUTCOL,-1,0,&a,&b) == 0 && a == 123 && b == 456);
     VERIFY(objc_sysvar(2,INDBUTCOL,2,0,&a,&b) == 0 && a == 123 && b == 456);
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
-    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&a,&b,global) == 1 && a == 8 && b == 456);
-    VERIFY(mt_objc_sysvar(SV_SET,LK3DIND,-1,-1,0,0,global) == 1);
-    global[2] = -1;
-    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&a,&b,global) == 0 && a == 8);
+    global = aes_global;
+    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&a,&b,&global) == 1 && a == 8 && b == 456);
+    VERIFY(mt_objc_sysvar(SV_SET,LK3DIND,-1,-1,0,0,&global) == 1);
+    global.ap_id = -1;
+    VERIFY(mt_objc_sysvar(SV_INQUIRE,ACTBUTCOL,0,0,&a,&b,&global) == 0 && a == 8);
     tree[0].ob_next = tree[0].ob_head = tree[0].ob_tail = -1;
     tree[0].ob_type = G_IBOX; tree[0].ob_width = tree[0].ob_height = 100;
     tree[1] = box; tree[1].ob_flags = 0x200; tree[1].ob_state = 0;
@@ -115,7 +116,7 @@ int gem_3d_checks(short handle)
         }
     }
     {
-        OBJECT siblings[3] = { { 0 } };
+        OBJECT siblings[3] = { 0 };
         USERBLK user;
         int before = gem_probe_pixel(handle,76,25);
         user.ub_code = move_sibling; user.ub_parm = 0;

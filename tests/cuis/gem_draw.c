@@ -46,17 +46,18 @@ void gem_menubar_input_stage(short stage)
     (void)stage;
     ptos_write(1,message,sizeof(message)-1);
 }
-/* Compiles against unmodified GEMlib as well as the kernel's GEM header. */
+/* Native pTOS bindings use the canonical typed AESGLOBAL. */
 static int graphics_checks(void)
 {
     short physical, virtual_handle, w,h,bw,bh,x,y, color, pen, background, i;
-    short input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, output[57], global[15];
+    short input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, output[57];
+    AESGLOBAL global = { 0 };
     MFORM custom = { 0 };
     short native_form[37] = { 0 };
     static const char ready[] = "x32 GEM graphics: READY\r\n";
     static const char pass[] = "x32 GEM graphics setup/cursors: PASS\r\n";
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
-    physical = mt_graf_handle(&w,&h,&bw,&bh,global);
+    global = aes_global;
+    physical = mt_graf_handle(&w,&h,&bw,&bh,&global);
     VERIFY(physical > 0 && w > 0 && h > 0 && bw >= w+4 && bh == h+3);
     VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
     virtual_handle = physical; v_opnvwk(input,&virtual_handle,output);
@@ -80,7 +81,7 @@ static int graphics_checks(void)
     native_form[2] = 1; native_form[4] = pen;
     __builtin_memcpy(&custom,native_form,sizeof(custom));
     custom.mf_mask[0] = custom.mf_data[0] = (short)0x8000;
-    VERIFY(mt_graf_mouse(USER_DEF,&custom,global) == 1);
+    VERIFY(mt_graf_mouse(USER_DEF,&custom,&global) == 1);
     VERIFY(gem_probe_pixel(physical,x,y) == color);
     VERIFY(graf_mouse(M_OFF,NULL) == 1 && graf_mouse(M_OFF,NULL) == 1);
     VERIFY(gem_probe_pixel(physical,x,y) == background);
@@ -123,7 +124,7 @@ static int control_checks(void)
             do {
                 VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1);
             } while (!(buttons & 1));
-            VERIFY(appl_write(aes_global[2],16,queued) == 1);
+            VERIFY(appl_write(aes_global.ap_id,16,queued) == 1);
             VERIFY(appl_read(-1,16,message) == 1 && message[0] == 0x4712);
             VERIFY(appl_read(-1,16,message) == 0);
             if (stage == 5) ptos_write(1,size_poll,sizeof(size_poll)-1);
@@ -220,7 +221,7 @@ static int slider_checks(void)
         ptos_write(1,ready,sizeof(ready)-1);
         if (stage >= 6) {
             do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(NULL,NULL,&buttons,NULL) == 1); } while (!(buttons & 1));
-            VERIFY(appl_write(aes_global[2],16,queued) == 1);
+            VERIFY(appl_write(aes_global.ap_id,16,queued) == 1);
             VERIFY(appl_read(-1,16,message) == 1 && message[0] == 0x4713);
             VERIFY(appl_read(-1,16,message) == 0);
             ptos_write(1,held,sizeof(held)-1);
@@ -447,13 +448,14 @@ int main(int argc, char **argv, char **envp)
     OBJECT box = { 0 };
     USERBLK user;
     WORD handle, width, height, cellw, cellh, pixels[400];
-    short x,y,global[15];
+    short x, y;
+    AESGLOBAL global = { 0 };
     LONG child, status, update;
     short control[8] = { 0 };
     char tail[3] = { 1,'f',0 };
     static const char environment[] = { 0,0 };
     (void)argv; (void)envp;
-    VERIFY(appl_init() > 0 && mt_appl_init(global) > 0);
+    VERIFY(appl_init() > 0 && mt_appl_init(&global) > 0);
     object(&box,G_BOX,0,0,100,100); box.ob_spec.index = 0x1170;
     if (argc > 1 && argv[1][0] == 'g') {
         short window = wind_create(0,0,0,80,70);
@@ -467,7 +469,7 @@ int main(int argc, char **argv, char **envp)
     if (argc > 1 && argv[1][0] == 'l') {
         short parent = (short)process(0x10c,0,0,0,0);
         VERIFY(parent > 0 && wind_update(BEG_UPDATE) == 1);
-        control[0] = 0x7001; control[1] = global[2];
+        control[0] = 0x7001; control[1] = global.ap_id;
         VERIFY(appl_write(parent,16,control) == 1);
         /* Deliberately wait for the parent's mouse while owning display. */
         VERIFY(wind_update(BEG_MCTRL) == 1);
@@ -521,12 +523,12 @@ int main(int argc, char **argv, char **envp)
         VERIFY(rsrc_load("GEMTEST.RSC") == 1 && rsrc_gaddr(R_TREE,0,&tree) == 1);
         if (argv[1][0] == 'R') { fault_callback(NULL); return 99; }
         tree[0].ob_x = 1234;
-        control[0] = 0x7010; control[1] = global[2];
+        control[0] = 0x7010; control[1] = global.ap_id;
         VERIFY(appl_write(parent,16,control) == 1 && control_message(control) == 1 && control[0] == 0x7011);
         VERIFY(tree[0].ob_x == 1234 && rsrc_gaddr(R_TREE,0,&tree) == 1);
         /* appl_exit reclaims even resources not explicitly freed. */
         VERIFY(gem_probe_close(handle) == 0 && appl_exit() == 1);
-        VERIFY(aes_global[5] == 0 && aes_global[6] == 0 && aes_global[7] == 0 && aes_global[8] == 0);
+        VERIFY(aes_global.ap_ptree == NULL && aes_global.ap_rscmem == NULL);
         return 0;
     }
     if (argc > 1 && argv[1][0] == 'c') {
@@ -542,7 +544,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(gem_menubar_install(handle,3) == 1);
         window = wind_create(0,300,100,100,80);
         VERIFY(window > 0 && wind_open(window,300,100,100,80) == 1);
-        control[0] = 0x7020; control[1] = global[2];
+        control[0] = 0x7020; control[1] = global.ap_id;
         VERIFY(appl_write(parent,16,control) == 1);
         VERIFY(control_message(control) == 1 && control[0] == 0x7021);
         VERIFY(wind_set(window,WF_TOP,0,0,0,0) == 1 && evnt_timer(0) == 1);
@@ -689,14 +691,14 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_update(BEG_UPDATE) == 1);
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1 && gem_probe_pixel(handle,26,26) == 0);
     object(&box,G_BOX,20,20,20,20); box.ob_spec.index = 0x1172;
-    VERIFY(mt_objc_draw(&box,0,0,25,25,10,10,global) == 1);
+    VERIFY(mt_objc_draw(&box,0,0,25,25,10,10,&global) == 1);
     VERIFY(gem_probe_pixel(handle,26,26) == 2 && gem_probe_pixel(handle,24,24) == 0 && gem_probe_pixel(handle,35,35) == 0);
     /* Native high-colour selection redraws coloured boxes.  Capture a fully
      * painted object before checking selection/deselection restoration. */
     VERIFY(objc_draw(&box,0,0,0,0,100,100) == 1);
     for (y = 0; y < 20; y++) for (x = 0; x < 20; x++) pixels[y*20+x] = gem_probe_pixel(handle,x+20,y+20);
     VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1 && gem_probe_pixel(handle,26,26) != 2);
-    VERIFY(mt_objc_change(&box,0,0,0,0,100,100,0,1,global) == 1);
+    VERIFY(mt_objc_change(&box,0,0,0,0,100,100,0,1,&global) == 1);
     for (y = 0; y < 20; y++) for (x = 0; x < 20; x++) VERIFY(gem_probe_pixel(handle,x+20,y+20) == pixels[y*20+x]);
     box.ob_type = G_IBOX;
     VERIFY(objc_change(&box,0,0,0,0,100,100,OS_SELECTED,1) == 1);
@@ -727,7 +729,7 @@ int main(int argc, char **argv, char **envp)
     object(&box,G_BOX,10,10,20,20); box.ob_spec.index = 0x1172;
     VERIFY(graf_watchbox(&box,0,OS_SELECTED,0) == 0 && !box.ob_state);
     {
-        OBJECT pair[2] = { { 0 } };
+        OBJECT pair[2] = { 0 };
         short next = 99;
         object(&pair[0],G_IBOX,0,0,100,100); pair[1] = box;
         pair[1].ob_flags = OF_SELECTABLE|OF_EXIT;

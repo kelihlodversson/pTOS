@@ -29,7 +29,7 @@
 #include "vdi_service.h"
 #include "../../lib/aes/transport.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("object draw failure: %d\n",__LINE__); return __LINE__; } } while (0)
-short aes_global[15];
+AESGLOBAL aes_global;
 static LONG session_error, graphics_error;
 static int opens, closes, nesting, calls, texts;
 static WORD image[120][160], last_text[256], last_count, last_text_x, last_text_y;
@@ -113,7 +113,7 @@ BOOL aes_frames_dialog(BOOL begin)
     if (frame_dialog_depth) { frame_dialog_depth--; aes_frames_resume(); }
     return TRUE;
 }
-LONG aes_application_session(short *global) { return global && global[2] >= 0 && !session_error ? 7 : EACCDN; }
+LONG aes_application_session(AESGLOBAL *global) { return global && global->ap_id >= 0 && !session_error ? 7 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     (void)c; (void)d; (void)e; (void)f;
@@ -241,7 +241,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     nesting += b ? 1 : -1;
     return E_OK;
 }
-short mt_wind_update(short code, short *global)
+short mt_wind_update(short code, AESGLOBAL *global)
 {
     if (aes_application_session(global) < 0) return 0;
     if (code == END_UPDATE) return cuis_call6(CUIS_DISPLAY_LOCK,7,0,0,0,0,0) == E_OK;
@@ -252,8 +252,8 @@ short mt_wind_update(short code, short *global)
         return cuis_call6(CUIS_MOUSE_LOCK,7,1,!(code & NO_BLOCK),0,0,0) == E_OK;
     return 0;
 }
-short wind_update(short code) { return mt_wind_update(code,aes_global); }
-short mt_graf_mkstate(short *mx, short *my, short *buttons, short *mods, short *global)
+short wind_update(short code) { return mt_wind_update(code,&aes_global); }
+short mt_graf_mkstate(short *mx, short *my, short *buttons, short *mods, AESGLOBAL *global)
 {
     if (aes_application_session(global) < 0) return 0;
     *mx = mouse_x; *my = mouse_y; *buttons = tracking_mode ? tracking_buttons : 0; *mods = 0;
@@ -261,13 +261,13 @@ short mt_graf_mkstate(short *mx, short *my, short *buttons, short *mods, short *
 }
 short graf_mkstate(short *mx, short *my, short *buttons, short *mods)
 {
-    return mt_graf_mkstate(mx,my,buttons,mods,aes_global);
+    return mt_graf_mkstate(mx,my,buttons,mods,&aes_global);
 }
 short mt_evnt_multi(short events, short clicks, short mask, short state,
                     short leave, short x, short y, short w, short h,
                     short leave2, short x2, short y2, short w2, short h2,
                     short message[], unsigned long interval, short *mx, short *my,
-                    short *buttons, short *mods, short *key, short *count, short *global)
+                    short *buttons, short *mods, short *key, short *count, AESGLOBAL *global)
 {
     WORD ready, sx = mouse_x, sy = mouse_y, sb = 0;
     BOOL inside;
@@ -311,11 +311,11 @@ short evnt_multi(short events, short clicks, short button_mask, short button_sta
 {
     return mt_evnt_multi(events, clicks, button_mask, button_state,
                          m1_leave, m1_x, m1_y, m1_w, m1_h, m2_leave, m2_x, m2_y, m2_w, m2_h,
-                         message, interval, mx, my, buttons, modifiers, key, click_count, aes_global);
+                         message, interval, mx, my, buttons, modifiers, key, click_count, &aes_global);
 }
 
 short mt_evnt_button(short clicks, short mask, short state, short *mx, short *my,
-                      short *buttons, short *mods, short *global)
+                      short *buttons, short *mods, AESGLOBAL *global)
 {
     if (!frame_overlay_depth) { bad_overlay_scope++; return 0; }
     if (input_error || aes_application_session(global) < 0) return 0;
@@ -618,8 +618,8 @@ static int frame_paint_checks(void)
     WORD saved[120][160], unselected[120][160];
     int x,y, changed = 0;
     __builtin_memcpy(saved,image,sizeof(image));
-    VERIFY(aes_frame_prepare(&state,NAME|INFO,&border,"Title","Info",aes_global));
-    VERIFY(aes_frame_paint(99,&state,aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|INFO,&border,"Title","Info",&aes_global));
+    VERIFY(aes_frame_paint(99,&state,&aes_global));
     /* Frame clipping must not touch application work pixels or its neighbour. */
     for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) {
         if (x < 20 || x >= 120 || y < 20 || y >= 100 ||
@@ -628,7 +628,7 @@ static int frame_paint_checks(void)
         else if (image[y][x] != saved[y][x]) changed++;
     }
     VERIFY(changed > 100 && !nesting && opens == closes);
-    VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER,&border,"Title","",aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER,&border,"Title","",&aes_global));
     VERIFY(aes_frame_control(&state,25,25) == W_CLOSER);
     /* 160-pixel mode reduces adjusted_width: the later title sibling
      * overlaps the closer at x=42 and must win the initial tree hit. */
@@ -638,9 +638,9 @@ static int frame_paint_checks(void)
     VERIFY(aes_frame_control(&state,65578,25) == 0);
     VERIFY(aes_frame_control(&state,110,25) == W_FULLER);
     VERIFY(aes_frame_control(&state,70,70) == 0);
-    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,FALSE,aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,FALSE,&aes_global));
     __builtin_memcpy(unselected,image,sizeof(image));
-    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,TRUE,aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_CLOSER,TRUE,&aes_global));
     changed = 0;
     for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) {
         if (image[y][x] != unselected[y][x]) {
@@ -658,33 +658,33 @@ static int move_paint_checks(void)
     GRECT border = { 20,20,100,80 }, result = { 99,99,99,99 };
     WORD saved[120][160];
     int before;
-    VERIFY(aes_frame_prepare(&state,NAME|MOVER,&border,"Mover","",aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|MOVER,&border,"Mover","",&aes_global));
     VERIFY(aes_frame_control(&state,70,25) == W_NAME);
     __builtin_memcpy(saved,image,sizeof(image));
     move_records[0][0] = 70; move_records[0][1] = 60; move_records[0][2] = 1; move_records[0][3] = 0;
     move_records[1][0] = 90; move_records[1][1] = 80; move_records[1][2] = 0; move_records[1][3] = 1;
     move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
     before = patterned_segments; bad_line_type = 0;
-    VERIFY(aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(aes_frame_move(99,&state,40,25,&result,&aes_global));
     VERIFY(result.g_x == 70 && result.g_y == 75 && result.g_w == 100 && result.g_h == 80);
     VERIFY(move_waits == 1 && move_at == 2 && patterned_segments > before && !bad_line_type);
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
     move_error = ERANGE; result.g_x = 99;
-    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global) && result.g_x == 99);
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,&aes_global) && result.g_x == 99);
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
     move_error = EACCDN;
-    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,&aes_global));
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
     move_at = 0; move_count = 1; move_records[0][2] = 3;
-    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,&aes_global));
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
     before = redraws; bar_line_error = TRUE;
-    VERIFY(!aes_frame_move(99,&state,40,25,&result,aes_global));
+    VERIFY(!aes_frame_move(99,&state,40,25,&result,&aes_global));
     VERIFY(redraws > before && !nesting && opens == closes);
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)));
     bar_line_error = FALSE;
     move_test = trace_animation = FALSE;
-    VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER|MOVER,&border,"Mover","",aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|CLOSER|FULLER|MOVER,&border,"Mover","",&aes_global));
     VERIFY(aes_frame_control(&state,42,25) == W_NAME);
     VERIFY(aes_frame_control(&state,25,25) == W_CLOSER);
     return 0;
@@ -695,26 +695,26 @@ static int size_paint_checks(void)
     GRECT border = { 20,20,100,80 }, result = { 99,99,99,99 };
     WORD saved[120][160];
     int before;
-    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&border,"Sizer","",aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&border,"Sizer","",&aes_global));
     VERIFY(aes_frame_control(&state,110,90) == W_SIZER);
     __builtin_memcpy(saved,image,sizeof(image));
     move_records[0][0] = 70; move_records[0][1] = 60; move_records[0][2] = 1; move_records[0][3] = 0;
     move_records[1][0] = 90; move_records[1][1] = 80; move_records[1][2] = 0; move_records[1][3] = 1;
     move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
     before = patterned_segments; bad_line_type = 0;
-    VERIFY(aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(aes_frame_size(99,&state,110,90,&result,&aes_global));
     VERIFY(result.g_x == 20 && result.g_y == 20 && result.g_w == 76 && result.g_h == 61);
     VERIFY(move_waits == 1 && move_at == 2 && patterned_segments >= before+32 && !bad_line_type);
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
-    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&result,"Sizer","",aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&result,"Sizer","",&aes_global));
     move_error = ERANGE; result.g_x = 99;
-    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global) && result.g_x == 99);
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,&aes_global) && result.g_x == 99);
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
     move_error = EACCDN;
-    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,&aes_global));
     VERIFY(!__builtin_memcmp(saved,image,sizeof(image)) && !nesting && opens == closes);
     before = redraws; bar_line_error = TRUE;
-    VERIFY(!aes_frame_size(99,&state,110,90,&result,aes_global));
+    VERIFY(!aes_frame_size(99,&state,110,90,&result,&aes_global));
     VERIFY(redraws > before && !nesting && opens == closes);
     bar_line_error = FALSE; move_test = trace_animation = FALSE;
     return 0;
@@ -738,40 +738,40 @@ static int size_frame_limits_checks(void)
     unsigned i;
     __builtin_memcpy(saved,image,sizeof(image));
     start.g_x = 20; start.g_y = 30; start.g_w = 100; start.g_h = 80;
-    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&start,"Title","",aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|SIZER,&start,"Title","",&aes_global));
     VERIFY(aes_frame_control(&state,97,87) == W_SIZER);
     VERIFY(aes_frame_control(&state,97,90) == W_SIZER);
     start.g_y = 20; start.g_h = 100;
     for (i = 0; i < sizeof(kinds)/sizeof(kinds[0]); i++) {
         VERIFY(wm_size_position(&start,kinds[i],-100,-100,8,16,19,19,160,120,&proposed));
         VERIFY(proposed.g_h == (i == 0 ? 23 : i == 1 ? 46 : 65));
-        VERIFY(aes_frame_prepare(&state,kinds[i],&proposed,"Title","Info",aes_global));
+        VERIFY(aes_frame_prepare(&state,kinds[i],&proposed,"Title","Info",&aes_global));
         wm_frame_init(&frame); wm_frame_build(frame.tree,&frame.name,&frame.info,&state);
         x = (LONG)frame.tree[ROOT].ob_x+frame.tree[W_DATA].ob_x+frame.tree[W_SIZER].ob_x;
         y = (LONG)frame.tree[ROOT].ob_y+frame.tree[W_DATA].ob_y+frame.tree[W_SIZER].ob_y;
         ob_3d_bounds(&frame.tree[W_SIZER],1,FALSE,&x,&y,&w,&h);
         VERIFY(x >= proposed.g_x && x+w <= (LONG)proposed.g_x+proposed.g_w);
         VERIFY(y >= proposed.g_y+frame.tree[W_DATA].ob_y && y+h <= (LONG)proposed.g_y+proposed.g_h);
-        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,&aes_global));
         proposed.g_h--;
-        VERIFY(!aes_frame_prepare(&state,kinds[i],&proposed,"Title","Info",aes_global));
+        VERIFY(!aes_frame_prepare(&state,kinds[i],&proposed,"Title","Info",&aes_global));
     }
     for (i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
-        VERIFY(aes_frame_prepare(&state,cases[i].kind,&cases[i].border,"Title","Info",aes_global));
-        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
+        VERIFY(aes_frame_prepare(&state,cases[i].kind,&cases[i].border,"Title","Info",&aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,&aes_global));
         VERIFY(wm_size_position(&cases[i].border,cases[i].kind,cases[i].x,cases[i].y,
                                8,16,19,19,160,120,&proposed));
-        VERIFY(aes_frame_prepare(&state,cases[i].kind,&proposed,"Title","Info",aes_global));
-        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
-        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
+        VERIFY(aes_frame_prepare(&state,cases[i].kind,&proposed,"Title","Info",&aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,&aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,&aes_global));
     }
     start.g_x = 0; start.g_y = 30; start.g_w = 32758; start.g_h = 140;
-    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&start,"","",aes_global));
+    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&start,"","",&aes_global));
     VERIFY(wm_move_position(&start,MOVER|SIZER,80,35,130,35,160,120,19,19,&proposed));
     VERIFY(proposed.g_x == 0 && proposed.g_y == 30 && proposed.g_w == start.g_w && proposed.g_h == start.g_h);
-    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&proposed,"","",aes_global));
-    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,aes_global));
-    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,aes_global));
+    VERIFY(aes_frame_prepare(&state,MOVER|SIZER,&proposed,"","",&aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,FALSE,&aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_SIZER,TRUE,&aes_global));
     VERIFY(!nesting && opens == closes);
     __builtin_memcpy(image,saved,sizeof(image));
     return 0;
@@ -797,8 +797,8 @@ static int arrow_frame_checks(void)
             for (i = 0; i < 4; i++) if (mask & (1U << i)) kind |= flags[i];
             VERIFY(wm_frame_limits(kind,20,30,19,19,display_width,display_height,&limits));
             border.g_x = 20; border.g_y = 30; border.g_w = limits.min_w; border.g_h = limits.min_h;
-            VERIFY(aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
-            VERIFY(aes_frame_paint(99,&state,aes_global));
+            VERIFY(aes_frame_prepare(&state,kind,&border,"Arrows","Info",&aes_global));
+            VERIFY(aes_frame_paint(99,&state,&aes_global));
             wm_frame_init(&frame); wm_frame_build(frame.tree,&frame.name,&frame.info,&state);
             for (i = 0; i < 4; i++) if (mask & (1U << i)) {
                 WORD object = objects[i], bar = i < 2 ? W_VBAR : W_HBAR;
@@ -806,19 +806,19 @@ static int arrow_frame_checks(void)
                 y = (LONG)border.g_y+frame.tree[W_DATA].ob_y+frame.tree[bar].ob_y+frame.tree[object].ob_y+9;
                 VERIFY(wm_arrow_action(aes_frame_control(&state,x,y)) == actions[i]);
             }
-            VERIFY(aes_frame_paint_control(99,&state,objects[mask & 1 ? 0 : mask & 2 ? 1 : mask & 4 ? 2 : 3],TRUE,aes_global));
+            VERIFY(aes_frame_paint_control(99,&state,objects[mask & 1 ? 0 : mask & 2 ? 1 : mask & 4 ? 2 : 3],TRUE,&aes_global));
             border.g_w--;
-            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",&aes_global));
             border.g_w++; border.g_h--;
-            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",aes_global));
+            VERIFY(!aes_frame_prepare(&state,kind,&border,"Arrows","Info",&aes_global));
         }
         /* Actual production preflight/painting at positive WORD endpoints,
          * with both bars and all fixed/relative arrow positions present. */
         kind = UPARROW|DNARROW|LFARROW|RTARROW;
         VERIFY(wm_frame_limits(kind,32600,32600,19,19,display_width,display_height,&limits));
         border.g_x = border.g_y = 32600; border.g_w = limits.max_w; border.g_h = limits.max_h;
-        VERIFY(aes_frame_prepare(&state,kind,&border,"","",aes_global));
-        VERIFY(aes_frame_paint_control(99,&state,W_RTARROW,TRUE,aes_global));
+        VERIFY(aes_frame_prepare(&state,kind,&border,"","",&aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_RTARROW,TRUE,&aes_global));
     }
     VERIFY(wm_arrow_action(W_SIZER) == -1 && wm_arrow_action(W_VSLIDE) == -1 && wm_arrow_action(W_WORK) == -1);
     display_width = 160; display_height = 120;
@@ -839,36 +839,36 @@ static int slider_paint_checks(void)
     for (mode = 0; mode < 3; mode++) {
         display_width = mode < 2 ? 320 : 640; display_height = mode ? 400 : 200;
         for (size = 0; size < 4; size++) for (position = 0; position < 3; position++) {
-            VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE|SIZER,&border,"Sliders","",aes_global));
+            VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE|SIZER,&border,"Sliders","",&aes_global));
             state.hslsiz = state.vslsiz = sizes[size]; state.hslide = state.vslide = positions[position];
             VERIFY(wm_slider_geometry(&state,W_HELEV,&slider));
             VERIFY(aes_frame_control(&state,slider.thumb.g_x+3,slider.thumb.g_y+3) == W_HELEV);
-            VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+            VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,&aes_global));
             VERIFY(wm_slider_geometry(&state,W_VELEV,&slider));
             VERIFY(aes_frame_control(&state,slider.thumb.g_x+3,slider.thumb.g_y+3) == W_VELEV);
-            VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+            VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,&aes_global));
         }
         VERIFY(wm_frame_limits(HSLIDE|VSLIDE,32600,32600,19,19,display_width,display_height,&limits));
         border.g_x = border.g_y = 32600; border.g_w = limits.max_w; border.g_h = limits.max_h;
-        VERIFY(aes_frame_prepare(&state,HSLIDE|VSLIDE,&border,"","",aes_global));
+        VERIFY(aes_frame_prepare(&state,HSLIDE|VSLIDE,&border,"","",&aes_global));
         state.hslsiz = state.vslsiz = 1000; state.hslide = state.vslide = 1000;
-        VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
-        VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,&aes_global));
+        VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,&aes_global));
         border.g_x = border.g_y = 20; border.g_w = 120; border.g_h = 95;
     }
     display_width = 160; display_height = 120;
     VERIFY(wm_frame_limits(HSLIDE,-32000,20,19,19,160,120,&limits));
     border.g_x = -32000; border.g_y = 20; border.g_w = limits.max_w; border.g_h = 95;
-    VERIFY(aes_frame_prepare(&state,HSLIDE,&border,"","",aes_global));
+    VERIFY(aes_frame_prepare(&state,HSLIDE,&border,"","",&aes_global));
     state.hslsiz = state.hslide = 1000;
-    VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_HELEV,TRUE,&aes_global));
     VERIFY(wm_frame_limits(VSLIDE,20,-32000,19,19,160,120,&limits));
     border.g_x = 20; border.g_y = -32000; border.g_w = 120; border.g_h = limits.max_h;
-    VERIFY(aes_frame_prepare(&state,VSLIDE,&border,"","",aes_global));
+    VERIFY(aes_frame_prepare(&state,VSLIDE,&border,"","",&aes_global));
     state.vslsiz = state.vslide = 1000;
-    VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,aes_global));
+    VERIFY(aes_frame_paint_control(99,&state,W_VELEV,TRUE,&aes_global));
     border.g_x = border.g_y = 20; border.g_w = 120; border.g_h = 95;
-    VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE,&border,"Sliders","",aes_global));
+    VERIFY(aes_frame_prepare(&state,NAME|HSLIDE|VSLIDE,&border,"Sliders","",&aes_global));
     VERIFY(wm_slider_geometry(&state,W_HELEV,&slider));
     move_records[0][0] = slider.thumb.g_x+10; move_records[0][1] = slider.thumb.g_y+3;
     move_records[0][2] = 1; move_records[0][3] = 0;
@@ -876,11 +876,11 @@ static int slider_paint_checks(void)
     move_records[1][2] = 0; move_records[1][3] = 1;
     move_count = move_at = move_waits = 0; move_test = trace_animation = TRUE;
     __builtin_memcpy(image,saved,sizeof(image));
-    VERIFY(aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,aes_global));
+    VERIFY(aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,&aes_global));
     VERIFY(result.g_x == 1000 && !result.g_y && !result.g_w && !result.g_h && move_waits == 1);
     VERIFY(!__builtin_memcmp(image,saved,sizeof(image)) && !nesting && opens == closes);
     move_error = ERANGE; result.g_x = 99;
-    VERIFY(!aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,aes_global) && result.g_x == 99);
+    VERIFY(!aes_frame_slide(99,&state,W_HELEV,slider.thumb.g_x+3,slider.thumb.g_y+3,&result,&aes_global) && result.g_x == 99);
     VERIFY(!__builtin_memcmp(image,saved,sizeof(image)) && !nesting && opens == closes);
     move_test = trace_animation = FALSE;
     VERIFY(wm_slider_position(&slider,0,0,0,0,&value,&result));
@@ -889,18 +889,18 @@ static int slider_paint_checks(void)
 static int frame_metric_checks(void)
 {
     WORD wbox = 99, hbox = 99, width = 99, height = 99;
-    VERIFY(aes_frame_metrics(&wbox,&hbox,&width,&height,aes_global) && wbox == 19 && hbox == 19);
+    VERIFY(aes_frame_metrics(&wbox,&hbox,&width,&height,&aes_global) && wbox == 19 && hbox == 19);
     VERIFY(width == 160 && height == 120);
     pixel_height = 2;
-    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 38 && hbox == 19);
+    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,&aes_global) && wbox == 38 && hbox == 19);
     pixel_width = 3; pixel_height = 1;
-    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(aes_frame_metrics(&wbox,&hbox,NULL,NULL,&aes_global) && wbox == 12 && hbox == 19);
     pixel_width = 0;
-    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,&aes_global) && wbox == 12 && hbox == 19);
     pixel_width = 1; pixel_height = 32767;
-    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,&aes_global) && wbox == 12 && hbox == 19);
     pixel_height = 1; fail_layout_close = TRUE;
-    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,aes_global) && wbox == 12 && hbox == 19);
+    VERIFY(!aes_frame_metrics(&wbox,&hbox,NULL,NULL,&aes_global) && wbox == 12 && hbox == 19);
     fail_layout_close = FALSE;
     VERIFY(opens == closes);
     return 0;
@@ -1026,7 +1026,7 @@ static int tracking_checks(void)
     tracking_events(80,70);
     VERIFY(graf_rubberbox(10,10,5,5,&rx,&ry) == 1 && rx == 71 && ry == 61);
     tracking_events(150,110);
-    VERIFY(mt_graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry,aes_global) == 1 && rx == 80 && ry == 70);
+    VERIFY(mt_graf_dragbox(20,20,40,40,0,0,100,90,&rx,&ry,&aes_global) == 1 && rx == 80 && ry == 70);
     for (y = 0; y < 120; y++) for (x = 0; x < 160; x++) VERIFY(image[y][x] == ((x+y)&15));
     tree[0].ob_head = tree[0].ob_tail = 1; tree[0].ob_next = NIL;
     tree[0].ob_x = tree[0].ob_y = 20; tree[0].ob_width = 100; tree[0].ob_height = 60; tree[0].ob_type = G_BOX;
@@ -1036,7 +1036,7 @@ static int tracking_checks(void)
     VERIFY(graf_slidebox(tree,0,1,0) == 500 && !tree[1].ob_x && !tree[1].ob_y);
     tree[1].ob_flags |= FL3DACT;
     tracking_events(90,50);
-    VERIFY(mt_graf_slidebox(tree,0,1,0,aes_global) == 526);
+    VERIFY(mt_graf_slidebox(tree,0,1,0,&aes_global) == 526);
     tree[1].ob_flags = LASTOB; tree[1].ob_width = 100;
     tracking_events(90,50);
     VERIFY(graf_slidebox(tree,0,1,0) == 0 && gesture_at == 2);
@@ -1077,7 +1077,7 @@ static int tracking_checks(void)
     tracking_events(80,70); damaged = opens;
     display_releases = releases; pointer_releases = mouse_releases;
     VERIFY(graf_dragbox(100,20,0,0,0,0,50,90,&rx,&ry) == 0 && rx == -1 && ry == -1);
-    VERIFY(mt_graf_dragbox(20,100,0,0,0,0,100,90,&rx,&ry,aes_global) == 0 && rx == -1 && ry == -1);
+    VERIFY(mt_graf_dragbox(20,100,0,0,0,0,100,90,&rx,&ry,&aes_global) == 0 && rx == -1 && ry == -1);
     VERIFY(opens == damaged && !gesture_at && !nesting && !mouse_nesting && !frame_overlay_depth);
     VERIFY(releases == display_releases && mouse_releases == pointer_releases);
     tracking_events(80,70);
@@ -1116,25 +1116,25 @@ static int desktop_drawing_checks(void)
     WORD x, y, saved[120][160];
     int before;
     __builtin_memcpy(saved,image,sizeof(saved));
-    VERIFY(aes_desktop_set(&tree,0,aes_global) == 1 && !nesting);
-    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && !nesting && background_state == 1);
+    VERIFY(aes_desktop_set(&tree,0,&aes_global) == 1 && !nesting);
+    VERIFY(aes_desktop_dispatch(&aes_global) == E_OK && !nesting && background_state == 1);
     for (y = 0; y < 120; y++) for (x = 0; x < 160; x++)
         VERIFY(image[y][x] == (x >= 20 && x < 60 && y >= 40 && y < 60 ? 3 : saved[y][x]));
     background_state |= 2; draw_error = TRUE;
-    VERIFY(aes_desktop_dispatch(aes_global) == EACCDN && background_state == 3 && !nesting);
+    VERIFY(aes_desktop_dispatch(&aes_global) == EACCDN && background_state == 3 && !nesting);
     draw_error = FALSE;
-    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 1 && !nesting);
+    VERIFY(aes_desktop_dispatch(&aes_global) == E_OK && background_state == 1 && !nesting);
     background_state |= 2; allocation_error = TRUE;
-    VERIFY(aes_desktop_dispatch(aes_global) == ENSMEM && background_state == 3 && !nesting);
+    VERIFY(aes_desktop_dispatch(&aes_global) == ENSMEM && background_state == 3 && !nesting);
     allocation_error = FALSE;
     before = calls;
     VERIFY(aes_frames_suspend());
-    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 3 && calls == before);
+    VERIFY(aes_desktop_dispatch(&aes_global) == E_OK && background_state == 3 && calls == before);
     aes_frames_resume();
     foreign_display = TRUE;
-    VERIFY(aes_desktop_dispatch(aes_global) == EAGAIN && background_state == 3 && !nesting);
+    VERIFY(aes_desktop_dispatch(&aes_global) == EAGAIN && background_state == 3 && !nesting);
     foreign_display = FALSE;
-    VERIFY(aes_desktop_dispatch(aes_global) == E_OK && background_state == 1);
+    VERIFY(aes_desktop_dispatch(&aes_global) == E_OK && background_state == 1);
     aes_desktop_reset(); background_state = 0;
     return 0;
 }
@@ -1213,7 +1213,7 @@ int main(void)
     tree[3].ob_flags = HIDETREE;
     VERIFY(objc_draw(tree,0,0,0,0,160,120) == 1 && image[20][20] == WHITE);
     indirect.index = 0x1174; tree[1].ob_flags = INDIRECT; tree[1].ob_spec.indirect = &indirect;
-    VERIFY(mt_objc_draw(tree,1,0,0,0,160,120,aes_global) == 1 && image[20][20] == BLUE);
+    VERIFY(mt_objc_draw(tree,1,0,0,0,160,120,&aes_global) == 1 && image[20][20] == BLUE);
     tree[1].ob_width = 80;
     tree[1].ob_flags = 0; tree[1].ob_type = G_FTEXT; tree[1].ob_spec.tedinfo = &ted;
     ted.te_ptext = raw; ted.te_ptmplt = pattern; ted.te_font = IBM; ted.te_color = 0x1100;
@@ -1230,7 +1230,7 @@ int main(void)
     VERIFY(callback_parameters.pb_obj == 1 && callback_parameters.pb_x == 15 && callback_parameters.pb_y == 18 &&
            callback_parameters.pb_xc == 20 && callback_parameters.pb_wc == 10 && callback_parameters.pb_parm == 123);
     invalidate_global = TRUE;
-    VERIFY(mt_objc_change(tree,1,0,20,20,10,10,DISABLED,1,aes_global) == 1 && !nesting);
+    VERIFY(mt_objc_change(tree,1,0,20,20,10,10,DISABLED,1,&aes_global) == 1 && !nesting);
     session_error = 0; invalidate_global = FALSE;
     VERIFY(callback_parameters.pb_prevstate == 0 && callback_parameters.pb_currstate == DISABLED);
     before = callbacks;
@@ -1432,7 +1432,7 @@ int main(void)
             VERIFY(gem_menubar_install(0,2) == 1);
             gem_menubar_input_stage(0);
             bar_write_block = TRUE;
-            VERIFY(aes_menu_dispatch(aes_global) == E_OK && !aes_menu_listening());
+            VERIFY(aes_menu_dispatch(&aes_global) == E_OK && !aes_menu_listening());
             before = bar_writes;
             bar_write_block = FALSE;
             if (mode) { bar_close_error = TRUE; bar_snapshot_handle = 0; }
@@ -1440,7 +1440,7 @@ int main(void)
             VERIFY(gem_menubar_install(0,3) == 0);
             bar_line_error = FALSE;
             VERIFY(bar_writes == before+1 && aes_menu_listening());
-            VERIFY(aes_menu_flush(aes_global) == E_OK && bar_writes == before+1);
+            VERIFY(aes_menu_flush(&aes_global) == E_OK && bar_writes == before+1);
             VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
             bar_stream = bar_mode = FALSE;
         }
@@ -1448,7 +1448,7 @@ int main(void)
     VERIFY(gem_menubar_install(0,2) == 1);
     gem_menubar_mutate();
     before = snapshot_reads;
-    VERIFY(aes_menu_dispatch(aes_global) < 0 && snapshot_reads == before);
+    VERIFY(aes_menu_dispatch(&aes_global) < 0 && snapshot_reads == before);
     VERIFY(menu_bar(NULL,MENU_REMOVE) == 1 && !aes_menu_registered());
     before = gem_menubar_checks(0);
     bar_mode = FALSE; gesture_count = gesture_at = 0;
@@ -1463,18 +1463,18 @@ int main(void)
             gem_menubar_input_stage(1);
             bar_write_block = mode == 1; accessory_gone = mode == 2;
             before = bar_writes;
-            VERIFY(aes_menu_dispatch(aes_global) == E_OK);
+            VERIFY(aes_menu_dispatch(&aes_global) == E_OK);
             VERIFY(!nesting && !mouse_nesting && gem_menubar_unchanged());
             VERIFY(bar_recipient == 99);
             if (mode == 1) {
                 VERIFY(bar_writes == before && !aes_menu_listening());
-                VERIFY(aes_menu_flush(aes_global) == E_OK && !aes_menu_listening());
+                VERIFY(aes_menu_flush(&aes_global) == E_OK && !aes_menu_listening());
                 bar_write_block = FALSE;
-                VERIFY(aes_menu_flush(aes_global) == E_OK && aes_menu_listening());
+                VERIFY(aes_menu_flush(&aes_global) == E_OK && aes_menu_listening());
             }
             if (mode != 2) {
                 VERIFY(bar_writes == before+1 && bar_message[0] == AC_OPEN && bar_message[4] == 4);
-                VERIFY(bar_message[1] == aes_global[2] && !bar_message[2] && !bar_message[3]);
+                VERIFY(bar_message[1] == aes_global.ap_id && !bar_message[2] && !bar_message[3]);
                 VERIFY(!bar_message[5] && !bar_message[6] && !bar_message[7]);
             } else VERIFY(bar_writes == before && aes_menu_listening());
             VERIFY(menu_bar(NULL,MENU_REMOVE) == 1);
@@ -1491,13 +1491,13 @@ int main(void)
             bar_write_block = bar_stream = TRUE;
             bar_message[0] = WM_REDRAW;
             before = bar_writes;
-            VERIFY(aes_menu_dispatch(aes_global) == E_OK && !self_blocked);
+            VERIFY(aes_menu_dispatch(&aes_global) == E_OK && !self_blocked);
             VERIFY(bar_recipient == 7 && bar_writes == before && !aes_menu_listening());
             VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
                               NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
             VERIFY(message[0] == WM_REDRAW && !self_blocked && !aes_menu_listening());
             bar_write_block = FALSE;
-            VERIFY(aes_menu_flush(aes_global) == E_OK && bar_writes == before+1);
+            VERIFY(aes_menu_flush(&aes_global) == E_OK && bar_writes == before+1);
             mouse_x = 30; mouse_y = 59; /* The completed gesture left the menu bar. */
             VERIFY(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
                               NULL,NULL,NULL,NULL,NULL,NULL) == MU_MESAG);
@@ -1516,9 +1516,9 @@ int main(void)
             gem_menubar_input_stage(1);
             before = bar_writes;
             if (opaque_entry == 8) {
-                VERIFY(aes_menu_dispatch(aes_global) == EACCDN && bar_writes == before);
+                VERIFY(aes_menu_dispatch(&aes_global) == EACCDN && bar_writes == before);
             } else {
-                VERIFY(aes_menu_dispatch(aes_global) == E_OK && bar_writes == before+1);
+                VERIFY(aes_menu_dispatch(&aes_global) == E_OK && bar_writes == before+1);
                 VERIFY(bar_recipient == 99 && bar_message[0] == AC_OPEN && bar_message[4] == 4);
             }
             VERIFY(gem_menubar_unchanged() && !nesting && !mouse_nesting);

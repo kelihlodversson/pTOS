@@ -45,7 +45,7 @@ int gem_argv_child(int argc, char **argv, char **envp)
     VERIFY(!argv[7][400]);
     return 0x67;
 }
-static int completed(short pid, short status, short *global)
+static int completed(short pid, short status, AESGLOBAL *global)
 {
     short message[8] = { 0 };
     VERIFY(mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -56,7 +56,7 @@ static int completed(short pid, short status, short *global)
         message,0,NULL,NULL,NULL,NULL,NULL,NULL,global) == MU_TIMER);
     return 0;
 }
-int gem_argv_checks(short *global, char **envp)
+int gem_argv_checks(AESGLOBAL *global, char **envp)
 {
     char command[] = "C:\\APPS\\GEMCHILD.PRG", tail[512] = { 127 }, saved[512];
     char console[] = "C:\\APPS\\GEMCHILD.TOS";

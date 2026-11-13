@@ -83,12 +83,12 @@ WORD aes_shell_first(char *path, WORD attributes)
     if (result < 0 && result != EFILNF && result != EPTHNF && result != ENMFIL) aes_shell->ok = FALSE;
     return (WORD)result;
 }
-WORD mt_shel_read(char *command, char *tail, WORD *global)
+WORD mt_shel_read(char *command, char *tail, AESGLOBAL *global)
 {
     if (!command || !tail || !startup_ready || aes_application_session(global) < 0) return 0;
     aes_shell_read_core(command,tail); return 1;
 }
-WORD shel_read(char *command, char *tail) { return mt_shel_read(command,tail,aes_global); }
+WORD shel_read(char *command, char *tail) { return mt_shel_read(command,tail,&aes_global); }
 static WORD application_kind(const char *path)
 {
     ULONG length = strlen(path), i;
@@ -130,7 +130,7 @@ static BOOL shell_absolute(char *result, const char *source)
     for (i = 2; result[i]; i++) if (result[i] == '/') result[i] = '\\';
     return TRUE;
 }
-WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
+WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, AESGLOBAL *global)
 {
     char path[AES_SHELL_PATH], absolute[AES_SHELL_PATH], directory[AES_SHELL_PATH];
     const char *requested_directory = NULL;
@@ -205,16 +205,16 @@ finished:
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
 }
 WORD shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail)
-{ return mt_shel_write(mode,graphical,execution,command,tail,aes_global); }
-WORD mt_shel_envrn(char **result, const char *prefix, WORD *global)
+{ return mt_shel_write(mode,graphical,execution,command,tail,&aes_global); }
+WORD mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global)
 {
     char *found;
     if (!result || bounded_length(prefix,AES_SHELL_ENV) >= AES_SHELL_ENV ||
         aes_application_session(global) < 0 || !environment_valid()) return 0;
     aes_shell_env_core(&found,prefix); *result = found; return 1;
 }
-WORD shel_envrn(char **result, const char *prefix) { return mt_shel_envrn(result,prefix,aes_global); }
-WORD mt_shel_find(char *path, WORD *global)
+WORD shel_envrn(char **result, const char *prefix) { return mt_shel_envrn(result,prefix,&aes_global); }
+WORD mt_shel_find(char *path, AESGLOBAL *global)
 {
     SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
     char staged[AES_SHELL_PATH];
@@ -232,4 +232,4 @@ WORD mt_shel_find(char *path, WORD *global)
     if (!result || !c.ok) return 0;
     strcpy(path,staged); return 1;
 }
-WORD shel_find(char *path) { return mt_shel_find(path,aes_global); }
+WORD shel_find(char *path) { return mt_shel_find(path,&aes_global); }

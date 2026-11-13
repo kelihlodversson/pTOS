@@ -22,7 +22,7 @@ static int equal(const char *a, const char *b)
 int main(int argc, char **argv)
 {
     short window;
-    VERIFY(argc == 2 && gl_apid == -1 && aes_global[2] == -1 && startup_ok);
+    VERIFY(argc == 2 && gl_apid == -1 && aes_global.ap_id == -1 && startup_ok);
     VERIFY(equal(startup_directory,argv[1][1] == 'l' ? "\\GEMSYS\\LIB" : argv[1][1] == 'i' ? "\\GEMSYS" : "\\APPS"));
     if (argv[1][2] == 'e') VERIFY(environ[0] && equal(environ[0],"DIRECTORY_TEST=present") && !environ[1]);
     if (argv[1][0] == 'g') {

@@ -9,7 +9,7 @@ typedef struct {
     WORD kind, vertical, mouse[4], result1, result2;
     GRECT box, bounds;
     OBJECT tree[2];
-    WORD *global;
+    AESGLOBAL *global;
 } AES_TRACK;
 extern AES_TRACK *aes_tracker;
 BOOL aes_graphics_track(AES_TRACK *track);

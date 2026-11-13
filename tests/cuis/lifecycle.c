@@ -14,7 +14,7 @@ static ULONG bytes, queued, consumed, request_start, published, rejected, resets
 static BOOL reset_fails, reset_busy, last_poll, pending_notice, notice_blocked;
 static LONG phase, published_result_token;
 static BOOL published_result;
-LONG aes_window_messages_poll(LONG session, WORD *global)
+LONG aes_window_messages_poll(LONG session, AESGLOBAL *global)
 {
     (void)session; (void)global;
     if (pending_notice && !notice_blocked) {
@@ -26,8 +26,8 @@ LONG aes_window_messages_poll(LONG session, WORD *global)
 }
 BOOL aes_frames_wait_display(void) { return notice_blocked; }
 BOOL aes_windows_pending(void) { return FALSE; }
-LONG aes_application_session(WORD *global) { (void)global; return 42; }
-LONG aes_windows_reset_policy(WORD *global, BOOL polling, LONG token)
+LONG aes_application_session(AESGLOBAL *global) { (void)global; return 42; }
+LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token)
 {
     (void)global; (void)token; last_poll = polling;
     if (reset_busy) return EAGAIN;

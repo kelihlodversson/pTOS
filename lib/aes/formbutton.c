@@ -124,7 +124,7 @@ static BOOL finish(FORM_CONTEXT *c, FORM_CONTEXT *saved)
     if (c->overlay) aes_frames_resume();
     return c->ok;
 }
-short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_state, short *global)
+short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_state, AESGLOBAL *global)
 {
     FORM_CONTEXT c = { 0 }, *saved = aes_form_context;
     WORD inside;
@@ -138,9 +138,9 @@ short mt_graf_watchbox(OBJECT *tree, short object, short in_state, short out_sta
 }
 short graf_watchbox(OBJECT *tree, short object, short in_state, short out_state)
 {
-    return mt_graf_watchbox(tree,object,in_state,out_state,aes_global);
+    return mt_graf_watchbox(tree,object,in_state,out_state,&aes_global);
 }
-short aes_form_button_checked(OBJECT *tree, short object, short clicks, short *next, short *global, BOOL *ok)
+short aes_form_button_checked(OBJECT *tree, short object, short clicks, short *next, AESGLOBAL *global, BOOL *ok)
 {
     FORM_CONTEXT c = { 0 }, *saved = aes_form_context;
     WORD cont, target;
@@ -159,12 +159,12 @@ short aes_form_button_checked(OBJECT *tree, short object, short clicks, short *n
     *ok = TRUE;
     return cont;
 }
-short mt_form_button(OBJECT *tree, short object, short clicks, short *next, short *global)
+short mt_form_button(OBJECT *tree, short object, short clicks, short *next, AESGLOBAL *global)
 {
     BOOL ok;
     return aes_form_button_checked(tree,object,clicks,next,global,&ok);
 }
 short form_button(OBJECT *tree, short object, short clicks, short *next)
 {
-    return mt_form_button(tree,object,clicks,next,aes_global);
+    return mt_form_button(tree,object,clicks,next,&aes_global);
 }

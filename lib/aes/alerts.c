@@ -9,10 +9,10 @@
 #include "string.h"
 
 ALERT_CONTEXT *aes_alert_context;
-static WORD *error_global;
+static AESGLOBAL *error_global;
 static BOOL error_ok;
 
-WORD mt_form_alert(WORD button, const char *text, WORD *global)
+WORD mt_form_alert(WORD button, const char *text, AESGLOBAL *global)
 {
     ALERT_CONTEXT c = { 0 }, *saved = aes_alert_context;
     VDI_SERVICE_WORKSTATION ws;
@@ -66,7 +66,7 @@ done:
     if (overlay) aes_frames_resume();
     return ok ? selection : 0;
 }
-WORD form_alert(WORD button, const char *text) { return mt_form_alert(button,text,aes_global); }
+WORD form_alert(WORD button, const char *text) { return mt_form_alert(button,text,&aes_global); }
 
 WORD aes_error_show(WORD string, WORD *number, WORD button)
 {
@@ -96,9 +96,10 @@ WORD aes_error_show(WORD string, WORD *number, WORD button)
     error_ok = result != 0;
     return result;
 }
-WORD mt_form_error(WORD error, WORD *global)
+WORD mt_form_error(WORD error, AESGLOBAL *global)
 {
-    WORD *saved = error_global, result;
+    AESGLOBAL *saved = error_global;
+    WORD result;
     BOOL saved_ok = error_ok, ok;
     if (aes_application_session(global) < 0) return 0;
     error_global = global; error_ok = TRUE;
@@ -107,4 +108,4 @@ WORD mt_form_error(WORD error, WORD *global)
     error_global = saved; error_ok = saved_ok;
     return ok ? result : 0;
 }
-WORD form_error(WORD error) { return mt_form_error(error,aes_global); }
+WORD form_error(WORD error) { return mt_form_error(error,&aes_global); }

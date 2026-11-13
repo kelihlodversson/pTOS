@@ -37,8 +37,9 @@ static void setup(OBJECT *tree, short ch)
 }
 int gem_menubar_checks(short handle)
 {
-    OBJECT tree[10] = { { 0 } };
-    short cw, ch, message[8], result, i, global[15];
+    OBJECT tree[10] = { 0 };
+    short cw, ch, message[8], result;
+    AESGLOBAL global = { 0 };
     VERIFY(gem_probe_cell(handle,&cw,&ch) == 0);
     setup(tree,ch);
     gem_menubar_input_stage(0);
@@ -53,9 +54,9 @@ int gem_menubar_checks(short handle)
     VERIFY((((unsigned long)(unsigned short)message[5]<<16) | (unsigned short)message[6]) == ((unsigned long)tree & 0xffffffffUL));
     VERIFY((tree[4].ob_state & OS_SELECTED) && !(tree[3].ob_state & OS_SELECTED));
     VERIFY(menu_tnormal(tree,4,UNHIGHLIGHT) == 1 && !(tree[4].ob_state & OS_SELECTED));
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
-    global[2] = -1;
-    VERIFY(mt_menu_bar(tree,MENU_REMOVE,global) == 0);
+    global = aes_global;
+    global.ap_id = -1;
+    VERIFY(mt_menu_bar(tree,MENU_REMOVE,&global) == 0);
     VERIFY(menu_bar(tree,MENU_REMOVE) == 1);
     VERIFY(menu_bar(tree,2) == 0);
     return 0;

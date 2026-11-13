@@ -23,13 +23,8 @@
 
 #ifndef _GEMBIND_H
 #define _GEMBIND_H
+#include "aesglobal.h"
 
-#if ARCH_X86_64
-#define G_SIZE 32 /* native AESGLOBAL has full-width kernel pointers */
-#else
-#define G_SIZE 15
-#endif
-
-extern UWORD    global[G_SIZE];
+extern AESGLOBAL global;
 
 #endif  /* _GEMBIND_H */

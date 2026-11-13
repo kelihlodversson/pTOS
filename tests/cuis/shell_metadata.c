@@ -4,11 +4,11 @@
 #include "gemerror.h"
 #include "string.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell metadata failure: %d\n",__LINE__); return __LINE__; } } while (0)
-short aes_global[15] = { 0x400,-1,7 };
+AESGLOBAL aes_global = { .ap_version = 0x400, .ap_count = -1, .ap_id = 7 };
 static UBYTE shared[4][256];
 static LONG sizes[4], depth = 2, writes, calls;
 static BOOL fail_lock, fail_read, fail_write, fail_size, fail_release;
-LONG aes_application_session(short *global) { return global && global[2] == 7 ? 9 : EACCDN; }
+LONG aes_application_session(AESGLOBAL *global) { return global && global->ap_id == 7 ? 9 : EACCDN; }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     calls++;
@@ -42,21 +42,21 @@ int main(void)
     char command[14] = "KEEP", directory[115] = "SAVED", scrap[129] = "SCRAP";
     char max_command[13], max_directory[114], max_scrap[128];
     char too_long[129], copy[127];
-    short global[15];
+    AESGLOBAL global = { 0 };
     LONG previous, count;
     int i;
-    memcpy(global,aes_global,sizeof(global));
+    memcpy(&global,&aes_global,sizeof(global));
     shel_rdef(command,directory);
     VERIFY(!*command && !*directory && scrp_read(scrap) == 1 && !*scrap);
     memset(max_command,'c',sizeof(max_command)); max_command[12] = 0;
     memset(max_directory,'d',sizeof(max_directory)); max_directory[113] = 0;
     memset(max_scrap,'s',sizeof(max_scrap)); max_scrap[127] = 0;
-    mt_shel_wdef(max_command,max_directory,global);
+    mt_shel_wdef(max_command,max_directory,&global);
     VERIFY(writes == 1 && sizes[1] == 127 && !sizes[2]);
-    VERIFY(mt_scrp_write(max_scrap,global) == 1 && sizes[2] == 128);
+    VERIFY(mt_scrp_write(max_scrap,&global) == 1 && sizes[2] == 128);
     command[13] = directory[114] = scrap[128] = 99;
-    mt_shel_rdef(command,directory,global);
-    VERIFY(mt_scrp_read(scrap,global) == 1);
+    mt_shel_rdef(command,directory,&global);
+    VERIFY(mt_scrp_read(scrap,&global) == 1);
     VERIFY(!memcmp(command,max_command,13) && !memcmp(directory,max_directory,114) && !memcmp(scrap,max_scrap,128));
     VERIFY(command[13] == 99 && directory[114] == 99 && scrap[128] == 99);
     /* Short replacements must erase the old record, including the other field. */

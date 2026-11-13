@@ -22,7 +22,7 @@ static int equal(const char *a, const char *b)
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
 }
-int gem_explicit_checks(short *global)
+int gem_explicit_checks(AESGLOBAL *global)
 {
     short pid, message[8], mode, kind, result;
     char tail[128] = { 3,0,0,0,0 }, original[128], current[128], command[260], read_tail[128];
@@ -48,7 +48,7 @@ int gem_explicit_checks(short *global)
         }
         VERIFY(directory_call(0x19,0,0) == 2 && directory_call(0x47,(uintptr_t)current,3) == 0);
         VERIFY(equal(current,"\\GEMSYS"));
-        VERIFY(pid > 0 && pid != global[2]);
+        VERIFY(pid > 0 && pid != global->ap_id);
         /* The console lease exists before the child gets its first timeslice. */
         result = wind_update(BEG_UPDATE|NO_BLOCK);
         VERIFY(result == (kind == TOSAPP ? 0 : 1));

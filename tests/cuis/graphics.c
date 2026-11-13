@@ -7,14 +7,14 @@
 #include "mforms.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("graphics failure: %d\n",__LINE__); return __LINE__; } } while (0)
-short aes_global[15];
+AESGLOBAL aes_global;
 static LONG session = 7, open_error, query_error, check_error, style_error;
 static WORD next_handle = 10, closed_handle;
 static unsigned opens, closes, queries, styles;
 static WORD pixel_x = 1, pixel_y = 1, char_w = 8, char_h = 16;
 static MFORM installed;
 static ULONG hidden;
-LONG aes_application_session(short *global) { return global ? session : -1; }
+LONG aes_application_session(AESGLOBAL *global) { return global ? session : -1; }
 LONG aes_graphics_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
     (void)c; (void)d;
@@ -46,7 +46,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 }
 int main(void)
 {
-    WORD w = 99,h = 99,bw = 99,bh = 99, handle, other[15] = {0};
+    WORD w = 99, h = 99, bw = 99, bh = 99, handle;
+    AESGLOBAL other = {0};
     MFORM custom;
     unsigned before;
     CHECK(sizeof(MFORM) == 74 && __builtin_offsetof(MFORM,mf_fg) == 6 &&
@@ -58,7 +59,7 @@ int main(void)
     CHECK(!graf_handle(&w,&h,&bw,&bh) && w == 99); open_error = 0;
     query_error = EINVAL;
     CHECK(!graf_handle(&w,&h,&bw,&bh) && opens == closes && w == 99); query_error = 0;
-    handle = mt_graf_handle(&w,&h,&bw,&bh,other);
+    handle = mt_graf_handle(&w,&h,&bw,&bh,&other);
     CHECK(handle > 0 && w == 8 && h == 16 && bw == 19 && bh == 19);
     before = opens;
     CHECK(graf_handle(NULL,NULL,NULL,NULL) == handle && opens == before);
