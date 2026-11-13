@@ -58,6 +58,10 @@ PY
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
         tests/kaspace_reservation.c -Wl,--gc-sections -o "$work/reservation"
     "$work/reservation"
+    ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+        -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
+        tests/kaspace_retired_backing.c -Wl,--gc-sections -o "$work/retired-backing"
+    "$work/retired-backing"
     # The clone transaction owns real KTHREAD/KASPACE objects. This harness
     # models PROCESS resources; native x32 tests use production KPROC instead.
     CONFIG_= python3 - "$preset" "$work/config" <<'PYCONFIG'

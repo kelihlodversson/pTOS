@@ -143,6 +143,54 @@ static void borrow_rollback(void)
     kcprintf("native live-root borrow rollback and loader allocation failure: PASS\n");
 }
 
+/* Run actual MMU backing admission against a fresh independently owned root.
+ * A narrow held page carries a wider retirement fence. Only immutable live
+ * owner extents may materialize; the fence itself grants no page rights. */
+static void retired_backing_bounds(KPROC *source)
+{
+    ASPACE *backend=aspace_create();
+    KASPACE *space;
+    KASPACE_RESERVATION_INFO info={0};
+    KASPACE_RESERVATION_HOLD middle={0},outside={0};
+    UWORD rights=0;
+    void *owner=NULL;
+    ULONG tables,value=1;
+    UQUAD free_ram;
+    REQUIRE(backend);
+    space=kaspace_adopt(backend);REQUIRE(space);
+    info.address=USER_HEAP_BASE;info.bytes=3*PAGE;
+    info.identity=kaspace_reservation_next();info.rights=ASPACE_PROT_USER;
+    info.flags=KASPACE_RESERVATION_LAZY;
+    REQUIRE(kaspace_reservation_hold_captured(space,&info,info.address+8,8,
+            info.rights,kproc_ref_number(source),source,&outside)==E_OK);
+    info.identity=kaspace_reservation_next();info.rights|=ASPACE_PROT_WRITE;
+    REQUIRE(kaspace_reservation_hold_captured(space,&info,info.address+PAGE+8,8,
+            info.rights,kproc_ref_number(source),source,&middle)==E_OK);
+    REQUIRE(kaspace_retire_private(space,info.address,info.bytes));
+    tables=aspace_table_pages(backend);free_ram=REGION_FREE_RAM();
+    REQUIRE(!kaspace_retained_lazy_protection(space,info.address+2*PAGE,&rights));
+    REQUIRE(!aspace_fault_in(backend,info.address+2*PAGE,info.rights) &&
+            !aspace_translate(backend,info.address+2*PAGE,NULL,NULL) &&
+            aspace_table_pages(backend)==tables && REGION_FREE_RAM()==free_ram);
+    REQUIRE(kaspace_retained_lazy_protection(space,info.address+PAGE,&rights) &&
+            rights==info.rights && aspace_fault_in(backend,info.address+PAGE,rights));
+    REQUIRE(aspace_copy_from_user(backend,&value,info.address+PAGE,sizeof(value)) && !value);
+    REQUIRE(kaspace_reservation_release(&middle,&owner) && owner==source);owner=NULL;
+    /* Release cannot yet reclaim the broad allocation, but its consumed
+     * fence cannot mask this independently owned read-only outside page. */
+    REQUIRE(!kaspace_retained_lazy_protection(space,info.address+PAGE,&rights));
+    REQUIRE(kaspace_retained_lazy_protection(space,info.address,&rights) &&
+            rights==ASPACE_PROT_USER && aspace_fault_in(backend,info.address,rights));
+    REQUIRE(aspace_translate(backend,info.address,NULL,&rights) &&
+            (rights&(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))==ASPACE_PROT_USER);
+    REQUIRE(!kaspace_mapping_can_change(backend,info.address,info.bytes));
+    REQUIRE(kaspace_reservation_release(&outside,&owner) && owner==source);
+    REQUIRE(!aspace_translate(backend,info.address,NULL,NULL) &&
+            !aspace_translate(backend,info.address+PAGE,NULL,NULL));
+    kaspace_put(space);
+    kcprintf("native retired reservation exact backing bounds: PASS\n");
+}
+
 static void held_staging_discard(KPROC *source)
 {
     KPROC *child=NULL;
@@ -325,6 +373,7 @@ void kproc_region_selftest(void)
     procmem_stats(&before); records=kproc_count();
     source=kproc_retain(run); REQUIRE(source);
     borrow_rollback();
+    retired_backing_bounds(source);
     held_staging_discard(source);
     held_clone_compat_retirement(source);
     REQUIRE(proc_create_clone_process(source,0,&owner)==E_OK && owner);
