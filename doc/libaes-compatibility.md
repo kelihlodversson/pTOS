@@ -139,7 +139,10 @@ The context now owns these retained state groups:
   Private readiness/flush/dispatch/reset helpers select the supplied context.
 - Shell command/tail, application directory, environment pointer/length and
   startup readiness. Fresh contexts consume the loader's saved launch record;
-  aliases reuse that state without reinitializing it. Command/tail/directory
+  aliases reuse that state without reinitializing it. If registration runs
+  before libptos auxiliary-vector initialization, capture remains pending and
+  completes on the first shell/resource lookup after it becomes available.
+  Early shell queries fail without committing outputs. Command/tail/directory
   are copied; the process environment remains borrowed caller/loader storage.
   There is no libaes `DT_INIT` startup cache. Shell lookup work buffers and
   saved-DTA state are stack-local. Context-owned
@@ -158,8 +161,8 @@ The context now owns these retained state groups:
   Resetting one context never retries another context's deferred cleanup.
 
 Private retained-state helpers receive the caller's global explicitly. Window,
-desktop, graphics and menu resets clean up only that context's retained state; explicit aliases
-share it. The native `wind_new` operation still resets the kernel session's
+desktop, graphics and menu resets clean up only that context's retained state;
+explicit aliases share it. The native `wind_new` operation still resets the kernel session's
 windows, whose identity boundary remains unchanged.
 
 The native loader captures launch metadata before executable preinitializers.

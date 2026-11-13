@@ -151,7 +151,7 @@ static LONG open_joined(const char *directory, size_t length, const char *name)
 static LONG open_resource(const char *name, AESGLOBAL *global)
 {
     const char *p, *base = name, *path;
-    const char *application_directory = aes_app_context(global)->shell.directory;
+    const char *application_directory = aes_shell_state(global)->directory;
     LONG handle;
     size_t n = 0;
     while (n < RESOURCE_PATH && name[n]) n++;

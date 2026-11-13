@@ -11,6 +11,7 @@
 static PD basepage;
 static DL_LAUNCH launch;
 static DL_LAUNCH *active_launch = &launch;
+static BOOL aux_ready = TRUE;
 static AESGLOBAL *nested_global;
 static const char *nested_hit;
 static BOOL nested_search, nested_active, nested_no_memory, nested_restored;
@@ -71,7 +72,7 @@ BOOL aes_windows_pending(AESGLOBAL *global) { (void)global; return FALSE; }
 LONG aes_application_session(AESGLOBAL *global)
 { return global && global->ap_id == 7 && !registration_error ? 9 : EACCDN; }
 unsigned long __ptos_getauxval(unsigned long type)
-{ return type == DL_AT_PTOS_LAUNCH ? (uintptr_t)active_launch : type == 0x5000 ? (uintptr_t)&basepage : type == 31 ? (uintptr_t)executable : 0; }
+{ return !aux_ready ? 0 : type == 6 ? 4096 : type == DL_AT_PTOS_LAUNCH ? (uintptr_t)active_launch : type == 0x5000 ? (uintptr_t)&basepage : type == 31 ? (uintptr_t)executable : 0; }
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
     (void)c;
@@ -385,12 +386,25 @@ static int argument_checks(void)
 static int context_checks(void)
 {
     static char other_environment[] = "FOO=second\0PATH=SECOND\0\0";
-    AES_APP_CONTEXT late = { 0 }, other = { 0 };
+    AES_APP_CONTEXT late = { 0 }, other = { 0 }, early = { 0 };
     AESGLOBAL second = { .ap_id = 7, .ap_3resv = &late }, alias = aes_global;
     DL_LAUNCH other_launch = launch;
     SHELL_CONTEXT sentinel;
     char command[AES_SHELL_PATH], tail[128], path[AES_SHELL_PATH], *value;
     int i, before = cwd_calls;
+    /* Registration from a preinitializer precedes libptos auxiliary access.
+     * Early queries fail without committing outputs; an alias can complete
+     * capture once the dependency is ready, without reinitializing context. */
+    aux_ready = FALSE; aes_shell_init(&early); second.ap_3resv = &early;
+    strcpy(command,"unchanged"); tail[0] = 99; value = command;
+    VERIFY(early.shell.capture_pending && !mt_shel_read(command,tail,&second));
+    VERIFY(!strcmp(command,"unchanged") && tail[0] == 99);
+    VERIFY(!mt_shel_envrn(&value,"FOO=",&second) && value == command);
+    aux_ready = TRUE;
+    VERIFY(mt_shel_read(command,tail,&second) && !early.shell.capture_pending);
+    VERIFY(!strcmp(command,"C:\\START\\APP\\TEST.TOS") && !memcmp(tail,initial_tail,128));
+    VERIFY(mt_shel_envrn(&value,"FOO=",&second) && value == environment+4);
+    second.ap_3resv = &late;
     /* The launch was captured before cwd/basepage/AT_EXECFN mutations. */
     aes_shell_init(&late);
     VERIFY(mt_shel_read(command,tail,&second) && !strcmp(command,"C:\\START\\APP\\TEST.TOS"));

@@ -27,6 +27,7 @@ typedef struct aes_app_context {
 } AES_APP_CONTEXT;
 
 void aes_shell_init(AES_APP_CONTEXT *context);
+AES_SHELL_STATE *aes_shell_state(AESGLOBAL *global);
 void aes_shell_reset(AESGLOBAL *global);
 
 /* A live context is a caller precondition, just as for other heap objects.

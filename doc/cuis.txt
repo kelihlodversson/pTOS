@@ -2640,9 +2640,12 @@ buffer must have at least 260 bytes. With CONF_WITH_LIBAES, the startup stack
 builder saves the original tail in an optional AT_PTOS_LAUNCH record. LD.SO
 qualifies AT_EXECFN in that record before executable preinitializers or any
 dependency constructor. The library copies the saved command and tail into
-each fresh AES_APP_CONTEXT at mt_appl_init, even if executable hooks have
-already changed cwd or the default DTA. Explicit aliases reuse the context
-without recapturing startup metadata; libaes has no DT_INIT startup cache.
+each fresh AES_APP_CONTEXT, even if executable hooks have already changed
+cwd or the default DTA. Registration before libptos auxiliary-vector setup
+leaves capture pending; the first shell/resource lookup after setup completes
+it from the saved record. Early shell queries return 0 without changing
+outputs. Explicit aliases reuse the context without recapturing completed
+metadata; libaes has no DT_INIT startup cache.
 The resource loader consumes the same captured command with a 260-byte bound.
 Extended ARGV[0] remains independent of the supplied executable pathname.
 Missing or invalid startup metadata returns 0 without changing either output.

@@ -15,7 +15,7 @@ typedef struct {
     char command[AES_SHELL_PATH], tail[128], directory[AES_SHELL_PATH];
     char *environment;
     ULONG environment_bytes;
-    BOOL startup_ready;
+    BOOL startup_ready, capture_pending;
     char empty_environment[2];
 } AES_SHELL_STATE;
 #endif

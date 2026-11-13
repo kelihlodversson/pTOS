@@ -30,7 +30,7 @@ BOOL aes_layout_metrics(LAYOUT_METRICS *metrics, AESGLOBAL *global)
     metrics->width = 640; metrics->height = 480;
     return TRUE;
 }
-unsigned long aes_test_getauxval(unsigned long type) { return type == 31 ? (uintptr_t)"APP\\TEST.TOS" : 0; }
+unsigned long aes_test_getauxval(unsigned long type) { return type == 6 ? 4096 : type == 31 ? (uintptr_t)"APP\\TEST.TOS" : 0; }
 char *aes_test_getenv(const char *name) { return !strcmp(name,"PATH") ? "BAD;GOOD,OTHER" : NULL; }
 UQUAD aes_memory_call(ULONG function, UQUAD argument)
 {

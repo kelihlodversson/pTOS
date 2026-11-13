@@ -52,12 +52,15 @@ static void capture_directory(AES_SHELL_STATE *state, const DL_LAUNCH *launch)
     memcpy(state->directory,directory,at+1);
 }
 
-void aes_shell_init(AES_APP_CONTEXT *context)
+static void capture_shell(AES_SHELL_STATE *state)
 {
-    AES_SHELL_STATE *state = &context->shell;
     const DL_LAUNCH *launch = (const DL_LAUNCH *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH);
     ULONG length;
-    memset(state,0,sizeof(*state));
+    /* AT_PAGESZ is mandatory in the pTOS startup vector. libptos exposes no
+     * auxiliary values before its initializer, which runs after executable
+     * preinitializers. Leave capture pending until that dependency is ready. */
+    if (!__ptos_getauxval(6)) return;
+    state->capture_pending = FALSE;
     capture_directory(state,launch);
     state->environment = launch && launch->environment ?
         (char *)(uintptr_t)launch->environment : state->empty_environment;
@@ -68,6 +71,23 @@ void aes_shell_init(AES_APP_CONTEXT *context)
     memcpy(state->command,launch->command,length+1);
     memcpy(state->tail,launch->tail,sizeof(state->tail));
     state->startup_ready = TRUE;
+}
+
+void aes_shell_init(AES_APP_CONTEXT *context)
+{
+    AES_SHELL_STATE *state = &context->shell;
+    memset(state,0,sizeof(*state));
+    state->environment = state->empty_environment;
+    state->environment_bytes = sizeof(state->empty_environment);
+    state->capture_pending = TRUE;
+    capture_shell(state);
+}
+
+AES_SHELL_STATE *aes_shell_state(AESGLOBAL *global)
+{
+    AES_SHELL_STATE *state = &aes_app_context(global)->shell;
+    if (state->capture_pending) capture_shell(state);
+    return state;
 }
 
 void aes_shell_reset(AESGLOBAL *global)

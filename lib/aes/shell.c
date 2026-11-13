@@ -40,7 +40,7 @@ BOOL aes_shell_path_valid(const char *path, const char *name)
 static BOOL environment_valid(const AES_SHELL_STATE *state)
 {
     ULONG i;
-    if (!state->environment || state->environment_bytes < 2 || state->environment_bytes > AES_SHELL_ENV) return FALSE;
+    if (state->capture_pending || !state->environment || state->environment_bytes < 2 || state->environment_bytes > AES_SHELL_ENV) return FALSE;
     for (i = 0; i+1 < state->environment_bytes; i++)
         if (!state->environment[i] && !state->environment[i+1]) return TRUE;
     return FALSE;
@@ -64,7 +64,7 @@ WORD mt_shel_read(char *command, char *tail, AESGLOBAL *global)
 {
     SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
     if (!command || !tail || aes_application_session(global) < 0) return 0;
-    c.state = &aes_app_context(global)->shell;
+    c.state = aes_shell_state(global);
     if (!c.state->startup_ready) return 0;
     aes_shell = &c;
     aes_shell_read_core(command,tail);
@@ -135,7 +135,7 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
         (execution == SHW_CHAIN && graphical == TOSAPP)) return 0;
     session = aes_application_session(global);
     if (session < 0 || !command || !tail || (UBYTE)tail[0] > 127) return 0;
-    state = &aes_app_context(global)->shell;
+    state = aes_shell_state(global);
     if (extensions) {
         const SHELW *extended = command;
         if (extensions & SW_ENVIRON) environment = extended->env;
@@ -195,7 +195,7 @@ WORD mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global)
     SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
     if (!result || bounded_length(prefix,AES_SHELL_ENV) >= AES_SHELL_ENV ||
         aes_application_session(global) < 0) return 0;
-    c.state = &aes_app_context(global)->shell;
+    c.state = aes_shell_state(global);
     if (!environment_valid(c.state)) return 0;
     aes_shell = &c;
     aes_shell_env_core(&found,prefix);
@@ -228,7 +228,7 @@ WORD mt_shel_find(char *path, AESGLOBAL *global)
     SHELL_SEARCH *search;
     if (aes_application_session(global) < 0 || !path || !*path ||
         !aes_shell_copy(staged,path,sizeof(staged))) return 0;
-    c.state = &aes_app_context(global)->shell;
+    c.state = aes_shell_state(global);
     if (!environment_valid(c.state)) return 0;
     dta = aes_gemdos_call(0x2f,0,0,0);
     if ((QUAD)dta < 0) return 0;

@@ -38,7 +38,11 @@ int main(int argc, char **argv, char **envp)
     if (argc > 1 && argv[1][0] == 'e') return 0x5678;
     if (argc > 1 && argv[1][0] == 't') return -1;
     if (argc > 1 && argv[1][0] == 'f') __asm__ volatile ("ud2");
-    GEM_TEST_CHECK(argc >= 1 && gl_apid == -1 && aes_global.ap_id == -1 && aes_global.ap_private == 0);
+    GEM_TEST_CHECK(argc >= 1 && aes_global.ap_private == 0);
+    if (argc > 1 && argv[1][0] == 'c')
+        GEM_TEST_CHECK(gl_apid > 0 && aes_global.ap_id == gl_apid);
+    else
+        GEM_TEST_CHECK(gl_apid == -1 && aes_global.ap_id == -1);
     pid = PROC(0x10b, 0, 0, 0, 0);
     id = appl_init();
     GEM_TEST_CHECK(id > 0 && id == pid && gl_apid == id && aes_global.ap_id == id && aes_global.ap_count == -1);
