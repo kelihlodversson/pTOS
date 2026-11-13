@@ -64,6 +64,15 @@ config TARGET_CART
 	  A diagnostic cartridge image, mapped at 0x00fa0000.  It is limited
 	  to 128 KB, so the AES and the desktop cannot be included.
 
+config TARGET_CART_STUB
+	bool "Atari ROM image that only hands over to the cartridge, 192 KB"
+	depends on CONF_ATARI_HARDWARE && !ARCH_COLDFIRE
+	help
+	  A 192 KB ROM image, mapped at 0x00fc0000, that contains no
+	  operating system: it hands over to a diagnostic cartridge in the
+	  ROM port, such as the TARGET_CART image, which then boots the
+	  machine.  Without a cartridge the screen border flashes red.
+
 config TARGET_PRG
 	bool "Atari RAM TOS program (emutos.prg)"
 	depends on ARCH_M68K

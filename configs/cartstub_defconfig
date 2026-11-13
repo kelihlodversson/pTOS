@@ -1,0 +1,2 @@
+# 192 KB Atari ROM image that only hands over to the cartridge
+TARGET_CART_STUB=y
