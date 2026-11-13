@@ -35,7 +35,7 @@
 #define fm_error aes_fsel_error
 #define fm_show aes_fsel_show
 #define rs_str(index) ((char *)rs_fstr[index])
-#define dos_alloc_anyram aes_temporary_alloc
+#define dos_alloc_anyram(bytes) aes_temporary_alloc(bytes,aes_fsel->global)
 #define dos_free aes_resource_discard
 #define dos_gdta aes_fsel_get_dta
 #define dos_sdta aes_fsel_set_dta

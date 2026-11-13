@@ -167,7 +167,7 @@ WORD mt_fsel_exinput(char *path, char *selection, WORD *button, const char *titl
     if (!c.ok || c.drives < 0) goto done;
     bytes = (ULONG)((c.bounds.g_w+15)&~15)*c.bounds.g_h*4;
     if (bytes > VDI_SERVICE_MAX_BITMAP) goto done;
-    snapshot = aes_temporary_alloc(bytes);
+    snapshot = aes_temporary_alloc(bytes,global);
     if (!snapshot) goto done;
     if (cuis_call6(CUIS_DISPLAY_LOCK,c.session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;

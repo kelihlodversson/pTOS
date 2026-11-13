@@ -12,7 +12,7 @@
 #define get_addr aes_resource_addr
 #define get_sub aes_resource_sub
 #define get_ciconblkptr aes_resource_cicons
-#define dos_alloc_anyram aes_resource_alloc
+#define dos_alloc_anyram(bytes) aes_resource_alloc(bytes,aes_resource->owner)
 #define dos_free aes_resource_discard
 #define dos_read aes_resource_read_file
 #define dos_lseek aes_resource_seek

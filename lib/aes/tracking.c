@@ -48,7 +48,7 @@ WORD mt_graf_slidebox(OBJECT *tree, WORD parent, WORD object, WORD vertical, AES
      * visited at most once while building a bounded, unambiguous parent map. */
     for (count = 0; count < 4096; count++) if (tree[count].ob_flags & LASTOB) break;
     if (count == 4096 || parent > count || object > count) return 0;
-    parents = aes_temporary_alloc((count+1L)*sizeof(*parents));
+    parents = aes_temporary_alloc((count+1L)*sizeof(*parents),global);
     if (!parents) return 0;
     for (i = 0; i <= count; i++) parents[i] = NIL;
     for (i = 0; i <= count; i++) {

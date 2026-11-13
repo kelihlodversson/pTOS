@@ -69,7 +69,7 @@ static BOOL collect_regions(DESKTOP_REGION **head, AESGLOBAL *global)
         if (result < 0 || state[0] < 0 || state[0] > 32767 || state[1] < 0 || state[1] > 32767 ||
             state[2] <= 0 || state[2] > 32767 || state[3] <= 0 || state[3] > 32767 ||
             state[0]+state[2] > 32767 || state[1]+state[3] > 32767) return FALSE;
-        item = aes_temporary_alloc(sizeof(*item));
+        item = aes_temporary_alloc(sizeof(*item),global);
         if (!item) return FALSE;
         item->next = NULL;
         item->rect.g_x = state[0]; item->rect.g_y = state[1];
@@ -177,7 +177,7 @@ void *aes_screen_buffer(LONG *bytes, AESGLOBAL *global)
      * private buffer permits four bytes per pixel, including true colour. */
     size = 640L*m.wchar*m.hchar*4;
     if (size > retained->screen_bytes) {
-        replacement = aes_temporary_alloc(size);
+        replacement = aes_temporary_alloc(size,global);
         if (!replacement) return NULL;
         if (retained->screen_buffer) (void)aes_resource_discard(retained->screen_buffer);
         retained->screen_buffer = replacement; retained->screen_bytes = size;

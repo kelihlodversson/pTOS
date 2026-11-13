@@ -24,7 +24,7 @@ short mt_shel_get(char *buffer, short length, AESGLOBAL *global)
     if (session < 0 || length < SHEL_BUFSIZE || (length > 0 && !buffer)) return 0;
     if (!length) return 1;
     if (length > 0) {
-        staged = aes_temporary_alloc(length);
+        staged = aes_temporary_alloc(length,global);
         if (!staged) return 0;
     }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) {

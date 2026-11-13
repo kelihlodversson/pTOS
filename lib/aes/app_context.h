@@ -6,6 +6,7 @@
 #include "graphics_state.h"
 #include "window_state.h"
 #include "desktop_state.h"
+#include "resource_state.h"
 typedef struct {
     BOOL accessory, coordinator, reset_wait_display;
     ULONG stale_window_bytes;
@@ -18,6 +19,7 @@ typedef struct aes_app_context {
     AES_GRAPHICS_STATE graphics;
     AES_WINDOW_STATE windows;
     AES_DESKTOP_STATE desktop;
+    AES_RESOURCE_STATE resources;
 } AES_APP_CONTEXT;
 
 /* A live context is a caller precondition, just as for other heap objects.

@@ -5,7 +5,7 @@
 #include "aesglobal.h"
 LONG aes_window_messages(LONG session, AESGLOBAL *global);
 LONG aes_window_messages_poll(LONG session, AESGLOBAL *global);
-void aes_resources_reset(void);
+BOOL aes_resources_reset(AESGLOBAL *global);
 void aes_windows_reset(AESGLOBAL *global);
 LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token);
 BOOL aes_windows_pending(AESGLOBAL *global);

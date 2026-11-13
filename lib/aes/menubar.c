@@ -59,10 +59,10 @@ static BOOL snapshot_rect(WORD object, GRECT *rect)
     rect->g_x = x; rect->g_y = y; rect->g_w = right-x; rect->g_h = bottom-y;
     return TRUE;
 }
-static void *snapshot_allocate(const GRECT *rect)
+static void *snapshot_allocate(const GRECT *rect, AESGLOBAL *global)
 {
     ULONG pixels = (ULONG)((rect->g_w+15L)&~15L)*(UWORD)rect->g_h;
-    return pixels && pixels <= VDI_SERVICE_MAX_BITMAP/4 ? aes_temporary_alloc(pixels*4) : NULL;
+    return pixels && pixels <= VDI_SERVICE_MAX_BITMAP/4 ? aes_temporary_alloc(pixels*4,global) : NULL;
 }
 static BOOL restore_snapshot(VDI_SERVICE_WORKSTATION *ws, BOOL *opened, const GRECT *rect, void *buffer)
 {
@@ -101,14 +101,14 @@ static BOOL flush(LONG session, BOOL block)
         cuis_call6(CUIS_PEER_PID,bar.recipient,0,0,0,0,0) < 0) { bar.pending = FALSE; return TRUE; }
     return result == EAGAIN;
 }
-static BOOL refresh(void)
+static BOOL refresh(AESGLOBAL *global)
 {
     WORD pairs = mn_bar_index(bar.tree,bar.count,NULL,0);
     MENU_BAR_ENTRY *entries = bar.entries;
     UBYTE *seen;
     if (!pairs) return FALSE;
     if (pairs != bar.pairs) {
-        entries = aes_temporary_alloc((LONG)pairs*sizeof(*entries)+(bar.count+7L)/8);
+        entries = aes_temporary_alloc((LONG)pairs*sizeof(*entries)+(bar.count+7L)/8,global);
         if (!entries) return FALSE;
     }
     seen = (UBYTE *)(entries+pairs);
@@ -157,7 +157,7 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, AESGLOBAL *global)
     next.pairs = mn_bar_index(tree,next.count,NULL,0);
     if (!next.pairs) return 0;
     bytes = (LONG)next.pairs*sizeof(MENU_BAR_ENTRY)+(next.count+7L)/8;
-    next.entries = aes_temporary_alloc(bytes);
+    next.entries = aes_temporary_alloc(bytes,global);
     if (!next.entries) return 0;
     seen = (UBYTE *)(next.entries+next.pairs);
     if (!mn_bar_admit(tree,next.count,seen,(next.count+7L)/8) ||
@@ -180,7 +180,7 @@ WORD mt_menu_bar(OBJECT *tree, WORD show, AESGLOBAL *global)
         tree[1].ob_width = original_width; goto done;
     }
     rect.g_x = rect.g_y = 0; rect.g_w = next.metrics.width; rect.g_h = next.height;
-    buffer = snapshot_allocate(&rect);
+    buffer = snapshot_allocate(&rect,global);
     if (!buffer) { tree[1].ob_width = original_width; goto done; }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) { tree[1].ob_width = original_width; goto done; }
     locked = TRUE;
@@ -228,7 +228,7 @@ typedef struct {
     char labels[6][CUIS_ENTRY_BYTES];
 } DESK_MENU;
 
-static BOOL desk_menu(LONG session, DESK_MENU *desk)
+static BOOL desk_menu(LONG session, DESK_MENU *desk, AESGLOBAL *global)
 {
     WORD i, box = bar.entries[0].menu, about = bar.tree[box].ob_head;
     WORD separator, width, x, y;
@@ -252,7 +252,7 @@ static BOOL desk_menu(LONG session, DESK_MENU *desk)
         desk->owners[desk->count] = owner; desk->slots[desk->count++] = i;
     }
     if (bar.count > 32759 || bar.metrics.hchar <= 0 || bar.metrics.hchar > 4095) return FALSE;
-    tree = aes_temporary_alloc(((LONG)bar.count+8)*sizeof(*tree));
+    tree = aes_temporary_alloc(((LONG)bar.count+8)*sizeof(*tree),global);
     if (!tree) return FALSE;
     memcpy(tree,bar.tree,(LONG)bar.count*sizeof(*tree));
     desk->tree = tree;
@@ -304,7 +304,7 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
     if (!(flags & CUIS_SURFACE_OWNED) || !(flags & (CUIS_SURFACE_DIRTY|CUIS_SURFACE_POINTER))) return E_OK;
     /* Recheck caller edits before any drawing can invoke an unsupported
      * payload or use stale title/dropdown correspondence. */
-    if (!refresh()) return EACCDN;
+    if (!refresh(global)) return EACCDN;
     original = bar.tree;
     bar.busy = TRUE;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) { ok = FALSE; goto done; }
@@ -318,7 +318,7 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
     opened = TRUE;
     if ((flags & CUIS_SURFACE_DIRTY) && !paint(global,ws.handle)) { ok = FALSE; goto done; }
     if (!(flags & CUIS_SURFACE_POINTER)) goto done;
-    if (!desk_menu(session,&desk)) { ok = FALSE; goto done; }
+    if (!desk_menu(session,&desk,global)) { ok = FALSE; goto done; }
     if (desk.tree) bar.tree = desk.tree;
     if (!mt_graf_mkstate(&mx,&my,&buttons,&modifiers,global)) { ok = FALSE; goto done; }
     pair = title_at(mx,my);
@@ -334,7 +334,7 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
             if (current != NIL && !change(bar.entries[current].title,FALSE,global,NULL)) { ok = FALSE; break; }
             current = pair;
             if (!change(bar.entries[current].title,TRUE,global,NULL) || !snapshot_rect(bar.entries[current].menu,&rect)) { ok = FALSE; break; }
-            buffer = snapshot_allocate(&rect);
+            buffer = snapshot_allocate(&rect,global);
             if (!buffer || aes_graphics_call(VDI_SERVICE_SCREEN_BUFFER,ws.handle,(uintptr_t)&rect,(uintptr_t)buffer,0) != E_OK) { ok = FALSE; break; }
             copied = TRUE;
             if (!mt_objc_draw(bar.tree,bar.entries[current].menu,1,rect.g_x,rect.g_y,rect.g_w,rect.g_h,global)) { ok = FALSE; break; }

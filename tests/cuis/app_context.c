@@ -71,11 +71,16 @@ LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQU
     if (function == CUIS_PEER_PID) return a >= 100 && a < (UQUAD)next_session ? 7 : EFILNF;
     return EINVFN;
 }
+static BOOL fail_resource_cleanup;
+static ULONG resource_cleanups;
 void aes_menu_reset(void) { resets++; }
 void aes_windows_reset(AESGLOBAL *global) { (void)global; }
 void aes_desktop_reset(AESGLOBAL *global) { (void)global; }
 void aes_graphics_reset(AESGLOBAL *global) { (void)global; }
-void aes_resources_reset(void) { }
+BOOL aes_resources_reset(AESGLOBAL *global)
+{
+    (void)global; resource_cleanups++; return !fail_resource_cleanup;
+}
 
 int main(void)
 {
@@ -133,6 +138,14 @@ int main(void)
     fail_close = TRUE;
     CHECK(!mt_appl_exit(&alias) && alias.ap_3resv == context && releases == before && resets == cleanup_before);
     fail_close = FALSE;
+    fail_resource_cleanup = TRUE;
+    before = resource_cleanups;
+    CHECK(!mt_appl_exit(&alias) && alias.ap_3resv == context && resource_cleanups == before+1);
+    CHECK(resets == cleanup_before+1);
+    before = closes;
+    CHECK(!mt_appl_exit(&alias) && closes == before && resets == cleanup_before+1);
+    fail_resource_cleanup = FALSE;
+    before = releases;
     fail_free = TRUE;
     CHECK(!mt_appl_exit(&alias) && alias.ap_3resv == context && releases == before && resets == cleanup_before+1);
     before = closes;

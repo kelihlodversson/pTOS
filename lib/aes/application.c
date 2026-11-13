@@ -105,8 +105,9 @@ short mt_appl_exit(AESGLOBAL *global)
         if (aes_session_close(context->session) != E_OK) return 0;
         context->session = -1;
         aes_menu_reset(); aes_windows_reset(global); aes_desktop_reset(global); aes_graphics_reset(global);
-        aes_resources_reset();
     }
+    /* Deferred resource cleanup also keeps the context alive for retry. */
+    if (!aes_resources_reset(global)) return 0;
     /* Retain ownership if Mfree fails, so exit can retry without closing the
      * session or resetting the adapters twice. Clear the supplied slot only. */
     if ((LONG)aes_memory_call(0x49,(uintptr_t)context) != E_OK) return 0;

@@ -328,7 +328,7 @@ static short visible_work(struct gem_window *window, BOOL first, GRECT *out, AES
                 (uintptr_t)&state[2],(uintptr_t)&state[3]);
             if (result < 0) { discard_regions(&snapshot); return 0; }
             if (!result) break;
-            item = aes_temporary_alloc(sizeof(*item));
+            item = aes_temporary_alloc(sizeof(*item),global);
             if (!item) { discard_regions(&snapshot); return 0; }
             item->next = NULL;
             item->bounds[0] = state[0]; item->bounds[1] = state[1];

@@ -10,9 +10,10 @@ static UBYTE shared[32767], pattern[32767], output[32769];
 static LONG size, depth = 2, allocations;
 static BOOL fail_alloc, fail_lock, fail_read, fail_write, fail_size, fail_release;
 LONG aes_application_session(AESGLOBAL *global) { return global && global->ap_id == 7 ? 9 : EACCDN; }
-void *aes_temporary_alloc(LONG bytes)
+void *aes_temporary_alloc(LONG bytes, AESGLOBAL *global)
 {
     void *value = fail_alloc ? NULL : malloc(bytes);
+    (void)global;
     if (value) allocations++;
     return value;
 }

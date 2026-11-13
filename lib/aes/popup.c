@@ -100,7 +100,7 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, AESGLOBAL *gl
     }
     if (start == NIL || !count) goto done;
     bytes = (LONG)(count+1)*(sizeof(OBJECT)+sizeof(WORD));
-    tree = aes_temporary_alloc(bytes);
+    tree = aes_temporary_alloc(bytes,global);
     if (!tree) goto done;
     map = (WORD *)(tree+count+1);
     tree[0] = *box; tree[0].ob_next = NIL; tree[0].ob_head = 1; tree[0].ob_tail = count;
@@ -139,7 +139,7 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, AESGLOBAL *gl
     if (c.clip.g_w <= 0 || c.clip.g_h <= 0 ||
         (ULONG)((c.clip.g_w+15L)&~15L)*(UWORD)c.clip.g_h > VDI_SERVICE_MAX_BITMAP/4) goto done;
     bytes = (LONG)((c.clip.g_w+15L)&~15L)*c.clip.g_h*4;
-    buffer = aes_temporary_alloc(bytes);
+    buffer = aes_temporary_alloc(bytes,global);
     if (!buffer) goto done;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;
