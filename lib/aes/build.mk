@@ -7,10 +7,10 @@ $(LIBAES_BINDINGS): $(wildcard lib/gemlib/ptos/*.[ch]) lib/gemlib/ptos/build.mk 
 LIBAES_CFLAGS = $(LDSO_CFLAGS) -DOB_WALK_COORD=LONG -Iinclude -Iobj -Iutil
 LIBAES_TRANSPORT-$(ARCH_X86_64) = lib/aes/arch/x32/transport.c
 LIBAES_ARCH_HEADERS-$(ARCH_X86_64) = -Iinclude/arch/x86_64
-LIBAES_CONTEXT_HEADERS = lib/aes/resource_state.h lib/aes/app_context.h lib/aes/window_state.h lib/aes/graphics_state.h lib/aes/desktop_state.h \
-    lib/aes/layout.h lib/aes/style.h aes/shared/gemslidegeom.h aes/shared/gemframe.h aes/shared/gemframeids.h \
-    include/libaes.h include/aesglobal.h include/mform.h include/obdefs.h include/grect.h include/portab.h
-obj/libaes/application.o obj/libaes/lifecycle.o obj/libaes/graphics.o obj/libaes/gemwindows.o obj/libaes/desktop.o obj/libaes/draw.o obj/libaes/resources.o: $(LIBAES_CONTEXT_HEADERS)
+LIBAES_CONTEXT_HEADERS = lib/aes/menu_state.h lib/aes/shell_state.h lib/aes/resource_state.h lib/aes/app_context.h lib/aes/window_state.h lib/aes/graphics_state.h lib/aes/desktop_state.h \
+    lib/aes/layout.h lib/aes/style.h aes/shared/gemmenubar.h aes/shared/gemdesk.h aes/shared/gemslidegeom.h aes/shared/gemframe.h aes/shared/gemframeids.h \
+    include/bdosdefs.h include/libaes.h include/aesglobal.h include/mform.h include/obdefs.h include/grect.h include/portab.h
+obj/libaes/application.o obj/libaes/lifecycle.o obj/libaes/graphics.o obj/libaes/gemwindows.o obj/libaes/desktop.o obj/libaes/draw.o obj/libaes/resources.o obj/libaes/menubar.o obj/libaes/shell.o obj/libaes/startup.o: $(LIBAES_CONTEXT_HEADERS)
 obj/libaes/application.o: lib/aes/application.c lib/aes/lifecycle.h lib/aes/desktop.h lib/aes/graphics.h lib/aes/menubar.h lib/aes/application.h include/libaes.h include/aesglobal.h lib/aes/transport.h lib/aes/native_bindings.h include/cuis.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
@@ -132,9 +132,9 @@ obj/libaes/frames.o: lib/aes/frames.c lib/aes/frame_colours.h aes/shared/gemfram
 obj/libaes/gemframegeom.o: aes/shared/gemframegeom.c aes/shared/gemframegeom.h aes/shared/gemframeids.h aes/shared/gemobjbounds.h include/aesglobal.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -Iaes/shared -c $< -o $@
-obj/libaes/libaes.so: obj/libaes/lifecycle.o obj/libaes/shell_arguments.o obj/libaes/children.o obj/libaes/shell_metadata.o obj/libaes/shell_buffer.o obj/libaes/shell.o obj/libaes/gemshquery.o obj/libaes/fsel.o obj/libaes/gemfslib.o obj/libaes/selector_optimize.o obj/libaes/selector_miscutil.o obj/libaes/desktop.o obj/libaes/animations.o obj/libaes/tracking.o obj/libaes/gemgrtrack.o obj/libaes/graphics.o obj/libaes/mforms.o obj/libaes/gemslidegeom.o obj/libaes/gemsizegeom.o obj/libaes/gemmovegeom.o obj/libaes/frames.o obj/libaes/gemframe.o obj/libaes/gemframegeom.o obj/libaes/menubar.o obj/libaes/gemmenubar.o obj/libaes/popup.o obj/libaes/gemmenupopup.o obj/libaes/menus.o obj/libaes/gemmenuchange.o $(LIBAES_RESOURCE_OBJECTS) obj/ldso/libptos.so obj/libaes/form_resources.o obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
+obj/libaes/libaes.so: obj/libaes/startup.o obj/libaes/lifecycle.o obj/libaes/shell_arguments.o obj/libaes/children.o obj/libaes/shell_metadata.o obj/libaes/shell_buffer.o obj/libaes/shell.o obj/libaes/gemshquery.o obj/libaes/fsel.o obj/libaes/gemfslib.o obj/libaes/selector_optimize.o obj/libaes/selector_miscutil.o obj/libaes/desktop.o obj/libaes/animations.o obj/libaes/tracking.o obj/libaes/gemgrtrack.o obj/libaes/graphics.o obj/libaes/mforms.o obj/libaes/gemslidegeom.o obj/libaes/gemsizegeom.o obj/libaes/gemmovegeom.o obj/libaes/frames.o obj/libaes/gemframe.o obj/libaes/gemframegeom.o obj/libaes/menubar.o obj/libaes/gemmenubar.o obj/libaes/popup.o obj/libaes/gemmenupopup.o obj/libaes/menus.o obj/libaes/gemmenuchange.o $(LIBAES_RESOURCE_OBJECTS) obj/ldso/libptos.so obj/libaes/form_resources.o obj/libaes/alerts.o obj/libaes/gemalert.o obj/libaes/gemformerror.o obj/libaes/gemformanim.o obj/libaes/gemformdo.o obj/libaes/forms.o obj/libaes/gemedit.o $(LIBAES_FORM_OBJECTS) obj/libaes/formbutton.o obj/libaes/formkeys.o obj/libaes/gemformkey.o obj/libaes/gemlayout.o obj/libaes/layout.o $(LIBAES_RENDER_OBJECTS) obj/libaes/gemobjwalk.o obj/libaes/draw_string.o obj/libaes/draw_memory.o obj/libaes/draw.o obj/libaes/gemwindows.o obj/libaes/events.o obj/libaes/application.o obj/libaes/windows.o obj/libaes/session.o obj/libaes/transport.o obj/libaes/rectfunc.o obj/libaes/objtree.o obj/libaes/objects.o lib/aes/exports.map
 	$(CC) $(LDSO_LDFLAGS) $(LIBAES_CFLAGS) -nostdlib -shared \
-	  -Wl,--gc-sections,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so,-init,aes_library_init \
+	  -Wl,--gc-sections,--no-undefined,--hash-style=sysv,-z,now,-z,noexecstack,-soname,libaes.so \
 	  -Wl,--version-script,lib/aes/exports.map -o $@ $(filter %.o,$^) -Lobj/ldso -lptos
 $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO: obj/libaes/libaes.so
 	@mkdir -p $(@D)
@@ -369,3 +369,7 @@ obj/libaes/EXPLICIT.PRG: tests/cuis/gem_explicit_child.c obj/ldso/dyncrt.o obj/l
 .PHONY: libaes-elf-check
 libaes-elf-check: obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/libaes/GEM.TOS
 	python3 tools/check-libaes-elf.py obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/libaes/GEM.TOS
+
+obj/libaes/startup.o: lib/aes/startup.c lib/aes/resource_context.h lib/ldso/launch.h lib/ldso/client/ptos.h lib/aes/transport.h $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(CC) $(LIBAES_CFLAGS) -Ilib/ldso/client -Iaes -Iaes/shared -c $< -o $@

@@ -2,6 +2,7 @@
 #include "libaes.h"
 #include "gemerror.h"
 #include "../../lib/aes/application.h"
+#include "../../lib/aes/app_context.h"
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/lifecycle.h"
 
@@ -73,7 +74,13 @@ LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQU
 }
 static BOOL fail_resource_cleanup;
 static ULONG resource_cleanups;
-void aes_menu_reset(void) { resets++; }
+void aes_menu_reset(AESGLOBAL *global) { (void)global; resets++; }
+static ULONG shell_initializations;
+void aes_shell_reset(AESGLOBAL *global) { (void)global; }
+void aes_shell_init(AES_APP_CONTEXT *context)
+{
+    shell_initializations++; context->shell.command[0] = 'A';
+}
 void aes_windows_reset(AESGLOBAL *global) { (void)global; }
 void aes_desktop_reset(AESGLOBAL *global) { (void)global; }
 void aes_graphics_reset(AESGLOBAL *global) { (void)global; }
@@ -109,6 +116,8 @@ int main(void)
     CHECK(mt_appl_init(&first) == 7 && first.ap_3resv && first.ap_private == 0x12345678);
     context = first.ap_3resv;
     before = opens;
+    CHECK(shell_initializations == 4);
+    ((AES_APP_CONTEXT *)context)->shell.command[0] = 'B';
     first.ap_rscmem = (void *)(uintptr_t)0x1000;
     first.ap_rsclen = 42;
     CHECK(mt_appl_init(&first) == 7 && first.ap_3resv == context && opens == before);
@@ -120,8 +129,10 @@ int main(void)
     CHECK(mt_appl_init(&alias) == 7 && alias.ap_3resv == context && opens == before);
     CHECK(alias.ap_private == 99 && alias.ap_rscmem == (void *)(uintptr_t)0x2000 && alias.ap_rsclen == 17);
     CHECK(aes_application_session(&alias) == aes_application_session(&first));
+    CHECK(shell_initializations == 4 && ((AES_APP_CONTEXT *)context)->shell.command[0] == 'B');
     CHECK(mt_appl_init(&second) == 7 && second.ap_3resv && second.ap_3resv != context);
     CHECK(aes_application_session(&second) != aes_application_session(&first));
+    CHECK(shell_initializations == 5 && ((AES_APP_CONTEXT *)second.ap_3resv)->shell.command[0] == 'A');
     CHECK(mt_appl_search(APP_FIRST,name,&type,&id,&first) == 1);
     CHECK(mt_appl_search(APP_FIRST,name,&type,&id,&second) == 1);
     CHECK(mt_appl_search(APP_NEXT,name,&type,&id,&first) == 1);

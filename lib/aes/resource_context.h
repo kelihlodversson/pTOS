@@ -29,7 +29,5 @@ WORD aes_resource_discard(void *memory);
 LONG aes_resource_read_file(WORD handle, LONG bytes, void *memory);
 LONG aes_resource_seek(WORD handle, WORD mode, LONG offset);
 CICONBLK **aes_resource_cicons(RSHDR *header);
-void aes_resources_init(void);
-const char *aes_resource_directory(void);
 BOOL aes_resources_reset(AESGLOBAL *global);
 #endif

@@ -10,7 +10,6 @@
 #include "gemrcfix.h"
 #include "gemlayout.h"
 #include "string.h"
-#include "ptos.h"
 #include "launch.h"
 
 extern char *getenv(const char *name);
@@ -25,8 +24,6 @@ typedef union resource_allocation {
     } cleanup;
     UQUAD alignment;
 } RESOURCE_ALLOCATION;
-static char application_directory[RESOURCE_PATH];
-const char *aes_resource_directory(void) { return application_directory; }
 
 static void *allocate(LONG bytes, AES_RESOURCE_STATE *owner)
 {
@@ -140,52 +137,6 @@ CICONBLK **aes_resource_cicons(RSHDR *header)
     return extension[1] > 0 ? (CICONBLK **)((char *)header+extension[1]) : NULL;
 }
 
-/* Capture the launch directory before application code can change cwd.
- * AT_EXECFN contains the actual supplied filename, independent of ARGV[0]. */
-void aes_resources_init(void)
-{
-    const char *name = (const char *)(uintptr_t)__ptos_getauxval(31), *p, *base;
-    char cwd[RESOURCE_PATH], directory[RESOURCE_PATH];
-    LONG drive;
-    size_t prefix, length, i, at = 0;
-    const DL_LAUNCH *launch = (const DL_LAUNCH *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH);
-    application_directory[0] = 0;
-    if (launch) {
-        if (launch->ready != 1) return;
-        name = launch->command;
-        for (i = 0, prefix = 0; i < RESOURCE_PATH && name[i]; i++)
-            if (name[i] == '\\' || name[i] == '/') prefix = i+1;
-        if (i == RESOURCE_PATH || !prefix) return;
-        memcpy(application_directory,name,prefix); application_directory[prefix] = 0;
-        return;
-    }
-    if (!name) return;
-    length = strlen(name);
-    if (length >= RESOURCE_PATH) return;
-    base = name;
-    for (p = name; *p; p++) if (*p == '\\' || *p == '/' || *p == ':') base = p+1;
-    prefix = base-name;
-    drive = (LONG)aes_gemdos_call(0x19,0,0,0);
-    if (length >= 2 && name[1] == ':') {
-        drive = (name[0] >= 'a' && name[0] <= 'z' ? name[0]-'a' : name[0]-'A');
-        name += 2; prefix = prefix >= 2 ? prefix-2 : 0;
-    }
-    if (drive < 0 || drive > 25) return;
-    directory[at++] = 'A'+drive; directory[at++] = ':';
-    if (*name != '\\' && *name != '/') {
-        if ((LONG)aes_gemdos_call(0x47,(uintptr_t)cwd,drive+1,0) != E_OK) return;
-        length = strlen(cwd);
-        if (length+at+prefix+2 >= RESOURCE_PATH) return;
-        if (!length || (cwd[0] != '\\' && cwd[0] != '/')) directory[at++] = '\\';
-        for (i = 0; i < length; i++) directory[at++] = cwd[i] == '/' ? '\\' : cwd[i];
-        if (directory[at-1] != '\\') directory[at++] = '\\';
-    }
-    if (at+prefix >= RESOURCE_PATH) return;
-    for (i = 0; i < prefix; i++) directory[at++] = name[i] == '/' ? '\\' : name[i];
-    directory[at] = 0;
-    memcpy(application_directory,directory,at+1);
-}
-
 static LONG open_joined(const char *directory, size_t length, const char *name)
 {
     char path[RESOURCE_PATH];
@@ -197,9 +148,10 @@ static LONG open_joined(const char *directory, size_t length, const char *name)
     memcpy(path+length,name,n+1);
     return (LONG)aes_gemdos_call(0x3d,(uintptr_t)path,0,0);
 }
-static LONG open_resource(const char *name)
+static LONG open_resource(const char *name, AESGLOBAL *global)
 {
     const char *p, *base = name, *path;
+    const char *application_directory = aes_app_context(global)->shell.directory;
     LONG handle;
     size_t n = 0;
     while (n < RESOURCE_PATH && name[n]) n++;
@@ -310,7 +262,7 @@ WORD mt_rsrc_load(const char *name, AESGLOBAL *global)
     memset(resource,0,sizeof(*resource));
     resource->owner = owner;
     if (!aes_layout_metrics(&resource->metrics,global)) { dispose_resource(resource); return 0; }
-    handle = open_resource(name);
+    handle = open_resource(name,global);
     if (handle < 0) { dispose_resource(resource); return 0; }
     owner->pending_close = handle; owner->close_pending = TRUE;
     aes_resource = resource;

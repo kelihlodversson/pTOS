@@ -3,18 +3,15 @@
 #define LIBAES_SHELL_CONTEXT_H
 #include "emutos.h"
 #include "bdosdefs.h"
-#define AES_SHELL_PATH 260
-#define AES_SHELL_ENV 32768UL
+#include "shell_state.h"
 typedef struct {
     char work[AES_SHELL_PATH];
+    DTA *dta;
+    AES_SHELL_STATE *state;
     void *original_dta;
     BOOL ok;
 } SHELL_CONTEXT;
 extern SHELL_CONTEXT *aes_shell;
-extern DTA aes_shell_dta;
-extern char aes_shell_command[AES_SHELL_PATH], aes_shell_tail[128];
-extern char *aes_shell_environment;
-void aes_library_init(void);
 void aes_shell_read_core(char *command, char *tail);
 char *aes_shell_name(char *path);
 void aes_shell_env_core(char **result, const char *prefix);
