@@ -127,7 +127,11 @@ int main(void)
 #endif
     assert(thread_startup_observe(draft,&observer,NULL)==E_OK);
     aliases=0;assert(thread_startup_run_preflight(draft)==E_OK && aliases);
-    thread_startup_abort(&draft);assert(!stacks && !observed && allocated==count);
+    assert(thread_startup_elf_initial_sp(draft)==0);
+    assert(thread_startup_seal(draft)==E_OK);thread_startup_commit_stores(draft,0,0);
+    thread_startup_publish(draft);assert(thread_startup_elf_initial_sp(draft)==0);
+    thread_startup_entering(draft);thread_startup_reclaim(&draft);
+    assert(!stacks && !observed && allocated==count);memcpy(stack_data,before,sizeof(before));
     /* Every allocation prefix must unwind independent stacks/bridge/leases. */
     for(i=1;i<=9;i++) {
         LONG error;fail_after=i;
@@ -137,12 +141,15 @@ int main(void)
         assert(allocated==count && !stacks && !bridge_live);
     }
     assert(thread_startup_prepare_elf(space,&args,initial,&draft)==E_OK && image_sp(draft)==initial);
+    assert(thread_startup_elf_initial_sp(draft)==0);
     assert(thread_startup_observe(draft,&observer,NULL)==E_OK);
     aliases=0;assert(thread_startup_run_preflight(draft)==E_OK && !aliases);
     assert(thread_startup_seal(draft)==E_OK);
     thread_startup_commit_stores(draft,0,0);
     assert(!aliases && !memcmp(stack_data,before,sizeof(before)) && image_sp(draft)==initial);
-    thread_startup_publish(draft);thread_startup_entering(draft);thread_startup_reclaim(&draft);
+    thread_startup_publish(draft);
+    assert(thread_startup_elf_initial_sp(draft)==initial && image_sp(draft)==initial);
+    thread_startup_entering(draft);thread_startup_reclaim(&draft);
     assert(!draft && !stacks && !observed && allocated==count && !bridge_live);
     assert(thread_startup_prepare_elf(space,&args,initial,&draft)==E_OK);
     assert(kaspace_mapping_change(&as,STACK,8192));

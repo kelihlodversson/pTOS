@@ -27,6 +27,9 @@ LONG thread_startup_prepare(struct kaspace *space, const THREAD_STARTUP_ARGS *ar
  * This is not a public clone option or arbitrary saved CPU-state restore. */
 LONG thread_startup_prepare_elf(struct kaspace *,const THREAD_STARTUP_ARGS *,
                               VADDR initial_sp,THREAD_STARTUP_DRAFT **);
+/* Native launcher projection of the published trusted entry kind. Zero for
+ * C entries and unpublished drafts; this does not grant execution authority. */
+VADDR thread_startup_elf_initial_sp(const THREAD_STARTUP_DRAFT *);
 #endif
 /* Public void entry returns through the kernel-selected zero-status stub. */
 LONG thread_startup_prepare_public(struct kaspace *, const THREAD_STARTUP_ARGS *, THREAD_STARTUP_DRAFT **);

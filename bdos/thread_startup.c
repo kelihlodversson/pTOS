@@ -108,6 +108,14 @@ LONG thread_startup_prepare_elf(KASPACE *space,const THREAD_STARTUP_ARGS *args,
     if(!initial_sp) return EINVAL;
     return startup_prepare(space,args,out,FALSE,NULL,NULL,initial_sp);
 }
+VADDR thread_startup_elf_initial_sp(const THREAD_STARTUP_DRAFT *draft)
+{
+#if CONF_WITH_NATIVE_SCHED
+    return draft && draft->elf_entry && draft->state==THREAD_STARTUP_RUNNABLE ? draft->initial_sp : 0;
+#else
+    UNUSED(draft);return 0;
+#endif
+}
 #endif
 #if CONF_WITH_FORK_RETURN_TEST
 LONG thread_startup_prepare_saved_return(KASPACE *space, const SYSCALL_RETURN *saved, THREAD_STARTUP_DRAFT **out)
