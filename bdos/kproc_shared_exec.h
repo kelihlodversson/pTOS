@@ -213,8 +213,11 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     {
         MMAP_REGION *region;
         for(region=kaspace_mmap(set->space)->regions;region;region=region->next) {
-            if(!(region->prot&ASPACE_PROT_USER)) { error=EINVFN;goto failed; }
-            SHARED_TRY(shared_logical(set,source,region->address,region->length,ASPACE_PROT_USER));
+            /* PROT_NONE is still a canonical reservation. Retain its exact
+             * lazy/inaccessible ownership without acquiring any USER grant. */
+            if(region->prot && !(region->prot&ASPACE_PROT_USER)) { error=EINVFN;goto failed; }
+            SHARED_TRY(shared_logical(set,source,region->address,region->length,
+                                      region->prot?ASPACE_PROT_USER:0));
         }
     }
 #endif
