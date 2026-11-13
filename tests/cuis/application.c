@@ -1300,6 +1300,8 @@ int main(void)
     CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
     CHECK(wind_get(1, WF_KIND, &a, &b, &c, &d) == 0 && a == 1 && !window_calls);
     CHECK(mt_appl_init(NULL) == -1);
+    CHECK(mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,0,
+                        NULL,NULL,NULL,NULL,NULL,NULL,&aes_global) == 0);
     aes_global.ap_private = 0x12345678L;
     other.ap_private = 0x76543210L;
     pid = 32768; CHECK(appl_init() == -1 && !starts && gl_apid == -1);

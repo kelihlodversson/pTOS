@@ -71,8 +71,10 @@ int main(int argc, char **argv, char **envp)
     status = process(0x13a, child, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 37));
     VERIFY(wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1 && x == 10 && y == 20);
-    VERIFY(mt_appl_exit(&globals) == 1 && wind_delete(window) == 0);
+    VERIFY(mt_appl_exit(&globals) == 1);
+    aes_global.ap_3resv = NULL; /* The default global was an alias of globals. */
     VERIFY(appl_init() == id && wind_get(window, WF_KIND, &x, &y, &w, &h) == 0);
+    VERIFY(wind_delete(window) == 0);
     VERIFY(appl_exit() == 1);
     {
         static const char marker[] = "x32 GEM window lifecycle: PASS\r\n";

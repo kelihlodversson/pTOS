@@ -168,11 +168,13 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
     LONG start = 0, session;
     ULONG duration;
     short result;
-    BOOL clocked = (events & MU_TIMER) &&
+    BOOL clocked;
+    session = aes_application_session(global);
+    if (session < 0) return 0;
+    clocked = (events & MU_TIMER) &&
         ((events & MU_MESAG) || aes_menu_registered() || aes_frames_registered() ||
          aes_controls_listening() || aes_frames_wait_display() || aes_lifecycle_listening(global));
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
-    session = aes_application_session(global);
     duration = interval/5 + (interval%5 != 0) + (interval != 0);
     if (clocked) {
         start = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
