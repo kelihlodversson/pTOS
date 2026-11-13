@@ -69,6 +69,7 @@ int main(int argc, char **argv, char **envp)
     char tail[3] = { 1, 'c', 0 };
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
+    VERIFY(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1);
     id = appl_init(); VERIFY(id > 0);
     global.ap_3resv = aes_global.ap_3resv;
     VERIFY(mt_appl_init(&global) == id);

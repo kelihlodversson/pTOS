@@ -1296,6 +1296,9 @@ int main(void)
     ULONG count;
     short held;
     CHECK(gl_apid == -1 && aes_global.ap_id == -1);
+    CHECK(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1 && !window_at_calls);
+    CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
+    CHECK(wind_get(1, WF_KIND, &a, &b, &c, &d) == 0 && a == 1 && !window_calls);
     CHECK(mt_appl_init(NULL) == -1);
     aes_global.ap_private = 0x12345678L;
     other.ap_private = 0x76543210L;
@@ -1306,6 +1309,7 @@ int main(void)
     failure = 0;
     CHECK(appl_init() == 7 && gl_apid == 7 && _AESapid == 7 && _AESnumapps == -1);
     CHECK(menu_register(8,"Not my identity") == -1 && !registered_items);
+    CHECK(mt_menu_register(7,"Null globals",NULL) == -1 && !registered_items);
     CHECK(menu_register(7,NULL) == -1 && menu_register(7,"") == -1);
     CHECK(menu_register(REG_NEWNAME,"RENAMED ") == 0 && !registered_items);
     label_result = EIMBA;

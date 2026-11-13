@@ -31,8 +31,10 @@ static BOOL registered(AESGLOBAL *global)
 
 LONG aes_application_session(AESGLOBAL *global)
 {
-    LONG session = aes_app_context(global)->session;
-    LONG result = aes_session_query(session);
+    LONG session, result;
+    if (!global || global->ap_id <= 0) return EACCDN;
+    session = aes_app_context(global)->session;
+    result = aes_session_query(session);
     return result == E_OK ? session : result;
 }
 
