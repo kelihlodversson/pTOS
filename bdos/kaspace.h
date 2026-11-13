@@ -148,6 +148,13 @@ LONG kaspace_reservation_hold_captured(KASPACE *space,
 BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *rights);
 /* Borrowed canonical owner; source ticket must stay owned across duplication. */
 void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Pure authentication of this selected live captured nonlazy receipt, not a
+ * query whose metadata could be supplied by another hold. Caller owns the
+ * receipt throughout; no retain, backing, access grant or transfer occurs. */
+BOOL kaspace_reservation_matches(const KASPACE_RESERVATION_HOLD *,
+        const KASPACE *,UQUAD birth,VADDR exact_address,VADDR exact_bytes);
+#endif
 LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
         void *owner_identity, KASPACE_RESERVATION_HOLD *result);
 BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_identity);

@@ -530,6 +530,19 @@ void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold)
     return lease ? lease->owner_identity : NULL;
 }
 
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+BOOL kaspace_reservation_matches(const KASPACE_RESERVATION_HOLD *hold,
+        const KASPACE *space,UQUAD birth,VADDR address,VADDR bytes)
+{
+    KASPACE_LEASE *lease=reservation_find(hold);
+    return lease && space && birth && bytes && lease->space==space &&
+        lease->held && lease->captured && !lease->revoked &&
+        !(lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
+        lease->reservation_id==birth && lease->exact_address==address &&
+        lease->exact_bytes==bytes;
+}
+#endif
+
 LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
         void *owner_identity, KASPACE_RESERVATION_HOLD *result)
 {
