@@ -955,18 +955,28 @@ BOOL aspace_load_private(ASPACE *as, VADDR va, VADDR memsz,
  * the window (so the same address in every address space); the stack pointer
  * starts at the top.
  */
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+static ULONG live_kstacks;
+ULONG kstack_test_live(void) { return live_kstacks; }
+#endif
 PADDR kstack_alloc(uintptr_t *top)
 {
     PADDR phys = pmem32_alloc(KSTACK_PAGES, 1);
 
     if (phys == PMEM32_NONE)
         return 0;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    live_kstacks++;
+#endif
     *top = (uintptr_t)pmem32_virt(phys) + KSTACK_PAGES * PAGE;
     return phys;
 }
 
 void kstack_free(PADDR phys)
 {
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (phys) live_kstacks--;
+#endif
     if (phys)
         pmem32_free(phys, KSTACK_PAGES);
 }

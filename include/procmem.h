@@ -514,6 +514,9 @@ BOOL aspace_load_private(ASPACE *as, VADDR va, VADDR memsz,
  */
 PADDR kstack_alloc(uintptr_t *top);
 void kstack_free(PADDR phys);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+ULONG kstack_test_live(void); /* allocated and not yet freed, for native leak tests */
+#endif
 #if CONF_WITH_FORK_RETURN_TEST
 BOOL kstack_contains(PADDR phys, uintptr_t address);
 #endif

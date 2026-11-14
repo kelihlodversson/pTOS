@@ -405,3 +405,89 @@ The two #917 input-admission corrections remain in the integrated source; #917
 is retargeted to epic before any scheduler merge and must not replay its old
 stacked scheduler history. Its superseded disposition requires a separate check.
 No public dispatch, delayed IRQ restore, timer preemption or SMP is enabled.
+
+Nested continuation ownership (#713 Track A)
+--------------------------------------------
+Synchronous direct MMU launches from an authentic managed THREAD now use
+ksched_nested_prepare/enter/cancel/leave. This is a scheduler/launcher contract,
+not a new runnable task, root entry, reaper or public Pexec mode. Existing
+Pexec load-and-go and direct prepared-image launch call it from prepare_launch
+and proc_go. Kernel-code, foreign-callback and unmanaged launches retain their
+existing THREAD-less behavior. Public Pexec(4/104) remains disabled.
+
+prepare allocates a private association record, retains both canonical KPROC
+identities, prepares the child's KASPACE and syscall stack, and constructs its
+initial LOADED_PROCESS KTHREAD through kproc_prepare_user_thread and the #892
+trusted factory. That THREAD retains PROCESS/ASPACE ownership; it owns no
+independent scheduler stack or resumable scheduler continuation. Factory failure
+rolls back without publication. Preparation completes before any irreversible
+loaded-image move. An abandoned launch calls cancel before PROCESS destruction.
+Both preparation rollback and final release use execution-scoped cleanup guards;
+no cancellation checkpoint is admitted in a partially released ownership set.
+
+enter validates carrier execution generation, enclosing live KPROC/THREAD,
+loaded PD and the private preparation, then starts and associates the child's
+THREAD without allocation, callbacks or scheduling. The association is a stack
+of canonical owners on the existing carrier. Carrier program/process/thread,
+PID, PROCESS anchor and admission/result ownership never change. Only the
+innermost ACTIVE record may authenticate ksched_exit_thread; a STOPPED record
+and all suspended enclosing owners authenticate nobody. PD address reuse alone
+cannot authorize a retired execution. Each record retains the enclosing KPROC
+and borrows its executing THREAD until restoration; the carrier cannot retire
+with any active or prepared record.
+
+Cooperative checkpoints ARE supported inside the nested image. The existing
+KTHREAD_CONTEXT/native backend saves the actual loaded PD/root/launcher chain,
+CPU/FPU state and disk-error scope of the carrier's innermost execution. Its
+resumption restores those values before returning to that same nested syscall
+frame. Independent peers can run without entering a second scheduler root.
+Diagnostic IRQ capture deliberately excludes nested owners: there is no copied
+IRQ restart, timer preemption, SMP or independently schedulable nested THREAD.
+Cleanup scopes bind the logical KPROC/TID plus the carrier's non-recycled
+continuation identity and LIFO ticket. Each nested owner has its own ticket
+chain. Enclosing scopes remain suspended with their owner, so a child launched
+from protected destruction inherits neither cleanup suppression nor pending
+enclosing cancellation. Restoring that owner restores its exact outstanding
+scope chain; no scope may be released by another logical owner.
+
+On normal return, Pterm0, Pterm or supported user fault, xterm authenticates the
+nested THREAD and uses #893's existing final-THREAD exit preparation. Each
+nested PROCESS is currently sole-THREAD: Pclone, Pthjoin, Ptermgrp and managed
+result-ticket attachment remain unavailable there. This preserves existing
+public policy rather than inventing a nested PROCESS scheduler anchor. A group
+request for an enclosing PROCESS stays latched while its children run; it is
+delivered at the enclosing GEMDOS return after full child cleanup. Indefinitely
+blocked nested children still require ordinary event progress.
+
+The architecture launcher first stops using the child's syscall stack, restores
+its enclosing root/launcher and frees the abandoned syscall stack. Only then
+ksched_finish_exit detaches the nested THREAD exactly once and marks its frame
+STOPPED. The canonical finalizer commits PROCESS status and retires resources.
+leave validates the restored PD, carrier generation, launcher chain and stopped
+THREAD, pops the association, and reaps the THREAD on the enclosing kernel
+stack. The enclosing owner's cleanup guard spans waiter retirement, KTHREAD
+reap, final KASPACE pin/destructor work and both frame-owned identity releases.
+Yielding destructors cannot deliver pending enclosing cancellation mid-release.
+The finalizer's retained handoff reference stays alive throughout. Only after
+those pins are released does it publish canonical observer readiness (#909).
+No parallel PROCESS completion registry or wait consumer is introduced.
+
+Architecture return-chain audit:
+* x32: the lexical launcher owns CR3, syscall/return bridge and original outer
+  task context; trap frames retain user integer/x87/SSE state. Cooperative
+  context restore reinstates the nested root and kernel/user/IRQ stack fields.
+* ARMv7-A: gouser's enclosing SVC-stack frame and setjmp remain authoritative;
+  the backend saves actual PD/root/launcher, banked user SP/LR and FPSCR, while
+  trap frames/setjmp preserve VFP and integer state. Original RFE/SVC returns
+  restore CPSR; no x32 continuation is transplanted.
+* m68k: existing trap/uenter/gouser/termuser owns SSP/USP and original RTE frame;
+  the backend and launcher preserve FSAVE/FP0-FP7/FPCR/FPSR/FPIAR using the
+  existing 030/040/060-specific helpers. No copied interrupt frame is resumed.
+
+Phase 5 handoff: ordinary direct nested Pexec may reuse prepare before taking
+inherited resources/consuming an image, cancel on pre-entry failure, and enter
+immediately before loading the PD. Architecture launchers already call the
+shared stopped-THREAD handoff and finalizer/leave. The initial factory THREAD
+is associated, never published as another task. Shared-VM image selection and
+Pexec(4/104) policy remain #894/#956 consumer work after integration; this branch
+imports no #956 implementation and enables no additional public mode.

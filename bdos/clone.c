@@ -12,7 +12,9 @@
 #include "ksched.h"
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "kthread.h"
+#include "kaspace.h"
 #include "procmem.h"
+#include "kheap.h"
 #endif
 #endif
 
@@ -68,6 +70,27 @@ static long clone_request(uint64_t address, uint64_t size)
                 }
                 if (size == 0xc8920600ULL) {
                     proc_clone_test_cancel_publication(); value = E_OK;
+                }
+                /* Nested continuation ownership (#713): scheduler counters and
+                 * one-shot injections, then global identity/resource counts. */
+                if (size >= 0xc8920700ULL && size <= 0xc892077fULL)
+                    value = ksched_test_nested((UWORD)(size & 255));
+                if (size == 0xc8920780ULL) value = (LONG)kproc_count();
+                if (size == 0xc8920781ULL) value = (LONG)kthread_test_live();
+                if (size == 0xc8920782ULL) value = (LONG)kaspace_test_live();
+                if (size == 0xc8920783ULL) value = (LONG)kstack_test_live();
+                if (size == 0xc8920784ULL) value = (LONG)kproc_pid(run);
+                if (size == 0xc8920785ULL) value = (LONG)kproc_test_identities(FALSE);
+                if (size == 0xc8920786ULL) value = (LONG)kproc_test_identities(TRUE);
+                if (size == 0xc8920787ULL) value = (LONG)kaspace_test_references();
+                if (size == 0xc8920788ULL || size == 0xc8920789ULL) {
+                    PROCMEM_STATS stats;
+                    procmem_stats(&stats);
+                    value = size == 0xc8920788ULL ? (LONG)stats.live_allocs : (LONG)stats.free_pages;
+                }
+                if (size == 0xc892078aULL) {
+                    KHEAP_STATS stats;
+                    kheap_stats(&stats); value = (LONG)stats.live_blocks;
                 }
                 kproc_release(source);
             }

@@ -49,10 +49,14 @@ enum { THREAD_NEW, THREAD_EXECUTING, THREAD_STOPPED, THREAD_REAPING };
 
 /* Never reuse a TID during a boot. Exhaustion fails closed. */
 static ULONG last_tid;
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 static UWORD fail_attach_after;
-void kthread_test_fail_after_attach(void) { fail_attach_after = 1; }
+static ULONG live_threads;
 void kthread_test_fail_attach_after(UWORD count) { fail_attach_after = count; }
+ULONG kthread_test_live(void) { return live_threads; }
+#endif
+#if CONF_WITH_X86_64_MEMTEST
+void kthread_test_fail_after_attach(void) { fail_attach_after = 1; }
 ULONG kthread_test_set_last_tid(ULONG tid)
 {
     ULONG previous = last_tid;
@@ -92,7 +96,7 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
         kfree(thread);
         return NULL;
     }
-#if CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     if (fail_attach_after && !--fail_attach_after) {
         kproc_thread_detach(thread->process, thread, thread->process_next);
         kaspace_put(thread->space);
@@ -106,6 +110,9 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
 #endif
     thread->attached = TRUE;
     thread->tid = ++last_tid;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    live_threads++;
+#endif
     return thread;
 }
 
@@ -251,6 +258,9 @@ BOOL kthread_reap(KTHREAD *thread)
     completion_put(thread->completion);
 #endif
     kfree(thread);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    live_threads--;
+#endif
     if (dispose)
         proc_dispose_process(process);
     kproc_release(process);

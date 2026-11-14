@@ -985,18 +985,28 @@ BOOL aspace_load_private(ASPACE *as, UQUAD va, UQUAD memsz,
  * pointer starts at the top less 8, as the syscall entry stub expects
  * ("as if a return address had just been pushed").
  */
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+static ULONG live_kstacks;
+ULONG kstack_test_live(void) { return live_kstacks; }
+#endif
 PADDR kstack_alloc(uintptr_t *top)
 {
     UQUAD phys = x86_64_pmem_try_alloc_pages(X86_64_KSTACK_PAGES, 0);
 
     if (phys == X86_64_PMEM_NONE)
         return 0;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    live_kstacks++;
+#endif
     *top = X86_64_PHYS_MAP_BASE + phys + X86_64_KSTACK_PAGES * X86_64_PAGE_SIZE - 8;
     return phys;
 }
 
 void kstack_free(PADDR phys)
 {
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (phys) live_kstacks--;
+#endif
     if (phys)
         x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);
 }
