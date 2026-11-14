@@ -11,5 +11,6 @@ struct shared_vm_probe {
     volatile uint32_t late_runtime,descendant_pid,descendant_ready,descendant_gate,descendant_done;
     volatile uint32_t unrelated_runtime;
     volatile uint32_t descendant_mapping_prefixes,descendant_preparation_prefixes;
+    volatile uint32_t peer_final_regions,peer_final_backing_refs,peer_final_file_pages;
 };
 #endif

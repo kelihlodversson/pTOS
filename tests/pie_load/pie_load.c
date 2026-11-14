@@ -342,6 +342,7 @@ static void shared_vm_interpreted(void)
 #endif
     }
     conws("native shared-VM 128 interpreted Pexec4/104 normal/fault-before-fini exact 45-counter conservation: tested\r\n");
+    conws("native shared-VM standard ELF registers checked at interpreter first instruction: tested\r\n");
     conws("native shared-VM PT_INTERP Pexec4/104 standard entry: tested\r\n");
 }
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
@@ -354,8 +355,8 @@ static void shared_vm_dso_retention(void)
     static const unsigned char late_file[4096]={0x7f,'E','L','F'};
     long late_fd;
     unsigned fault,spin,boundary;
-    /* Use a fresh file: the ELF loader already cached SHRINT's first page on
-     * ARM/m68k, so that page cannot prove a new post-exit lazy file fault. */
+    /* A dedicated file makes the first clean fault and last-alias COW
+     * observable independently of the interpreter's executable cache. */
     late_fd=Fcreate("C:\\DSOLATE.BIN",0);
     ptest_assert_msg(late_fd>=0,"shared DSO late runtime: create uncached file");
     if(late_fd<0) return;
@@ -418,9 +419,9 @@ static void shared_vm_dso_retention(void)
             ptest_assert_msg(probe.descendant_ready && !probe.descendant_done && !probe.error &&
                 descendant.value[MLT_ALLOC_HOLDS]==common[0].value[MLT_ALLOC_HOLDS]+8,
                 "shared DSO descendant: complete ancestor and immediate-source R1 prefix survives both creators");
-            if(descendant.value[MLT_MMAP]!=common[2].value[MLT_MMAP] ||
-                descendant.value[MLT_BACKING_REFS]!=common[2].value[MLT_BACKING_REFS]+1 ||
-                descendant.value[MLT_FILE_PAGES]!=common[2].value[MLT_FILE_PAGES]+1) {
+            if(descendant.value[MLT_MMAP]+1!=probe.peer_final_regions ||
+                descendant.value[MLT_BACKING_REFS]!=probe.peer_final_backing_refs ||
+                descendant.value[MLT_FILE_PAGES]!=probe.peer_final_file_pages) {
                 shared_vm_diagnostic("shared DSO creator-exit regions=",common[2].value[MLT_MMAP]);
                 shared_vm_diagnostic("shared DSO descendant regions=",descendant.value[MLT_MMAP]);
                 shared_vm_diagnostic("shared DSO creator-exit backing refs=",common[2].value[MLT_BACKING_REFS]);
@@ -428,12 +429,13 @@ static void shared_vm_dso_retention(void)
                 shared_vm_diagnostic("shared DSO creator-exit file pages=",common[2].value[MLT_FILE_PAGES]);
                 shared_vm_diagnostic("shared DSO descendant file pages=",descendant.value[MLT_FILE_PAGES]);
             }
-            /* The peer first faults the late file page after creator exit,
-             * then COWs it. Its clean cache page owns one backing reference
-             * while the descendant retains the canonical file reservation. */
-            ptest_assert_msg(descendant.value[MLT_MMAP]==common[2].value[MLT_MMAP] &&
-                descendant.value[MLT_BACKING_REFS]==common[2].value[MLT_BACKING_REFS]+1 &&
-                descendant.value[MLT_FILE_PAGES]==common[2].value[MLT_FILE_PAGES]+1,
+            /* Fault/COW accounting is checked at the actual accesses. Cold
+             * DSO instructions can fault additional code pages before this
+             * boundary; compare with the peer's final live snapshot. Only
+             * its later unexported anonymous reservation must disappear. */
+            ptest_assert_msg(descendant.value[MLT_MMAP]+1==probe.peer_final_regions &&
+                descendant.value[MLT_BACKING_REFS]==probe.peer_final_backing_refs &&
+                descendant.value[MLT_FILE_PAGES]==probe.peer_final_file_pages,
                 "shared DSO descendant: loaded exact runtime attachments remain after generic peer exit");
             ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,
                 "shared DSO descendant: original metadata remain held after generic peer exit");

@@ -41,6 +41,10 @@ LONG thread_startup_arch_elf_entry(ASPACE *space,const THREAD_STARTUP_ARGS *args
     error=thread_startup_arch_validate_elf(space,args,initial_sp);
     if(error) return error;
     ((THREAD_STARTUP32 *)image)->sp=initial_sp;
+#if ARCH_ARM
+    /* Standard ELF uses r0 for an optional finalizer, not a basepage. */
+    ((THREAD_STARTUP32 *)image)->argument=0;
+#endif
     return E_OK;
 }
 #endif

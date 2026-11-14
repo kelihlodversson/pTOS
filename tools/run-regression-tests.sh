@@ -649,6 +649,7 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
         if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
             for marker in \
                 'native shared-VM 128 interpreted Pexec4/104 normal/fault-before-fini exact 45-counter conservation: tested' \
+                'native shared-VM standard ELF registers checked at interpreter first instruction: tested' \
                 'native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested' \
                 'native shared-VM generic executable dependency prefixes, surviving owner rollback and retry: tested' \
                 'native shared-VM late runtime file-COW and loaded descendant after both creators retire: tested' \

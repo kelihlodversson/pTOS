@@ -72,6 +72,9 @@ LONG thread_startup_arch_elf_entry(ASPACE *space,const THREAD_STARTUP_ARGS *args
     error=thread_startup_arch_validate_elf(space,args,initial_sp);
     if(error) return error;
     ((X32_THREAD_STARTUP_DRAFT *)image)->user.rsp=initial_sp;
+    /* Standard ELF entry has no C/basepage argument. All other GPRs were
+     * cleared by arch_prepare; keep its C-entry contract separate. */
+    ((X32_THREAD_STARTUP_DRAFT *)image)->user.rdi=0;
     return E_OK;
 }
 #endif

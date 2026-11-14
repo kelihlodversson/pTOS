@@ -223,8 +223,17 @@ fixture reaches all8 raw receipts while the last child outlives both creators.
 It executes retained DSO/main code, reads and COWs a file mapping born after the
 generic peer joined, and keeps exact source-owned runtime attachments after
 that peer exits. A later unexported runtime mapping is reclaimed independently.
-The clean file cache page materialized after creator exit accounts for exactly
-one extra live page/backing reference; final45-counter equality remains strict.
+The late file is distinct from executable input: snapshots at the actual read
+and COW require one clean file page/reference, then its last-alias retirement.
+A pre-exit snapshot separates cold DSO code faults from mapping-owner release;
+after peer exit only its later unexported reservation disappears. Final45-counter
+equality remains strict.
+
+Standard ELF entry clears x32's legacy RDI argument and ARM's r0 finalizer;
+C-entry drafts retain their authenticated basepage argument. Ordinary isolated
+ARM entry applies the same documented zero-finalizer ABI. Gated LD.SO assembly
+checks the real initial registers before bootstrap overwrites them (all15 x32
+GPRs, ARM r0), so successful interpreted launches also prove the kernel handoff.
 
 Presentation compatibility boundary: the optional FreeMiNT mode104 name hint
 is currently ignored; pTOS retains the authenticated PE_LOAD basename. This

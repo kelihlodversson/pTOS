@@ -53,6 +53,7 @@ static int64_t loaded_descendant_publish(uintptr_t image,struct shared_vm_probe 
  * the interpreted creator has stopped, including when fini never executes. */
 void dso_shared_peer(void *argument)
 {
+    static MAPPING_LIFETIME_SNAPSHOT lazy,clean,cow,final;
     struct shared_vm_probe *probe=argument;
     unsigned spin,i;
     char tail[12];
@@ -71,10 +72,23 @@ void dso_shared_peer(void *argument)
     if(!probe->grandchild || *(volatile uint32_t *)(uintptr_t)probe->grandchild!=0x644894UL)
         probe->error=84;
     late=(volatile unsigned char *)(uintptr_t)probe->late_runtime;
+    if(dl_syscall(0x190,(uintptr_t)&lazy,MLT_SNAPSHOT,0,0,0,0)) {probe->error=100;return;}
     if(!late || late[0]!=0x7f || late[1]!='E' || late[2]!='L' || late[3]!='F') {
         probe->error=93;return;
     }
+    if(dl_syscall(0x190,(uintptr_t)&clean,MLT_SNAPSHOT,0,0,0,0) ||
+        clean.value[MLT_FILE_PAGES]!=lazy.value[MLT_FILE_PAGES]+1 ||
+        clean.value[MLT_FILE_REFS]!=lazy.value[MLT_FILE_REFS]+1 ||
+        clean.value[MLT_BACKING_REFS]!=lazy.value[MLT_BACKING_REFS]+1) {
+        probe->error=101;return;
+    }
     late[0]=0x53;if(late[0]!=0x53) probe->error=94; /* actual retained file COW */
+    if(dl_syscall(0x190,(uintptr_t)&cow,MLT_SNAPSHOT,0,0,0,0) ||
+        cow.value[MLT_FILE_PAGES]!=lazy.value[MLT_FILE_PAGES] ||
+        cow.value[MLT_FILE_REFS]!=lazy.value[MLT_FILE_REFS] ||
+        cow.value[MLT_BACKING_REFS]!=lazy.value[MLT_BACKING_REFS]) {
+        probe->error=102;return;
+    }
     dynbss=17;probe->steps=2;
     /* A loaded child acquires existing source-owned runtime dependencies and
      * special ancestor receipts, then outlives this intermediate PROCESS. */
@@ -98,6 +112,10 @@ void dso_shared_peer(void *argument)
     if(image<=0) {probe->error=99;return;}
     probe->unrelated_runtime=(uint32_t)image;
     *(volatile uint32_t *)(uintptr_t)image=0x967894UL;
+    if(dl_syscall(0x190,(uintptr_t)&final,MLT_SNAPSHOT,0,0,0,0)) {probe->error=103;return;}
+    probe->peer_final_regions=final.value[MLT_MMAP];
+    probe->peer_final_backing_refs=final.value[MLT_BACKING_REFS];
+    probe->peer_final_file_pages=final.value[MLT_FILE_PAGES];
     probe->done=1;
 }
 #endif

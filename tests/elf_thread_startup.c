@@ -106,16 +106,22 @@ int main(void)
     {
 #if ARCH_X86_64
         X32_THREAD_STARTUP_DRAFT expected=*(const X32_THREAD_STARTUP_DRAFT *)thread_startup_image(draft);
+        assert(expected.user.rdi==args.argument);
 #else
         THREAD_STARTUP32 expected=*(const THREAD_STARTUP32 *)thread_startup_image(draft);
+        assert(expected.argument==args.argument);
 #endif
         assert(thread_startup_arch_elf_entry(&as,&args,initial+1,(void *)thread_startup_image(draft))==EINVAL);
         assert(!memcmp(&expected,thread_startup_image(draft),sizeof(expected)));
         assert(thread_startup_arch_elf_entry(&as,&args,initial,(void *)thread_startup_image(draft))==E_OK);
 #if ARCH_X86_64
         expected.user.rsp=initial;
+        expected.user.rdi=0;
 #else
         expected.sp=initial;
+#if ARCH_ARM
+        expected.argument=0;
+#endif
 #endif
         assert(!memcmp(&expected,thread_startup_image(draft),sizeof(expected)));
     }
@@ -158,6 +164,6 @@ int main(void)
     assert(kaspace_mapping_change(&as,STACK,8192));
     assert(thread_startup_validate(draft)==EIMBA);thread_startup_abort(&draft);
     kaspace_put(space);assert(!allocated && !stacks && !bridge_live);
-    puts("Production ELF startup: exact SP, preserved argc, no frame aliases/stores, C path, failure prefixes and revoked leases: PASS (modeled CPU)");
+    puts("Production ELF startup: exact SP, standard registers, preserved argc, no frame aliases/stores, C path, failure prefixes and revoked leases: PASS (modeled CPU)");
     return 0;
 }
