@@ -187,3 +187,30 @@ Native regression runs real DSO code/data before and after creator normal/fault
 exit, including a call back into the source image, then checks exact45-counter
 conservation with the parent root alive. The original failing control is retained
 in the PR evidence; successful-fini unmapping is not used.
+
+Native regression corrections discovered during reconciliation
+--------------------------------------------------------------
+The original m68k peer-chain98 and GLOBALCHffff failures occur before their
+role logic: native trap PCs identify _crtinit_noargs's insufficient-TPA branch.
+Their actual TPAs were77,824 and61,440 bytes; the default64KiB CRT stack plus
+MINFREE and image exceeds those bounds. The bounded test helpers declare16KiB
+stacks (their C frames are below1KiB). No TPA inflation, libcmini change, CRT
+check bypass or lifecycle assertion change is used.
+
+The multiple-orphan cleanup failure was a real lost-guard panic, not delayed
+readiness. Native creation/removal tracing showed the guard's canonical record
+was overwritten without a retirement. Production m68k memmove copied low chunks
+first inside backward64/256-byte blocks; an88-byte move shifted22bytes corrupts
+unread records. Its odd-overlap16-byte loop had the same flaw. Descending chunks
+and byte copies correct memmove itself for classic and ColdFire while preserving
+registers, counters and return ABI. A gated actual-symbol native1600-case oracle
+covers zero/self, both parities/directions and overlap distances/boundaries. The
+old-source failure is retained; ownership guards and exact reclamation assertions
+are unchanged. Runners reject kernel panics even if a continuation resumes.
+
+The DSO peer fixture accounts for the existing isolated-child test's intentional
+parent data write on ARM/m68k; its peer compares the authenticated shared value
+before/after creator normal/fault completion. It does not change status or data
+expectations to hide a launch failure. Every new special dependency acquisition
+prefix is injected natively, checked against all45 resource counters without a
+published child, and retried successfully from the same surviving source.

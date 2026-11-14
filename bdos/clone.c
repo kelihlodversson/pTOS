@@ -1,6 +1,7 @@
 /* Pclone GEMDOS snapshot/validation boundary; trusted startup is separate. */
 #include "emutos.h"
 #include "gemerror.h"
+#include "string.h"
 #include "clone.h"
 #include "biosext.h"
 #if CONF_WITH_USER_ASPACE
@@ -79,6 +80,35 @@ static LONG mapping_snapshot(VADDR output)
 }
 #endif
 
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+/* Call the actual production symbol, including the m68k assembly. The byte
+ * oracle is computed from the original pattern, never by another memmove. */
+static LONG shared_move_probe(void)
+{
+    static const UWORD lengths[]={0,1,3,4,15,16,17,22,43,44,63,64,65,66,88,127,128,255,256,257,300,511,512,513,600};
+    static const UWORD distances[]={0,1,2,3,15,16,18,20,22,31,32,43,44,63,64,65};
+    UBYTE actual[768],expected[768];
+    void *(*volatile move)(void *,const void *,size_t)=memmove;
+    UWORD n,d,direction,parity,i,from,to;
+    BOOL valid=TRUE;
+    for(n=0;n<ARRAY_SIZE(lengths);n++) for(d=0;d<ARRAY_SIZE(distances);d++)
+        for(direction=0;direction<2;direction++) for(parity=0;parity<2;parity++) {
+            from=16+parity+(direction?distances[d]:0);to=16+parity+(direction?0:distances[d]);
+            for(i=0;i<sizeof(actual);i++) actual[i]=expected[i]=(UBYTE)(i*17+(i>>3));
+            for(i=0;i<lengths[n];i++) expected[to+i]=(UBYTE)((from+i)*17+((from+i)>>3));
+            if(move(actual+to,actual+from,lengths[n])!=actual+to) valid=FALSE;
+            for(i=0;i<sizeof(actual);i++) if(actual[i]!=expected[i]) {
+                kcprintf("native kernel memmove mismatch: length=%u distance=%u direction=%u byte=%u\n",
+                    lengths[n],distances[d],direction,i);
+                valid=FALSE;break;
+            }
+        }
+    if(valid) kcprintf("native kernel memmove overlap: %lu cases PASS\n",
+        (unsigned long)(ARRAY_SIZE(lengths)*ARRAY_SIZE(distances)*4));
+    return valid?E_OK:ERR;
+}
+#endif
+
 static long clone_request(uint64_t address, uint64_t size)
 {
 #if CONF_WITH_USER_ASPACE
@@ -93,6 +123,11 @@ static long clone_request(uint64_t address, uint64_t size)
     BOOL scoped_test = FALSE;
 #endif
 #if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+    if(!address && size==SHARED_PEXEC_MOVE_QUERY) return shared_move_probe();
+    if(!address && size>=SHARED_PEXEC_DEPENDENCY_FAIL && size<=SHARED_PEXEC_DEPENDENCY_FAIL+255) {
+        kproc_shared_dependency_test_fail_after((UWORD)(size&255));return E_OK;
+    }
+    if(!address && size==SHARED_PEXEC_DEPENDENCY_STEPS) return kproc_shared_dependency_test_steps();
     if(size==SHARED_PEXEC_PROTECTED_QUERY) {
         SHARED_PEXEC_PROTECTED probe;
         if(kproc_copy_from_user_checked(&probe,(VADDR)address,sizeof(probe)) ||

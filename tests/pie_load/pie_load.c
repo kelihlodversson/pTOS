@@ -371,6 +371,10 @@ static void shared_vm_dso_retention(void)
             for(spin=0;spin<512 && !probe.started && !probe.error;spin++) (void)Syield();
             ptest_assert_msg(probe.started && probe.worker_started && probe.steps==1 && !probe.error,
                 "shared DSO peer: generic peer executes actual DSO code/data before creator termination");
+            if(probe.error) shared_vm_diagnostic("shared DSO peer construction error=",probe.error);
+            ptest_assert_msg(probe.second_tid>16 && probe.same_limit==probe.second_tid,
+                "shared DSO peer: every special dependency prefix rolls back without publication or a resource delta");
+            shared_vm_diagnostic("shared DSO native dependency failure prefixes=",probe.second_tid);
             shared_vm_snapshot(&snapshots[1]);shared_vm_common_snapshot(&common[1]);
             ptest_assert_msg(common[1].value[MLT_MMAP]>common[0].value[MLT_MMAP] &&
                 common[1].value[MLT_MEMBERS]>=common[0].value[MLT_MEMBERS]+3,
@@ -410,6 +414,7 @@ static void shared_vm_dso_retention(void)
         ptest_assert_msg(Mfree(stack)==0,"shared DSO peer: final stopped stack release");
     }
     conws("native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested\r\n");
+    conws("native shared-VM generic executable dependency prefixes, surviving owner rollback and retry: tested\r\n");
 }
 #endif
 #endif
@@ -1041,6 +1046,9 @@ void test_pie_load(void)
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    ptest_assert_msg(trap_1_wll(GEMDOS_PCLONE,0,SHARED_PEXEC_MOVE_QUERY)==0,
+        "shared resources: production kernel memmove preserves every overlapping byte");
+    conws("native shared-VM production kernel memmove overlap: tested\r\n");
     shared_vm_multiple_lifetime();
 #endif
     shared_vm_basic();

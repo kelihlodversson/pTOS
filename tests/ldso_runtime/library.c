@@ -23,14 +23,15 @@ void dso_shared_peer(void *argument)
 {
     struct shared_vm_probe *probe=argument;
     unsigned spin;
-    if(answer()!=23 || dynvalue!=9 || dynbss!=3) probe->error=81;
+    if(dynvalue!=(int32_t)probe->stack_limit || dynbss!=3 ||
+        answer()!=14+(int32_t)probe->stack_limit) probe->error=81;
     probe->core_limit=(uintptr_t)&answer;probe->data_limit=(uintptr_t)&dynvalue;
     probe->steps=1;probe->worker_started=1;
     for(spin=0;spin<2048 && !probe->gate;spin++)
         (void)dl_syscall(0xff,0,0,0,0,0,0);
     if(!probe->gate) {probe->error=82;return;}
-    if(dynvalue!=(probe->controller_result?9:-7) || dynbss!=3 ||
-        answer()!=(probe->controller_result?23:7)) probe->error=83;
+    if(dynvalue!=(probe->controller_result?(int32_t)probe->stack_limit:-7) || dynbss!=3 ||
+        answer()!=(probe->controller_result?14+(int32_t)probe->stack_limit:7)) probe->error=83;
     if(!probe->grandchild || *(volatile uint32_t *)(uintptr_t)probe->grandchild!=0x644894UL)
         probe->error=84;
     dynbss=17;probe->steps=2;probe->done=1;

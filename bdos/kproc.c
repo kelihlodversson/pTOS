@@ -4905,6 +4905,15 @@ BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size)
 #if CONF_WITH_NATIVE_SCHED
 #if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
 static UWORD shared_fail_after,shared_steps;
+static UWORD shared_dependency_after,shared_dependency_steps;
+void kproc_shared_dependency_test_fail_after(UWORD after)
+{ shared_dependency_after=after;shared_dependency_steps=0; }
+UWORD kproc_shared_dependency_test_steps(void) { return shared_dependency_steps; }
+static BOOL shared_dependency_point(void)
+{
+    shared_dependency_steps++;
+    return shared_dependency_after && !--shared_dependency_after;
+}
 void kproc_shared_test_fail_after(UWORD after) {shared_fail_after=after;shared_steps=0;}
 UWORD kproc_shared_test_steps(void) {return shared_steps;}
 static BOOL shared_failure_point(void)
@@ -4914,6 +4923,7 @@ static BOOL shared_failure_point(void)
 }
 #else
 static BOOL shared_failure_point(void) {return FALSE;}
+#define shared_dependency_point() FALSE
 #endif
 #if KPROC_SHARED_INTERP
 #include "kproc_shared_interp.h"

@@ -161,23 +161,26 @@ LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
     if(!target || !source || target==source || target->shared_exec || target->shared_inherited ||
         target->threads || target->mapping_preparation!=MAPPING_PREPARED ||
         !source->active_space || !mapping_owner_live(source)) return EACCDN;
-    set=kalloc(sizeof(*set));if(!set) return ENSMEM;
-    memset(set,0,sizeof(*set));set->space=kaspace_share(source->active_space);
+    set=shared_dependency_point()?NULL:kalloc(sizeof(*set));if(!set) return ENSMEM;
+    memset(set,0,sizeof(*set));
+    set->space=shared_dependency_point()?NULL:kaspace_share(source->active_space);
     if(!set->space) { kfree(set);return ENSMEM; }
     inherited=shared_regions(source);
     if(inherited) {
         for(i=0;i<inherited->nraw;i++) {
-            error=kproc_allocation_duplicate(&inherited->raw[i],&set->raw[set->nraw]);
+            error=shared_dependency_point()?ENSMEM:
+                kproc_allocation_duplicate(&inherited->raw[i],&set->raw[set->nraw]);
             if(error) goto failed;
             set->nraw++;
         }
         for(i=0;i<inherited->nlogical;i++) {
-            error=kproc_reservation_duplicate(&inherited->logical[i],&set->logical[set->nlogical]);
+            error=shared_dependency_point()?ENSMEM:
+                kproc_reservation_duplicate(&inherited->logical[i],&set->logical[set->nlogical]);
             if(error) goto failed;
             set->nlogical++;
         }
     }
-#define DEPENDENCY(call) do {error=(call);if(error) goto failed;}while(0)
+#define DEPENDENCY(call) do {error=shared_dependency_point()?ENSMEM:(call);if(error) goto failed;}while(0)
     /* A generic source's own compatibility PD/env are distinct from its
      * ancestor's receipts. Own exactly those dependencies as well. */
     DEPENDENCY(shared_raw(set,source,source->user_start,source->tpa_gen));
@@ -199,6 +202,7 @@ LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
                                         source->interpreter_layout.seg[i].memsz,ASPACE_PROT_USER));
 #endif
     }
+    if(shared_dependency_point()) {error=ENSMEM;goto failed;}
     target->shared_inherited=set; /* prepared, not committed/runnable */
     return E_OK;
 failed:

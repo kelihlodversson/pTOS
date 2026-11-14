@@ -1,9 +1,12 @@
 #include <stdint.h>
 #include "../../lib/ldso/runtime.h"
 #include "../../include/mman.h"
+extern int answer(void), dynvalue, dynbss;
 #ifdef LDSO_TEST_SHARED_VM
 #include "../pie_load/shared_vm_probe.h"
 #include "../../include/pclone.h"
+#include "../../include/shared_pexec_test.h"
+#include "../../include/mapping_lifetime_test.h"
 static struct shared_vm_probe *shared_probe;
 static struct shared_vm_probe *dso_probe;
 extern void dso_shared_peer(void *);
@@ -17,6 +20,29 @@ static void shared_fault(void)
     __asm__ volatile("ud2");
 #endif
 }
+static int64_t shared_dependency_matrix(struct ptos_clone_args *args)
+{
+    static MAPPING_LIFETIME_SNAPSHOT before,after;
+    unsigned prefix,i;
+    int64_t result,steps;
+    for(prefix=1;prefix<256;prefix++) {
+        if(dl_syscall(GEMDOS_PCLONE,(uintptr_t)&before,MLT_SNAPSHOT,0,0,0,0)) return -1;
+        if(dl_syscall(GEMDOS_PCLONE,0,SHARED_PEXEC_DEPENDENCY_FAIL+prefix,0,0,0,0)) return -1;
+        result=dl_syscall(GEMDOS_PCLONE,(uintptr_t)args,sizeof(*args),0,0,0,0);
+        steps=dl_syscall(GEMDOS_PCLONE,0,SHARED_PEXEC_DEPENDENCY_STEPS,0,0,0,0);
+        (void)dl_syscall(GEMDOS_PCLONE,0,SHARED_PEXEC_DEPENDENCY_FAIL,0,0,0,0);
+        if(result>0) {
+            dso_probe->second_tid=prefix-1;dso_probe->same_limit=(uint32_t)steps;
+            return prefix>16?result:-1;
+        }
+        if(result!=-39 || dso_probe->child_pid || dso_probe->worker_tid ||
+            dl_syscall(GEMDOS_PCLONE,(uintptr_t)&after,MLT_SNAPSHOT,0,0,0,0)) return -1;
+        for(i=0;i<MLT_FIELDS;i++) if(before.value[i]!=after.value[i]) {
+            dso_probe->error=1000+i;return -1;
+        }
+    }
+    return -1;
+}
 static int shared_dso_create(void)
 {
     struct ptos_clone_args args={0};
@@ -26,7 +52,10 @@ static int shared_dso_create(void)
     args.stack_base=(void *)(uintptr_t)dso_probe->worker_stack;args.stack_size=32768;
     args.child_pid=(int32_t *)&dso_probe->child_pid;
     args.child_tid=(int32_t *)&dso_probe->worker_tid;
-    result=dl_syscall(GEMDOS_PCLONE,(uintptr_t)&args,sizeof(args),0,0,0,0);
+    /* launch_child() already proved nested isolated data independence. Its
+     * deliberate parent write remains123 on sharing-test architectures. */
+    dso_probe->stack_limit=(uint32_t)dynvalue;
+    result=shared_dependency_matrix(&args);
     if(result<=0 || !dso_probe->child_pid) {dso_probe->error=85;return 89;}
     for(spin=0;spin<512 && !dso_probe->worker_started;spin++)
         (void)dl_syscall(0xff,0,0,0,0,0,0);
@@ -43,7 +72,6 @@ static int shared_dso_create(void)
     return 77;
 }
 #endif
-extern int answer(void), dynvalue, dynbss;
 int startup_log;
 int leaf(void) { return 11; }             /* executable interposes library leaf */
 static void preinit(void) { startup_log = 9; }

@@ -41,6 +41,11 @@ void *kalloc(ULONG size)
 }
 void kfree(void *p) { if (p) { CHECK(metadata_live);metadata_live--;free(p); } }
 void panic(const char *format,...) { fprintf(stderr,"unexpected panic: %s\n",format);abort(); }
+#if CONF_WITH_NATIVE_SCHED
+/* Physical/permission harness has one modeled execution context. Native
+ * scheduler tests independently authenticate actual continuation identities. */
+UQUAD ksched_context_id(void) { return 1; }
+#endif
 static PADDR ram_alloc(ULONG pages)
 {
     ULONG i,j;

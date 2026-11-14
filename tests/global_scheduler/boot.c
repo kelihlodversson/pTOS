@@ -3,6 +3,13 @@
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
+
+#if defined(__mc68000__) && defined(TEST_IS_PRG)
+/* Bounded scheduler fixture, including PD churn under simultaneous startup
+ * TPAs. Native tracing proves the default64KiB CRT stack cannot fit the
+ * legitimately available61KiB child TPA; these small roles need <1KiB. */
+long _stksize = 16L * 1024;
+#endif
 #include <stdint.h>
 #include <string.h>
 #define LOG "C:\\GLOBAL.LOG"

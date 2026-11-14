@@ -10,7 +10,6 @@ void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(!scope->active);scope->active=TRUE; }
 void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(scope->active);scope->active=FALSE; }
-UQUAD ksched_context_id(void) { return 1; }
 BOOL ksched_wait_ready(BOOL (*ready)(void *),void *argument)
 { CHECK(ready(argument));return TRUE; }
 struct kthread { KPROC *process;KASPACE *space;KTHREAD *next; };

@@ -493,6 +493,9 @@ while [ "$n" -lt "$limit" ]; do
     n=$((n + 1))
 done
 suite_log=$log
+if grep -aq 'Panic:' "$suite_log"; then
+    record "kernel panic" FAIL "regression execution crossed a kernel panic"
+fi
 finish_cuis_input
 
 if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
@@ -615,6 +618,7 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
     fi
     if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
         for marker in \
+            'native shared-VM production kernel memmove overlap: tested' \
             'native shared-VM four-boundary resource conservation and multiple surviving orphans: tested' \
             'native shared-VM exhaustive preparation prefixes and exact rollback conservation: tested'; do
             if ! grep -aqF "$marker" "$suite_log"; then
@@ -645,7 +649,8 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
         if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
             for marker in \
                 'native shared-VM 128 interpreted Pexec4/104 normal/fault-before-fini exact 45-counter conservation: tested' \
-                'native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested'; do
+                'native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested' \
+                'native shared-VM generic executable dependency prefixes, surviving owner rollback and retry: tested'; do
                 if ! grep -aqF "$marker" "$suite_log"; then
                     record "native shared-Pexec DSO lifetime" FAIL "missing positive consumer execution: $marker"
                 fi
