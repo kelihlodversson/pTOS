@@ -31,6 +31,7 @@ static UBYTE stack_data[8192] __attribute__((aligned(16))),bridge_data[4096];
 static BOOL bridge_live,stack_live=TRUE;
 static FS_ERROR_STATE disk_error;
 FS_ERROR_STATE *fs_error_current(void) { return &disk_error; }
+UQUAD ksched_context_id(void) { return 1; } /* one modeled CPU continuation */
 BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *draft) { return draft!=NULL; }
 int fixture_setjmp(jmp_buf state) { (void)state;return 0; }
 void panic(const char *format,...) { fprintf(stderr,"panic: %s\n",format);abort(); }
@@ -66,6 +67,8 @@ void *aspace_user_write_alias(const ASPACE *as,VADDR va,ULONG bytes)
 { aliases++;return aspace_user_range_ok(as,va,bytes,TRUE)?stack_data+va-STACK:NULL; }
 BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
 BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;abort(); } /* this fixture has no ordinary reservations */
 void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
 BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }

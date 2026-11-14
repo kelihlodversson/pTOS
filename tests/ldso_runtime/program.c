@@ -46,7 +46,7 @@ static int64_t shared_dependency_matrix(struct ptos_clone_args *args)
 static int shared_dso_create(void)
 {
     struct ptos_clone_args args={0};
-    int64_t result;
+    int64_t result,handle;
     unsigned spin;
     args.flags=CLONE_VM;args.entry=dso_shared_peer;args.argument=dso_probe;
     args.stack_base=(void *)(uintptr_t)dso_probe->worker_stack;args.stack_size=32768;
@@ -64,6 +64,13 @@ static int shared_dso_create(void)
     if(result<=0) {dso_probe->error=86;return 89;}
     dso_probe->grandchild=(uint32_t)result;
     *(volatile uint32_t *)(uintptr_t)result=0x644894UL;
+    /* Born after generic membership, left lazy until after creator exit. */
+    handle=dl_syscall(0x3d,(uintptr_t)"C:\\SHRINT.ELF",0,0,0,0,0);
+    if(handle<0) {dso_probe->error=91;return 89;}
+    result=dl_syscall(GEMDOS_MMAP,0,4096,PROT_READ|PROT_WRITE,
+                     MAP_PRIVATE|MAP_PTOS_RUNTIME,handle,0);
+    if(dl_syscall(0x3e,handle,0,0,0,0,0) || result<=0) {dso_probe->error=92;return 89;}
+    dso_probe->late_runtime=(uint32_t)result;
     dso_probe->started=1;
     for(spin=0;spin<512 && !dso_probe->resize_limit;spin++)
         (void)dl_syscall(0xff,0,0,0,0,0,0);

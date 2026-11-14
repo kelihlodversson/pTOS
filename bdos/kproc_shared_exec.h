@@ -339,6 +339,12 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     /* The borrowed-text transaction authenticates an already-owned R1 ticket.
      * Keep that exact physical allocation held until commit or full rollback. */
     SHARED_TRY(shared_raw(set,source,target->user_start,target->tpa_gen));
+    inherited=shared_regions(source);
+    if(inherited) for(i=0;i<inherited->nraw;i++) {
+        if(set->nraw==SHARED_RAW) {error=ENSMEM;goto failed;}
+        SHARED_TRY(kproc_allocation_duplicate(&inherited->raw[i],&set->raw[set->nraw]));
+        set->nraw++;
+    }
     if(legacy) {
 #if KPROC_LEGACY_PRG
         VADDR base=(VADDR)(uintptr_t)target->user_start;

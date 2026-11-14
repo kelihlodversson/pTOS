@@ -350,6 +350,7 @@ static void shared_vm_dso_retention(void)
     static struct shared_vm_probe probe;
     static SHARED_PEXEC_SNAPSHOT snapshots[4];
     static MAPPING_LIFETIME_SNAPSHOT common[4];
+    static MAPPING_LIFETIME_SNAPSHOT descendant;
     unsigned fault,spin,boundary;
     for(fault=0;fault<2;fault++) {
         BASEPAGE *image;
@@ -395,8 +396,50 @@ static void shared_vm_dso_retention(void)
             for(spin=0;spin<512 && !probe.done && !probe.error;spin++) (void)Syield();
             ptest_assert_msg(probe.done && probe.steps==2 && !probe.error,
                 "shared DSO peer: executes file-backed DSO after creator exit and writes surviving data");
+            if(probe.error) shared_vm_diagnostic("shared DSO descendant launch result=",probe.environment);
             ptest_assert_msg(Pwaitpid(probe.child_pid,1,0)==-33,
                 "shared DSO peer: unrelated observer gains no orphan reaping authority");
+            shared_vm_retirement(&snapshots[0],1);
+            shared_vm_common_snapshot(&descendant);
+            ptest_assert_msg(probe.descendant_ready && !probe.descendant_done && !probe.error &&
+                descendant.value[MLT_ALLOC_HOLDS]==common[0].value[MLT_ALLOC_HOLDS]+8,
+                "shared DSO descendant: complete ancestor and immediate-source R1 prefix survives both creators");
+            if(descendant.value[MLT_MMAP]!=common[2].value[MLT_MMAP] ||
+                descendant.value[MLT_BACKING_REFS]!=common[2].value[MLT_BACKING_REFS]+1 ||
+                descendant.value[MLT_FILE_PAGES]!=common[2].value[MLT_FILE_PAGES]+1) {
+                shared_vm_diagnostic("shared DSO creator-exit regions=",common[2].value[MLT_MMAP]);
+                shared_vm_diagnostic("shared DSO descendant regions=",descendant.value[MLT_MMAP]);
+                shared_vm_diagnostic("shared DSO creator-exit backing refs=",common[2].value[MLT_BACKING_REFS]);
+                shared_vm_diagnostic("shared DSO descendant backing refs=",descendant.value[MLT_BACKING_REFS]);
+                shared_vm_diagnostic("shared DSO creator-exit file pages=",common[2].value[MLT_FILE_PAGES]);
+                shared_vm_diagnostic("shared DSO descendant file pages=",descendant.value[MLT_FILE_PAGES]);
+            }
+            /* The peer first faults the late file page after creator exit,
+             * then COWs it. Its clean cache page owns one backing reference
+             * while the descendant retains the canonical file reservation. */
+            ptest_assert_msg(descendant.value[MLT_MMAP]==common[2].value[MLT_MMAP] &&
+                descendant.value[MLT_BACKING_REFS]==common[2].value[MLT_BACKING_REFS]+1 &&
+                descendant.value[MLT_FILE_PAGES]==common[2].value[MLT_FILE_PAGES]+1,
+                "shared DSO descendant: loaded exact runtime attachments remain after generic peer exit");
+            ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,
+                "shared DSO descendant: original metadata remain held after generic peer exit");
+            ptest_assert_msg(probe.unrelated_runtime &&
+                trap_1_wlll(GEMDOS_MPROT,probe.unrelated_runtime,4096,PROT_READ|PROT_WRITE)==-40,
+                "shared DSO descendant: later unexported runtime mapping is not implicitly attached by visibility");
+            {
+                unsigned char byte=0;
+                long fd=Fopen("C:\\SHRINT.ELF",0);
+                ptest_assert_msg(fd>=0 && Fread(fd,1,&byte)==1 && byte==0x7f,
+                    "shared DSO late runtime COW preserves the independent file contents");
+                if(fd>=0) ptest_assert_msg(Fclose(fd)==0,"shared DSO late runtime independent file close");
+            }
+            probe.descendant_gate=1;
+            for(spin=0;spin<512 && !probe.descendant_done && !probe.error;spin++) (void)Syield();
+            if(probe.error) shared_vm_diagnostic("shared DSO descendant error=",probe.error);
+            ptest_assert_msg(probe.descendant_done && !probe.error,
+                "shared DSO descendant: executes retained DSO/main code and accesses late runtime COW after both creators exit");
+            ptest_assert_msg(Pwaitpid(probe.descendant_pid,1,0)==-33,
+                "shared DSO descendant: orphan observation grants no public reap");
             shared_vm_retirement(&snapshots[0],0);
         }
         ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared DSO peer: final staged metadata release");
@@ -415,6 +458,7 @@ static void shared_vm_dso_retention(void)
     }
     conws("native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested\r\n");
     conws("native shared-VM generic executable dependency prefixes, surviving owner rollback and retry: tested\r\n");
+    conws("native shared-VM late runtime file-COW and loaded descendant after both creators retire: tested\r\n");
 }
 #endif
 #endif

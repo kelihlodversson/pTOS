@@ -183,8 +183,9 @@ end = script.index('# Configured nested ownership checks', start)
 block = script[start:end]
 import re
 shared_markers = re.findall(r"'(native shared-VM[^']+: tested)'", block)
-dso_markers = [m for m in shared_markers if '45-counter conservation' in m or 'dependency prefixes' in m]
-assert len(dso_markers) == 3
+dso_markers = [m for m in shared_markers if '45-counter conservation' in m or
+               'dependency prefixes' in m or 'late runtime file-COW' in m]
+assert len(dso_markers) == 4
 with tempfile.TemporaryDirectory(prefix='ptos-shared-dso-probes-') as directory:
     top = Path(directory)
     (top / 'obj').mkdir()
@@ -200,4 +201,4 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-dso-probes-') as directory:
                                     check=True, text=True, capture_output=True)
             expected = 'native shared-Pexec DSO lifetime' if mask == 7 and missing else ''
             assert result.stdout == expected, (mask, missing, result.stdout)
-print('Native shared-Pexec DSO guards: 32 feature/marker cases, compiled-out or missing evidence rejected: PASS (host shell)')
+print('Native shared-Pexec DSO guards: 40 feature/marker cases, compiled-out or missing evidence rejected: PASS (host shell)')

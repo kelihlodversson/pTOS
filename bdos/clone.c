@@ -90,6 +90,7 @@ static LONG shared_move_probe(void)
     UBYTE actual[768],expected[768];
     void *(*volatile move)(void *,const void *,size_t)=memmove;
     UWORD n,d,direction,parity,i,from,to;
+    ULONG cases=0;
     BOOL valid=TRUE;
     for(n=0;n<ARRAY_SIZE(lengths);n++) for(d=0;d<ARRAY_SIZE(distances);d++)
         for(direction=0;direction<2;direction++) for(parity=0;parity<2;parity++) {
@@ -97,14 +98,15 @@ static LONG shared_move_probe(void)
             for(i=0;i<sizeof(actual);i++) actual[i]=expected[i]=(UBYTE)(i*17+(i>>3));
             for(i=0;i<lengths[n];i++) expected[to+i]=(UBYTE)((from+i)*17+((from+i)>>3));
             if(move(actual+to,actual+from,lengths[n])!=actual+to) valid=FALSE;
+            cases++;
             for(i=0;i<sizeof(actual);i++) if(actual[i]!=expected[i]) {
                 kcprintf("native kernel memmove mismatch: length=%u distance=%u direction=%u byte=%u\n",
                     lengths[n],distances[d],direction,i);
                 valid=FALSE;break;
             }
         }
-    if(valid) kcprintf("native kernel memmove overlap: %lu cases PASS\n",
-        (unsigned long)(ARRAY_SIZE(lengths)*ARRAY_SIZE(distances)*4));
+    if(cases!=ARRAY_SIZE(lengths)*ARRAY_SIZE(distances)*4) valid=FALSE;
+    if(valid) kcprintf("native kernel memmove overlap: %lu cases PASS\n",(unsigned long)cases);
     return valid?E_OK:ERR;
 }
 #endif

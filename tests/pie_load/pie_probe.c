@@ -70,7 +70,7 @@ int main(void)
 {
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     if(_base->p_cmdlin[0]==10 && (_base->p_cmdlin[1]=='s' || _base->p_cmdlin[1]=='o' ||
-        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m' || _base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e' || _base->p_cmdlin[1]=='n')) {
+        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m' || _base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e' || _base->p_cmdlin[1]=='n' || _base->p_cmdlin[1]=='h')) {
         uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
         for(i=3;i<11;i++) {
             unsigned char c=(unsigned char)_base->p_cmdlin[i];
@@ -99,6 +99,19 @@ int main(void)
             if((uint32_t)Pgetpid()!=probe->pid ||
                (uint32_t)trap_1_wll(GEMDOS_PCLONE,0,0xc8920103UL)!=probe->worker_tid) probe->error=85;
             probe->done=1;Pterm(probe->error?94:0x35);
+        }
+        if(_base->p_cmdlin[1]=='h') {
+            unsigned spin;
+            int (*answer)(void)=(int (*)(void))(uintptr_t)probe->core_limit;
+            int expected=28+(probe->controller_result?(int32_t)probe->stack_limit:-7);
+            probe->descendant_ready=1;
+            for(spin=0;spin<512 && !probe->descendant_gate;spin++) (void)Syield();
+            if(!probe->descendant_gate || answer()!=expected ||
+                *(volatile unsigned char *)(uintptr_t)probe->late_runtime!=0x53 ||
+                *(volatile uint32_t *)(uintptr_t)probe->grandchild!=0x644894UL) {
+                probe->error=98;Pterm(94);
+            }
+            probe->descendant_done=1;Pterm(0x36);
         }
         if(_base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e') {
             unsigned n,spin,count=_base->p_cmdlin[1]=='u'?2:1;

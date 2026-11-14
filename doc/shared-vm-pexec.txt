@@ -214,3 +214,20 @@ before/after creator normal/fault completion. It does not change status or data
 expectations to hide a launch failure. Every new special dependency acquisition
 prefix is injected natively, checked against all45 resource counters without a
 published child, and retried successfully from the same surviving source.
+
+Loaded descendants inherit the complete source-set R1 prefix as well as R2
+receipts. The target's own TPA receipt remains raw[0] for exact PRG journal
+authentication; remaining acquisitions deduplicate the immediate source and
+respect the unchanged raw8/region96 bounds. The native loaded->generic->loaded
+fixture reaches all8 raw receipts while the last child outlives both creators.
+It executes retained DSO/main code, reads and COWs a file mapping born after the
+generic peer joined, and keeps exact source-owned runtime attachments after
+that peer exits. A later unexported runtime mapping is reclaimed independently.
+The clean file cache page materialized after creator exit accounts for exactly
+one extra live page/backing reference; final45-counter equality remains strict.
+
+Presentation compatibility boundary: the optional FreeMiNT mode104 name hint
+is currently ignored; pTOS retains the authenticated PE_LOAD basename. This
+is unchanged by Phase5 and is separate from its VM/PROCESS/result contract.
+Resolve that presentation extension before public ABI activation. No claim of
+unqualified FreeMiNT API parity or public activation follows from this candidate.
