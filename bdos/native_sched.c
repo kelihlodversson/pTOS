@@ -976,7 +976,7 @@ static void reclaim_nested_execution(void *resource)
         panic("scheduler: nested observer ready before THREAD reclamation");
     if (frame->tid && !frame->program) {
         if (!ksched_cleanup_active()) panic("scheduler: unprotected nested reclamation");
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_PTERMGRP && CONF_WITH_PRIVATE_CLONE_TEST
         if (ksched_cancellation_pending()) {
             KTHREAD *enclosing = ksched_exit_thread(run);
             /* Exercise a real scheduler handoff in a destructor while the
