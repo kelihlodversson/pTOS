@@ -112,6 +112,10 @@ struct kproc {
     UBYTE *user_end;
     ASPACE *aspace;      /* borrowed from active_space */
     KASPACE *active_space; /* owning reference, NULL until prepared */
+    KASPACE_MEMBER *mapping_members; /* authenticated PROCESS lifetime claims */
+    KASPACE_MEMBER *prepared_mapping_members; /* borrowed, caller-owned construction token */
+    UBYTE mapping_preparation; /* closes competing construction through rollback callbacks */
+    KASPACE_SCOPE *allocation_scope; /* borrowed from those memberships */
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
@@ -196,6 +200,65 @@ struct kproc {
 };
 
 static KPROC *kproc_list;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+static ULONG mapping_wait_count;
+static UQUAD mapping_pause_actor;
+ULONG kproc_test_mapping_wait_count(void) { return mapping_wait_count; }
+VADDR kproc_test_contended_allocation(void)
+{
+    VADDR result;
+    if (mapping_pause_actor || !ksched_exit_thread(run) || !ksched_context_id()) return 0;
+    mapping_pause_actor=ksched_context_id();
+    result=kproc_uheap_alloc(run,3*USER_PAGE_SIZE);
+    mapping_pause_actor=0;
+    return result;
+}
+#endif
+#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_SCHED
+static BOOL mapping_idle(void *space) { return !kaspace_mutation_busy(space); }
+#endif
+static BOOL mapping_wait_idle(KASPACE *space)
+{
+    KASPACE *retained;
+    BOOL ready=TRUE;
+    if (!kaspace_mutation_busy(space)) return TRUE;
+    retained=kaspace_share(space);
+    if (!retained) return FALSE;
+    while (kaspace_mutation_busy(space)) {
+        if (kaspace_mutation_reentrant(space)) { ready=FALSE;break; }
+#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_PRIVATE_CLONE_TEST
+        if (mapping_wait_count==0xffffffffUL) panic("mapping wait counter exhausted");
+        mapping_wait_count++;
+#endif
+        if (!ksched_wait_ready(mapping_idle,space)) { ready=FALSE;break; }
+#else
+        ready=FALSE;break;
+#endif
+    }
+    kaspace_put(retained);
+    return ready;
+}
+typedef struct { KPROC *process;KASPACE *space; } MAPPING_MUTATION;
+static BOOL mapping_open(PD *pd,MAPPING_MUTATION *mutation)
+{
+    KPROC *p=kproc_retain(pd);
+    KASPACE *space=p?kaspace_share(p->active_space):NULL;
+    if (!space || !mapping_wait_idle(space) || kproc_live_pd(p)!=pd || p->active_space!=space ||
+        !kaspace_mutation_begin(space)) {
+        kaspace_put(space);kproc_release(p);return FALSE;
+    }
+    mutation->process=p;mutation->space=space;
+    return TRUE;
+}
+static void mapping_close(MAPPING_MUTATION *mutation)
+{
+    kaspace_mutation_end(mutation->space);
+    kaspace_put(mutation->space);kproc_release(mutation->process);
+    mutation->space=NULL;mutation->process=NULL;
+}
+#endif
 #if CONF_WITH_FORK_RETURN_TEST
 BOOL kproc_has_aspace_peer(const KPROC *source)
 {
@@ -386,11 +449,15 @@ BOOL kproc_test_share_active(PD *pd, KASPACE *space)
 {
     KPROC *process = kproc_find(pd);
     KASPACE *shared;
+    KASPACE_MEMBER *member=NULL;
     if (!process || process->active_space || process->pending_space)
         return FALSE;
+    if (kaspace_member_new(space,process->number,process,&member)) return FALSE;
     shared = kaspace_share(space);
     if (!shared)
-        return FALSE;
+        { kaspace_member_release(&member);return FALSE; }
+    process->mapping_members=member;
+    process->allocation_scope=kaspace_member_scope(member);
     process->active_space = shared;
     process->aspace = kaspace_backend(shared);
     return TRUE;
@@ -605,11 +672,29 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
 BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
 {
     KPROC *peer;
+    KASPACE *original;
+    KASPACE_HEAP *heap;
+    ULONG i;
     if (!source || !source->active_space || !source->threads ||
         !kproc_thread_is_sole(source, source->threads) || source->nheap || source->pending_space ||
         source->give_back || source->lender || source->lost) return FALSE;
+    original=source->active_space;
+    if (!mapping_wait_idle(original) || source->active_space!=original || !source->threads ||
+        !kproc_thread_is_sole(source,source->threads)) return FALSE;
     for (peer = kproc_list; peer; peer = peer->next)
         if (peer != source && peer->active_space == source->active_space) return FALSE;
+    heap=kaspace_heap(source->active_space);
+    for (i=0;i<heap->count;i++)
+        if (!kaspace_mapping_owned(source->active_space,source->number,source,heap->blocks[i].reservation,
+                heap->blocks[i].va,(VADDR)heap->blocks[i].pages*USER_PAGE_SIZE)) return FALSE;
+#if CONF_WITH_MMAP
+    {
+        MMAP_REGION *region;
+        for (region=kaspace_mmap(source->active_space)->regions;region;region=region->next)
+            if (!kaspace_mapping_owned(source->active_space,source->number,source,region->reservation,
+                    region->address,region->length)) return FALSE;
+    }
+#endif
     if (target) {
         if (!kproc_clone_target_ready(target, NULL) || target->nheap) return FALSE;
         target->stack_size = source->stack_size;
@@ -734,6 +819,201 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
     p->aspace = kaspace_backend(space);
     p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
     return TRUE;
+}
+
+static BOOL mapping_owner_live(const KPROC *p)
+{
+    return kproc_thread_start_allowed(p)
+#if CONF_WITH_PTERMGRP
+        && !kproc_group_status(p,NULL)
+#endif
+        ;
+}
+
+enum { MAPPING_PREPARING=1,MAPPING_PREPARED,MAPPING_ABORTING };
+static LONG mapping_prepare_begin(KPROC *p,KPROC *source,KASPACE *space,KASPACE_MEMBER **result)
+{
+    if (!result || *result) return EINVAL;
+    if (!p || !source || p==source || !space || p->mapping_members || p->mapping_preparation ||
+        !kproc_clone_target_ready(p,NULL) || !mapping_owner_live(p) || !mapping_owner_live(source)) return EACCDN;
+    p->mapping_preparation=MAPPING_PREPARING;
+    if (!mapping_wait_idle(space) || !mapping_owner_live(p) || !mapping_owner_live(source) ||
+        !kproc_clone_target_ready(p,NULL)) {
+        p->mapping_preparation=0;return EACCDN;
+    }
+    return E_OK;
+}
+
+LONG kproc_clone_prepare_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,
+                                      BOOL private_vm,KASPACE_MEMBER **result)
+{
+    LONG error;
+    error=mapping_prepare_begin(p,source,space,result);
+    if (error) return error;
+    if (!private_vm) {
+        if (source->active_space!=space || !source->mapping_members) { error=EACCDN;goto failed; }
+        error=kaspace_member_inherit(source->mapping_members,p->number,p,result);
+        if (error) goto failed;
+        p->prepared_mapping_members=*result;
+        error=kaspace_attachment_inherit(space,source->number,source,p->number,p);
+        if (error) goto failed;
+    } else {
+        error=kaspace_member_new(space,p->number,p,result);
+        if (error) goto failed;
+        p->prepared_mapping_members=*result;
+        kaspace_member_claim_private(*result);
+    }
+    p->mapping_preparation=MAPPING_PREPARED;
+    return E_OK;
+failed:
+    if (*result) kproc_abort_mapping_owners(p,space,result);
+    else p->mapping_preparation=0;
+    return error;
+}
+
+void kproc_abort_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members)
+{
+    KASPACE_MEMBER *owned,*token;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+#endif
+    if (!p || !members || !*members) return;
+    token=*members;
+    if (p->disposal_state<PROCESS_DISPOSING &&
+        (p->prepared_mapping_members!=token ||
+         (p->mapping_preparation!=MAPPING_PREPARING && p->mapping_preparation!=MAPPING_PREPARED)))
+        panic("mapping preparation abort owner changed");
+    p->mapping_preparation=MAPPING_ABORTING;
+    owned=*members;*members=NULL;
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_begin(&scope);
+#endif
+    kaspace_attachment_release_owner(space,p->number,p);
+    kaspace_member_release(&owned);
+    if (p->mapping_preparation==MAPPING_ABORTING) {
+        p->prepared_mapping_members=NULL;p->mapping_preparation=0;
+    }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+}
+
+LONG kproc_prepare_scoped_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,KASPACE_MEMBER **result)
+{
+    LONG error;
+    ULONG i;
+    error=mapping_prepare_begin(p,source,space,result);
+    if (error) return error;
+    if (source->active_space!=space) { p->mapping_preparation=0;return EACCDN; }
+    error=kaspace_member_new(space,p->number,p,result);
+    if (error) { p->mapping_preparation=0;return error; }
+    p->prepared_mapping_members=*result;
+    for (i=0;i<kaspace_heap(space)->count;i++) {
+        KASPACE_HEAP_BLOCK *block=&kaspace_heap(space)->blocks[i];
+        KASPACE_ATTACHMENT claim={0};
+        VADDR bytes=(VADDR)block->pages*USER_PAGE_SIZE;
+        if (!kaspace_mapping_owned(space,source->number,source,block->reservation,block->va,bytes)) continue;
+        error=kaspace_attachment_acquire(space,block->reservation,block->va,bytes,
+                        source->number,source,p->number,p,&claim);
+        if (error) goto failed;
+    }
+#if CONF_WITH_MMAP
+    {
+        MMAP_REGION *region;
+        for (region=kaspace_mmap(space)->regions;region;region=region->next) {
+            KASPACE_ATTACHMENT claim={0};
+            if (!kaspace_mapping_owned(space,source->number,source,region->reservation,region->address,region->length)) continue;
+            error=kaspace_attachment_acquire(space,region->reservation,region->address,region->length,
+                            source->number,source,p->number,p,&claim);
+            if (error) goto failed;
+        }
+    }
+#endif
+    p->mapping_preparation=MAPPING_PREPARED;
+    return E_OK;
+failed:
+    kproc_abort_mapping_owners(p,space,result);
+    return error;
+}
+
+LONG kproc_mapping_attach(KPROC *source,KPROC *target,UQUAD birth,VADDR address,VADDR bytes,KASPACE_ATTACHMENT *result)
+{
+    LONG error;
+    KASPACE *space;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+#endif
+    if (!mapping_owner_live(source) || !mapping_owner_live(target) ||
+        !source->active_space || source->active_space!=target->active_space ||
+        !kaspace_member_matches(target->mapping_members,target->active_space,target->number,target)) return EACCDN;
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_begin(&scope);
+#endif
+    space=kaspace_share(source->active_space);
+    if (!space) error=ENSMEM;
+    else if (!mapping_wait_idle(space) || !mapping_owner_live(source) || !mapping_owner_live(target) ||
+             source->active_space!=space || target->active_space!=space ||
+             !kaspace_member_matches(target->mapping_members,space,target->number,target)) error=EACCDN;
+    else error=kaspace_attachment_acquire(space,birth,address,bytes,
+                                         source->number,source,target->number,target,result);
+    kaspace_put(space);
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return error;
+}
+
+BOOL kproc_mapping_detach(KPROC *owner,KASPACE_ATTACHMENT *claim)
+{
+    BOOL released;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+#endif
+    if (!mapping_owner_live(owner)) return FALSE;
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_begin(&scope);
+#endif
+    released=kaspace_attachment_release(claim,owner->number,owner);
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return released;
+}
+
+#if CONF_WITH_PRIVATE_CLONE_TEST
+LONG kproc_test_mapping_claim(ULONG operation,MAPPING_LIFETIME_CLAIM *claim)
+{
+    KPROC *source=kproc_find(run);
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_ATTACHMENT token;
+    LONG error;
+    if (!mapping_owner_live(source) || !source->active_space) return EACCDN;
+    if (operation==MLT_INFO) {
+        if (!kaspace_reservation_info(source->active_space,claim->address,claim->bytes,&info) ||
+            !kaspace_mapping_owned(source->active_space,source->number,source,info.identity,
+                                    claim->address,claim->bytes)) return EACCDN;
+        claim->birth=info.identity;return E_OK;
+    }
+    token.ticket=claim->ticket;
+    if (operation==MLT_DETACH) {
+        if (!kproc_mapping_detach(source,&token)) return EACCDN;
+        claim->ticket=token.ticket;return E_OK;
+    }
+    if (operation!=MLT_ATTACH_PARENT) return EINVFN;
+    error=kproc_mapping_attach(source,source->parent_identity,claim->birth,claim->address,claim->bytes,&token);
+    if (!error) claim->ticket=token.ticket;
+    return error;
+}
+#endif
+
+void kproc_clone_commit_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members)
+{
+    if (!p || p->mapping_members || !members ||
+        p->mapping_preparation!=MAPPING_PREPARED || p->prepared_mapping_members!=*members ||
+        !kaspace_member_matches(*members,space,p->number,p)) panic("unprepared mapping ownership commit");
+    p->mapping_members=*members;*members=NULL;
+    p->prepared_mapping_members=NULL;p->mapping_preparation=0;
+    p->allocation_scope=kaspace_member_scope(p->mapping_members);
 }
 
 #if CONF_WITH_NATIVE_SCHED
@@ -1159,6 +1439,9 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_NATIVE_SCHED
             kproc_clone_drop_compat(kproc);
 #endif
+            kaspace_member_release(&kproc->mapping_members);
+            kproc->allocation_scope=NULL;
+            kaspace_attachment_release_owner(kproc->active_space,kproc->number,kproc);
             kaspace_put(kproc->pending_space);
             /* Unlinked first, so the record is gone before its address
              * space is torn down: a second kproc_destroy() for the same
@@ -1617,6 +1900,8 @@ static BOOL prepare_failed(KPROC *kproc, KASPACE *owner)
         kproc->has_image = FALSE;
         kproc->lost = TRUE;
     }
+    kaspace_member_release(&kproc->mapping_members);
+    kproc->allocation_scope=NULL;
     kaspace_put(owner);
     if (kproc->kstack_phys)
         kstack_free(kproc->kstack_phys);
@@ -1689,7 +1974,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     UWORD tpa_prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
 
     if (thread_result) *thread_result = NULL;
-    if (!kproc || kproc->lost)
+    if (!kproc || kproc->lost || kproc->mapping_preparation)
         return FALSE;
     if (kproc->aspace) {
         /* Already prepared -- but a process that has been launched has handed
@@ -1736,11 +2021,18 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         owner = kaspace_adopt(as);
         if (!owner) { aspace_destroy(as); return FALSE; }
     }
+    if (kaspace_member_new(owner,kproc->number,kproc,&kproc->mapping_members)) {
+        if (owner!=kproc->pending_space) kaspace_put(owner);
+        return FALSE;
+    }
+    kproc->allocation_scope=kaspace_member_scope(kproc->mapping_members);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     if (fail_kernel_stack) { fail_kernel_stack = FALSE; kproc->kstack_phys = 0; } else
 #endif
     kproc->kstack_phys = kstack_alloc(&kproc->kstack_top);
     if (!kproc->kstack_phys) {
+        kaspace_member_release(&kproc->mapping_members);
+        kproc->allocation_scope=NULL;
         if (owner != kproc->pending_space)
             kaspace_put(owner);
         return FALSE;
@@ -2677,7 +2969,20 @@ static MMAP_REGION **mapping_slot(KPROC *kproc, UQUAD *address,
     return link;
 }
 
-LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
+static BOOL mapping_owned_range(KPROC *p,VADDR address,VADDR bytes)
+{
+    MMAP_REGION *region;
+    for (region=kaspace_mmap(p->active_space)->regions;region;region=region->next) {
+        VADDR first=address>region->address?address:region->address;
+        VADDR end=address+bytes<(UQUAD)region->address+region->length?
+                    address+bytes:(VADDR)region->address+region->length;
+        if (first<end && !kaspace_mapping_owned(p->active_space,p->number,p,region->reservation,first,end-first))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+static LONG do_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
                 UQUAD flags, UQUAD fd, UQUAD offset)
 {
     KPROC *kproc = kproc_find(pd);
@@ -2686,7 +2991,7 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     LONG rc;
     BOOL exact = (flags & MAP_FIXED_NOREPLACE) != 0;
 
-    if (!kproc || !kproc->aspace)
+    if (!kproc || !kproc->aspace || !kproc->allocation_scope || !mapping_owner_live(kproc))
         return EACCDN;
     /* Private anonymous or file-backed reservations; never MAP_SHARED. */
     if ((flags & ~(UQUAD)(MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE)) ||
@@ -2734,13 +3039,42 @@ LONG kproc_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     if (!(region->reservation=kaspace_reservation_next())) {
         fileback_put(region->backing); kfree(region); return ENSMEM;
     }
+    /* Backing acquisition may finish deferred file cleanup. Revalidate the
+     * live owner, shared budget and placement after all fallible preparation;
+     * no raw list cursor survives a callback. */
+    if (!mapping_owner_live(kproc) || !kproc->allocation_scope) {
+        fileback_put(region->backing);kfree(region);return EACCDN;
+    }
+    if (length>alloc_room(kproc)) { fileback_put(region->backing);kfree(region);return ENSMEM; }
+    link=mapping_slot(kproc,&address,length,exact);
+    if (!link || !kaspace_mapping_change(kproc->aspace,(VADDR)address,(VADDR)length)) {
+        fileback_put(region->backing);kfree(region);return EACCDN;
+    }
     region->address = (ULONG)address;
     region->length = (ULONG)length;
     region->prot = prot;
+    region->scope=kproc->allocation_scope;
     region->next = *link;
     *link = region;
     kaspace_mmap(kproc->active_space)->bytes += length;
     return (LONG)address;
+}
+
+LONG kproc_mmap(PD *pd,UQUAD address,UQUAD length,UQUAD protection,UQUAD flags,UQUAD fd,UQUAD offset)
+{
+    MAPPING_MUTATION mutation;
+    LONG result=EACCDN;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    if (mapping_open(pd,&mutation)) {
+        result=do_mmap(pd,address,length,protection,flags,fd,offset);mapping_close(&mutation);
+    }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return result;
 }
 
 /* Shutdown never returns to user code. Drop file views before flushing the
@@ -2751,7 +3085,7 @@ void kproc_shutdown_file_mappings(void)
     kaspace_shutdown_file_mappings();
 }
 
-LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
+static LONG do_munmap(PD *pd, UQUAD address, UQUAD length)
 {
     KPROC *kproc = kproc_find(pd);
     MMAP_REGION **link, *region, *tail;
@@ -2767,6 +3101,7 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
         return rc;
     if (!mapping_range(address, length))
         return EIMBA;
+    if (!mapping_owned_range(kproc,(VADDR)address,(VADDR)length)) return EACCDN;
     if (!kaspace_mapping_can_change(kproc->aspace, address, length)) return EACCDN;
     end = address + length;
     /* Validate EVERY affected reservation before changing the first. A late
@@ -2802,6 +3137,7 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
             tail->length = (ULONG)(region_end - last);
             tail->prot = region->prot;
             tail->reservation = region->reservation;
+            tail->scope=region->scope;
             tail->backing = region->backing;
             tail->offset = region->offset + (ULONG)(last - region->address);
             tail->next = region->next;
@@ -2829,6 +3165,21 @@ LONG kproc_munmap(PD *pd, UQUAD address, UQUAD length)
         }
     }
     return E_OK;                       /* unmapped holes are harmless */
+}
+
+LONG kproc_munmap(PD *pd,UQUAD address,UQUAD length)
+{
+    MAPPING_MUTATION mutation;
+    LONG result=EACCDN;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    if (mapping_open(pd,&mutation)) { result=do_munmap(pd,address,length);mapping_close(&mutation); }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return result;
 }
 
 /* Split a reservation at an interior boundary using preallocated metadata. */
@@ -2870,7 +3221,7 @@ static BOOL standard_image_range(const KPROC *kproc, UQUAD address, UQUAD length
 }
 #endif
 
-LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
+static LONG do_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
 {
     KPROC *kproc = kproc_find(pd);
     MMAP_REGION *region, *first = NULL, *last = NULL;
@@ -2889,6 +3240,7 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
     rc = mapping_protection(protection, &prot);
     if (rc)
         return rc;
+    if (mapping_range(address,length) && !mapping_owned_range(kproc,(VADDR)address,(VADDR)length)) return EACCDN;
     if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
     if (!mapping_range(address, length)) {
 #if CONF_WITH_ELF_SHARED
@@ -2946,6 +3298,9 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
 
         if ((UQUAD)region->address + region->length == next->address &&
             region->reservation == next->reservation &&
+            region->scope == next->scope &&
+            kaspace_mapping_same_owners(kproc->active_space,region->reservation,region->address,region->length,
+                                        next->address,next->length) &&
             region->prot == next->prot && region->backing == next->backing &&
             (!region->backing || (UQUAD)region->offset + region->length == next->offset)) {
             region->length += next->length;
@@ -2957,6 +3312,20 @@ LONG kproc_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
         }
     }
     return E_OK;
+}
+LONG kproc_mprot(PD *pd,UQUAD address,UQUAD length,UQUAD protection)
+{
+    MAPPING_MUTATION mutation;
+    LONG result=EACCDN;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    if (mapping_open(pd,&mutation)) { result=do_mprot(pd,address,length,protection);mapping_close(&mutation); }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return result;
 }
 #endif
 
@@ -3056,6 +3425,13 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
     if (!kproc || !kproc->aspace || !bytes ||
         bytes > heap_limit(kproc) - USER_HEAP_BASE)
         return 0;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    if (kind==UH_MALLOC && mapping_pause_actor && mapping_pause_actor==ksched_context_id()) {
+        mapping_pause_actor=0;
+        (void)ksched_yield(); /* real cooperative contention with root guard held */
+    }
+#endif
+    if (kind==UH_MALLOC && (!kproc->allocation_scope || !mapping_owner_live(kproc))) return 0;
     size = ((VADDR)bytes + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
     if (kind == UH_MALLOC && size > alloc_room(kproc))
         return 0;                       /* over a Psetlimit() limit */
@@ -3083,6 +3459,7 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
         heap->blocks[index].va = va;
         heap->blocks[index].pages = (ULONG)(size / USER_PAGE_SIZE);
         heap->blocks[index].reservation = reservation;
+        heap->blocks[index].scope=kproc->allocation_scope;
         heap->count++;
         return va;
     }
@@ -3459,11 +3836,23 @@ LONG kproc_mvalidate(PD *pd, WORD pid, VADDR address, LONG size, UQUAD flags)
 /* Malloc(): the address of `bytes` of fresh zeroed memory, 0 if there is none */
 VADDR kproc_uheap_alloc(PD *pd, ULONG bytes)
 {
-    return heap_alloc(kproc_find(pd), bytes, UH_MALLOC, NULL, FALSE);
+    MAPPING_MUTATION mutation;
+    VADDR result=0;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    if (mapping_open(pd,&mutation)) {
+        result=heap_alloc(mutation.process,bytes,UH_MALLOC,NULL,FALSE);mapping_close(&mutation);
+    }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return result;
 }
 
 /* Malloc(-1): the size of the largest block that could be allocated */
-ULONG kproc_uheap_largest(PD *pd)
+static ULONG do_heap_largest(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
     VADDR largest;
@@ -3487,6 +3876,20 @@ ULONG kproc_uheap_largest(PD *pd)
             largest = aspace_mappable_bytes();
     }
     return (ULONG)largest;
+}
+ULONG kproc_uheap_largest(PD *pd)
+{
+    MAPPING_MUTATION mutation;
+    ULONG result=0;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    if (mapping_open(pd,&mutation)) { result=do_heap_largest(pd);mapping_close(&mutation); }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return result;
 }
 
 static struct uheap_block *heap_find(KPROC *kproc, VADDR va)
@@ -3569,7 +3972,7 @@ static LONG heap_release(KPROC *kproc, struct uheap_block *b)
 }
 
 /* Mfree(): E_OK, or EIMBA if va is not the start of a block of this process */
-LONG kproc_uheap_free(PD *pd, VADDR va)
+static LONG do_heap_free(PD *pd, VADDR va)
 {
     KPROC *kproc = kproc_find(pd);
     struct uheap_block *b;
@@ -3587,6 +3990,8 @@ LONG kproc_uheap_free(PD *pd, VADDR va)
 #endif
     if (ordinary) {
         heap = kaspace_heap(kproc->active_space);
+        if (!kaspace_mapping_owned(kproc->active_space,kproc->number,kproc,ordinary->reservation,
+                                  va,(VADDR)ordinary->pages*USER_PAGE_SIZE)) return EACCDN;
         if (!release_pages(kproc->aspace, va, (VADDR)ordinary->pages * USER_PAGE_SIZE))
             return ERR;
         memmove(ordinary, ordinary + 1,
@@ -3597,9 +4002,24 @@ LONG kproc_uheap_free(PD *pd, VADDR va)
     return heap_release(kproc, b);
 }
 
+LONG kproc_uheap_free(PD *pd,VADDR va)
+{
+    MAPPING_MUTATION mutation;
+    LONG result=EIMBA;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    if (mapping_open(pd,&mutation)) { result=do_heap_free(pd,va);mapping_close(&mutation); }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return result;
+}
+
 /* Mshrink(): keeps the first `len` bytes of the block (rounded up to whole
  * pages); EGSBF if that would make it bigger, EIMBA if va is no block */
-LONG kproc_uheap_shrink(PD *pd, VADDR va, long len)
+static LONG do_heap_shrink(PD *pd, VADDR va, long len)
 {
     KPROC *kproc = kproc_find(pd);
     struct uheap_block *b;
@@ -3613,10 +4033,12 @@ LONG kproc_uheap_shrink(PD *pd, VADDR va, long len)
     b = ordinary ? NULL : heap_find(kproc, va);
     if (!ordinary && (!b || b->kind != UH_MALLOC)) return EIMBA;
     pages = ordinary ? ordinary->pages : b->pages;
+    if (ordinary && !kaspace_mapping_owned(kproc->active_space,kproc->number,kproc,ordinary->reservation,
+                                          va,(VADDR)ordinary->pages*USER_PAGE_SIZE)) return EACCDN;
     if (len < 0)
         return ERANGE;
     if (len == 0)
-        return kproc_uheap_free(pd, va);
+        return do_heap_free(pd, va);
     keep = ((VADDR)len + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
     if (keep > pages)
         return EGSBF;
@@ -3633,6 +4055,20 @@ LONG kproc_uheap_shrink(PD *pd, VADDR va, long len)
     if (ordinary) ordinary->pages = (ULONG)keep;
     else b->pages = (ULONG)keep;
     return E_OK;
+}
+LONG kproc_uheap_shrink(PD *pd,VADDR va,long len)
+{
+    MAPPING_MUTATION mutation;
+    LONG result=EIMBA;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    if (mapping_open(pd,&mutation)) { result=do_heap_shrink(pd,va,len);mapping_close(&mutation); }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    return result;
 }
 
 /*
@@ -4053,8 +4489,9 @@ LONG kproc_reservation_hold(PD *pd, VADDR address, VADDR bytes,
             if (info.flags&KASPACE_RESERVATION_CAPTURED)
                 error=kaspace_reservation_hold_captured(space,&info,address,bytes,rights,
                             kproc_ref_number(owner),owner,result);
+            else if (!kaspace_mapping_owned(space,owner->number,owner,reservation,address,bytes)) error=EACCDN;
             else error=kaspace_reservation_hold(space,reservation,address,bytes,rights,
-                            kproc_ref_number(owner),owner,result);
+                             kproc_ref_number(owner),owner,result);
         }
     }
     if (error) kproc_release(owner);

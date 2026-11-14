@@ -7,6 +7,46 @@
 struct aspace;
 typedef struct kaspace KASPACE;
 typedef struct kaspace_lease KASPACE_LEASE;
+typedef struct kaspace_scope KASPACE_SCOPE;
+typedef struct kaspace_member KASPACE_MEMBER;
+/* PROCESS lifetime membership, separate from root references and R2 holds.
+ * A member owns all current/future ordinary reservations in its scope. Only
+ * trusted construction uses these; identities are canonical, never raw PDs.
+ * Prepared membership owns its root and must be moved or released once. */
+LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBER **result);
+LONG kaspace_member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *identity,
+                           KASPACE_MEMBER **result);
+KASPACE_SCOPE *kaspace_member_scope(const KASPACE_MEMBER *member); /* borrowed */
+BOOL kaspace_member_matches(const KASPACE_MEMBER *member,const KASPACE *space,
+                            UQUAD number,const void *identity);
+/* Only an unpublished private clone may bind its copied, unowned metadata. */
+void kaspace_member_claim_private(KASPACE_MEMBER *member);
+void kaspace_member_release(KASPACE_MEMBER **members);
+/* Serialize canonical metadata over backend/file callbacks. Nested mutation
+ * is rejected; releases may detach claims but reaping waits until end. Caller
+ * owns a root reference and defers cancellation through the entire transfer. */
+BOOL kaspace_mutation_begin(KASPACE *space);
+void kaspace_mutation_end(KASPACE *space);
+BOOL kaspace_mutation_busy(const KASPACE *space);
+BOOL kaspace_mutation_reentrant(const KASPACE *space);
+/* Lifetime-only claims; no permission or cached physical access is conveyed.
+ * mmap subranges are split before publication; heap claims cover one complete
+ * allocation. Tokens authenticate birth and canonical PROCESS identity. */
+typedef struct { UQUAD ticket; } KASPACE_ATTACHMENT;
+BOOL kaspace_mapping_owned(KASPACE *,UQUAD,void *,UQUAD,VADDR,VADDR);
+LONG kaspace_attachment_acquire(KASPACE *,UQUAD,VADDR,VADDR,UQUAD,void *,
+                                UQUAD,void *,KASPACE_ATTACHMENT *);
+LONG kaspace_attachment_duplicate(const KASPACE_ATTACHMENT *,UQUAD,void *,
+                                  UQUAD,void *,KASPACE_ATTACHMENT *);
+BOOL kaspace_attachment_release(KASPACE_ATTACHMENT *,UQUAD,void *);
+/* A PROCESS owns all its claims in its active/construction space. Abort and
+ * final disposal consume those claims without another mapping registry. */
+void kaspace_attachment_release_owner(KASPACE *,UQUAD,void *);
+LONG kaspace_attachment_inherit(KASPACE *,UQUAD,void *,UQUAD,void *);
+BOOL kaspace_mapping_same_owners(KASPACE *,UQUAD,VADDR,VADDR,VADDR,VADDR);
+#if CONF_WITH_MMAP
+void kaspace_mmap_coalesce(KASPACE *space);
+#endif
 /* Startup leases require resident mappings and retain the containing ASPACE.
  * Preparation leases are revocable: ANY overlapping mapping/permission change
  * permanently invalidates them, including same-address/same-permission remaps.
@@ -58,6 +98,7 @@ typedef struct {
     VADDR va;
     ULONG pages;
     UQUAD reservation; /* immutable birth identity; not a physical frame */
+    KASPACE_SCOPE *scope; /* lifetime claim set, not a mutation/access grant */
 } KASPACE_HEAP_BLOCK;
 typedef struct {
     KASPACE_HEAP_BLOCK *blocks;
@@ -75,6 +116,7 @@ typedef struct mmap_region {
     FILE_BACKING *backing;
     ULONG offset;
     UQUAD reservation; /* split fragments preserve this original identity */
+    KASPACE_SCOPE *scope;
     struct mmap_region *next;
 } MMAP_REGION;
 typedef struct {
@@ -151,6 +193,11 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 ULONG kaspace_test_live(void); /* address spaces with at least one owner */
 ULONG kaspace_test_references(void);
+#endif
+#if CONF_WITH_PRIVATE_CLONE_TEST
+struct aspace;
+void kaspace_test_mapping_snapshot(const struct aspace *,uint32_t *values);
+void kaspace_test_fail_mapping_after(UWORD count);
 #endif
 #if CONF_WITH_X86_64_MEMTEST
 /* Fail the next adoption, leaving backend ownership with its caller. */

@@ -17,6 +17,29 @@ struct file_backing {
     BOOL current;
 };
 static FILE_BACKING *backings;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG fileback_test_count(BOOL references)
+{
+    const FILE_BACKING *backing;
+    ULONG count=0;
+    for (backing=backings;backing;backing=backing->next) count+=references?backing->references:1;
+    return count;
+}
+ULONG fileback_test_orphan_ofd_refs(void)
+{
+    const FILE_BACKING *backing,*earlier;
+    ULONG count=0;
+    int i;
+    for (backing=backings;backing;backing=backing->next) {
+        for (earlier=backings;earlier!=backing;earlier=earlier->next)
+            if (earlier->file==backing->file) break;
+        if (earlier!=backing) continue;
+        for (i=0;i<OPNFILES;i++) if (sft[i].f_use && sft[i].f_ofd==backing->file) break;
+        if (i==OPNFILES) count+=backing->file->o_refs;
+    }
+    return count;
+}
+#endif
 
 /* A failed final close retains its OFD pin for retry. Allocation must finish
  * this work before scanning a FAT which may already contain a cleared entry.

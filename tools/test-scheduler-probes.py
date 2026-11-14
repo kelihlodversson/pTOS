@@ -147,3 +147,33 @@ with tempfile.TemporaryDirectory(prefix='ptos-nested-probes-') as directory:
                         else 'native nested continuation ownership') if required else ''
             assert result.stdout == expected, (mask, missing, result.stdout)
 print('Native nested ownership guards: 40 feature/marker cases, optional cancellation and missing evidence: PASS (host shell)')
+
+start = script.index('# Configured shared-root lifetime probes')
+end = script.index('# The experimental VM test', start)
+block = script[start:end]
+mapping_markers = [
+    'native shared-root common/scoped/late mapping lifetime: PASS',
+    'native shared-root peer/last-THREAD/orphan safety: PASS',
+    'native shared-root exact mapping resource conservation: PASS',
+    'native shared-root guarded peer contention: PASS',
+    'native shared-root guarded waiter cancellation: PASS',
+]
+with tempfile.TemporaryDirectory(prefix='ptos-mapping-probes-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    for mask in range(16):
+        names = ['CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_NATIVE_SCHED', 'CONF_WITH_MMAP', 'CONF_WITH_PTERMGRP']
+        (top / 'obj/autoconf.h').write_text(''.join(
+            '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
+        for missing in [None] + mapping_markers:
+            log.write_text('\n'.join(m for m in mapping_markers if m != missing) + '\n')
+            shell = 'top=$1; suite_log=$2\nrecord() { printf "%s" "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
+                                    check=True, text=True, capture_output=True)
+            required = (mask & 7) == 7 and missing is not None
+            if missing == mapping_markers[-1]: required = required and bool(mask & 8)
+            expected = ('native shared-root waiter cancellation' if missing == mapping_markers[-1]
+                        else 'native shared-root mapping ownership') if required else ''
+            assert result.stdout == expected, (mask, missing, result.stdout)
+print('Native shared-root mapping guards: 96 feature/marker cases, missing execution evidence fails: PASS (host shell)')

@@ -207,6 +207,23 @@ BOOL kproc_thread_attach_space(KPROC *process, struct kaspace *construction_spac
  * Success transfers space. Failure changes neither object nor references. */
 BOOL kproc_clone_target_ready(const KPROC *process, struct kthread *thread);
 BOOL kproc_clone_adopt_space(KPROC *process, struct kthread *thread, struct kaspace *space);
+/* All fallible mapping memberships precede THREAD/startup publication. Commit
+ * moves the authenticated prepared set and performs no allocation/callback. */
+LONG kproc_clone_prepare_mapping_owners(KPROC *,KPROC *,KASPACE *,BOOL,KASPACE_MEMBER **);
+void kproc_clone_commit_mapping_owners(KPROC *,KASPACE *,KASPACE_MEMBER **);
+/* Explicit independent lifetime in a shared root. Copies current source
+ * dependencies as exact claims; late allocations use a fresh scope. This is
+ * an internal opt-in, not public FreeMiNT shared-Pexec policy. */
+LONG kproc_prepare_scoped_mapping_owners(KPROC *,KPROC *,KASPACE *,KASPACE_MEMBER **);
+void kproc_abort_mapping_owners(KPROC *,KASPACE *,KASPACE_MEMBER **);
+LONG kproc_mapping_attach(KPROC *,KPROC *,UQUAD,VADDR,VADDR,KASPACE_ATTACHMENT *);
+BOOL kproc_mapping_detach(KPROC *,KASPACE_ATTACHMENT *);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+#include "mapping_lifetime_test.h"
+LONG kproc_test_mapping_claim(ULONG operation,MAPPING_LIFETIME_CLAIM *claim);
+VADDR kproc_test_contended_allocation(void);
+ULONG kproc_test_mapping_wait_count(void);
+#endif
 #if CONF_WITH_NATIVE_SCHED
 BOOL kproc_clone_prepare_compat(KPROC *, struct kthread *, struct kaspace *);
 void kproc_clone_drop_compat(KPROC *);
