@@ -351,7 +351,17 @@ static void shared_vm_dso_retention(void)
     static SHARED_PEXEC_SNAPSHOT snapshots[4];
     static MAPPING_LIFETIME_SNAPSHOT common[4];
     static MAPPING_LIFETIME_SNAPSHOT descendant;
+    static const unsigned char late_file[4096]={0x7f,'E','L','F'};
+    long late_fd;
     unsigned fault,spin,boundary;
+    /* Use a fresh file: the ELF loader already cached SHRINT's first page on
+     * ARM/m68k, so that page cannot prove a new post-exit lazy file fault. */
+    late_fd=Fcreate("C:\\DSOLATE.BIN",0);
+    ptest_assert_msg(late_fd>=0,"shared DSO late runtime: create uncached file");
+    if(late_fd<0) return;
+    ptest_assert_msg(Fwrite(late_fd,sizeof(late_file),late_file)==sizeof(late_file),
+        "shared DSO late runtime: complete file payload");
+    ptest_assert_msg(Fclose(late_fd)==0,"shared DSO late runtime: close file before mapping");
     for(fault=0;fault<2;fault++) {
         BASEPAGE *image;
         char tail[12],*env;
@@ -397,6 +407,10 @@ static void shared_vm_dso_retention(void)
             ptest_assert_msg(probe.done && probe.steps==2 && !probe.error,
                 "shared DSO peer: executes file-backed DSO after creator exit and writes surviving data");
             if(probe.error) shared_vm_diagnostic("shared DSO descendant launch result=",probe.environment);
+            ptest_assert_msg(probe.descendant_mapping_prefixes>4 && probe.descendant_preparation_prefixes>16,
+                "shared DSO descendant: every mapping/R1/R2 preparation prefix preserves the staged image and live source");
+            shared_vm_diagnostic("shared DSO loaded mapping failure prefixes=",probe.descendant_mapping_prefixes);
+            shared_vm_diagnostic("shared DSO loaded preparation failure prefixes=",probe.descendant_preparation_prefixes);
             ptest_assert_msg(Pwaitpid(probe.child_pid,1,0)==-33,
                 "shared DSO peer: unrelated observer gains no orphan reaping authority");
             shared_vm_retirement(&snapshots[0],1);
@@ -428,7 +442,7 @@ static void shared_vm_dso_retention(void)
                 "shared DSO descendant: later unexported runtime mapping is not implicitly attached by visibility");
             {
                 unsigned char byte=0;
-                long fd=Fopen("C:\\SHRINT.ELF",0);
+                long fd=Fopen("C:\\DSOLATE.BIN",0);
                 ptest_assert_msg(fd>=0 && Fread(fd,1,&byte)==1 && byte==0x7f,
                     "shared DSO late runtime COW preserves the independent file contents");
                 if(fd>=0) ptest_assert_msg(Fclose(fd)==0,"shared DSO late runtime independent file close");
@@ -456,9 +470,11 @@ static void shared_vm_dso_retention(void)
         shared_vm_common_equal(&common[0],&common[3]);
         ptest_assert_msg(Mfree(stack)==0,"shared DSO peer: final stopped stack release");
     }
+    ptest_assert_msg(Fdelete("C:\\DSOLATE.BIN")==0,"shared DSO late runtime: unlink after final owner");
     conws("native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested\r\n");
     conws("native shared-VM generic executable dependency prefixes, surviving owner rollback and retry: tested\r\n");
     conws("native shared-VM late runtime file-COW and loaded descendant after both creators retire: tested\r\n");
+    conws("native shared-VM loaded runtime dependencies and ancestor R1 prefixes rollback/retry: tested\r\n");
 }
 #endif
 #endif

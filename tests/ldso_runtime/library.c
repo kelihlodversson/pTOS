@@ -16,7 +16,38 @@ __attribute__((destructor)) static void fini(void)
 #ifdef LDSO_TEST_DSO_PEER
 #include "../../lib/ldso/runtime.h"
 #include "../../include/mman.h"
+#include "../../include/shared_pexec_test.h"
+#include "../../include/mapping_lifetime_test.h"
 #include "../pie_load/shared_vm_probe.h"
+static int64_t loaded_descendant_publish(uintptr_t image,struct shared_vm_probe *probe)
+{
+    static MAPPING_LIFETIME_SNAPSHOT before,after;
+    unsigned phase,prefix,i;
+    int64_t result,steps;
+    for(phase=0;phase<2;phase++) for(prefix=1;prefix<256;prefix++) {
+        if(dl_syscall(0x190,(uintptr_t)&before,MLT_SNAPSHOT,0,0,0,0)) return -1;
+        if(!phase) {
+            /* The first acquisition after mapping admission is raw[0].
+             * Force it to fail so a complete mapping prefix stays unpublished. */
+            if(dl_syscall(0x190,0,0xc9670200UL+prefix,0,0,0,0) ||
+               dl_syscall(0x190,0,0xc8940903UL,0,0,0,0)) return -1;
+        } else if(dl_syscall(0x190,0,0xc8940900UL+prefix,0,0,0,0)) return -1;
+        result=dl_syscall(0x4b,104,0,image,0,0,0);
+        steps=dl_syscall(0x190,0,0xc8940a00UL,0,0,0,0);
+        (void)dl_syscall(0x190,0,0xc9670200UL,0,0,0,0);
+        (void)dl_syscall(0x190,0,0xc8940900UL,0,0,0,0);
+        if(phase && result>0) {
+            probe->descendant_preparation_prefixes=prefix-1;
+            return prefix>16 && steps==prefix-1?result:-1;
+        }
+        if(result!=-39 || dl_syscall(0x190,(uintptr_t)&after,MLT_SNAPSHOT,0,0,0,0)) return -1;
+        for(i=0;i<MLT_FIELDS;i++) if(before.value[i]!=after.value[i]) {
+            probe->error=1100+i;return -1;
+        }
+        if(!phase && steps==3) {probe->descendant_mapping_prefixes=prefix-1;break;}
+    }
+    return -1;
+}
 /* Entry and writable state live in the actual file-backed DSO. The generic
  * CLONE_VM owner must keep them and their executable dependencies alive after
  * the interpreted creator has stopped, including when fini never executes. */
@@ -56,7 +87,7 @@ void dso_shared_peer(void *argument)
                      (uintptr_t)"CHECK=descendant\0\0",0,0);
     if(image<=0) {probe->environment=(uint32_t)image;probe->error=95;return;}
     probe->staged=(uint32_t)image;
-    pid=dl_syscall(0x4b,104,0,image,0,0,0);
+    pid=loaded_descendant_publish((uintptr_t)image,probe);
     if(pid<=0) {probe->environment=(uint32_t)pid;probe->error=96;return;}
     probe->descendant_pid=(uint32_t)pid;
     for(spin=0;spin<512 && !probe->descendant_ready;spin++)

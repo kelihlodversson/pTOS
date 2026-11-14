@@ -65,7 +65,7 @@ static int shared_dso_create(void)
     dso_probe->grandchild=(uint32_t)result;
     *(volatile uint32_t *)(uintptr_t)result=0x644894UL;
     /* Born after generic membership, left lazy until after creator exit. */
-    handle=dl_syscall(0x3d,(uintptr_t)"C:\\SHRINT.ELF",0,0,0,0,0);
+    handle=dl_syscall(0x3d,(uintptr_t)"C:\\DSOLATE.BIN",0,0,0,0,0);
     if(handle<0) {dso_probe->error=91;return 89;}
     result=dl_syscall(GEMDOS_MMAP,0,4096,PROT_READ|PROT_WRITE,
                      MAP_PRIVATE|MAP_PTOS_RUNTIME,handle,0);

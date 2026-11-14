@@ -651,7 +651,8 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
                 'native shared-VM 128 interpreted Pexec4/104 normal/fault-before-fini exact 45-counter conservation: tested' \
                 'native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested' \
                 'native shared-VM generic executable dependency prefixes, surviving owner rollback and retry: tested' \
-                'native shared-VM late runtime file-COW and loaded descendant after both creators retire: tested'; do
+                'native shared-VM late runtime file-COW and loaded descendant after both creators retire: tested' \
+                'native shared-VM loaded runtime dependencies and ancestor R1 prefixes rollback/retry: tested'; do
                 if ! grep -aqF "$marker" "$suite_log"; then
                     record "native shared-Pexec DSO lifetime" FAIL "missing positive consumer execution: $marker"
                 fi
