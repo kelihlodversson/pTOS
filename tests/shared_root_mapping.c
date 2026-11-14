@@ -342,6 +342,34 @@ static void pending_predecessor(BOOL heap_case,BOOL shrink)
     CHECK(backend.destroyed && allocations==frees);
 }
 
+static void prepared_target_exclusion(void)
+{
+    ASPACE backend={0};
+    KASPACE *space=kaspace_adopt(&backend);
+    PD parent={0},candidate={0};
+    KPROC *source,*target;
+    KASPACE_MEMBER *first=NULL,*second=NULL;
+    LONG mapping;
+    unsigned owned;
+    CHECK(space && kproc_create(&parent) && kproc_test_share_active(&parent,space));
+    source=kproc_find(&parent);
+    mapping=kproc_mmap(&parent,0,USER_PAGE_SIZE,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,0,0);CHECK(mapping>0);
+    CHECK(kproc_create(&candidate));target=kproc_find(&candidate);
+    CHECK(kproc_prepare_scoped_mapping_owners(target,source,space,&first)==E_OK && first);
+    owned=allocations-frees;
+    CHECK(kproc_prepare_scoped_mapping_owners(target,source,space,&second)==EACCDN && !second);
+    CHECK(kproc_clone_prepare_mapping_owners(target,source,space,FALSE,&second)==EACCDN && !second);
+    CHECK(allocations-frees==owned && reservations(space)==1);
+    kproc_abort_mapping_owners(target,space,&first);CHECK(!first && !target->mapping_preparation);
+    CHECK(kproc_prepare_scoped_mapping_owners(target,source,space,&second)==E_OK && second);
+    kproc_clone_commit_mapping_owners(target,space,&second);CHECK(!second && !target->mapping_preparation);
+    target->active_space=kaspace_share(space);target->aspace=kaspace_backend(space);
+    dispose(&parent);CHECK(reservations(space)==1);
+    dispose(&candidate);CHECK(!reservations(space));kaspace_put(space);
+    CHECK(backend.destroyed && allocations==frees);
+    puts("Prepared target: one constructor, cross-policy exclusion, abort/retry and one commit preserve exact dependencies: PASS");
+}
+
 static void attachment_r2_reentry(void)
 {
     ASPACE backend={0};
@@ -400,6 +428,7 @@ int main(void)
     attachment_r2_reentry();deferred_stack_hold();
     pending_predecessor(FALSE,FALSE);pending_predecessor(TRUE,FALSE);pending_predecessor(TRUE,TRUE);
     puts("Reentrant predecessor retirement: Munmap/Mfree/Mshrink cursors survive, recursive mutation rejected: PASS");
+    prepared_target_exclusion();
     CHECK(!kproc_count() && allocations==frees);
     return 0;
 }

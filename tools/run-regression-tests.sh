@@ -604,11 +604,16 @@ if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
     for marker in \
         'native shared-root common/scoped/late mapping lifetime: PASS' \
         'native shared-root peer/last-THREAD/orphan safety: PASS' \
+        'native shared-root guarded peer contention: PASS' \
         'native shared-root exact mapping resource conservation: PASS'; do
         if ! grep -aq "$marker" "$suite_log"; then
             record "native shared-root mapping ownership" FAIL "missing $marker"
         fi
     done
+    if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native shared-root guarded waiter cancellation: PASS' "$suite_log"; then
+        record "native shared-root waiter cancellation" FAIL "configured guarded wait cancellation did not pass"
+    fi
 fi
 
 # The experimental VM test must execute, not merely compile.

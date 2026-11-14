@@ -221,6 +221,8 @@ BOOL kproc_mapping_detach(KPROC *,KASPACE_ATTACHMENT *);
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "mapping_lifetime_test.h"
 LONG kproc_test_mapping_claim(ULONG operation,MAPPING_LIFETIME_CLAIM *claim);
+VADDR kproc_test_contended_allocation(void);
+ULONG kproc_test_mapping_wait_count(void);
 #endif
 #if CONF_WITH_NATIVE_SCHED
 BOOL kproc_clone_prepare_compat(KPROC *, struct kthread *, struct kaspace *);

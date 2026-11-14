@@ -90,6 +90,8 @@ static long clone_request(uint64_t address, uint64_t size)
     BOOL scoped_test = FALSE;
     if ((size&0xffffffffffff0000ULL)==MLT_SCOPED_CLONE) {
         if (address>=USER_VA_LIMIT) return EIMBA;
+        if (!address && size==MLT_CONTENDED_ALLOC) return (LONG)kproc_test_contended_allocation();
+        if (!address && size==MLT_WAIT_COUNT) return (LONG)kproc_test_mapping_wait_count();
         if (size==MLT_SNAPSHOT) return mapping_snapshot((VADDR)address);
         if (size>=MLT_INFO && size<=MLT_DETACH) {
             MAPPING_LIFETIME_CLAIM claim;

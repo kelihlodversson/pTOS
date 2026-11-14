@@ -18,6 +18,13 @@ KASPACE_MMAP *kaspace_mmap(KASPACE *space) { (void)space; return &mappings; }
 #endif
 void *kalloc(ULONG bytes) { return malloc(bytes); }
 void kfree(void *p) { free(p); }
+void panic(const char *format,...) { (void)format;abort(); }
+KASPACE *kaspace_share(KASPACE *space) { assert(space==(KASPACE *)1);return space; }
+void kaspace_put(KASPACE *space) { assert(space==(KASPACE *)1); }
+BOOL kaspace_mutation_busy(const KASPACE *space) { assert(space==(KASPACE *)1);return FALSE; }
+BOOL kaspace_mutation_reentrant(const KASPACE *space) { assert(space==(KASPACE *)1);return FALSE; }
+BOOL kaspace_mutation_begin(KASPACE *space) { assert(space==(KASPACE *)1);return TRUE; }
+void kaspace_mutation_end(KASPACE *space) { assert(space==(KASPACE *)1); }
 KASPACE_HEAP *kaspace_heap(KASPACE *space) { (void)space; return &ordinary; }
 BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end)
 { (void)space;(void)from;(void)to;(void)first;(void)end;return FALSE; }
@@ -74,6 +81,7 @@ int main(void)
     KASPACE_RESERVATION_INFO info,unchanged;
     memset(&process,0,sizeof(process));memset(&image,0,sizeof(image));
     process.pd=&pd;process.active_space=(KASPACE *)1;process.aspace=(ASPACE *)1;
+    process.references=1;process.allocation_scope=(KASPACE_SCOPE *)1;
     process.heap=&image;process.nheap=1; kproc_list=&process;
     image.va=0x10000000UL;image.pages=2;image.kind=UH_IMAGE;image.reservation=7;
     check_rights(); /* no earlier broad witness */

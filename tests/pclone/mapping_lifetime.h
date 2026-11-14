@@ -213,6 +213,94 @@ static void mlt_run(int mode,int conserve)
     if(conserve) mlt_equal(&mlt_before,&mlt_after);
 }
 
+static struct {
+    volatile int ready,go,entered,returned,owner_done,error,cancel;
+} mlt_contention;
+static MAPPING_LIFETIME_SNAPSHOT mlt_wait_before,mlt_wait_after;
+#if defined(TEST_WITH_PTERMGRP)
+static void mlt_cancel_waiter(void *argument)
+{
+    (void)argument;
+    while(!mlt_contention.entered) (void)Syield();
+    (void)term_group(61);mlt_contention.error=41;
+}
+#endif
+static void mlt_waiter(void *argument)
+{
+    long allocation;
+    (void)argument;
+#if defined(TEST_WITH_PTERMGRP)
+    if(mlt_contention.cancel) {
+        int32_t pid=-1,tid=-1;
+        long stack=Malloc(32768);
+        if(stack<=0) { mlt_contention.error=42;return; }
+        memset((void *)stack,0,32768);
+        if(mlt_launch(mlt_cancel_waiter,(void *)stack,CLONE_VM|CLONE_SAME_PROCESS,0,&pid,&tid)<=0 || pid!=Pgetpid())
+            { mlt_contention.error=43;return; }
+    }
+#endif
+    mlt_contention.ready=1;
+    while(!mlt_contention.go) (void)Syield();
+    mlt_contention.entered=1;
+    allocation=Malloc(12288);
+    mlt_contention.returned=1;
+    if(mlt_contention.cancel || allocation<=0) mlt_contention.error=44;
+}
+static void mlt_guard_owner(void *argument)
+{
+    long allocation;
+    (void)argument;
+    mlt_contention.go=1;
+    /* Real Malloc reaches a scheduling checkpoint with its metadata guard
+     * held. The regression adapter never exposes a held guard to user mode. */
+    allocation=pclone_trap(0,MLT_CONTENDED_ALLOC);
+    if(allocation<=0) mlt_contention.error=45;
+    mlt_contention.owner_done=1;
+}
+static void mlt_test_contention(void)
+{
+    void *waiter_stack=(void *)Malloc(32768);
+    unsigned round;
+    int spins;
+    int32_t owner_pid=-1,owner_tid=-1,waiter_pid=-1,waiter_tid=-1;
+    long status,waits;
+    ptest_assert_msg((long)waiter_stack>0,"allocate competing native continuation stack");
+    if((long)waiter_stack<=0) return;
+    memset(waiter_stack,0,32768);
+    memset(&mlt_wait_before,0,sizeof(mlt_wait_before));memset(&mlt_wait_after,0,sizeof(mlt_wait_after));
+    for(round=0;round<4;round++) {
+        memset(&mlt_contention,0,sizeof(mlt_contention));
+#if defined(TEST_WITH_PTERMGRP)
+        mlt_contention.cancel=round&1;
+#endif
+        waits=pclone_trap(0,MLT_WAIT_COUNT);
+        ptest_assert_msg(mlt_snapshot(&mlt_wait_before)==0,"contention pre-construction snapshot");
+        ptest_assert_msg(mlt_launch(mlt_waiter,waiter_stack,CLONE_VM,1,&waiter_pid,&waiter_tid)>0,
+                         "publish independent guarded waiter PROCESS");
+        for(spins=0;spins<128 && !mlt_contention.ready && !mlt_contention.error;spins++) (void)Syield();
+        ptest_assert_msg(mlt_contention.ready && !mlt_contention.error,"waiter and optional cancellation sibling ready");
+        ptest_assert_msg(mlt_launch(mlt_guard_owner,mlt_stack,CLONE_VM,1,&owner_pid,&owner_tid)>0,
+                         "publish guard owner PROCESS");
+        status=Pwaitpid(owner_pid,0,0);
+        ptest_assert_msg((status>>16)==owner_pid && !(status&65535) && mlt_contention.owner_done,
+                         "guard owner resumes and settles transfer after contention");
+        status=Pwaitpid(waiter_pid,0,0);
+        ptest_assert_msg((status>>16)==waiter_pid && (status&65535)==(mlt_contention.cancel?61:0) &&
+                         !mlt_contention.error && mlt_contention.returned==!mlt_contention.cancel &&
+                         pclone_trap(0,MLT_WAIT_COUNT)>waits,
+                         "blocked peer resumes, or cancellation wins without user return/publication");
+        ptest_assert_msg(mlt_snapshot(&mlt_wait_after)==0,"contention post-stop snapshot");
+        if(round>=2) mlt_equal(&mlt_wait_before,&mlt_wait_after);
+    }
+    ptest_assert_msg(Mfree(waiter_stack)==0,"release idle contention fixture stack");
+    if(!ptest_failures()) {
+        conws("native shared-root guarded peer contention: PASS\r\n");
+#if defined(TEST_WITH_PTERMGRP)
+        conws("native shared-root guarded waiter cancellation: PASS\r\n");
+#endif
+    }
+}
+
 static void test_mapping_lifetime(void)
 {
     long file,result,status;
@@ -241,6 +329,7 @@ static void test_mapping_lifetime(void)
 #endif
         mlt_run(i,0);
     }
+    mlt_test_contention();
     ptest_assert_msg(mlt_snapshot(&mlt_before)==0,"primed resource baseline");
     mlt_print("mapping initial",&mlt_initial);mlt_print("mapping baseline",&mlt_before);
     pid=0x12345678;tid=0x23456789;

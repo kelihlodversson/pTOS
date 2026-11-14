@@ -4214,6 +4214,11 @@ static void test_kproc_pending_ownership(void)
     KASPACE *second;
     LONG saved_value;
     VADDR heap_va;
+    PD *peer;
+    KPROC *source_identity,*peer_identity;
+    PROC_CLONE_ARGS policy={0};
+    PROC_CLONE_TRANSACTION *transaction=NULL;
+    PROC_CLONE_RESULT consumer=PROC_CLONE_RESULT_INIT;
 
     snap(&s);
     pd = new_basepage();
@@ -4233,6 +4238,18 @@ static void test_kproc_pending_ownership(void)
     retained = kproc_test_retain_active(pd);
     second = kaspace_share(retained);
     CHECK(retained && second, "retain active space twice");
+    /* A live shared-VM PROCESS, rather than an observer's root reference,
+     * legitimately retains ordinary reservations after creator completion. */
+    peer=new_basepage();
+    CHECK(peer!=NULL,"allocate independent shared-root consumer");
+    if (!peer) { proc_free_owned(pd);kaspace_put(retained);kaspace_put(second);return; }
+    set_owner(peer,peer);set_owner(USERPTR_TO_PTR(peer->p_env),peer);
+    source_identity=kproc_retain(pd);peer_identity=kproc_retain(peer);
+    policy.source=source_identity;policy.prepared_process=peer_identity;
+    policy.process_policy=PROC_CLONE_PREPARED_PROCESS;policy.vm_policy=PROC_CLONE_SHARE_VM;
+    CHECK(source_identity && peer_identity && proc_clone(&policy,&transaction)==E_OK &&
+          proc_clone_commit(&transaction,&consumer)==E_OK,"trusted shared-VM PROCESS inherits ordinary mapping lifetime");
+    proc_clone_abort(&transaction);kproc_release(peer_identity);kproc_release(source_identity);
     proc_free_owned(pd);
     CHECK(procmem_size(pd) && procmem_size(env) && procmem_pinned(pd) &&
           retained && aspace_translate(kaspace_backend(retained), (VADDR)(uintptr_t)pd, NULL, NULL),
@@ -4241,7 +4258,7 @@ static void test_kproc_pending_ownership(void)
           (VADDR)(uintptr_t)pd + offsetof(PD, p_dreg), sizeof(saved_value)) &&
           saved_value == 0x12345678L, "retained mapping preserves process data");
     CHECK(retained && kaspace_heap_contains(retained, heap_va),
-          "ordinary heap reservation survives KPROC destruction");
+          "shared PROCESS retains ordinary heap after creator destruction");
 #if CONF_WITH_DEMAND_PAGING
     saved_value = -1;
     CHECK(retained && kaspace_heap_demand_page(retained, heap_va, ASPACE_PROT_EXEC) == 0 &&
@@ -4267,6 +4284,14 @@ static void test_kproc_pending_ownership(void)
                                 PTOS_MMAP_BASE, sizeof(saved_value)) && !saved_value &&
           kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, 0) == 0,
           "retained anonymous reservation faults after process destruction");
+#endif
+    proc_clone_release(&consumer);
+    proc_free_owned(peer);
+    CHECK(retained && !kaspace_heap_contains(retained,heap_va),
+          "final PROCESS consumer retires heap while observer root survives");
+#if CONF_WITH_MMAP
+    CHECK(retained && !kaspace_mmap(retained)->regions && !kaspace_mmap(retained)->bytes,
+          "final PROCESS consumer retires mmap metadata before observer root release");
 #endif
     kaspace_put(retained);
     CHECK(procmem_size(pd) && procmem_size(env), "first independent release keeps mappings");

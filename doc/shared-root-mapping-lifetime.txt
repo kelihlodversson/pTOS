@@ -194,6 +194,14 @@ dependency; merely seeing it in the root does not qualify. Preparation retains
 all current source-owned heap/mmap fragments, including PROT_NONE, through
 distinct lifetime tickets, without freezing Munmap/Mprot.
 
+Preparation reserves target-side admission before it can wait or allocate.
+Only one common/scoped mapping constructor may own an empty target at a time.
+The prepared membership pointer is an internal move-only token; commit checks
+and consumes that exact token. Abort closes admission through all callbacks,
+consumes its handle before cleanup, then permits retry after every claim is
+released. A second preparation cannot have its claims swept by another abort.
+Retired target identity references remain distinct from a new PD incarnation.
+
 The loader retains its construction root and uses its existing trusted THREAD
 factory. It must call kproc_clone_commit_mapping_owners at its no-fail root
 adoption boundary; abort calls kproc_abort_mapping_owners before dropping the
