@@ -586,12 +586,15 @@ if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
     for marker in \
         'native nested Pexec identity/exit modes/restoration: PASS' \
         'native nested Pexec construction rollback: PASS' \
-        'native nested Pexec resource conservation: PASS' \
-        'native nested Pexec cancellation during reclamation: PASS'; do
+        'native nested Pexec resource conservation: PASS'; do
         if ! grep -aq "$marker" "$suite_log"; then
             record "native nested continuation ownership" FAIL "missing $marker"
         fi
     done
+    if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native nested Pexec cancellation during reclamation: PASS' "$suite_log"; then
+        record "native nested continuation cancellation" FAIL "configured reclamation checkpoint did not pass"
+    fi
 fi
 
 # The experimental VM test must execute, not merely compile.

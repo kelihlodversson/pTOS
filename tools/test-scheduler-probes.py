@@ -115,3 +115,35 @@ with tempfile.TemporaryDirectory(prefix='ptos-initial-probe-') as directory:
                     required = machine != 'pc-x86_64' and sched and clone and not present
                     assert r.stdout == ('native clone initial register state' if required else ''), (machine, sched, clone, present, r.stdout)
 print('Native initial-entry production guards: all machine alternatives and disabled gates: PASS (host shell)')
+
+# Nested ownership always requires its three native verdicts. Reclamation
+# cancellation additionally requires the optional group-termination feature.
+start = script.index('# Configured nested ownership checks')
+end = script.index('# The experimental VM test', start)
+block = script[start:end]
+nested_markers = [
+    'native nested Pexec identity/exit modes/restoration: PASS',
+    'native nested Pexec construction rollback: PASS',
+    'native nested Pexec resource conservation: PASS',
+    'native nested Pexec cancellation during reclamation: PASS',
+]
+with tempfile.TemporaryDirectory(prefix='ptos-nested-probes-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    for mask in range(8):
+        names = ['CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_NATIVE_SCHED', 'CONF_WITH_PTERMGRP']
+        (top / 'obj/autoconf.h').write_text(''.join(
+            '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
+        for missing in [None] + nested_markers:
+            log.write_text('\n'.join(m for m in nested_markers if m != missing) + '\n')
+            shell = 'top=$1; suite_log=$2\nrecord() { printf "%s" "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
+                                    check=True, text=True, capture_output=True)
+            required = (mask & 3) == 3 and missing is not None
+            if missing == nested_markers[-1]:
+                required = required and bool(mask & 4)
+            expected = ('native nested continuation cancellation' if missing == nested_markers[-1]
+                        else 'native nested continuation ownership') if required else ''
+            assert result.stdout == expected, (mask, missing, result.stdout)
+print('Native nested ownership guards: 40 feature/marker cases, optional cancellation and missing evidence: PASS (host shell)')
