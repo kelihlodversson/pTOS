@@ -60,7 +60,9 @@ case $(uname -s) in
                     (cd -- "$scratch" && sha256sum --check -)
                 files+=("$scratch/$file")
             done
-            "${admin[@]}" apt-get install -y --no-install-recommends "${files[@]}"
+            # An explicit release pin also restores older SDKs on developer
+            # machines that already installed a newer repository version.
+            "${admin[@]}" apt-get install -y --allow-downgrades --no-install-recommends "${files[@]}"
         else
             key=$(mktemp)
             trap 'rm -f "$key"' EXIT

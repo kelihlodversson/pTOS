@@ -71,6 +71,8 @@ together when upgrading CI; do not select `latest` or fetch runtime checksums
 from the same download. GitHub Releases retain older versions independently
 of the limited APT repository storage. Local developers may use this same
 reproducible path or the current packages from apt.ptos.dev above.
+The explicit release option may downgrade an already newer SDK to restore
+the pin; this permission applies only to the verified local SDK package install.
 
 For an environment without permission to install system packages, use an
 isolated Ubuntu 24.04/26.04 container and run this same installer there. Keep

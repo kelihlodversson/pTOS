@@ -28,6 +28,9 @@ elif name == "dpkg":
 elif name == "curl":
     output = Path(args[args.index("-o") + 1])
     output.write_bytes(b"corrupt" if os.environ.get("INSTALL_TEST_CORRUPT") else output.name.encode())
+elif name == "apt-get" and os.environ.get("INSTALL_TEST_NEWER"):
+    if any(arg.endswith(".deb") for arg in args) and "--allow-downgrades" not in args:
+        sys.exit(100)
 elif name == "dpkg-query":
     version = os.environ.get("INSTALL_TEST_VERSION", "1.0.0")
     if any(arg.startswith("-f=") for arg in args): print(version)
@@ -93,6 +96,15 @@ class ReleaseInstaller(unittest.TestCase):
         result = self.run_installer(INSTALL_TEST_VERSION="2.0.0")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expected pinned version 1.0.0", result.stderr)
+
+    def test_newer_installation_can_restore_pin(self):
+        result = self.run_installer(INSTALL_TEST_NEWER="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.installed()), 3)
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        for name, args in calls:
+            if name == "apt-get" and "install" in args:
+                self.assertEqual("--allow-downgrades" in args, any(arg.endswith(".deb") for arg in args))
 
     def test_invalid_release(self):
         self.manifest.write_text(self.manifest.read_text().replace("# release: 1.0.0", "# release: ../bad"))

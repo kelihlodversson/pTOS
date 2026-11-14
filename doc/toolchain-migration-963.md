@@ -11,6 +11,8 @@ Linux CI calls `tools/install-ptos-toolchain.sh ARCH --release`. The manifest
 `tools/ptos-toolchain.sha256` pins version 1.0.0 and the SHA-256 of each official
 GitHub Release `.deb`. Every selected file must have a checksum and match it
 before APT installs any SDK package. Installed versions must equal the pin.
+The explicit release install permits downgrades to restore the pin when a
+developer already has a newer SDK; ordinary repository installs are unaffected.
 This does not require historical packages to remain on apt.ptos.dev.
 
 Local developers may select the same release or install current packages from
@@ -47,12 +49,17 @@ migration. See the PR's current pBench result for the actual measured comparison
   passed across 68000/68020/68040, -Os/-O2 and stack/fastcall, covering 96 copies.
 - Full m68k address-space QEMU regression without the disabling flag: 25 suites
   passed, zero failed; five shutdown checks and scalable-font replay passed.
+- Full ARM address-space QEMU regression: 26 suites passed, zero failed; five
+  shutdown checks and scalable-font replay passed.
+- Native x32 interactive ELF/libaes/VDI/callback/mapping boot and AES ELF audit:
+  passed with the SDK's default prefixes, without native-compiler overrides.
 - ELF metadata/admission suite using real SDK objects: 53 passed.
 - 256 KiB Vampire ROM with LTO: passed with 8,348 bytes free.
 - Host CUIS/GEM suite, including concurrent contexts and non-recovering
   ASan/UBSan: passed.
-- Installer selection/integrity fixtures: six passed, including corrupt files,
-  missing checksums, unsupported hosts and installed-version mismatch.
+- Installer selection/integrity fixtures: seven passed, including corrupt
+  files, missing checksums, unsupported hosts, installed-version mismatch and
+  restoration of the pin over a newer installation.
 
 Kernel builds and QEMU system runs use the same verified SDK payload relocated
 under the managed Debian workspace. CI additionally covers the full build and

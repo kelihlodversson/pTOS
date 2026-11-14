@@ -22,6 +22,7 @@ and installs them with APT. To reproduce that version locally, use:
 
 This remains reproducible when apt.ptos.dev retires older package versions.
 Update the manifest's release version and all hashes together to upgrade CI.
+The explicit --release option can downgrade a newer installed SDK to the pin.
 
   Target                         Default compiler prefix
   Atari, ARAnyM, Amiga, ColdFire  m68k-unknown-ptos-prgelf-
