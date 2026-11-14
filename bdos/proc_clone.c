@@ -201,6 +201,14 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         if(loaded_shared) tx->owns_shared_exec=TRUE;
         error=ENSMEM;
     }
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(!loaded_shared && args->process_policy==PROC_CLONE_NEW_PROCESS &&
+        args->vm_policy!=PROC_CLONE_PRIVATE_VM) {
+        error=kproc_shared_dependencies_prepare(tx->process,tx->source);
+        if(error) goto failed;
+        error=ENSMEM;
+    }
+#endif
     tx->thread = args->process_policy == PROC_CLONE_LOADED_PROCESS ?
         kthread_prepare(kproc_live_pd(tx->process), tx->space) :
         kthread_construct_identity(tx->process, tx->space);

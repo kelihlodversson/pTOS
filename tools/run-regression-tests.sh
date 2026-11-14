@@ -84,6 +84,11 @@ cleanup() {
 trap cleanup EXIT
 
 [ -d "$top/test-dir" ] || { echo "$0: no test-dir/: run 'make test-dir' first" >&2; exit 2; }
+if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested positive shared-Pexec but the effective gate is disabled" >&2
+    exit 2
+fi
 
 # record <name> <PASS|FAIL> [detail]
 record() {
@@ -637,6 +642,15 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
                 record "native shared-Pexec interpreter" FAIL "missing consumer assertion: $marker"
             fi
         done
+        if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+            for marker in \
+                'native shared-VM 128 interpreted Pexec4/104 normal/fault-before-fini exact 45-counter conservation: tested' \
+                'native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested'; do
+                if ! grep -aqF "$marker" "$suite_log"; then
+                    record "native shared-Pexec DSO lifetime" FAIL "missing positive consumer execution: $marker"
+                fi
+            done
+        fi
     fi
     if grep -q '^#define ARCH_M68K 1' "$top/obj/autoconf.h" &&
        ! grep -aqF 'native shared-VM PRG Pexec4/104 entry, status and shared data: tested' "$suite_log"; then

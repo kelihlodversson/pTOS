@@ -166,6 +166,9 @@ struct kproc {
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
     struct shared_exec_regions *shared_exec;
+    /* Mutually exclusive with shared_exec: generic descendants retain the
+     * same bounded special R1/R2 receipts without loaded-entry/stack policy. */
+    struct shared_exec_regions *shared_inherited;
     BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
@@ -875,6 +878,9 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
     p->active_space = space; /* transfer the transaction's owning reference */
     p->aspace = kaspace_backend(space);
     p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(p->shared_inherited) p->shared_inherited->committed=TRUE;
+#endif
     return TRUE;
 }
 
@@ -1289,6 +1295,9 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
         p->parent = p->clone_controller_pd; /* logical identity remains separate */
     }
     if(p->shared_exec) shared_exec_commit(p);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(p->shared_inherited) p->shared_inherited->committed=TRUE;
+#endif
     p->active_space = space; p->aspace = kaspace_backend(space);
     p->clone_guarded = TRUE; p->clone_identity_only = FALSE;
     p->child_usage_at_wait = wait_usage;

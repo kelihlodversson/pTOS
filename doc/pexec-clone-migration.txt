@@ -1,9 +1,11 @@
 Pexec creation and executable-transition policy audit (#894 / #895)
 =================================================================
 
-Accepted baseline: epic be81959ea54a13c1ab6f4946086590083710d929.
-#966 actual-merge validation is accepted; source-PR CI alone was not used.
-Phase5 history4f1981 was reconciled by normal merge2a43ed804 with that epic.
+Accepted baseline: epic496ceba0eb260e3de2cef52f074699df6bf6f177.
+Its tree is identical to independently accepted #968 source69ccd179. Existing
+8ece5bde Phase5 history is reconciled by normal merge96e408df6, with #966/#968
+imported once. Current consumer evidence and pending whole acceptance are in
+phase5-acceptance.txt and PR956/#894. Historical results are not current source.
 The mode table below records the original migration inventory. Shared4/104 now
 have a default-off test implementation; see shared-vm-pexec.txt and the current
 acceptance ledger, not this historical table, for implementation status.
@@ -144,25 +146,24 @@ Supported nested execution is a sole-THREAD synchronous continuation; public
 nested Pclone/Pthjoin/Ptermgrp restrictions, single CPU and cooperative admission
 remain unchanged. This is independent of production dispatch/preemption/SMP.
 
-Blocking ordinary-region consumer contract (#891 / #892 / #894)
+Resolved ordinary-region consumer prerequisite (#968 / #894)
 -------------------------------------------------------------
-MMAP_REGION and ordinary heap records currently belong to KASPACE. Generic
-NEW_PROCESS/CLONE_VM retains that root and its own execution stack; it does not
-acquire R2 lifetime attachments for every inherited region. Shared-Pexec does
-capture current ordinary regions, but runtime DSOs created after its publication
-have no PROCESS retirement owner. PROCESS teardown merely drops a root reference.
-Repeated interpreted shared launches retain obsolete runtime reservations until
-the surviving root dies and eventually exhaust the bounded consumer region set.
+Before #968, ordinary heap/MMAP_REGION records had no PROCESS lifetime owner;
+repeated interpreted shared launches retained obsolete runtime regions until
+root destruction. The original failing conservation tests remain negative
+evidence. Creator-only unmap and successful-fini cleanup were rejected because
+both can invalidate surviving peers or returning DSO code.
 
-Final reclamation before surviving-root destruction requires an owner-reviewed
-common attachment/retirement policy across all shared-root creators, including
-allocations born after peers already exist. Preserve exact births, rights,
-FILE_BACKING and split metadata, THREAD-vs-PROCESS completion and R1-R4 rollback.
-Creator-only unmap can destroy a still-runnable generic peer's code/data.
-Unmapping inside interpreter fini is also unsafe: it returns into DSO code and
-post-fini checks still read DSO data; faults/raw termination bypass fini.
-Do not increase bounds, omit maps from accounting, add another registry or
-substitute another root. Accepted R1-R4 and #966 are not the missing contract.
+Accepted #968 supplies canonical common-VM memberships, exact birth/interval
+attachments and final-owner retirement, including late allocations. Phase5
+consumes that machinery for general allocations and an explicit gated loader
+runtime annotation; see shared-vm-pexec.txt for the FreeMiNT compatibility
+choice. Generic descendants also retain the existing bounded special R1/R2
+execution dependencies, without duplicating ordinary mapping ownership.
+Final consumer source still requires its own native conservation, fault/rollback,
+compatibility and independent owner acceptance; prerequisite CI is not that
+acceptance. No bounds are increased, root destruction is not a leak workaround,
+and #958/#966 ownership and continuation restrictions remain unchanged.
 
 Committed executable replacement design (200)
 --------------------------------------------

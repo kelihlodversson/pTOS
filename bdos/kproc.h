@@ -231,6 +231,9 @@ ULONG kproc_test_mapping_wait_count(void);
 #include "thread_startup.h"
 LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PERMISSION_TRANSACTION **);
 LONG kproc_shared_exec_take_mapping_owners(KPROC *,KASPACE_MEMBER **);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG kproc_shared_dependencies_prepare(KPROC *,KPROC *);
+#endif
 void kproc_shared_exec_abort(KPROC *);
 void kproc_shared_exec_finish(KPROC *);
 BOOL kproc_shared_exec_relro_range(const KPROC *,VADDR address,VADDR bytes);

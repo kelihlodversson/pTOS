@@ -150,7 +150,9 @@ obj/ldso/test/librt.so: tests/ldso_runtime/leaf.c tools/make-partial-bss.py $(AU
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,librt.so,--section-start,.partial_bss=0x20000 $< -o $@
 	python3 tools/make-partial-bss.py $@
 obj/ldso/test/libdyn.so: tests/ldso_runtime/library.c obj/ldso/test/librt.so $(AUTOCONF_H)
-	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,libdyn.so $< -Lobj/ldso/test -lrt -o $@
+	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) \
+	  $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),-DLDSO_TEST_DSO_PEER) \
+	  -nostdlib -shared -Wl,--hash-style=sysv,-soname,libdyn.so $< -Lobj/ldso/test -lrt -o $@
 LDSO_INTERP-$(ARCH_X86_64) = /GEMSYS/LIB/X32/LD.SO
 LDSO_INTERP-$(ARCH_ARM) = /GEMSYS/LIB/$(LDSO_LIBNAME-y)/LD.SO
 LDSO_INTERP-$(ARCH_M68K) = /GEMSYS/LIB/M68K/LD.SO

@@ -162,3 +162,28 @@ FILE_BACKING exactly once; immutable #958 backing bounds and access checks still
 apply. No parallel mapping registry, reaper or scheduler is introduced. The
 shared region limit remains96. Whole-consumer public compatibility acceptance
 and fresh native resource/DSO evidence are required before public activation.
+
+Generic shared-root execution dependencies
+------------------------------------------
+Generic NEW_PROCESS descendants need more than ordinary mapping membership:
+DSO code can call an interposed function or syscall stub in the source's main
+image. Final source exit must not allow its original staged metadata to be
+freed while that peer can execute such code. Generic same-root construction
+therefore duplicates the existing bounded R1/R2 receipts and authenticates the
+immediate source's own compatibility metadata and main/interpreter witnesses.
+A mutually exclusive inherited role uses the same shared_exec_regions storage
+(one set per PROCESS, the unchanged raw/region bounds); it carries no borrowed
+stack owner, permission journal, pending image, parent/controller or image-commit
+state. Each token is duplicated through its canonical primitive, never copied.
+
+This role is prepared after mapping-owner admission and before THREAD creation,
+committed at the existing identity-only adoption or runnable no-fail boundary,
+and released after final THREAD stop before ordinary membership retirement.
+Loaded entry/guarded-stack/RELRO and scalar-limit rules remain exclusive to the
+loaded role. SAME_PROCESS adds no PROCESS owner; PRIVATE_VM copies its root and
+never inherits source-root receipts. A failed prefix releases only its acquired
+tickets and leaves source receipts, mappings, aliases and permissions intact.
+Native regression runs real DSO code/data before and after creator normal/fault
+exit, including a call back into the source image, then checks exact45-counter
+conservation with the parent root alive. The original failing control is retained
+in the PR evidence; successful-fini unmapping is not used.

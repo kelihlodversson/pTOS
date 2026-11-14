@@ -1,3 +1,8 @@
+static struct shared_exec_regions *shared_regions(const KPROC *p)
+{
+    if(p->shared_exec && p->shared_inherited) panic("duplicate special execution region owner");
+    return p->shared_exec?p->shared_exec:p->shared_inherited;
+}
 static LONG shared_logical(struct shared_exec_regions *set,KPROC *source,VADDR va,VADDR bytes,UWORD access)
 {
     KASPACE_RESERVATION_INFO info;
@@ -63,8 +68,10 @@ static BOOL shared_supervisor_compat(KPROC *source,void *base,UQUAD generation)
 static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,UQUAD generation)
 {
     LONG error;ULONG i;
+    struct shared_exec_regions *inherited=shared_regions(source);
+    for(i=0;i<set->nraw;i++) if(set->raw[i].token.base==(VADDR)(uintptr_t)base)
+        return set->raw[i].token.allocation==generation?E_OK:EACCDN;
     if(set->nraw==SHARED_RAW) return ENSMEM;
-    for(i=0;i<set->nraw;i++) if(set->raw[i].token.base==(VADDR)(uintptr_t)base) return E_OK;
 #if CONF_WITH_SHARED_VM_PEXEC_TEST
     if(shared_supervisor_compat(source,base,generation)) {
         KPROC *owner=kproc_retain_live(source);
@@ -79,10 +86,10 @@ static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,
                                    &set->raw[set->nraw]);
     else {
         error=EACCDN;
-        if(source->shared_exec) for(i=0;i<source->shared_exec->nraw;i++)
-            if(source->shared_exec->raw[i].token.base==(VADDR)(uintptr_t)base &&
-                source->shared_exec->raw[i].token.allocation==generation) {
-                error=kproc_allocation_duplicate(&source->shared_exec->raw[i],&set->raw[set->nraw]);break;
+        if(inherited) for(i=0;i<inherited->nraw;i++)
+            if(inherited->raw[i].token.base==(VADDR)(uintptr_t)base &&
+                inherited->raw[i].token.allocation==generation) {
+                error=kproc_allocation_duplicate(&inherited->raw[i],&set->raw[set->nraw]);break;
             }
     }
     if(!error) set->nraw++;
@@ -122,12 +129,10 @@ static void shared_retire_stack(struct shared_exec_regions *set)
     }
     set->stack=0;
 }
-void kproc_shared_exec_abort(KPROC *process)
+static void shared_regions_release(KPROC *process,struct shared_exec_regions *set)
 {
-    struct shared_exec_regions *set=process?process->shared_exec:NULL;
     if(!set) return;
     if(set->committed && process->threads) panic("shared exec release while THREADs can resume");
-    process->shared_exec=NULL; /* unpublish before releases may reclaim anything */
     shared_retire_stack(set);
     while(set->nlogical) if(!kproc_reservation_release(&set->logical[--set->nlogical]))
         panic("shared exec reservation released twice");
@@ -140,6 +145,68 @@ void kproc_shared_exec_abort(KPROC *process)
     kproc_abort_mapping_owners(process,set->space,&set->mapping_members);
     kproc_release(set->parent);kaspace_put(set->space);kfree(set);
 }
+void kproc_shared_exec_abort(KPROC *process)
+{
+    struct shared_exec_regions *set=process?shared_regions(process):NULL;
+    if(!set) return;
+    process->shared_exec=process->shared_inherited=NULL;
+    shared_regions_release(process,set); /* close admission before callbacks */
+}
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
+{
+    struct shared_exec_regions *set,*inherited;
+    ULONG i;
+    LONG error=ENSMEM;
+    if(!target || !source || target==source || target->shared_exec || target->shared_inherited ||
+        target->threads || target->mapping_preparation!=MAPPING_PREPARED ||
+        !source->active_space || !mapping_owner_live(source)) return EACCDN;
+    set=kalloc(sizeof(*set));if(!set) return ENSMEM;
+    memset(set,0,sizeof(*set));set->space=kaspace_share(source->active_space);
+    if(!set->space) { kfree(set);return ENSMEM; }
+    inherited=shared_regions(source);
+    if(inherited) {
+        for(i=0;i<inherited->nraw;i++) {
+            error=kproc_allocation_duplicate(&inherited->raw[i],&set->raw[set->nraw]);
+            if(error) goto failed;
+            set->nraw++;
+        }
+        for(i=0;i<inherited->nlogical;i++) {
+            error=kproc_reservation_duplicate(&inherited->logical[i],&set->logical[set->nlogical]);
+            if(error) goto failed;
+            set->nlogical++;
+        }
+    }
+#define DEPENDENCY(call) do {error=(call);if(error) goto failed;}while(0)
+    /* A generic source's own compatibility PD/env are distinct from its
+     * ancestor's receipts. Own exactly those dependencies as well. */
+    DEPENDENCY(shared_raw(set,source,source->user_start,source->tpa_gen));
+    DEPENDENCY(shared_raw(set,source,source->env_start,source->env_gen));
+    DEPENDENCY(shared_compat_logical(set,source,source->user_start,source->tpa_gen,&source->reservation_birth[0]));
+    DEPENDENCY(shared_compat_logical(set,source,source->env_start,source->env_gen,&source->reservation_birth[1]));
+    if(!inherited) {
+        if(!source->legacy && owns_top_stack(source))
+            DEPENDENCY(shared_logical(set,source,USER_STACK_TOP-stack_bytes(source),stack_bytes(source),ASPACE_PROT_USER));
+        DEPENDENCY(shared_source_images(set,source));
+    }
+    if(source->has_image) {
+        for(i=0;i<source->layout.nseg;i++) if(source->layout.seg[i].memsz)
+            DEPENDENCY(shared_logical(set,source,source->layout.seg[i].vaddr,
+                                        source->layout.seg[i].memsz,ASPACE_PROT_USER));
+#if CONF_WITH_ELF_SHARED
+        for(i=0;i<source->interpreter_layout.nseg;i++) if(source->interpreter_layout.seg[i].memsz)
+            DEPENDENCY(shared_logical(set,source,source->interpreter_layout.seg[i].vaddr,
+                                        source->interpreter_layout.seg[i].memsz,ASPACE_PROT_USER));
+#endif
+    }
+    target->shared_inherited=set; /* prepared, not committed/runnable */
+    return E_OK;
+failed:
+    shared_regions_release(target,set);
+    return error;
+#undef DEPENDENCY
+}
+#endif
 BOOL kproc_shared_exec_ready(const KPROC *p,KTHREAD *thread)
 {
     BOOL pending_ok=p && !p->pending_space;
@@ -180,18 +247,21 @@ BOOL kproc_shared_exec_active(PD *pd)
 BOOL kproc_shared_exec_retire_source(void *base)
 {
     KPROC *p;ULONG i;UQUAD generation=procmem_gen(base);
-    for(p=kproc_list;p;p=p->next) if(p->shared_exec && p->shared_exec->committed)
-        for(i=0;i<p->shared_exec->nraw;i++)
-            if(p->shared_exec->raw[i].token.base==(VADDR)(uintptr_t)base &&
-                p->shared_exec->raw[i].token.allocation==generation) {
+    for(p=kproc_list;p;p=p->next) {
+        struct shared_exec_regions *set=shared_regions(p);
+        if(!set || !set->committed) continue;
+        for(i=0;i<set->nraw;i++)
+            if(set->raw[i].token.base==(VADDR)(uintptr_t)base &&
+                set->raw[i].token.allocation==generation) {
                 retire_discard_borrow(base);return TRUE;
             }
+    }
     return FALSE;
 }
 LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *startup,
                               KASPACE_PERMISSION_TRANSACTION **permissions)
 {
-    struct shared_exec_regions *set;
+    struct shared_exec_regions *set,*inherited;
     KASPACE_PROTECTION policy[PROG_MAX_SEGMENTS];
     KASPACE_HEAP *heap;
     struct uheap_block *image=NULL;
@@ -326,9 +396,10 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         if(source->interpreter_layout.seg[i].memsz) SHARED_TRY(shared_logical(set,source,source->interpreter_layout.seg[i].vaddr,
                 source->interpreter_layout.seg[i].memsz,ASPACE_PROT_USER));
 #endif
-    if(source->shared_exec) for(i=0;i<source->shared_exec->nlogical;i++) {
+    inherited=shared_regions(source);
+    if(inherited) for(i=0;i<inherited->nlogical;i++) {
         if(set->nlogical==SHARED_REGIONS) {error=ENSMEM;goto failed;}
-        SHARED_TRY(kproc_reservation_duplicate(&source->shared_exec->logical[i],&set->logical[set->nlogical]));set->nlogical++;
+        SHARED_TRY(kproc_reservation_duplicate(&inherited->logical[i],&set->logical[set->nlogical]));set->nlogical++;
     }
     SHARED_TRY(shared_source_images(set,source));
     /* Ordinary heap/mmap lifetime is owned solely by #968 membership and

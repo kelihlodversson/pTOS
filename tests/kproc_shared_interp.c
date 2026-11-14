@@ -134,6 +134,24 @@ static void supervisor_clone_metadata(void)
         CHECK(owns_top_stack(&owner));
         owner.threads=NULL;owner.started=FALSE;
     }
+    {
+        KPROC target={0};PD target_pd={0};unsigned prefix;LONG error;
+        target.pd=&target_pd;target.number=235;target.references=1;
+        target.mapping_preparation=MAPPING_PREPARED;
+        for(prefix=1;prefix<16;prefix++) {
+            ULONG before=metadata_live,refs=owner.references;
+            PROCMEM_STATS a,b;procmem_stats(&a);
+            fail_metadata=allocation_call+prefix;
+            error=kproc_shared_dependencies_prepare(&target,&owner);fail_metadata=0;
+            if(!error) kproc_shared_exec_abort(&target);
+            else CHECK(error==ENSMEM && !target.shared_inherited);
+            procmem_stats(&b);
+            CHECK(metadata_live==before && owner.references==refs &&
+                a.live_allocs==b.live_allocs && a.free_pages==b.free_pages);
+            if(!error) break;
+        }
+        CHECK(prefix>4 && prefix<16 && !target.shared_inherited);
+    }
     while(held.nlogical) CHECK(kproc_reservation_release(&held.logical[--held.nlogical]));
     while(held.nraw) CHECK(kproc_allocation_release(&held.raw[--held.nraw]));
     CHECK(owner.references==1);kproc_list=NULL;

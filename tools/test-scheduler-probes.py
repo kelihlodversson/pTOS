@@ -177,3 +177,27 @@ with tempfile.TemporaryDirectory(prefix='ptos-mapping-probes-') as directory:
                         else 'native shared-root mapping ownership') if required else ''
             assert result.stdout == expected, (mask, missing, result.stdout)
 print('Native shared-root mapping guards: 96 feature/marker cases, missing execution evidence fails: PASS (host shell)')
+
+start = script.index('# A positive shared-Pexec build')
+end = script.index('# Configured nested ownership checks', start)
+block = script[start:end]
+import re
+shared_markers = re.findall(r"'(native shared-VM[^']+: tested)'", block)
+dso_markers = [m for m in shared_markers if '45-counter conservation' in m]
+assert len(dso_markers) == 2
+with tempfile.TemporaryDirectory(prefix='ptos-shared-dso-probes-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    for mask in range(8):
+        names = ['CONF_WITH_SHARED_VM_PEXEC_TEST', 'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_ELF_SHARED']
+        (top / 'obj/autoconf.h').write_text(''.join(
+            '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
+        for missing in [None] + dso_markers:
+            log.write_text('\n'.join(m for m in shared_markers if m != missing) + '\n')
+            shell = 'top=$1; suite_log=$2\nrecord() { printf "%s" "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
+                                    check=True, text=True, capture_output=True)
+            expected = 'native shared-Pexec DSO lifetime' if mask == 7 and missing else ''
+            assert result.stdout == expected, (mask, missing, result.stdout)
+print('Native shared-Pexec DSO guards: 24 feature/marker cases, compiled-out or missing evidence rejected: PASS (host shell)')
