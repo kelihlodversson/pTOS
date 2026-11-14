@@ -4,7 +4,7 @@ Pexec creation and executable-transition policy audit (#894 / #895)
 Accepted baseline: epic496ceba0eb260e3de2cef52f074699df6bf6f177.
 Its tree is identical to independently accepted #968 source69ccd179. Existing
 8ece5bde Phase5 history is reconciled by normal merge96e408df6, with #966/#968
-imported once. Current consumer evidence and pending whole acceptance are in
+imported once. Current consumer evidence and the exact acceptance verdict are in
 phase5-acceptance.txt and PR956/#894. Historical results are not current source.
 The mode table below records the original migration inventory. Shared4/104 now
 have a default-off test implementation; see shared-vm-pexec.txt and the current
@@ -112,7 +112,7 @@ reuse the isolated move-private mechanism on COW/shared pages for exec200.
 Implemented default-off shared-VM consumer (4/104)
 ------------------------------------------------
 The following policy is implemented behind CONF_WITH_SHARED_VM_PEXEC_TEST;
-whole-consumer acceptance is pending. It does not authorize production use.
+exact whole-consumer acceptance is recorded on PR956/#894. It does not authorize production use.
 Use distinct PROCESS identities with the same retained KASPACE, not SAME_PROCESS.
 A loaded-image policy must authenticate the caller's PE_LOAD grant, retain
 image/stack/environment/basepage allocations and logical mappings through

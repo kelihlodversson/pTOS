@@ -111,7 +111,12 @@ int main(int argc, char **argv, char **envp)
     CHECK(waitpid(-1, 1, ~0ULL) == EFILNF);
     CHECK(waitpid(-1, 4, 0) == EINVAL);
     CHECK(waitpid(0, 0, 0) == EINVFN); /* process groups are not implemented */
-    CHECK(call(0x4b, 104, 0, 0, 0) == EINVFN);
+    CHECK(call(0x4b, 104, 0, 0, 0) ==
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+          EIMBA);
+#else
+          EINVFN);
+#endif
     CHECK(call(0x4b, 106, 0, 0, 0) == EIMBA);
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
     {

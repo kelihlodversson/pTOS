@@ -6,7 +6,7 @@ Implementation slice (private test kernels only until independent acceptance):
 - Preserve ordinary PE_LOAD ownership and patchable data; mark original heap grant as shared attachment on no-fail commit. Parent retirement retires attached ranges into existing R4 fences; it cannot destroy an executing child KPROC merely because its allocation was parent-owned.
 - Reuse existing canonical #909 reap, adding only an internal full-result projection to the same consumption path for Pexec4's full16 status. No second observer registry or reaper.
 
-Post-#968 reconciliation (test-only, whole-consumer acceptance pending)
+Post-#968 reconciliation (test-only; exact acceptance on PR956/#894)
 --------------------------------------------------------------------
 Accepted epic: 496ceba0eb260e3de2cef52f074699df6bf6f177, identical tree
 b3fbe23151ea26ee217779d99848098f532a2829 to accepted #968 source69ccd179.
@@ -31,7 +31,8 @@ Additional draft implementation:
 - PRG borrowed-text permission preparation authenticates a live exact R1
   allocation hold and uses the same reversible journal. Native m68k basic
   PRG4/104 entry, shared-data write and status/reap pass in the preliminary
-  authored configuration; full final-source/PFS/pinned coverage is pending.
+  authored configuration. Final-source/PFS/pinned results are recorded in the
+  exact-source acceptance ledger, separately from that preliminary evidence.
 - Trusted standard ELF entry preserves the argc/argv stack rather than
   constructing a C entry frame. The x32 launcher authenticates the published
   ELF draft's exact initial SP before using the existing16-byte ELF alignment
@@ -58,8 +59,8 @@ parent-first and generic/nested-source fixtures are being verified. A green
 component or earlier source result does not establish final-head acceptance.
 #966 resolves the old #713 continuation-owner dependency. #968 supplies the common mapping lifetime prerequisite; the consumer now uses
 its canonical memberships and exact attachments for ordinary mappings.
-Full final native/compatibility/GUI/pinned evidence and whole-owner review remain
-pending; see phase5-acceptance.txt and current PR956/#894 ledgers.
+Full final native/compatibility/GUI/pinned evidence and whole-owner review are
+required; see phase5-acceptance.txt and the exact-source PR956/#894 ledgers.
 Successful execution is not proof of complete shared-ASPACE allocation lifetime.
 
 Hosted production startup, permissions, wait claims and RELRO tests use modeled

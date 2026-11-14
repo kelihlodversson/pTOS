@@ -86,6 +86,11 @@ typedef unsigned int u32;
 #define ENSMEM (-39)
 #define EINVFN (-32)
 #define EACCDN (-36)
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#define MODE4_INVALID_IMAGE EIMBA
+#else
+#define MODE4_INVALID_IMAGE EINVFN
+#endif
 #define BIOS   13
 #define XBIOS  14
 
@@ -738,7 +743,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(BIOS, 5, 0x102, 0x500000, 0) != EACCDN)
             bad |= 1;                   /* Setexc(etv_term, user address) */
         /* this very (running) basepage a second time, and mode 50 */
-        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
+        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != MODE4_INVALID_IMAGE ||
             sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EIMBA ||
             sys4(GEMDOS, 0x4b, 50, 0, 0, 0) != EINVFN)
             bad |= 32;
@@ -829,7 +834,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         bp[2] = (u32)bp_addr + 0x100;
         env = bp[11]; hitpa = bp[1];
         for (i = 0; i < 64; i++) forged[i] = bp[i];
-        if (sys4(GEMDOS, 0x4b, 4, none, (s64)(int)(unsigned long)forged, 0) != EINVFN ||
+        if (sys4(GEMDOS, 0x4b, 4, none, (s64)(int)(unsigned long)forged, 0) != MODE4_INVALID_IMAGE ||
             sys4(GEMDOS, 0x4b, 104, 0, bp_addr, 0) != EINVFN ||
             sys4(GEMDOS, 0x4b, 6, none, (s64)(int)(unsigned long)forged, 0) != EIMBA)
             bad |= 8;
@@ -1332,7 +1337,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             }
         }
         /* a launch of a basepage needs one: null is refused up front */
-        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != EINVFN) bad |= 512;
+        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != MODE4_INVALID_IMAGE) bad |= 512;
         if (sys4(GEMDOS, 0x4b, 6, 0, 0, 0) != EIMBA) bad |= 512;
         /* no environment given: the caller's own is inherited through its
          * basepage's p_env, which it can have rewritten */
@@ -1483,10 +1488,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'G': case 'H': {
-        /* A rejected mode-4 launch leaves a mode-3 image and basepage
-         * untouched. Exercise both discard and a later consuming launch. */
+        /* The production gate rejects mode4; positive test kernels execute
+         * it. A failed mode4 still permits the same image's consuming mode6. */
         static const char patch_tail[] = { 1, 'P', 0 };
-        s64 bpa, env, rc, ordinary, gap = 0;
+        s64 bpa, env, rc, ordinary, launch_image, expected, gap = 0;
         volatile u32 *bpp, *w;
         u32 first, last;
         if (tail[0] == 'H') {
@@ -1509,8 +1514,23 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             if (*w == 0x11111111u) { *w = 0x22222222u; break; }
         if ((unsigned long)w >= last) bad |= 32;
         if (gap && gemdos(0x49, gap, 0) != 0) bad |= 128;
-        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", bpa, 0);
-        if (rc != EINVFN || bpp[0] != (u32)bpa || (unsigned long)w >= last ||
+        launch_image=bpa;expected=EINVFN;
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+        expected=0;
+        if (tail[0]=='H') {
+#if CONF_WITH_PRIVATE_CLONE_TEST
+            if (gemdos(GEMDOS_PCLONE,0,0xc8940901UL)) bad |= 512;
+            expected=ENSMEM;
+#else
+            launch_image=0;expected=EIMBA;
+#endif
+        }
+#endif
+        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", launch_image, 0);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+        if (tail[0]=='H' && gemdos(GEMDOS_PCLONE,0,0xc8940900UL)) bad |= 512;
+#endif
+        if (rc != expected || bpp[0] != (u32)bpa || (unsigned long)w >= last ||
             *w != 0x22222222u) bad |= 4;
         if (tail[0] == 'H') {
             if (sys4(GEMDOS, 0x4b, 6, 0, bpa, 0) != 0) bad |= 8;

@@ -3,17 +3,19 @@ Shared-root mapping attachment and retirement (#967)
 
 Implementation base: be81959ea54a13c1ab6f4946086590083710d929.
 Prerequisite: #894 / #956; ownership foundations: #891, #892, #958.
-This document is the design contract, written before production changes.
+This document preserves the design contract written before production changes.
 The shared-VM/default versus explicit scoped policy was approved by the task
-owner before scoped implementation. Implementation is in progress; native
-acceptance and final independent verdicts are still pending.
+owner before scoped implementation. The implementation was accepted in #968 at
+69ccd179aa5e376505baa5ef8ed5a4a1e7750370, then normally merged as496ceba0.
+Those commits have identical tree b3fbe23151ea26ee217779d99848098f532a2829.
+Prerequisite acceptance is separate from the combined #956 consumer verdict.
 
-The accepted-base negative control
+The historical accepted-base negative control
 ----------------------------------
-Run `python3 tools/test-shared-root-mapping.py` with kconfiglib installed.
+`python3 tools/test-shared-root-mapping.py` runs with kconfiglib installed.
 The test includes production kproc.c and kaspace.c. Only physical MMU and file
 resources are counted hosted models; it is not native launcher evidence.
-The source production tree is identical to the accepted base. One PROCESS
+The original negative used the production tree at be81959e. One PROCESS
 creates anonymous PROT_NONE and closed-lifetime file reservations, Mprot splits
 the anonymous reservation, and Munmap removes the file reservation's middle.
 The last PROCESS then retires while an observer retains the root, with no
