@@ -651,6 +651,24 @@ BOOL kproc_thread_start_allowed(const KPROC *process)
         !process->clone_identity_only && process->disposal_state == PROCESS_LIVE;
 }
 
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+/* One-shot native injections for the regression kernels: the next THREAD
+ * association cannot retain its KASPACE; the next launch preparation cannot
+ * allocate its syscall stack. */
+static BOOL fail_thread_space, fail_kernel_stack;
+ULONG kproc_test_identities(BOOL references)
+{
+    const KPROC *process;
+    ULONG count = 0;
+    for (process = kproc_list; process; process = process->next)
+        count += references ? process->references : 1;
+    for (process = retired_processes; process; process = process->next)
+        count += references ? process->references : 1;
+    return count;
+}
+void kproc_test_fail_thread_space(BOOL armed) { fail_thread_space = armed; }
+void kproc_test_fail_kernel_stack(BOOL armed) { fail_kernel_stack = armed; }
+#endif
 BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
     KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next, BOOL identity_only)
 {
@@ -668,6 +686,9 @@ BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
         (p->active_space && p->active_space != construction_space) ||
         !kproc_retain_live(p))
         return FALSE;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (fail_thread_space) { fail_thread_space = FALSE; as = NULL; } else
+#endif
     as = kaspace_share(construction_space);
     if (!as) {
         kproc_release(p);
@@ -1715,6 +1736,9 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         owner = kaspace_adopt(as);
         if (!owner) { aspace_destroy(as); return FALSE; }
     }
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    if (fail_kernel_stack) { fail_kernel_stack = FALSE; kproc->kstack_phys = 0; } else
+#endif
     kproc->kstack_phys = kstack_alloc(&kproc->kstack_top);
     if (!kproc->kstack_phys) {
         if (owner != kproc->pending_space)

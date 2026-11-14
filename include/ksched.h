@@ -25,7 +25,7 @@ BOOL ksched_async_allowed(void);
 /* Irreversible system shutdown, not PROCESS cancellation. No resources are
  * destroyed here; callers must never resume dispatch after shutting files down. */
 void ksched_shutdown_begin(void);
-PD *ksched_launch_controller(PD *pd); /* current task only, never a nested launcher */
+PD *ksched_launch_controller(PD *pd); /* current task only, never a nested execution */
 #if CONF_WITH_NATIVE_SCHED
 /* IRQ entry/owner publication only: no callback, allocation or dispatch.
  * The owner publishes durable readiness before ending its masked IRQ/owner
@@ -100,10 +100,35 @@ LONG ksched_clone_dispatch(void **slot, struct proc_clone_transaction *, LONG *s
 #endif
 struct kthread;
 struct kproc;
-/* Borrow the current task identity only for its own process, never a nested
- * synchronous child. Finish is called off the child syscall stack, before
- * the common PROCESS finalizer; task-stack reclamation remains root-only. */
+/* The THREAD that authentically executes `pd` on this CPU: the current task's
+ * own, or the innermost associated nested execution's. Enclosing owners
+ * suspended in a launcher, and stopped executions, authenticate nobody.
+ * Finish is called off the child syscall stack, before the common PROCESS
+ * finalizer; task-stack reclamation remains root-only. */
 struct kthread *ksched_exit_thread(PD *pd);
+#if CONF_WITH_NATIVE_SCHED
+/* Synchronous nested PROCESS execution on the calling THREAD's carrier
+ * (doc/native-scheduler-plan.txt, "Nested continuation ownership").
+ * prepare: fallible and private; constructs the nested PROCESS's address
+ *   space, syscall stack and trusted-factory initial THREAD. Returns E_OK,
+ *   KSCHED_NESTED_UNMANAGED when the caller is no managed THREAD (the launch
+ *   then keeps kproc_prepare_user()), or a negative error with nothing kept.
+ * cancel: rolls a prepared, unentered association back.
+ * enter: no-fail publication immediately before the launcher loads `pd`.
+ * leave: no-fail restoration of the enclosing owner and reclamation of the
+ *   stopped THREAD, from the common finalizer on the enclosing kernel stack.
+ * Calls for a PROCESS without such an association are no-ops. */
+#define KSCHED_NESTED_UNMANAGED 1L
+LONG ksched_nested_prepare(PD *pd);
+void ksched_nested_cancel(PD *pd);
+void ksched_nested_enter(PD *pd);
+BOOL ksched_nested_leave(struct kproc *process); /* TRUE if a nested owner was restored */
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+LONG ksched_test_nested(UWORD selector); /* counters 0-13, arm stage 0x10+n, 0x20 untracked */
+BOOL ksched_test_nested_injected(UWORD stage);
+void ksched_test_nested_published(struct kproc *process);
+#endif
+#endif
 #if CONF_WITH_PTERMGRP
 /* Only terminates at an owned syscall continuation; nested children defer it. */
 void ksched_cancel_point(void);

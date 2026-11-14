@@ -6260,6 +6260,9 @@ static void test_ring3(void)
     snap(&s);
     x86_64_memtest_fail_next_exit_handoff();
 #if CONF_WITH_NATIVE_SCHED
+    /* The refusal needs a child without a THREAD: keep this one nested
+     * launch on the untracked carrier contract (#713). */
+    (void)ksched_test_nested(0x20);
     CHECK(run_probe('n') == 0, "nested failed exit handoff preserves legacy termination");
 #else
     CHECK(run_probe('e') == 0, "failed exit handoff preserves legacy termination");

@@ -1401,6 +1401,9 @@ static void test_group_exit(void)
     int i, mode, spin;
     int32_t pid,tid,peer_pid,peer_tid;
     long result;
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    long cancel_reaped = pclone_trap(0, 0xc8920721UL);
+#endif
     const char *files[]={"GDEEP.ON","GGO.ON","GRET0.ON","GRET1.ON","GRET2.ON"};
     for (i=0;i<6;i++) {
         group.stack[i]=(void *)Malloc(RUNNABLE_STACK_SIZE);
@@ -1452,6 +1455,11 @@ static void test_group_exit(void)
     }
     for (i=0;i<6;i++) ptest_assert_msg(Mfree(group.stack[i])==0,"group root reclaim releases each stack hold");
     for (i=0;i<5;i++) (void)Fdelete(files[i]);
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    ptest_assert_msg(pclone_trap(0, 0xc8920721UL) >= cancel_reaped + 2,
+                     "pending cancellation survives nested destructor scheduler checkpoints");
+    if (!ptest_failures()) conws("native nested Pexec cancellation during reclamation: PASS\r\n");
+#endif
 }
 #endif
 #include "public_contract.h"

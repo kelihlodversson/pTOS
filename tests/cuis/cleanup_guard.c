@@ -8,16 +8,18 @@
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"cleanup guard:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static PD parent, nested;
 static KERNEL_TASK tasks[2];
-static ULONG tids[2]={17,18};
+static char nested_thread;
+static ULONG tids[3]={17,18,19};
 static BOOL pending, expect_panic;
 static unsigned deliveries;
 static jmp_buf fatal, delivered;
-static KTHREAD *identity(unsigned i) { return (KTHREAD *)&tasks[i]; }
-BOOL kthread_is_executing(const KTHREAD *t) { return t==identity(0) || t==identity(1); }
-KPROC *kthread_process(const KTHREAD *t) { CHECK(kthread_is_executing(t)); return (KPROC *)&parent; }
-ULONG kthread_tid(const KTHREAD *t) { CHECK(kthread_is_executing(t)); return tids[t==identity(0) ? 0:1]; }
+static KTHREAD *identity(unsigned i) { return i==2 ? (KTHREAD *)&nested_thread : (KTHREAD *)&tasks[i]; }
+BOOL kthread_is_executing(const KTHREAD *t) { return t==identity(0) || t==identity(1) || t==identity(2); }
+KPROC *kthread_process(const KTHREAD *t)
+{ CHECK(kthread_is_executing(t)); return t==identity(2) ? (KPROC *)&nested : (KPROC *)&parent; }
+ULONG kthread_tid(const KTHREAD *t) { CHECK(kthread_is_executing(t)); return tids[t==identity(0) ? 0:t==identity(1) ? 1:2]; }
 BOOL kproc_group_status(const KPROC *p,UWORD *status)
-{ CHECK(p==(KPROC *)&parent); if(status)*status=0x2468; return pending; }
+{ CHECK(p==(KPROC *)&parent || p==(KPROC *)&nested); if(status)*status=0x2468; return p==(KPROC *)&parent && pending; }
 BOOL kproc_request_group_exit(KPROC *p,UWORD status)
 { (void)p; (void)status; abort(); } /* Protected Ptermgrp must reject before admission. */
 void xterm(UWORD status) { CHECK(status==0x2468); deliveries++; longjmp(delivered,1); }
@@ -27,6 +29,7 @@ void panic(const char *format,...)
 int main(void)
 {
     KSCHED_CLEANUP_SCOPE outer={0}, inner={0}, child={0}, empty={0}, stale;
+    KSCHED_NESTED associated={0};
     run=&parent; scheduler.active=TRUE; scheduler.tasks=tasks; execution_cpu.current=&tasks[0];
     tasks[0].program=tasks[1].program=&parent;
     tasks[0].process=tasks[1].process=(KPROC *)&parent;
@@ -43,6 +46,21 @@ int main(void)
     ksched_cleanup_begin(&child); CHECK(!child.thread && child.active);
     ksched_cleanup_end(&child); run=&parent;
     CHECK(ksched_cleanup_active() && tasks[0].cleanup_depth==2);
+    /* A real associated child owns its own ticket chain. Parent tickets and
+     * pending cancellation survive nested guards and a rejected cross-owner
+     * release, then authenticate again after restoration. */
+    associated.program=&nested; associated.process=(KPROC *)&nested;
+    associated.thread=identity(2); associated.state=NESTED_ACTIVE;
+    tasks[0].nested=&associated; run=&nested;
+    CHECK(!ksched_cleanup_active() && !ksched_cancellation_pending());
+    ksched_cleanup_begin(&child);
+    CHECK(child.thread==identity(2) && associated.cleanup_depth==1 && tasks[0].cleanup_depth==2);
+    CHECK(ksched_cleanup_active() && ksched_termgrp(7)==EINVFN);
+    ksched_cancel_point(); CHECK(!deliveries);
+    BAD(ksched_cleanup_end(&inner));
+    ksched_cleanup_end(&child); CHECK(!associated.cleanup_depth);
+    tasks[0].nested=NULL; run=&parent;
+    CHECK(ksched_cleanup_active() && ksched_cancellation_pending() && tasks[0].cleanup_depth==2);
     execution_cpu.current=&tasks[1]; CHECK(!ksched_cleanup_active() && ksched_cancellation_pending());
     BAD(ksched_cleanup_end(&inner)); CHECK(!tasks[1].cleanup_depth);
     execution_cpu.current=&tasks[0];

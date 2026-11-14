@@ -281,6 +281,11 @@ BOOL kproc_prepare_user(PD *pd, PD *parent);
 /* Optional generic identity construction is part of preparation, before any
  * consuming image transfer. Failure leaves *thread NULL with no association. */
 BOOL kproc_prepare_user_thread(PD *pd, PD *parent, struct kthread **thread);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+void kproc_test_fail_thread_space(BOOL armed);
+void kproc_test_fail_kernel_stack(BOOL armed);
+ULONG kproc_test_identities(BOOL references); /* live and retained retired */
+#endif
 #if CONF_WITH_NATIVE_SCHED
 void kproc_add_child_usage(PD *pd, ULONG milliseconds);
 void kproc_commit_async(PD *pd);
