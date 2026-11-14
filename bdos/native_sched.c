@@ -2467,12 +2467,16 @@ BOOL ksched_clone_context(KPROC *source, PD **controller)
 }
 BOOL ksched_loaded_clone_context(KPROC *source,PD **controller)
 {
+    KTHREAD *owner;
     if(!source || !ksched_async_allowed() || kproc_live_pd(source)!=run ||
 #if CONF_WITH_PTERMGRP
         kproc_group_status(source,NULL) ||
 #endif
         !kproc_active_space(source)) return FALSE;
-    if(ksched_exit_thread(run) && execution_cpu.current->process!=source) return FALSE;
+    /* A nested source owns its logical THREAD; the carrier continues to own
+     * its original anchor. THREAD-less legacy callers keep their old path. */
+    owner=ksched_exit_thread(run);
+    if(owner && kthread_process(owner)!=source) return FALSE;
     *controller=ksched_controller_pd();return *controller!=NULL;
 }
 BOOL ksched_loaded_clone_begin(KPROC *source,PD **controller,KSCHED_PUBLICATION_GUARD *guard)
@@ -2533,8 +2537,10 @@ void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STA
         task->execution.syscall_stack.top = syscall_stack->top;
         syscall_stack->physical = syscall_stack->top = 0;
     } else if (logical_parent) {
+        KTHREAD *owner=ksched_exit_thread(run);
         if ((execution_cpu.current && execution_cpu.current->process != logical_parent &&
-             !(kproc_shared_exec_committed(process) && !ksched_exit_thread(run))) ||
+             !(kproc_shared_exec_committed(process) &&
+               (!owner || kthread_process(owner)==logical_parent))) ||
             !ksched_async_allowed() || kproc_live_pd(logical_parent) != run)
             panic("clone publication parent changed");
         task->asynchronous = TRUE; task->parent = run;
