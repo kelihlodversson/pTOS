@@ -39,7 +39,7 @@ static struct allocation_hold **hold_find(const PROCMEM_HOLD *hold,
     return NULL;
 }
 
-BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
+static BOOL hold_acquire(const void *base, UQUAD allocation,
         const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
         UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result)
 {
@@ -50,7 +50,7 @@ BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
         !link || !allocation || (*link)->gen != allocation ||
         !expected_owner || (*link)->owner != expected_owner || (*link)->reclaim || (*link)->cleanup_owned ||
         !owner_number || !owner_identity || !bytes ||
-        !(rights & ASPACE_PROT_USER) ||
+        (rights && !(rights & ASPACE_PROT_USER)) ||
         (rights & ~(ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC))) return FALSE;
     a = *link; size = (VADDR)a->pages * HOLD_PAGE;
     if (offset >= size || bytes > size-offset || a->hold_count == (ULONG)~0UL ||
@@ -66,6 +66,27 @@ BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
     result->allocation = allocation; result->ticket = hold->ticket;
     return TRUE;
 }
+
+BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
+        const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
+        UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result)
+{
+    if(!(rights&ASPACE_PROT_USER)) return FALSE;
+    return hold_acquire(base,allocation,expected_owner,offset,bytes,rights,
+                        owner_number,owner_identity,result);
+}
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Kernel metadata lifetime only. This token can never authenticate a USER
+ * mapping, executable permission journal or a user allocation grant. */
+BOOL procmem_hold_lifetime(const void *base,UQUAD allocation,const void *expected_owner,
+        UQUAD owner_number,void *owner_identity,PROCMEM_HOLD *result)
+{
+    struct alloc **link=find_link(base);
+    if(!link) return FALSE;
+    return hold_acquire(base,allocation,expected_owner,0,(VADDR)(*link)->pages*HOLD_PAGE,
+                        0,owner_number,owner_identity,result);
+}
+#endif
 
 BOOL procmem_hold_duplicate(const PROCMEM_HOLD *source, void *owner_identity,
                            PROCMEM_HOLD *result)

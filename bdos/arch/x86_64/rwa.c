@@ -471,7 +471,18 @@ void gouser_entry(WORD entry_type)
         __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
                           : "=r"(launcher_ds), "=r"(launcher_es), "=r"(launcher_fs), "=r"(launcher_gs));
         launcher_fsbase = clone_read_base(0xc0000100UL);
-        if (prepared) { entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; standard_entry = FALSE; }
+        if (prepared) {
+            entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; standard_entry = FALSE;
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+            {
+                VADDR initial_sp=thread_startup_elf_initial_sp(startup);
+                if(initial_sp) {
+                    if(user_rsp!=initial_sp) panic("x86-64: published ELF stack changed\n");
+                    standard_entry=TRUE;
+                }
+            }
+#endif
+        }
 #endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */
             entry_rip = (UQUAD)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);

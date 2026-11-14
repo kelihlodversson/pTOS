@@ -70,6 +70,19 @@ BOOL aspace_logical_protection(const ASPACE *space,VADDR address,UWORD *prot)
 BOOL aspace_private_range_ok(const ASPACE *space,VADDR address,VADDR bytes)
 { (void)space;(void)address;(void)bytes;return TRUE; }
 BOOL aspace_file_cow(const ASPACE *space,VADDR address) { (void)space;(void)address;return FALSE; }
+BOOL kaspace_heap_protection(KASPACE *space,UQUAD address,UWORD *prot)
+{
+    ULONG i;
+    if (!space || !prot) return FALSE;
+    for (i=0;i<ordinary.count;i++) {
+        const KASPACE_HEAP_BLOCK *block=&ordinary.blocks[i];
+        if (address>=block->va && address-block->va<(VADDR)block->pages*USER_PAGE_SIZE) {
+            *prot=(block->flags&KASPACE_HEAP_GUARD)?0:ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
 BOOL kaspace_heap_contains(KASPACE *space,UQUAD address) { (void)space;(void)address;return FALSE; }
 BOOL kaspace_mmap_protection(KASPACE *space,UQUAD address,UWORD *prot)
 { (void)space;(void)address;(void)prot;return FALSE; }
@@ -133,6 +146,27 @@ int main(void)
 #endif
         assert(kproc_psetlimit(&pd,PSETLIMIT_STACK,grown)==old &&
                kproc_psetlimit(&pd,PSETLIMIT_STACK,-1)==grown);
+    }
+    {
+        KASPACE_HEAP_BLOCK blocks[2];UWORD rights=0x5a5a;
+        memset(blocks,0,sizeof(blocks));
+        blocks[0].va=0x20000000UL;blocks[0].pages=1;blocks[0].flags=KASPACE_HEAP_GUARD;
+        blocks[1].va=blocks[0].va+USER_PAGE_SIZE;blocks[1].pages=1;
+        ordinary.blocks=blocks;ordinary.count=ordinary.capacity=2;
+        /* A PROCESS-local compatibility block must not override a matching
+         * authoritative ordinary-heap guard. Neither heap kind is executable. */
+        image.va=blocks[0].va;image.pages=2;image.kind=UH_MALLOC;
+        process.heap=&image;process.nheap=1;
+        assert(!kaspace_heap_protection(process.active_space,0x21000000UL,&rights) && rights==0x5a5a);
+        assert(!lazy_area(&process,blocks[0].va,&rights));
+#if CONF_WITH_DEMAND_PAGING
+        assert(!rights);
+        assert(lazy_area(&process,blocks[1].va,&rights) && rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+#else
+        assert(!lazy_area(&process,blocks[1].va,&rights));
+#endif
+        assert(!kproc_validate_user_exec(blocks[0].va) && !kproc_validate_user_exec(blocks[1].va));
+        memset(&ordinary,0,sizeof(ordinary));
     }
     return 0;
 }

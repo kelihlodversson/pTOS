@@ -9,8 +9,9 @@
 #define ARM_ENTRY_H
 
 /*
- * r0 is the BASEPAGE pointer at every ARM user-process entry.  r1 identifies
- * the entry kind so startup code can select the ordinary or accessory path.
+ * Legacy C/accessory entry receives the BASEPAGE pointer in r0. Standard ELF
+ * entry receives an optional finalizer in r0 (zero from the kernel). r1
+ * identifies the entry kind for ordinary C and accessory startup.
  */
 #define ARM_ENTRY_PROGRAM       0
 #define ARM_ENTRY_ACCESSORY     1

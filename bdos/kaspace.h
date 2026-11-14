@@ -16,6 +16,13 @@ typedef struct kaspace_member KASPACE_MEMBER;
 LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBER **result);
 LONG kaspace_member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *identity,
                            KASPACE_MEMBER **result);
+/* Loaded execution inherits general allocations (including future ones),
+ * but acquires only existing exact dependencies from loader runtime scopes.
+ * Generic CLONE_VM still inherits both kinds, including future runtime maps. */
+LONG kaspace_member_inherit_general(const KASPACE_MEMBER *,UQUAD,void *,KASPACE_MEMBER **);
+LONG kaspace_member_add_runtime(KASPACE *,UQUAD,void *,KASPACE_MEMBER **,KASPACE_SCOPE **);
+KASPACE_SCOPE *kaspace_member_runtime(const KASPACE_MEMBER *);
+BOOL kaspace_member_selects(const KASPACE_MEMBER *,const KASPACE_SCOPE *,BOOL runtime);
 KASPACE_SCOPE *kaspace_member_scope(const KASPACE_MEMBER *member); /* borrowed */
 BOOL kaspace_member_matches(const KASPACE_MEMBER *member,const KASPACE *space,
                             UQUAD number,const void *identity);
@@ -82,8 +89,31 @@ BOOL kaspace_mapping_can_change(const struct aspace *backend, VADDR address, VAD
 BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end);
 
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
+#if CONF_WITH_NATIVE_SCHED
+/* Loader-only, synchronous no-yield permission preparation. Abort only after
+ * releasing all new startup/region holds. Existing lease pointers cannot be
+ * released/reentered during the transaction. Never an IRQ/SMP primitive. */
+typedef struct kaspace_permission_transaction KASPACE_PERMISSION_TRANSACTION;
+typedef struct { VADDR address,bytes; UWORD rights; } KASPACE_PROTECTION;
+LONG kaspace_permission_prepare(KASPACE *,const KASPACE_PROTECTION *,UWORD,
+                               KASPACE_PERMISSION_TRANSACTION **);
+/* PRG borrowed-text variant; unsupported backends return EINVFN. The live
+ * R1 token must cover every rounded page with USER backing rights and remain
+ * owned until finish. Its nonowning journal copy never releases the token.
+ * Changes mapping rights only; no raw allocation ownership or pin changes. */
+struct procmem_hold;
+LONG kaspace_permission_prepare_procmem(KASPACE *,const struct procmem_hold *,
+        const KASPACE_PROTECTION *,UWORD,KASPACE_PERMISSION_TRANSACTION **);
+void kaspace_permission_finish(KASPACE_PERMISSION_TRANSACTION **,BOOL commit);
+#endif
+
 /* Logical reservation-preserving lazy/file backing only. This cannot authorize
  * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Backend-only, after complete resident private-frame preflight; only image
+ * write removal which preserves all retained minimum-access obligations. */
+BOOL kaspace_relro_change(struct aspace *,VADDR,VADDR);
+#endif
 BOOL kaspace_materialization_change(struct aspace *backend, VADDR address,
                                    VADDR bytes, UWORD logical_rights);
 
@@ -98,14 +128,18 @@ typedef struct {
     VADDR va;
     ULONG pages;
     UQUAD reservation; /* immutable birth identity; not a physical frame */
+    UWORD flags; /* zero for ordinary allocations */
     KASPACE_SCOPE *scope; /* lifetime claim set, not a mutation/access grant */
 } KASPACE_HEAP_BLOCK;
+#define KASPACE_HEAP_GUARD 1U
+#define KASPACE_HEAP_RETIRED 2U /* exact birth remains until final holder exits */
 typedef struct {
     KASPACE_HEAP_BLOCK *blocks;
     ULONG count, capacity;
 } KASPACE_HEAP;
 KASPACE_HEAP *kaspace_heap(KASPACE *space);
 BOOL kaspace_heap_contains(KASPACE *space, UQUAD address);
+BOOL kaspace_heap_protection(KASPACE *,UQUAD address,UWORD *rights);
 /* -1: not reserved; otherwise the usual demand-fault result. */
 int kaspace_heap_demand_page(KASPACE *space, UQUAD address, UWORD access);
 #if CONF_WITH_MMAP
@@ -117,6 +151,7 @@ typedef struct mmap_region {
     ULONG offset;
     UQUAD reservation; /* split fragments preserve this original identity */
     KASPACE_SCOPE *scope;
+    BOOL runtime_owned; /* preserved classification when PRIVATE_VM copies metadata */
     struct mmap_region *next;
 } MMAP_REGION;
 typedef struct {
@@ -147,6 +182,7 @@ typedef struct {
 } KASPACE_RESERVATION_INFO;
 #define KASPACE_RESERVATION_LAZY 1
 #define KASPACE_RESERVATION_CAPTURED 2
+#define KASPACE_RESERVATION_INACCESSIBLE 4 /* ownership only, no USER access */
 UQUAD kaspace_reservation_next(void); /* 0 on permanent exhaustion */
 BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
                              KASPACE_RESERVATION_INFO *result);
@@ -163,6 +199,13 @@ LONG kaspace_reservation_hold_captured(KASPACE *space,
 BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *rights);
 /* Borrowed canonical owner; source ticket must stay owned across duplication. */
 void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Pure authentication of this selected live captured nonlazy receipt, not a
+ * query whose metadata could be supplied by another hold. Caller owns the
+ * receipt throughout; no retain, backing, access grant or transfer occurs. */
+BOOL kaspace_reservation_matches(const KASPACE_RESERVATION_HOLD *,
+        const KASPACE *,UQUAD birth,VADDR exact_address,VADDR exact_bytes);
+#endif
 LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
         void *owner_identity, KASPACE_RESERVATION_HOLD *result);
 BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_identity);
@@ -170,6 +213,7 @@ BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_id
  * reservation lease without allocation; release after its last conflicting
  * owner, outside exclusion. These are not public destructive-mutation bypasses. */
 BOOL kaspace_retire_private(KASPACE *space, VADDR address, VADDR bytes);
+BOOL kaspace_retire_heap(KASPACE *space, VADDR address, UQUAD birth);
 BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes);
 /* Backend-only: requires an exact published, consumed, in-flight retirement
  * owner and no live conflicting holder. Ordinary mutations cannot use this. */

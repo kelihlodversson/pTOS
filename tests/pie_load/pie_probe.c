@@ -17,10 +17,213 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+#include <mint/osbind.h>
+#include <mint/basepage.h>
+#include <mint/mintbind.h>
+#include "shared_vm_probe.h"
+#include "../../include/pclone.h"
+#include "../../include/threadcalls.h"
+#endif
+
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+static void probe_tail(char *tail,char role,struct shared_vm_probe *probe)
+{
+    uintptr_t address=(uintptr_t)probe;unsigned i;
+    tail[0]=10;tail[1]=role;tail[2]=' ';
+    for(i=0;i<8;i++) tail[3+i]="0123456789abcdef"[(address>>(28-4*i))&15];
+    tail[11]=0;
+}
+static long probe_thread(void (*entry)(void *),struct shared_vm_probe *probe,void *stack)
+{
+    struct ptos_clone_args args={0};
+    args.flags=CLONE_VM|CLONE_SAME_PROCESS;args.entry=entry;args.argument=probe;
+    args.stack_base=stack;args.stack_size=16384;
+    return trap_1_wll(GEMDOS_PCLONE,(long)&args,sizeof(args));
+}
+static void nested_worker(void *argument)
+{
+    struct shared_vm_probe *probe=argument;
+    if((uint32_t)Pgetpid()!=probe->pid) probe->error=21;
+    probe->steps++;
+}
+static void surviving_worker(void *argument)
+{
+    struct shared_vm_probe *probe=argument;unsigned spin;void *stack;long tid;int32_t status=-1;
+    if((uint32_t)Pgetpid()!=probe->pid) probe->error=22;
+    probe->worker_started=1;
+    for(spin=0;spin<512 && !probe->gate;spin++) (void)Syield();
+    if(!probe->gate) {probe->error=23;Pterm(94);}
+    stack=(void *)Malloc(16384);
+    if((long)stack<=0) {probe->error=24;Pterm(94);}
+    tid=probe_thread(nested_worker,probe,stack);probe->second_tid=(uint32_t)tid;
+    if(tid<=0 || trap_1_wll(GEMDOS_PTHJOIN,tid,(long)&status) || status) probe->error=25;
+    if(Mfree(stack)) probe->error=26;
+    probe->steps++;probe->done=1;Pterm(0x42);
+}
+#endif
+
 static int target = 0x1234;
 static int *ptr = &target;
 
 int main(void)
 {
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+    if(_base->p_cmdlin[0]==10 && (_base->p_cmdlin[1]=='s' || _base->p_cmdlin[1]=='o' ||
+        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m' || _base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e' || _base->p_cmdlin[1]=='n' || _base->p_cmdlin[1]=='h')) {
+        uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
+        for(i=3;i<11;i++) {
+            unsigned char c=(unsigned char)_base->p_cmdlin[i];
+            if(c>='0' && c<='9') c-='0';
+            else if(c>='a' && c<='f') c=c-'a'+10;
+            else Pterm(90);
+            address=(address<<4)|c;
+        }
+        probe=(struct shared_vm_probe *)address;
+        if(_base->p_cmdlin[1]=='n') {
+            struct shared_vm_probe nested={0};unsigned mode;
+            /* Ordinary mode0 has an isolated root. Its own stack mailbox,
+             * not its caller's pointer, belongs to this logical owner. */
+            probe=&nested;
+            probe->pid=Pgetpid();probe->worker_tid=trap_1_wll(GEMDOS_PCLONE,0,0xc8920103UL);
+            for(mode=0;mode<2;mode++) {
+                BASEPAGE *bp=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",0);char *env;long result;
+                if((long)bp<=0) {probe->error=81;Pterm(94);}
+                env=bp->p_env;result=Pexec(mode?104:4,0,bp,0);
+                if(mode && result>0) {
+                    long waited=Pwaitpid(result,0,0);
+                    if((waited>>16)!=result || (waited&65535) || Pwaitpid(result,1,0)!=-33) probe->error=82;
+                } else if(mode || result) probe->error=83;
+                if(Mfree(bp) || Mfree(env)) probe->error=84;
+            }
+            if((uint32_t)Pgetpid()!=probe->pid ||
+               (uint32_t)trap_1_wll(GEMDOS_PCLONE,0,0xc8920103UL)!=probe->worker_tid) probe->error=85;
+            probe->done=1;Pterm(probe->error?94:0x35);
+        }
+        if(_base->p_cmdlin[1]=='h') {
+            unsigned spin;
+            int (*answer)(void)=(int (*)(void))(uintptr_t)probe->core_limit;
+            int expected=28+(probe->controller_result?(int32_t)probe->stack_limit:-7);
+            probe->descendant_ready=1;
+            for(spin=0;spin<512 && !probe->descendant_gate;spin++) (void)Syield();
+            if(!probe->descendant_gate || answer()!=expected ||
+                *(volatile unsigned char *)(uintptr_t)probe->late_runtime!=0x53 ||
+                *(volatile uint32_t *)(uintptr_t)probe->grandchild!=0x644894UL) {
+                probe->error=98;Pterm(94);
+            }
+            probe->descendant_done=1;Pterm(0x36);
+        }
+        if(_base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e') {
+            unsigned n,spin,count=_base->p_cmdlin[1]=='u'?2:1;
+            for(n=1;n<=count;n++) {
+                char tail[12];BASEPAGE *staged;long pid;
+                probe_tail(tail,_base->p_cmdlin[1]=='e'?'e':'b',probe+n);
+                staged=(BASEPAGE *)Pexec(3,_base->p_cmdlin[1]=='e'?"C:\\SHRINT.ELF":"C:\\PIEPROBE.TOS",
+                                         tail,"CHECK=phase5\0\0");
+                if((long)staged<=0) {probe->error=61;Pterm(94);}
+                (probe+n)->staged=(uint32_t)(uintptr_t)staged;
+                (probe+n)->environment=(uint32_t)(uintptr_t)staged->p_env;
+                pid=Pexec(104,0,staged,0);
+                if(pid<=0) {probe->error=62;Pterm(94);}
+                (probe+n)->child_pid=(uint32_t)pid;
+            }
+            probe->started=1;
+            for(spin=0;spin<512 && !probe->gate;spin++) (void)Syield();
+            if(!probe->gate) {probe->error=63;Pterm(94);}
+            Pterm(0x32);
+        }
+        if(_base->p_cmdlin[1]=='m') {
+            volatile uint32_t *resident=(volatile uint32_t *)(uintptr_t)probe->staged;
+            volatile uint32_t *absent=(volatile uint32_t *)(uintptr_t)probe->environment;
+            if(*absent!=0x12345678UL || *resident!=0x12345678UL) {probe->error=51;Pterm(94);}
+            *resident=0x89400001UL;*absent=0x89400002UL;
+            probe->done=1;Pterm(0x34);
+        }
+        if(_base->p_cmdlin[1]=='p') {
+            probe->core_limit=(uint32_t)Psetlimit(2,-1);
+            probe->data_limit=(uint32_t)Psetlimit(3,-1);
+            probe->stack_limit=(uint32_t)Psetlimit(0x100,-1);
+            probe->same_limit=(uint32_t)Psetlimit(0x100,probe->stack_limit);
+            probe->resize_limit=(uint32_t)Psetlimit(0x100,probe->stack_limit+4096);
+            probe->started=1;
+            /* Outside the inherited 1MiB top-stack reservation and the
+             * child's actual guarded heap stack. No logical owner exists. */
+            *(volatile uint32_t *)(uintptr_t)0x7f001000UL=0x894;
+            probe->done=1;Pterm(0x55);
+        }
+        if(_base->p_cmdlin[1]=='l') {
+            void *stack=(void *)Malloc(16384);long tid;
+            probe->pid=(uint32_t)Pgetpid();probe->worker_stack=(uint32_t)(uintptr_t)stack;
+            if((long)stack<=0) {probe->error=27;Pterm(94);}
+            tid=probe_thread(surviving_worker,probe,stack);probe->worker_tid=(uint32_t)tid;
+            if(tid<=0) {probe->error=28;(void)Mfree(stack);probe->worker_stack=0;Pterm(94);}
+            Pterm(0x41);
+        }
+        if(_base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='r') {
+            unsigned spin;BASEPAGE *grandchild;
+            if(_base->p_cmdlin[1]=='r') {
+                probe->controller_result=(uint32_t)Pexec(4,0,_base,0);
+                probe->resize_limit=(uint32_t)Pexec(104,0,_base,0);
+            }
+            probe->started=1;
+            for(spin=0;spin<512 && !probe->gate;spin++) (void)Syield();
+            if(!probe->gate) {probe->error=11;Pterm(94);}
+            grandchild=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",0);
+            if((long)grandchild<=0) {probe->error=12;Pterm(94);}
+            probe->grandchild=(uint32_t)(uintptr_t)grandchild;
+            probe->grand_environment=(uint32_t)(uintptr_t)grandchild->p_env;
+            if(Pexec(4,0,grandchild,0)!=0 || Mfree(grandchild) ||
+               Mfree((void *)(uintptr_t)probe->grand_environment)) {probe->error=15;Pterm(94);}
+            probe->steps++;probe->done=1;Pterm(0x33);
+        }
+        if(_base->p_cmdlin[1]=='o' || _base->p_cmdlin[1]=='g') {
+            char tail[12];BASEPAGE *staged;
+            if(_base->p_cmdlin[1]=='g') {
+                unsigned spin;void *stack=(void *)Malloc(16384);long tid;
+                probe->pid=(uint32_t)Pgetpid();probe->worker_stack=(uint32_t)(uintptr_t)stack;
+                if((long)stack<=0) {probe->error=41;Pterm(94);}
+                tid=probe_thread(surviving_worker,probe,stack);probe->worker_tid=(uint32_t)tid;
+                if(tid<=0) {probe->error=42;(void)Mfree(stack);probe->worker_stack=0;Pterm(94);}
+                for(spin=0;spin<512 && !probe->worker_started;spin++) (void)Syield();
+                if(!probe->worker_started) {probe->error=43;Pterm(94);}
+            }
+            probe_tail(tail,'b',probe);staged=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+            if((long)staged<=0) {probe->error=13;Pterm(94);}
+            probe->staged=(uint32_t)(uintptr_t)staged;
+            probe->environment=(uint32_t)(uintptr_t)staged->p_env;
+            {
+                long pid=Pexec(104,0,staged,0);
+                if(pid<=0) {probe->error=14;Pterm(94);}
+                probe->child_pid=(uint32_t)pid;
+            }
+            if(_base->p_cmdlin[1]=='g') {
+                (void)trap_1_ww(GEMDOS_PTERMGRP,0x63);
+                probe->error=44;Pterm(94);
+            }
+            Pterm(0x32);
+        }
+        {
+            BASEPAGE *staged=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",0);
+            if((long)staged<=0) {probe->error=(uint32_t)(long)staged;Pterm(91);}
+            probe->staged=(uint32_t)(uintptr_t)staged;
+            probe->environment=(uint32_t)(uintptr_t)staged->p_env;
+            probe->pid=(uint32_t)Pgetpid();probe->done=1;
+        }
+        Pterm(0x31);
+    }
+    if(_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='f') Pterm(0xffff);
+    if(_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='i') {
+#if defined(__x86_64__)
+        __asm__ volatile("ud2");
+#elif defined(__arm__)
+        /* UDF encodings are pTOS's emulated Line-A namespace. Use a
+         * genuinely undefined ARM instruction outside that reserved pattern. */
+        __asm__ volatile(".word 0xe6000010");
+#elif defined(__mc68000__)
+        __asm__ volatile("illegal");
+#endif
+        Pterm(91);
+    }
+#endif
     return (*ptr == 0x1234) ? 0 : 1;
 }

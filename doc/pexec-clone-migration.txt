@@ -1,7 +1,14 @@
 Pexec creation and executable-transition policy audit (#894 / #895)
 =================================================================
 
-Baseline: epic197d05ce6d71efb8e626df5b4e7db11d29f5c3fc (merged #931).
+Accepted baseline: epic496ceba0eb260e3de2cef52f074699df6bf6f177.
+Its tree is identical to independently accepted #968 source69ccd179. Existing
+8ece5bde Phase5 history is reconciled by normal merge96e408df6, with #966/#968
+imported once. Current consumer evidence and pending whole acceptance are in
+phase5-acceptance.txt and PR956/#894. Historical results are not current source.
+The mode table below records the original migration inventory. Shared4/104 now
+have a default-off test implementation; see shared-vm-pexec.txt and the current
+acceptance ledger, not this historical table, for implementation status.
 This workstream owns executable creation/transition policy and fork/vfork.
 The scheduler, final PROCESS termination, public waits and filesystem reference
 service remain #713/#914, #893, #909 and #933 respectively. #907/#935 owns the
@@ -18,11 +25,11 @@ Mode       Current entry/ownership                 Required migration
 3          Load-only staging; env/TPA owned        Preserve caller ownership and
            by caller, loader grant recorded;      failed mode4 rejection without
            may stage image in caller's heap.      consuming staged resources.
-4          Ring3 USER_ASPACE returns EINVFN        New distinct PROCESS+THREAD,
-           before changing image/ownership.       SHARE_VM; sync waits for full
-           Kernel/ROM legacy give-back remains.   PROCESS result, not same PID.
-104        No public implementation, EINVFN.      New distinct PROCESS+THREAD,
-                                                   SHARE_VM, async child PID.
+4          Test-gated NEW_PROCESS/SHARE_VM;        Full16 final PROCESS result;
+           production EINVFN remains.             canonical #909 one-time reap.
+           Kernel/ROM legacy give-back remains.
+104        Same test-gated creation policy;       Async PID and canonical wait.
+           production EINVFN remains.
 6          Existing staged image, isolated VM;     Preserve image-consuming launch
            check grant, prepare before changing   and rollback/error boundaries;
            env/TPA owner, then execute/free.       not shared mode4 semantics.
@@ -74,9 +81,10 @@ publication and stopped-stack reclamation are unchanged.
 
 Paths deliberately not yet migrated
 ----------------------------------
-- Direct nested proc_go, ROM/accessory launch and group attachment of an already
-  prepared image still use their existing launcher/THREAD association. Their
-  topology must be reviewed before changing #713's continuation admission.
+- Managed direct nested proc_go now uses #966's authenticated initial THREAD
+  and nested continuation association. Unmanaged ROM/accessory paths retain
+  their documented THREAD-less behavior. Already-prepared scheduler groups
+  call proc_clone_prepare_loaded_thread.
 - KPROC/env/TPA allocation and image-specific KASPACE construction still originate
   in loader policy. This increment consolidates initial managed THREAD creation;
   it does not claim complete Pexec -> proc_clone convergence.
@@ -101,8 +109,10 @@ invariant check still follows loading; its old ordering needs separate review
 before claiming a general no-fail executable-replacement transaction. Do not
 reuse the isolated move-private mechanism on COW/shared pages for exec200.
 
-Next default-off shared-VM increment (4/104)
------------------------------------------
+Implemented default-off shared-VM consumer (4/104)
+------------------------------------------------
+The following policy is implemented behind CONF_WITH_SHARED_VM_PEXEC_TEST;
+whole-consumer acceptance is pending. It does not authorize production use.
 Use distinct PROCESS identities with the same retained KASPACE, not SAME_PROCESS.
 A loaded-image policy must authenticate the caller's PE_LOAD grant, retain
 image/stack/environment/basepage allocations and logical mappings through
@@ -119,6 +129,41 @@ of heap/image ledgers and controller mappings needs a reviewed shared-space
 policy, not attachment of two KPROC records to one page-table pointer. Keep4/104
 EINVFN until native x32/A32/m68k040 and owner gates pass. Non-MMU compatibility
 continues its old path, without claiming new shared-VM parity.
+
+Accepted direct nested MMU continuation contract (#966 / #713)
+-------------------------------------------------------------
+The integrated scheduler supplies ksched_nested_prepare/cancel/enter/leave.
+Ordinary managed direct launch paths already call them. Preparation constructs
+an authentic initial KTHREAD through the existing loader/factory. The carrier
+retains its own PROCESS/THREAD anchor; the active nested frame owns the logical
+PROCESS/THREAD, cleanup tickets and stack lifetime. Leave restores the enclosing
+owner after stop and before final resource/observer publication.
+
+Phase5 adds no redundant preparation, entry or leave calls. Its remaining
+shared-Pexec admission/publication checks authenticate ksched_exit_thread(run)'s
+logical PROCESS instead of comparing it with the suspended carrier anchor.
+Supported nested execution is a sole-THREAD synchronous continuation; public
+nested Pclone/Pthjoin/Ptermgrp restrictions, single CPU and cooperative admission
+remain unchanged. This is independent of production dispatch/preemption/SMP.
+
+Resolved ordinary-region consumer prerequisite (#968 / #894)
+-------------------------------------------------------------
+Before #968, ordinary heap/MMAP_REGION records had no PROCESS lifetime owner;
+repeated interpreted shared launches retained obsolete runtime regions until
+root destruction. The original failing conservation tests remain negative
+evidence. Creator-only unmap and successful-fini cleanup were rejected because
+both can invalidate surviving peers or returning DSO code.
+
+Accepted #968 supplies canonical common-VM memberships, exact birth/interval
+attachments and final-owner retirement, including late allocations. Phase5
+consumes that machinery for general allocations and an explicit gated loader
+runtime annotation; see shared-vm-pexec.txt for the FreeMiNT compatibility
+choice. Generic descendants also retain the existing bounded special R1/R2
+execution dependencies, without duplicating ordinary mapping ownership.
+Final consumer source still requires its own native conservation, fault/rollback,
+compatibility and independent owner acceptance; prerequisite CI is not that
+acceptance. No bounds are increased, root destruction is not a leak workaround,
+and #958/#966 ownership and continuation restrictions remain unchanged.
 
 Committed executable replacement design (200)
 --------------------------------------------

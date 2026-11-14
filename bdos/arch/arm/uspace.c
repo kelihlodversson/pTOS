@@ -328,7 +328,8 @@ void gouser(void)
             arm_enter_prepared_user(prepared, (ULONG)kstack_top);
         }
 #endif
-        arm_enter_user(entry, user_sp, (ULONG)(uintptr_t)p, (ULONG)kstack_top);
+        arm_enter_user(entry, user_sp, kproc_standard_entry(p)?0:(ULONG)(uintptr_t)p,
+                       (ULONG)kstack_top);
     }
     set_uspace_launch(launch.previous);
     *fs_error_current() = launch.error;

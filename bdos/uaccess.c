@@ -296,13 +296,14 @@ static long pexec_ok(const long *pw)
     WORD mode = (WORD)pw[1];
     long rc;
 
-#if CONF_WITH_USER_ASPACE
-    /* Reject before validating or touching the staged image. Kernel/ROM
-     * callers without a user address space retain the classic mode. */
-    if (mode == PE_GO && kproc_user_aspace(run))
-        return EINVFN;
+#if CONF_WITH_USER_ASPACE && !(CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST)
+    /* Production gate: no staged-image access before capability acceptance. */
+    if (mode == PE_GO && kproc_user_aspace(run)) return EINVFN;
 #endif
     if (mode == 4 || mode == 6
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+        || mode == 104
+#endif
 #if CONF_WITH_NATIVE_SCHED
         || mode == PE_ASYNC_GO_FREE
 #endif

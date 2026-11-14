@@ -24,6 +24,10 @@
 #define MAP_ANONYMOUS       0x20
 #define MAP_ANON            MAP_ANONYMOUS
 #define MAP_FIXED_NOREPLACE 0x100000
+/* Explicit ld.so-owned lifetime, admitted only by the shared-Pexec test gate.
+ * Unannotated user mappings retain common FreeMiNT shared-VM lifetime. This
+ * conveys ownership only: permissions and exact backing checks are unchanged. */
+#define MAP_PTOS_RUNTIME    0x200000
 
 #define PTOS_MMAP_BASE  0x01000000UL
 #define PTOS_MMAP_LIMIT 0x0f000000UL

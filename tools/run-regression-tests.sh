@@ -84,6 +84,11 @@ cleanup() {
 trap cleanup EXIT
 
 [ -d "$top/test-dir" ] || { echo "$0: no test-dir/: run 'make test-dir' first" >&2; exit 2; }
+if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested positive shared-Pexec but the effective gate is disabled" >&2
+    exit 2
+fi
 
 # record <name> <PASS|FAIL> [detail]
 record() {
@@ -488,6 +493,9 @@ while [ "$n" -lt "$limit" ]; do
     n=$((n + 1))
 done
 suite_log=$log
+if grep -aq 'Panic:' "$suite_log"; then
+    record "kernel panic" FAIL "regression execution crossed a kernel panic"
+fi
 finish_cuis_input
 
 if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
@@ -578,6 +586,84 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     fi
     finish_cuis_input
     stop_vm
+fi
+
+# A positive shared-Pexec build must execute every configured consumer fixture.
+# The ordinary gate-off jobs remain independent compatibility evidence.
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; then
+    for marker in \
+        'native shared-VM Pexec4/104 execution and canonical reap: tested' \
+        'native shared-VM full-status/fault and canonical wait: tested' \
+        'native shared-VM unstarted-child source retirement: tested' \
+        'native shared-VM running orphan and nested unstarted cleanup: tested' \
+        'native shared-VM orphan grandchild execution after source retirement: tested' \
+        'native shared-VM inherited limits and exact stack authority: tested' \
+        'native shared-VM live-target and self-relaunch ownership rejection: tested'; do
+        if ! grep -aqF "$marker" "$suite_log"; then
+            record "native shared-Pexec execution" FAIL "missing consumer assertion: $marker"
+        fi
+    done
+    if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM PROCESS-local group cancellation and orphan survival: tested' "$suite_log"; then
+        record "native shared-Pexec group exit" FAIL "PROCESS-local group assertion did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM final-THREAD completion and competing waiter: tested' "$suite_log"; then
+        record "native shared-Pexec final THREAD" FAIL "managed lifetime assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM constructor/observer/prepublication rollback and retry: tested' "$suite_log"; then
+        record "native shared-Pexec rollback" FAIL "configured factory injections did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        for marker in \
+            'native shared-VM production kernel memmove overlap: tested' \
+            'native shared-VM four-boundary resource conservation and multiple surviving orphans: tested' \
+            'native shared-VM exhaustive preparation prefixes and exact rollback conservation: tested'; do
+            if ! grep -aqF "$marker" "$suite_log"; then
+                record "native shared-Pexec ownership/cancellation" FAIL "missing consumer assertion: $marker"
+            fi
+        done
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM Pclone and nested source convergence, wait ABIs and protected cancellation: tested' "$suite_log"; then
+        record "native shared-Pexec protected wait" FAIL "logical-owner and cancellation assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM absent file backing and resident file-COW: tested' "$suite_log"; then
+        record "native shared-Pexec file mappings" FAIL "file backing/COW assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_ELF_SHARED 1' "$top/obj/autoconf.h"; then
+        for marker in \
+            'native shared-VM PT_INTERP Pexec4/104 standard entry: tested' \
+            'native shared-VM simultaneous and completed-image peers: tested' \
+            'native shared-VM parent-first interpreter execution and finalization: tested'; do
+            if ! grep -aqF "$marker" "$suite_log"; then
+                record "native shared-Pexec interpreter" FAIL "missing consumer assertion: $marker"
+            fi
+        done
+        if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+            for marker in \
+                'native shared-VM 128 interpreted Pexec4/104 normal/fault-before-fini exact 45-counter conservation: tested' \
+                'native shared-VM standard ELF registers checked at interpreter first instruction: tested' \
+                'native shared-VM generic DSO peer creator-first normal/fault lifetime and exact 45-counter conservation: tested' \
+                'native shared-VM generic executable dependency prefixes, surviving owner rollback and retry: tested' \
+                'native shared-VM late runtime file-COW and loaded descendant after both creators retire: tested' \
+                'native shared-VM loaded runtime dependencies and ancestor R1 prefixes rollback/retry: tested'; do
+                if ! grep -aqF "$marker" "$suite_log"; then
+                    record "native shared-Pexec DSO lifetime" FAIL "missing positive consumer execution: $marker"
+                fi
+            done
+        fi
+    fi
+    if grep -q '^#define ARCH_M68K 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM PRG Pexec4/104 entry, status and shared data: tested' "$suite_log"; then
+        record "native shared-Pexec PRG" FAIL "PRG assertions did not execute"
+    fi
 fi
 
 # Configured nested ownership checks must execute as managed THREADs.

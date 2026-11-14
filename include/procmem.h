@@ -77,7 +77,7 @@ UQUAD procmem_gen(const void *p);
  * release returns it exactly once for destruction OUTSIDE all leaf exclusion.
  * No allocation, callback or final release occurs in the publication interval.
  * These operations require cooperative owner serialization (not SMP safe). */
-typedef struct {
+typedef struct procmem_hold {
     VADDR base;
     UQUAD allocation, ticket;
 } PROCMEM_HOLD;
@@ -90,6 +90,10 @@ typedef struct {
 BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
         const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
         UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+BOOL procmem_hold_lifetime(const void *base,UQUAD allocation,const void *expected_owner,
+        UQUAD owner_number,void *owner_identity,PROCMEM_HOLD *result);
+#endif
 BOOL procmem_hold_info(const PROCMEM_HOLD *hold, PROCMEM_HOLD_INFO *result);
 /* An already-owned hold may be duplicated after original PROCESS retirement.
  * The supplied reference must duplicate the same canonical owner identity. */
@@ -327,6 +331,13 @@ BOOL aspace_map_procmem(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
  * No extra pin/allocation, preserves frame/ownership, checks the entire range
  * before updates. m68k has no hardware NX; granularity is an MMU page. */
 BOOL aspace_mark_procmem_text(ASPACE *as, VADDR va, VADDR bytes);
+/* Pure exact borrowed-page authentication, followed by allocation-free
+ * permission mutation. Caller retains the authenticated allocation R1 hold;
+ * mutation checks the whole page-rounded range before revoking leases/stores. */
+BOOL aspace_procmem_permission_info(const ASPACE *, const void *base, UQUAD generation,
+                                   VADDR page, PADDR *, UWORD *);
+BOOL aspace_protect_procmem(ASPACE *, const void *base, UQUAD generation,
+                           VADDR address, VADDR bytes, UWORD rights);
 #endif
 
 /*
@@ -344,6 +355,9 @@ void aspace_shrink_procmem(ASPACE *as, VADDR va, VADDR bytes);
  * takes it away again (and unpins), exactly once per borrow.  See aspace.c.
  */
 BOOL aspace_borrow(ASPACE *as, VADDR va, VADDR bytes);
+/* Additional exact reference only; translation/permissions must already match.
+ * No mapping/lease mutation; ordinary/retired unborrow consumes it once. */
+BOOL aspace_duplicate_borrow(ASPACE *as,VADDR va,VADDR bytes);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 void aspace_test_borrow_failure(ASPACE *as,LONG after);
 LONG aspace_test_borrow_pending(const ASPACE *as);
@@ -437,6 +451,11 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
  * page and its ownership stay).  FALSE, with nothing changed, if a page is
  * not one of its private pages.
  */
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+/* Current PROCESS must authenticate its exact loaded GNU_RELRO interval.
+ * Resident private RAM only; removes WRITE, never USER/EXEC or a frame. */
+BOOL aspace_protect_relro(ASPACE *as,VADDR address,VADDR bytes);
+#endif
 BOOL aspace_protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 /* Same ownership/atomicity checks, but absent pages are skipped. The caller
  * owns and validates the lazy reservation and records its future permissions.

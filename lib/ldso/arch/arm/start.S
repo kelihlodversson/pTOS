@@ -6,6 +6,10 @@
         .hidden _start
         .type _start,%function
 _start:
+#if PTOS_RUNTIME_OWNERSHIP
+        cmp     r0, #0                 @ kernel standard-entry finalizer
+        bne     entry_failed
+#endif
         mov     r4, sp                  @ the initial stack of the process
         mov     r0, sp
         bl      dl_bootstrap
@@ -26,6 +30,12 @@ _start:
         bx      r5
 failed:
         mov     r1, #127                @ Pterm(127)
+#if PTOS_RUNTIME_OWNERSHIP
+        b       terminate
+entry_failed:
+        mov     r1, #126
+terminate:
+#endif
         mov     r0, #0x4c
         svc     1
         b       .

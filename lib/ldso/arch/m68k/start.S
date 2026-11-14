@@ -6,6 +6,10 @@
         .hidden _start
         .type _start,@function
 _start:
+#if PTOS_RUNTIME_OWNERSHIP
+        tst.l   %d1                    | kernel standard-entry finalizer
+        jne     entry_failed
+#endif
         move.l  %sp,%a2                 | the initial stack of the process
         move.l  %a2,-(%sp)
         bsr.l   dl_bootstrap
@@ -25,6 +29,12 @@ _start:
         jmp     (%a0)
 failed:
         move.w  #127,-(%sp)             | Pterm(127)
+#if PTOS_RUNTIME_OWNERSHIP
+        bra.s   terminate
+entry_failed:
+        move.w  #126,-(%sp)
+terminate:
+#endif
         move.w  #0x4c,-(%sp)
         trap    #1
         bra.s   .

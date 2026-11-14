@@ -66,6 +66,34 @@ int main(void)
     CHECK(kaspace_reservation_release(&outside,&owner) && owner==&canonical);owner=NULL;
     CHECK(retired_private==1 && !kaspace_reservation_release(&narrow,&owner));
     CHECK(!kaspace_retained_lazy_protection(space,0x90000,&rights));
+    {
+        KASPACE_RESERVATION_HOLD parent={0},child={0},grandchild={0};
+        KASPACE_HEAP_BLOCK *block;
+        unsigned before=retired_private;UQUAD birth;
+        space->heap.blocks=block=kalloc(sizeof(*block));CHECK(block);
+        space->heap.count=space->heap.capacity=1;
+        block->va=0x30000;block->pages=2;block->flags=0;
+        block->reservation=birth=kaspace_reservation_next();
+        CHECK(kaspace_reservation_hold(space,birth,block->va,8192,
+              ASPACE_PROT_USER|ASPACE_PROT_WRITE,7,&canonical,&parent)==E_OK);
+        CHECK(kaspace_reservation_duplicate(&parent,&canonical,&child)==E_OK);
+        CHECK(kaspace_retire_heap(space,block->va,birth));
+        CHECK(!kaspace_retire_heap(space,block->va,birth) && space->heap.count==1);
+        CHECK(kaspace_reservation_release(&parent,&owner));owner=NULL;
+        CHECK(kaspace_reservation_duplicate(&child,&canonical,&grandchild)==E_OK);
+        CHECK(kaspace_reservation_info(space,block->va,8192,&info) && info.identity==birth);
+        CHECK(info.rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+        CHECK(kaspace_reservation_release(&child,&owner));owner=NULL;
+        CHECK(retired_private==before && space->heap.count==1);
+        CHECK(kaspace_reservation_release(&grandchild,&owner));owner=NULL;
+        CHECK(retired_private==before+1 && !space->heap.count);
+        CHECK(!kaspace_reservation_info(space,0x30000,8192,&info));
+        /* Failure before the first hold takes the immediate cleanup path. */
+        space->heap.count=1;block->flags=0;
+        block->reservation=kaspace_reservation_next();
+        CHECK(kaspace_retire_heap(space,block->va,block->reservation));
+        CHECK(retired_private==before+2 && !space->heap.count);
+    }
     kaspace_put(space);
     CHECK(backend.destroyed==1 && allocations==frees && !walks);
     puts("Production retired reservation: exact backing bounds, independent rights, consumed fence, once-only cleanup: PASS (host)");

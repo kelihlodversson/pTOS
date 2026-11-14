@@ -24,6 +24,30 @@ LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS
         !aspace_user_range_ok(space, args->stack_base, args->stack_size, TRUE)) return EIMBA;
     return E_OK;
 }
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG thread_startup_arch_validate_elf(const ASPACE *space,const THREAD_STARTUP_ARGS *args,VADDR initial_sp)
+{
+    LONG error=thread_startup_arch_validate(space,args);
+    if(error) return error;
+    if(!initial_sp || initial_sp%CONF_PCLONE_STACK_ALIGNMENT || initial_sp<args->stack_base ||
+        initial_sp-args->stack_base>=args->stack_size ||
+        args->stack_size-(initial_sp-args->stack_base)<4) return EINVAL;
+    return E_OK;
+}
+LONG thread_startup_arch_elf_entry(ASPACE *space,const THREAD_STARTUP_ARGS *args,VADDR initial_sp,void *image)
+{
+    LONG error;
+    if(!image) return EINVAL;
+    error=thread_startup_arch_validate_elf(space,args,initial_sp);
+    if(error) return error;
+    ((THREAD_STARTUP32 *)image)->sp=initial_sp;
+#if ARCH_ARM
+    /* Standard ELF uses r0 for an optional finalizer, not a basepage. */
+    ((THREAD_STARTUP32 *)image)->argument=0;
+#endif
+    return E_OK;
+}
+#endif
 void thread_startup_arch_abort(void *image)
 {
     THREAD_STARTUP32 *draft = image;

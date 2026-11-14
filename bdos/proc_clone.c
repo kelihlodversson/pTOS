@@ -38,6 +38,8 @@ struct proc_clone_transaction {
     THREAD_STARTUP_DRAFT *startup;
     PROC_CLONE_OBSERVER *observer; /* borrowed from owned startup registration */
     BOOL asynchronous;
+    BOOL loaded_shared;
+    BOOL owns_shared_exec; /* exact preparation token was transferred to this attempt */
 };
 
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
@@ -61,10 +63,16 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
     if (ksched_test_clone_masked()) panic("clone teardown in publication exclusion");
 #endif
     thread_startup_abort(&tx->startup);
-    kproc_abort_mapping_owners(tx->process,tx->space,&tx->mapping_members);
 #if CONF_WITH_NATIVE_SCHED
     if (tx->owns_compat) kproc_clone_drop_compat(tx->process);
+    if(tx->owns_shared_exec) {
+        kthread_destroy(tx->thread);tx->thread=NULL;
+        if(tx->process) kproc_shared_exec_abort(tx->process);
+    }
 #endif
+    /* Special execution holds and the permission journal are gone before
+     * canonical claim release may retire mappings or call file cleanup. */
+    kproc_abort_mapping_owners(tx->process,tx->space,&tx->mapping_members);
     if (tx->owns_process) proc_dispose_process(tx->process);
     kthread_destroy(tx->thread);
 #if CONF_WITH_PRIVATE_CLONE
@@ -82,7 +90,7 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
     kfree(tx);
 }
 
-LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transaction)
+static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transaction,BOOL loaded_shared)
 {
     PROC_CLONE_TRANSACTION *tx;
     KPROC *target;
@@ -111,8 +119,13 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
         if (args->prepared_process) return EINVAL;
         target = args->source;
     } else if (args->process_policy == PROC_CLONE_NEW_PROCESS) {
-        if (args->prepared_process || (args->resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
-        target = NULL;
+        if ((args->prepared_process && !loaded_shared) || (args->resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
+        target = loaded_shared ? args->prepared_process : NULL;
+#if CONF_WITH_NATIVE_SCHED
+        if(loaded_shared && (!target || !kproc_shared_exec_constructible(target))) return EACCDN;
+#else
+        if(loaded_shared) return EINVFN;
+#endif
     } else {
         target = args->prepared_process;
         if (!target || target == args->source) return EINVAL;
@@ -146,13 +159,15 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     tx->observer = NULL; tx->asynchronous = FALSE;
     tx->policy = args->process_policy;
     tx->owns_process = FALSE;
+    tx->loaded_shared=loaded_shared;
+    tx->owns_shared_exec=FALSE;
     tx->owns_compat = FALSE;
     tx->source = kproc_retain_live(args->source);
     if (!tx->source) { error = EACCDN; goto failed; }
     tx->source_space = kaspace_share(space);
     if (!tx->source_space) goto failed;
     if ((args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(1))) goto failed;
-    if (tx->policy == PROC_CLONE_NEW_PROCESS) {
+    if (tx->policy == PROC_CLONE_NEW_PROCESS && !loaded_shared) {
         error = proc_create_clone_process(tx->source, args->resources, &tx->process);
         if (error != E_OK) goto failed;
         tx->owns_process = TRUE;
@@ -173,13 +188,27 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
 #endif
     if (!tx->space || (args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(3))) goto failed;
     if (args->process_policy!=PROC_CLONE_SAME_PROCESS && args->process_policy!=PROC_CLONE_LOADED_PROCESS) {
-        error=args->vm_policy==PROC_CLONE_SCOPED_VM ?
+#if CONF_WITH_NATIVE_SCHED
+        if(loaded_shared) error=kproc_shared_exec_take_mapping_owners(tx->process,&tx->mapping_members);
+        else
+#endif
+        error=
+              args->vm_policy==PROC_CLONE_SCOPED_VM ?
               kproc_prepare_scoped_mapping_owners(tx->process,tx->source,tx->space,&tx->mapping_members) :
               kproc_clone_prepare_mapping_owners(tx->process,tx->source,tx->space,
                     args->vm_policy==PROC_CLONE_PRIVATE_VM,&tx->mapping_members);
         if (error) goto failed;
+        if(loaded_shared) tx->owns_shared_exec=TRUE;
         error=ENSMEM;
     }
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(!loaded_shared && args->process_policy==PROC_CLONE_NEW_PROCESS &&
+        args->vm_policy!=PROC_CLONE_PRIVATE_VM) {
+        error=kproc_shared_dependencies_prepare(tx->process,tx->source);
+        if(error) goto failed;
+        error=ENSMEM;
+    }
+#endif
     tx->thread = args->process_policy == PROC_CLONE_LOADED_PROCESS ?
         kthread_prepare(kproc_live_pd(tx->process), tx->space) :
         kthread_construct_identity(tx->process, tx->space);
@@ -190,6 +219,18 @@ failed:
     release_transaction(tx);
     return error;
 }
+
+LONG proc_clone(const PROC_CLONE_ARGS *args,PROC_CLONE_TRANSACTION **transaction)
+{ return clone_prepare(args,transaction,FALSE); }
+#if CONF_WITH_NATIVE_SCHED
+LONG proc_clone_loaded_shared(KPROC *source,KPROC *target,PROC_CLONE_TRANSACTION **transaction)
+{
+    PROC_CLONE_ARGS args={0};
+    args.source=source;args.prepared_process=target;
+    args.process_policy=PROC_CLONE_NEW_PROCESS;args.vm_policy=PROC_CLONE_SHARE_VM;
+    return clone_prepare(&args,transaction,TRUE);
+}
+#endif
 
 LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *result)
 {
@@ -351,6 +392,21 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
 #endif
     return thread_startup_prepare(tx->space, args, &tx->startup);
 }
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG proc_clone_prepare_startup_elf(PROC_CLONE_TRANSACTION *tx,const THREAD_STARTUP_ARGS *args,VADDR initial_sp)
+{
+    if(!tx || !args || tx->startup || !initial_sp) return EINVAL;
+    if(!tx->loaded_shared || tx->policy!=PROC_CLONE_NEW_PROCESS ||
+        kproc_shared_exec_initial_sp(tx->process)!=initial_sp ||
+#if CONF_WITH_PTERMGRP
+        kproc_group_status(tx->source,NULL) || kproc_group_status(tx->process,NULL) ||
+#endif
+        kproc_active_space(tx->source)!=tx->source_space || tx->space!=tx->source_space ||
+        !kproc_clone_target_ready(tx->process,tx->thread)) return EACCDN;
+    return thread_startup_prepare_elf(tx->space,args,initial_sp,&tx->startup);
+}
+#endif
 
 static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 {
@@ -586,12 +642,12 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     if (!handle || !*handle || !created || created->pid || created->tid) return EINVAL;
     tx = *handle;
     if (kproc_live_pd(tx->source) != run || !aspace_is_current(kaspace_backend(tx->source_space))) return EINVFN;
-    if (((tx->policy != PROC_CLONE_NEW_PROCESS || !tx->owns_process) &&
+    if (((tx->policy != PROC_CLONE_NEW_PROCESS || (!tx->owns_process && !tx->loaded_shared)) &&
          tx->policy != PROC_CLONE_SAME_PROCESS) || !tx->startup ||
         !tx->observer || tx->observer->state != PROC_CLONE_OBSERVER_PREPARED) return EINVFN;
     if (!startup_target_live(tx) || !kthread_clone_run_ready(tx->thread)) return EACCDN;
     if (thread_startup_state(tx->startup) != THREAD_STARTUP_OBSERVED) return EINVAL;
-    if (!ksched_clone_context(tx->source, &controller)) return EINVFN;
+    if (!(tx->loaded_shared ? ksched_loaded_clone_context(tx->source,&controller) : ksched_clone_context(tx->source,&controller))) return EINVFN;
     error = ksched_task_reserve(FALSE, &slot);
     if (error) return error;
     if (tx->policy == PROC_CLONE_SAME_PROCESS) {
@@ -613,7 +669,7 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
      * under backend exclusion. Cleanup always restores the entry IRQ state. */
     {
         PD *confirmed;
-        if (!ksched_clone_begin(tx->source, &confirmed, &guard)) { error = EINVFN; goto failed; }
+        if (!(tx->loaded_shared ? ksched_loaded_clone_begin(tx->source,&confirmed,&guard) : ksched_clone_begin(tx->source,&confirmed,&guard))) { error = EINVFN; goto failed; }
         if (confirmed != controller) { ksched_clone_end(&guard); error = EACCDN; goto failed; }
     }
     error = thread_startup_seal(tx->startup);

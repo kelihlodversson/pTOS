@@ -139,7 +139,8 @@ LDSO_START_FLAGS-$(ARCH_M68K) = -fno-tree-loop-distribute-patterns -fno-builtin
 LDSO_START_LIBS-$(ARCH_M68K) = -lgcc
 obj/ldso/ld.so: lib/ldso/runtime.c lib/ldso/launch.c lib/ldso/launch.h $(LDSO_START-y) obj/ldso/libldso.a $(AUTOCONF_H) \
                 lib/ldso/runtime.h lib/ldso/exports.map $(X32_PROBE_LDSO_HEADERS) lib/ldso/startup.h
-	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_START_FLAGS-y) -fvisibility=hidden -nostdlib -shared \
+	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_START_FLAGS-y) \
+	  -DPTOS_RUNTIME_OWNERSHIP=$(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),1,0) -fvisibility=hidden -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-e,_start,--version-script,lib/ldso/exports.map \
 	  -o $@ $(filter %.c %.S,$^) $(filter %.a,$^) $(LDSO_START_LIBS-y)
 all: obj/ldso/ld.so
@@ -149,7 +150,9 @@ obj/ldso/test/librt.so: tests/ldso_runtime/leaf.c tools/make-partial-bss.py $(AU
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,librt.so,--section-start,.partial_bss=0x20000 $< -o $@
 	python3 tools/make-partial-bss.py $@
 obj/ldso/test/libdyn.so: tests/ldso_runtime/library.c obj/ldso/test/librt.so $(AUTOCONF_H)
-	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,libdyn.so $< -Lobj/ldso/test -lrt -o $@
+	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) \
+	  $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),-DLDSO_TEST_DSO_PEER) \
+	  -nostdlib -shared -Wl,--hash-style=sysv,-soname,libdyn.so $< -Lobj/ldso/test -lrt -o $@
 LDSO_INTERP-$(ARCH_X86_64) = /GEMSYS/LIB/X32/LD.SO
 LDSO_INTERP-$(ARCH_ARM) = /GEMSYS/LIB/$(LDSO_LIBNAME-y)/LD.SO
 LDSO_INTERP-$(ARCH_M68K) = /GEMSYS/LIB/M68K/LD.SO
@@ -167,9 +170,15 @@ LDSO_SYSCALL-$(ARCH_M68K) = lib/ldso/arch/m68k/syscall.c
 LDSO_APP_BASE-$(ARCH_ARM) = -Wl,-Ttext-segment=0x401000 -Wl,-z,noexecstack
 # (the GNU/Linux linker drops a library nothing refers to, which the failure fixtures are)
 LDSO_APP_BASE-$(ARCH_M68K) = -Wl,-Ttext-segment=0x401000 -Wl,-z,noexecstack -Wl,--no-as-needed
+ifeq ($(CONF_WITH_SHARED_VM_PEXEC_TEST),y)
+LDSO_APP_BASE-$(ARCH_X86_64) = -Wl,-Ttext-segment=0x400000 -Wl,-z,noexecstack -Wl,--no-as-needed
+endif
 LDSO_APP_BASE = $(LDSO_APP_BASE-y)
 obj/ldso/test/soapp.elf: LDSO_RUNTIME_APP_LINK = -no-pie $(LDSO_APP_BASE)
-obj/ldso/test/soapp-pie.elf: LDSO_RUNTIME_APP_LINK = -pie
+obj/ldso/test/soapp-pie.elf: LDSO_RUNTIME_APP_LINK = -pie -Wl,-z,noexecstack
+ifeq ($(CONF_WITH_SHARED_VM_PEXEC_TEST),y)
+obj/ldso/test/soapp-pie.elf: LDSO_TEST_DEFS-y += -DLDSO_TEST_SHARED_VM
+endif
 obj/ldso/test/soapp.elf obj/ldso/test/soapp-pie.elf: $(LDSO_TEST_START-y) tests/ldso_runtime/program.c $(LDSO_SYSCALL-y) $(LDSO_TEST_SUPPORT-y) obj/ldso/test/libdyn.so $(AUTOCONF_H)
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_TEST_DEFS-y) -nostdlib $(LDSO_RUNTIME_APP_LINK) \
 	  -Wl,--export-dynamic,--hash-style=sysv,-e,_start,--dynamic-linker,$(LDSO_INTERP-y) \
@@ -177,7 +186,7 @@ obj/ldso/test/soapp.elf obj/ldso/test/soapp-pie.elf: $(LDSO_TEST_START-y) tests/
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/ldso/test/soapp.elf
 endif
-ifneq ($(ARCH_ARM)$(ARCH_M68K),)
+ifneq ($(ARCH_ARM)$(ARCH_M68K)$(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),$(ARCH_X86_64)),)
 obj/ldso/test/libmiss.so obj/ldso/test/libbad.so: obj/ldso/test/lib%.so: tests/ldso_arm/miss.c $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -nostdlib -shared -Wl,--hash-style=sysv,-soname,lib$*.so $< -o $@

@@ -148,3 +148,9 @@ ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie
     -ffunction-sections -fdata-sections -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -iquote bdos -iquote fs \
     -c tests/sched_result_wait.c -o "$work/result-wait-quoted.o"
+
+${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie -no-pie \
+    -ffunction-sections -fdata-sections -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 -idirafter include -iquote bdos -iquote fs \
+    tests/sched_process_claim.c bdos/sched_lifetime.c -Wl,--gc-sections -o "$work/process-claim"
+"$work/process-claim"

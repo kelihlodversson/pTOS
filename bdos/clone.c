@@ -1,7 +1,9 @@
 /* Pclone GEMDOS snapshot/validation boundary; trusted startup is separate. */
 #include "emutos.h"
 #include "gemerror.h"
+#include "string.h"
 #include "clone.h"
+#include "biosext.h"
 #if CONF_WITH_USER_ASPACE
 #include "fs.h"
 #include "bdosstub.h"
@@ -15,6 +17,8 @@
 #include "kaspace.h"
 #include "procmem.h"
 #include "kheap.h"
+#include "shared_pexec_test.h"
+#include "proc.h"
 #include "mapping_lifetime_test.h"
 #include "fileback.h"
 #endif
@@ -76,6 +80,37 @@ static LONG mapping_snapshot(VADDR output)
 }
 #endif
 
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+/* Call the actual production symbol, including the m68k assembly. The byte
+ * oracle is computed from the original pattern, never by another memmove. */
+static LONG shared_move_probe(void)
+{
+    static const UWORD lengths[]={0,1,3,4,15,16,17,22,43,44,63,64,65,66,88,127,128,255,256,257,300,511,512,513,600};
+    static const UWORD distances[]={0,1,2,3,15,16,18,20,22,31,32,43,44,63,64,65};
+    UBYTE actual[768],expected[768];
+    void *(*volatile move)(void *,const void *,size_t)=memmove;
+    UWORD n,d,direction,parity,i,from,to;
+    ULONG cases=0;
+    BOOL valid=TRUE;
+    for(n=0;n<ARRAY_SIZE(lengths);n++) for(d=0;d<ARRAY_SIZE(distances);d++)
+        for(direction=0;direction<2;direction++) for(parity=0;parity<2;parity++) {
+            from=16+parity+(direction?distances[d]:0);to=16+parity+(direction?0:distances[d]);
+            for(i=0;i<sizeof(actual);i++) actual[i]=expected[i]=(UBYTE)(i*17+(i>>3));
+            for(i=0;i<lengths[n];i++) expected[to+i]=(UBYTE)((from+i)*17+((from+i)>>3));
+            if(move(actual+to,actual+from,lengths[n])!=actual+to) valid=FALSE;
+            cases++;
+            for(i=0;i<sizeof(actual);i++) if(actual[i]!=expected[i]) {
+                kcprintf("native kernel memmove mismatch: length=%u distance=%u direction=%u byte=%u\n",
+                    lengths[n],distances[d],direction,i);
+                valid=FALSE;break;
+            }
+        }
+    if(cases!=ARRAY_SIZE(lengths)*ARRAY_SIZE(distances)*4) valid=FALSE;
+    if(valid) kcprintf("native kernel memmove overlap: %lu cases PASS\n",(unsigned long)cases);
+    return valid?E_OK:ERR;
+}
+#endif
+
 static long clone_request(uint64_t address, uint64_t size)
 {
 #if CONF_WITH_USER_ASPACE
@@ -88,6 +123,64 @@ static long clone_request(uint64_t address, uint64_t size)
 #if CONF_WITH_PRIVATE_CLONE_TEST
     BOOL private_test = FALSE;
     BOOL scoped_test = FALSE;
+#endif
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+    if(!address && size==SHARED_PEXEC_MOVE_QUERY) return shared_move_probe();
+    if(!address && size>=SHARED_PEXEC_DEPENDENCY_FAIL && size<=SHARED_PEXEC_DEPENDENCY_FAIL+255) {
+        kproc_shared_dependency_test_fail_after((UWORD)(size&255));return E_OK;
+    }
+    if(!address && size==SHARED_PEXEC_DEPENDENCY_STEPS) return kproc_shared_dependency_test_steps();
+    if(size==SHARED_PEXEC_PROTECTED_QUERY) {
+        SHARED_PEXEC_PROTECTED probe;
+        if(kproc_copy_from_user_checked(&probe,(VADDR)address,sizeof(probe)) ||
+           !aspace_copy_to_user_ok(kproc_user_aspace(run),(VADDR)address,sizeof(probe))) return EIMBA;
+        probe.tid_before=kthread_tid(ksched_exit_thread(run));
+        probe.result=proc_shared_vm_exec((PD *)(uintptr_t)probe.image,FALSE);
+        probe.pending=ksched_cancellation_pending();
+        probe.tid_after=kthread_tid(ksched_exit_thread(run));
+        /* xclone's enclosing cleanup scope owns this private experiment.
+         * Its ordinary final checkpoint must deliver the latched request. */
+        if(!kproc_copy_to_user_resident((VADDR)address,&probe,sizeof(probe)))
+            panic("shared test lost resident result");
+        return E_OK;
+    }
+    if(!address && size>=0xc8940900UL && size<=0xc89409ffUL) {
+        kproc_shared_test_fail_after((UWORD)(size&255));return E_OK;
+    }
+    if(!address && size==0xc8940a00UL) return kproc_shared_test_steps();
+    if(size==SHARED_PEXEC_SNAPSHOT_QUERY) {
+        SHARED_PEXEC_SNAPSHOT out={ {0} };KHEAP_STATS heap;ULONG i;
+        /* Preflight only resident output. The read itself cannot fault,
+         * allocate, reap pending work, retain an owner, callback or yield. */
+        if(!address || address>=USER_VA_LIMIT ||
+           !aspace_copy_to_user_ok(kproc_user_aspace(run),(VADDR)address,sizeof(out))) return EIMBA;
+        out.count[SP_PROCESSES]=kproc_count();
+        out.count[SP_IDENTITIES]=kproc_test_identities(FALSE);
+        out.count[SP_PROCESS_REFS]=kproc_test_identities(TRUE);
+        out.count[SP_THREADS]=kthread_test_live();
+        out.count[SP_CURRENT_PRIVATE]=aspace_private_pages(kproc_user_aspace(run));
+        procmem_shared_snapshot(&out);kaspace_shared_snapshot(kproc_user_aspace(run),&out);
+        out.count[SP_KSTACKS]=kstack_test_live();
+        out.count[SP_SCHEDSTACKS]=(ULONG)ksched_test_nested(14);
+        kheap_stats(&heap);out.count[SP_KHEAP_BLOCKS]=heap.live_blocks;
+        out.count[SP_KHEAP_PAGES]=heap.pages;out.count[SP_KHEAP_BAD_FREES]=heap.bad_frees;
+#if CONF_WITH_MMAP
+        out.count[SP_FILE_PAGES]=aspace_file_pages();out.count[SP_FILE_REFS]=aspace_file_references();
+        fileback_shared_snapshot(&out);
+#endif
+#if CONF_WITH_PRIVATE_CLONE
+        out.count[SP_COW_FRAMES]=aspace_cow_frames();out.count[SP_COW_REFS]=aspace_cow_references();
+#endif
+        for(i=0;i<OPNFILES;i++) {
+            out.count[SP_SFT_USES]+=sft[i].f_use;
+            out.count[SP_SFT_STAGED]+=sft[i].f_staged_refs;
+            out.count[SP_SFT_CLEANUP]+=sft[i].f_cleanup_refs;
+        }
+        for(i=0;i<NCURDIR;i++) out.count[SP_DIRECTORY_USES]+=dirtbl[i].use;
+        return kproc_copy_to_user_resident((VADDR)address,&out,sizeof(out))?E_OK:EIMBA;
+    }
+#endif
+#if CONF_WITH_PRIVATE_CLONE_TEST
     if ((size&0xffffffffffff0000ULL)==MLT_SCOPED_CLONE) {
         if (address>=USER_VA_LIMIT) return EIMBA;
         if (!address && size==MLT_CONTENDED_ALLOC) return (LONG)kproc_test_contended_allocation();

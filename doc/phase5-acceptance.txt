@@ -1,0 +1,76 @@
+Phase 5 whole-consumer acceptance ledger (#894 / PR956)
+=====================================================
+
+Current accepted epic: 496ceba0eb260e3de2cef52f074699df6bf6f177.
+Identical tree to independently accepted #968 source69ccd179:
+b3fbe23151ea26ee217779d99848098f532a2829. No redundant prerequisite matrix
+is required to begin development. Normal merge96e408df6 has parents8ece5bde
+and496ceba0; tree022bc903df756b269ccba4d569b5bcfe6849f4cf. #966 and #968
+are ancestors once; authored Phase5 history is retained, no preview imported.
+
+Combined consumer acceptance: PENDING. Production gates remain disabled.
+The old ordinary-mapping architectural dependency is supplied by #968. The
+consumer now selects common GENERAL membership and explicit annotated RUNTIME
+ownership as documented in shared-vm-pexec.txt. Fresh consumer validation and
+same-source whole kernel/memory/loader acceptance are still required.
+
+Historical negative evidence remains:8ece5bde leaks repeated-interpreter maps;
+its five native configurations failed that assertion. The disposable scoped
+preview passed DSO conservation but had m68k nested-chain/GLOBALCH failures.
+Neither is final evidence. A clean merged96e408d m68k FAT run reproduces the
+nested-chain/DSO failures (25/2); GLOBALCH passes there. Native tracing locates
+the first nested divergence at the PRG CRT insufficient-TPA Ptermffff branch,
+before role entry. The bounded helper declares its own16KiB stack budget;
+CRT admission, legacy TPA semantics and every lifecycle assertion remain.
+Exact logs and subsequent source evidence belong on PR956/#894.
+
+Criterion matrix (V: verified accepted epic; U: implementation exists but final
+consumer verification insufficient; M: missing implementation/evidence;
+D: independently owned architectural contract blocks acceptance):
+
+Requirement                                      Class / current disposition
+#966 actual merge, #958 invariants, native nested  V; Milestone A exact head
+4/104 NEW_PROCESS/SHARE_VM, distinct PID/TID        U; reconciled basic execution
+4 full16;104 PID; canonical #909 one-time reaper    U; existing positive fixtures
+nested logical owner/carrier separation           U; focused admission correction
+parent-first/child-first/multiple survivors        U; expanded native fixtures
+executable orphan grandchild / source PD reuse     U; expanded native fixtures
+leader/further worker THREAD/final PROCESS exit    U; existing managed fixture
+PROCESS-local group exit / independent survivor    U; existing group/orphan fixture
+basepage/env/image/interpreter retention           U; parent-first interp added
+R1/R2 overlap/birth/rights and mutation rejection   U; production models/native
+ordinary heap/mmap/late-created runtime ownership U; #968 common + annotated runtime
+PROT_NONE/file-COW/guard/limit lifetime             U; full final consumer slice
+four-boundary native resource conservation         U; read-only snapshots added
+repeated interpreted final reclamation             U; fresh consumer matrix pending
+PE_LOAD authentication and stale authority         U; existing rejection fixtures
+raw/reservation acquisition prefix failure         U; static/interpreted sweep
+borrow/pin/partial mapping rollback                U; production models + probes
+interp/relocation/permissions/RELRO/startup/stack   U; production/native fixtures
+THREAD/observer/scheduler/publication rollback     U; six existing factory stages
+failed live/self attempt preserves committed set  U; existing regression retained
+cancellation before/after readiness/claims         U; protected native fixture
+Pwait/Pwait3/Pwaitpid ABI/early/late/WNOHANG         U; generic-source fixture
+competing waits/failed copyout/ffff vs fault        U; canonical consumer fixtures
+orphan/PID reuse and independent CH_EXIT            U; gated GEMPIE fixture added
+0/3/6/100/106/static/interpreted/PRG/nested paths   U; final matrix outstanding
+C-entry vs standard ELF/argv/AUXV/RELRO/exec-stack U; preserved, hosted/native
+five positive MMU configurations + shutdown5/5    U; final source required
+full GUI/legacy/ROM/eager/disabled/pinned matrix    U; final source required
+production ASan/UBSan/leak/GCC13; ABI/ELF/gitready U; final source required
+four exact final-head CI workflows SUCCESS         U; not established
+independent whole kernel/memory/loader acceptance U; same final source required
+public production activation/dispatch             M by design; remains disabled
+
+Native snapshots read existing allocation records, leases, backend pins,
+page/backing/stack owners, SFT/directory refs and completion-held identities.
+They never reset counters, reap, fault pages, retain owners or yield. Recorded
+root page-table/vector growth is accounted separately; final raw/reservation,
+stack/reference/file counts must match without destroying the surviving root.
+No existing assertions or timeouts are relaxed. A failed acceptance regression
+remains a failure and cannot be promoted through other green workflows.
+
+Unsupported: production4/104,200/fork/vfork/PRIVATE_VM, generic PROCESS dispatch,
+TLS, nested public Pclone/join/group extensions, timer preemption and SMP.
+Formal completion still requires separate merge authorization and validation of
+the resulting actual epic head after all consumer acceptance gates pass.

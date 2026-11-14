@@ -3,6 +3,13 @@ Shared-ASPACE allocation retention: prerequisite handoff
 
 Status
 ------
+R1-R4 ownership corrections #952/#958 are accepted in actual epic
+be81959ea54a13c1ab6f4946086590083710d929, preserving the single-CPU cooperative
+contract. The remaining shared-root ordinary mapping consumer attachment and
+retirement policy is separate from primitive acceptance; see the current
+pexec-clone-migration.txt and phase5-acceptance.txt.
+
+Historical implementation provenance follows.
 Implementation and corrective validation on feature/894-shared-region-ownership, based on
 merged epic 52b74f64f62ae92059ededa6f03ca277d79703b1. The original #942 was
 DESIGN/HOST FIXTURES ONLY; its acceptance does not establish R1-R4.

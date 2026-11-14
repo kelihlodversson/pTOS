@@ -11,6 +11,7 @@
 #include "kthread.h"
 #include "thread_startup.h"
 #include "proc_clone.h"
+#include "process_observer.h"
 #include "fs.h"
 #include "callback_cpu.h"
 #include "ksched_legacy_irq.h"
@@ -43,6 +44,8 @@ typedef struct kernel_task {
     struct ksched_nested *nested;          /* innermost associated owner, or NULL */
     struct ksched_nested *nested_prepared; /* private until its launcher entry */
     PD *program, *parent;
+    UQUAD synchronous_wait_process;
+    ULONG synchronous_waiter; /* non-recycled TID; no borrowed waiter stack */
     struct kernel_task *completion_owner; /* owns one dependent reference; NULL is anchor */
     ULONG dependents; /* prevents anchor retirement/reuse until worker root reap */
     BOOL process_completed, result_published;
@@ -1613,6 +1616,9 @@ KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *
 
 static BOOL cancellation_wait(BOOL (*ready)(void *), void *argument)
 {
+    /* Cancellation cannot execute while this owner has cleanup tickets.
+     * Keep dispatching its dependency instead of retrying CANCELLED forever. */
+    if (ksched_cleanup_active()) return ksched_block(ready, argument);
     return ksched_wait_cancelable(ready, argument) != KSCHED_WAIT_UNMANAGED;
 }
 
@@ -1967,40 +1973,74 @@ LONG ksched_spawn(PD *pd)
 }
 #endif
 
-typedef struct { PD *parent; WORD pid; } CHILD_WAIT;
+typedef struct { PD *parent; WORD pid; UQUAD owner; ULONG tid; } CHILD_WAIT;
+static BOOL process_wait_target(const KERNEL_TASK *task,const CHILD_WAIT *wait)
+{
+    return task->asynchronous && !task->completion_owner &&
+        task->state!=TASK_UNUSED && task->state!=TASK_RESERVED && task->state!=TASK_RETIRING &&
+        task->parent==wait->parent && (wait->pid<0 || task->pid==wait->pid);
+}
+static BOOL process_wait_claim_available(const KERNEL_TASK *task,const CHILD_WAIT *wait)
+{
+    return !task->synchronous_wait_process ||
+        (task->synchronous_wait_process==wait->owner && task->synchronous_waiter==wait->tid);
+}
+static void process_wait_release_claim(const CHILD_WAIT *wait)
+{
+    KERNEL_TASK *task;
+    uintptr_t flags=native_sched_irq_save();
+    for(task=async_tasks();task;task=task->next_task)
+        if(process_wait_target(task,wait) && task->synchronous_wait_process==wait->owner &&
+           task->synchronous_waiter==wait->tid) {
+            task->synchronous_waiter=0;task->synchronous_wait_process=0;
+        }
+    native_sched_irq_restore(flags);
+}
 static BOOL child_ready(void *argument)
 {
-    CHILD_WAIT *wait = argument;
+    CHILD_WAIT *wait=argument;
     KERNEL_TASK *task;
-    BOOL found = FALSE;
-    for (task = async_tasks(); task; task = task->next_task) {
-        if (!task->asynchronous || task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != wait->parent ||
-            (wait->pid > 0 && task->pid != wait->pid)) continue;
-        found = TRUE;
-        if (task->state == TASK_ZOMBIE) return TRUE;
+    BOOL found=FALSE;
+    for(task=async_tasks();task;task=task->next_task) {
+        if(!process_wait_target(task,wait) || !process_wait_claim_available(task,wait)) continue;
+        found=TRUE;
+        if(task->state==TASK_ZOMBIE) return TRUE;
     }
     return !found;
 }
 
-LONG ksched_wait(WORD pid, WORD options, UQUAD address)
+static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETION *completion)
 {
     CHILD_WAIT wait;
     uintptr_t flags;
     KERNEL_TASK *task;
+    ULONG waiter=kthread_tid(ksched_exit_thread(run));
+    KPROC *wait_owner=kproc_retain(run);
+    UQUAD wait_number=kproc_ref_number(wait_owner);
+    kproc_release(wait_owner);
     if (scheduler.stopping) return EACCDN;
     if (options & ~3) return EINVAL;
     /* No process-group or stopped-process model is implemented yet. */
     if (!pid || pid < -1) return EINVFN;
     if (!scheduler.active) return EFILNF;
-    wait.parent = run; wait.pid = pid;
+    if(completion && (!wait_number || pid<1)) return EINVFN;
+#if CONF_WITH_PTERMGRP
+    if(completion) ksched_cancel_point(); /* caller owns no uncommitted launch resources */
+#endif
+    wait.parent = run; wait.pid = pid; wait.owner=wait_number;wait.tid=waiter;
     flags = native_sched_irq_save();
     for (;;) {
-        BOOL found = FALSE;
+        BOOL found = FALSE,contended=FALSE;
         for (task = async_tasks(); task; task = task->next_task) {
             ULONG status;
-            if (!task->asynchronous || task->completion_owner || task->state == TASK_UNUSED || task->state == TASK_RESERVED || task->state == TASK_RETIRING || task->parent != run ||
-                (pid > 0 && task->pid != pid)) continue;
-            found = TRUE;
+            if(!process_wait_target(task,&wait)) continue;
+            if(!process_wait_claim_available(task,&wait)) {
+                contended=TRUE;
+                if(pid>0) {native_sched_irq_restore(flags);return EACCDN;}
+                continue; /* wait-any can still consume an unrelated child */
+            }
+            found=TRUE;
+            if(completion) { task->synchronous_wait_process=wait_number;task->synchronous_waiter=waiter; }
             if (task->state != TASK_ZOMBIE || task->dependents) continue;
             /* Back/copy output outside IRQ exclusion. This path never yields,
              * so the zombie remains owned and cannot change under the copy. */
@@ -2008,6 +2048,11 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
             if (address && !kproc_copy_to_user(address, task->usage, sizeof(task->usage))) return EIMBA;
             kproc_add_child_usage(run, task->usage[0]);
             native_sched_irq_disable();
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+            if(completion && (!process_observer_snapshot(task->process,completion) ||
+                completion->state!=PROCESS_COMPLETED)) panic("zombie without canonical PROCESS result");
+#endif
+            task->synchronous_waiter=0;task->synchronous_wait_process=0;
             status = ((ULONG)(UWORD)task->pid << 16) |
                      (task->signal ? ((ULONG)task->signal << 8) : (task->result & 255));
             task->parent = NULL;
@@ -2021,22 +2066,35 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD address)
         }
         if (!found || (options & 1)) {
             native_sched_irq_restore(flags);
-            return found ? 0 : EFILNF;
+            return found ? 0 : contended ? EACCDN : EFILNF;
         }
         if (!ksched_spawn_allowed()) {
             LONG error;
             native_sched_irq_restore(flags);
             error=enter_root(FALSE,child_ready,&wait);
-            if(error) return error;
+            if(error) { if(completion) process_wait_release_claim(&wait);return error; }
         } else {
             cancellation_wait(child_ready, &wait);
             native_sched_irq_restore(flags);
         }
 #if CONF_WITH_PTERMGRP
+        if(completion && ksched_cancellation_pending() && !ksched_cleanup_active())
+            process_wait_release_claim(&wait);
         ksched_cancel_point();
 #endif
         flags = native_sched_irq_save();
     }
+}
+LONG ksched_wait(WORD pid,WORD options,UQUAD address)
+{ return wait_process(pid,options,address,NULL); }
+LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion)
+{
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(!completion) return EINVAL;
+    return wait_process(pid,0,0,completion);
+#else
+    UNUSED(pid);UNUSED(completion);return EINVFN;
+#endif
 }
 
 /* Called only after the scheduler has switched back to its root context.
@@ -2411,6 +2469,30 @@ BOOL ksched_clone_context(KPROC *source, PD **controller)
         execution_cpu.current->program != run || kproc_live_pd(source) != run) return FALSE;
     *controller = ksched_controller_pd(); return *controller!=NULL;
 }
+BOOL ksched_loaded_clone_context(KPROC *source,PD **controller)
+{
+    KTHREAD *owner;
+    if(!source || !ksched_async_allowed() || kproc_live_pd(source)!=run ||
+#if CONF_WITH_PTERMGRP
+        kproc_group_status(source,NULL) ||
+#endif
+        !kproc_active_space(source)) return FALSE;
+    /* A nested source owns its logical THREAD; the carrier continues to own
+     * its original anchor. THREAD-less legacy callers keep their old path. */
+    owner=ksched_exit_thread(run);
+    if(owner && kthread_process(owner)!=source) return FALSE;
+    *controller=ksched_controller_pd();return *controller!=NULL;
+}
+BOOL ksched_loaded_clone_begin(KPROC *source,PD **controller,KSCHED_PUBLICATION_GUARD *guard)
+{
+    uintptr_t flags=native_sched_irq_save();
+    if(!ksched_loaded_clone_context(source,controller)) {native_sched_irq_restore(flags);return FALSE;}
+#if CONF_WITH_X86_64_MEMTEST
+    if(clone_masked) panic("nested loaded clone publication");
+    clone_masked=TRUE;
+#endif
+    guard->flags=flags;return TRUE;
+}
 BOOL ksched_clone_begin(KPROC *source, PD **controller, KSCHED_PUBLICATION_GUARD *guard)
 {
     uintptr_t flags;
@@ -2459,7 +2541,11 @@ void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STA
         task->execution.syscall_stack.top = syscall_stack->top;
         syscall_stack->physical = syscall_stack->top = 0;
     } else if (logical_parent) {
-        if (execution_cpu.current->process != logical_parent || kproc_live_pd(logical_parent) != run)
+        KTHREAD *owner=ksched_exit_thread(run);
+        if ((execution_cpu.current && execution_cpu.current->process != logical_parent &&
+             !(kproc_shared_exec_committed(process) &&
+               (!owner || kthread_process(owner)==logical_parent))) ||
+            !ksched_async_allowed() || kproc_live_pd(logical_parent) != run)
             panic("clone publication parent changed");
         task->asynchronous = TRUE; task->parent = run;
     }

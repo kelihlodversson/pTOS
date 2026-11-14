@@ -1,0 +1,242 @@
+Implementation slice (private test kernels only until independent acceptance):
+- Reuse the PE_LOAD-created distinct KPROC/PD/PID as NEW_PROCESS/SHARE_VM loader input; no second public basepage/PID allocation. The generic factory creates the new THREAD and independent kernel stacks, not a duplicate process manager. Rollback does not dispose the caller-owned staged PROCESS.
+- Associate bounded R1 physical/R2 reservation ownership with this KPROC. Source metadata references are canonical; no live source PD is retained as a completion controller. Preserve original image/basepage/environment mappings and source ownership.
+- Independent exact backend borrow-reference duplication validates unchanged physical mappings, then acquires its own pin without remapping/revoking leases. Existing transactional map_procmem is untouched.
+- Stage ELF W->X policy under a short non-yielding reversible permission journal before installing new holds/startup. Restore old permissions and old lease revocations on all prepublication failures. Only bounded allocation occurs within the no-yield journal lifetime; no callback or user execution may cross it. Revocation snapshots use non-recycled lease IDs, never borrowed lease pointers. Abort drops new image fences before restoring old permissions, and restores before raw-allocation final releases. Existing foreign held mappings reject admission.
+- Preserve ordinary PE_LOAD ownership and patchable data; mark original heap grant as shared attachment on no-fail commit. Parent retirement retires attached ranges into existing R4 fences; it cannot destroy an executing child KPROC merely because its allocation was parent-owned.
+- Reuse existing canonical #909 reap, adding only an internal full-result projection to the same consumption path for Pexec4's full16 status. No second observer registry or reaper.
+
+Post-#968 reconciliation (test-only, whole-consumer acceptance pending)
+--------------------------------------------------------------------
+Accepted epic: 496ceba0eb260e3de2cef52f074699df6bf6f177, identical tree
+b3fbe23151ea26ee217779d99848098f532a2829 to accepted #968 source69ccd179.
+Normal merge96e408df6 preserves existing8ece5bde consumer history and imports
+#966/#968 once. No preview or unrelated validation branch is imported.
+#958 immutable exact backing authority remains authoritative. Prerequisite
+acceptance permits development; it does not accept the combined consumer.
+Current exact consumer source and fresh evidence are recorded on PR956/#894.
+
+Historical pre-#966 merge 1903d5041ff8d3b70a8686c10dd4d191834c96f9 retains both the previous
+consumer and accepted epic histories. Fresh actual static-ELF trap suites at
+that exact reconciliation pass x32 FAT24/0, ARM FAT27/0/PFS28/0 and m68k040
+FAT26/0/PFS27/0, with five shutdown checks each. Independent review verifies
+the corrected exact backing bounds, live-ticket checks and cleanup fences
+remain unchanged. Later authored increments require their own final matrix.
+
+CONF_WITH_SHARED_VM_PEXEC_TEST defaults n; no shipped preset selects it.
+Ordinary ring-3 mode4/104 rejection remains unchanged. This test switch is
+not a production activation decision.
+
+Additional draft implementation:
+- PRG borrowed-text permission preparation authenticates a live exact R1
+  allocation hold and uses the same reversible journal. Native m68k basic
+  PRG4/104 entry, shared-data write and status/reap pass in the preliminary
+  authored configuration; full final-source/PFS/pinned coverage is pending.
+- Trusted standard ELF entry preserves the argc/argv stack rather than
+  constructing a C entry frame. The x32 launcher authenticates the published
+  ELF draft's exact initial SP before using the existing16-byte ELF alignment
+  rule; public C entries retain their RSP+8 alignment requirement.
+- Interpreted images are staged transactionally in shared owner storage,
+  with rebuilt standard stack/AUXV and preserved original pending image on
+  rollback. The native entry-kind correction is implemented. Static and
+  interpreted runtime fixtures both exist; final-source evidence is recorded
+  separately from historical checkpoints in phase5-acceptance.txt and PR956.
+- RELRO tightening may only remove WRITE from fully preflighted private,
+  non-FILE, non-EXEC user leaves. It preserves immutable ticket ceilings while
+  checking current minimum access and updating COW logical protection. The
+  KPROC caller must authenticate only its kernel-recorded exact GNU_RELRO
+  interval, never ordinary heap/MMAP pages or a generic shared-root range.
+- Canonical PROCESS wait claims use PROCESS number/TID identity, skip another
+  waiter's claimed zombie and release before cancellation checkpoints.
+
+Existing fixtures cover running orphans that execute another shared PROCESS,
+multiple simultaneous surviving children, four-boundary resource snapshots,
+source-PD reuse, leader-first/final-THREAD completion, worker-created THREAD/join,
+inherited limits, file-backed/COW mappings, self/live relaunch rejection,
+six factory failures, and a shared-preparation prefix sweep. Interpreted
+parent-first and generic/nested-source fixtures are being verified. A green
+component or earlier source result does not establish final-head acceptance.
+#966 resolves the old #713 continuation-owner dependency. #968 supplies the common mapping lifetime prerequisite; the consumer now uses
+its canonical memberships and exact attachments for ordinary mappings.
+Full final native/compatibility/GUI/pinned evidence and whole-owner review remain
+pending; see phase5-acceptance.txt and current PR956/#894 ledgers.
+Successful execution is not proof of complete shared-ASPACE allocation lifetime.
+
+Hosted production startup, permissions, wait claims and RELRO tests use modeled
+CPU/MMU/physical providers. Their normal/ASan/UBSan/fortified results are not
+native shared-Pexec execution evidence. No public activation, merge or Phase5
+completion follows from these incremental tests.
+
+Shared-loader stack and inherited limits (test-gated consumer)
+------------------------------------------------------------
+Preparation snapshots the source PROCESS priority, CORE/DATA limits and effective
+stack cap. Commit assigns them without a new fallible step; aborted preparation
+does not change the staged PROCESS policy. The shared child uses its independently
+retained, guarded resident heap stack, capped by the inherited stack limit. This
+is a bounded startup extent, not an implementation of lazy growth to that cap.
+Interpreted argc/argv/AUXV construction fits within the actual body and leaves a
+resident page below it for runtime use; excessive startup data fails preparation.
+
+The inherited scalar cap does not authorize a synthetic top-of-VA stack. Shared
+children obtain backing only from their actual heap/mmap or authenticated retained
+reservations. Callback stack bounds use the actual body. Querying the stack cap
+and setting the same normalized cap succeed; relocating/resizing this sealed
+stack returns EACCDN. Nested shared launches duplicate existing reservation holds
+rather than inventing a new default-stack owner.
+
+Launch cleanup and ordinary mapping ownership
+--------------------------------------------
+A rejected launch grants no cleanup right over an existing target attachment.
+The launch scope may abort only preparation it successfully acquired. In the
+supported cooperative no-yield preparation/abort path, constructor rollback and
+scope cleanup are idempotent; committed sets with resumable THREADs remain
+protected by the existing fatal invariant.
+
+Ordinary KASPACE heap/mmap lifetime uses #968's canonical memberships and
+exact attachments. The former all-visible-region R2 sweep is removed. Claims
+are prepared before borrowing/staging or opening the permission journal, and
+moved exactly once into the clone transaction. Commit moves membership at its
+existing no-fail boundary. Abort restores the journal after releasing its own
+conflicting special holds, before canonical claim release may call file cleanup.
+The staged image remains caller-owned and retryable. Failed competing attempts
+cannot consume an existing preparation token or committed attachment.
+File-backed mmap retains its live birth, exact bounds, logical rights and
+FILE_BACKING owner; missing pages and file-COW remain materializable only through
+that authenticated owner. Attachment tickets provide lifetime, not permission. KPROC-only image/raw/
+stack views retain captured receipts. No cleanup fence, broad source image hold
+or merely readable PTE grants new file-backing authority.
+
+Post-#966 lifetime corrections
+-----------------------------
+Retired shared stack guard/body records keep their immutable ordinary birth,
+extent and rights until the last conflicting R2 release. The existing R4 cleanup
+fence removes the exact marked metadata after its backend commit. Early failure
+before any hold uses immediate removal. Fences never become access authority.
+Generic clone supervisor metadata can be held by an explicitly authenticated
+no-access R1 lifetime token and inaccessible captured R2 witness. Public USER
+hold authentication is unchanged; private fork snapshots explicitly retain any
+inherited top-stack ownership. An inherited scalar limit never creates a stack.
+Protected completion/join waits continue raw scheduler blocking while cleanup
+suppresses cancellation, retaining synchronous claims until delivery can occur.
+No additional reaper or nested execution mechanism is introduced.
+
+FreeMiNT compatibility and explicit runtime ownership
+---------------------------------------------------
+FreeMiNT's mode4/104 shares ALL parent memory, not just the initial snapshot.
+Its share_mem() returns the same p_mem; future Malloc/Mxalloc records attach to
+that shared memspace, which is released only at its last link. A surviving
+sharer can access allocations created after sharing even after their creator
+exits. Pexec4/104 therefore inherits GENERAL lifetime membership, including
+future ordinary Malloc and unannotated pTOS Mmap allocations. Existing image,
+basepage, environment, interpreter and actual stack retain their R1-R4 claims.
+
+Primary reference: FreeMiNT68be4e529ad82ea9ec2b1c215b53303f91e78d52:
+  doc/programmer/mint.txt1115-1118,1295-1297 (all memory, basepage/environment)
+  sys/k_fork.c143-146; sys/proc_help.h43-47 (shared p_mem)
+  sys/memory.c524-552; sys/proc_help.c224-261 (late allocation, final link)
+These are not evidence that FreeMiNT implements pTOS's mmap API: its
+sys/syscalls.master514-515 lists mmap/munmap as undefined.
+
+MAP_PTOS_RUNTIME is an explicit pTOS loader-owned lifetime annotation, admitted
+and emitted by ld.so ONLY with CONF_WITH_SHARED_VM_PEXEC_TEST. It is not an
+implicit change to general FreeMiNT allocations or a production ABI activation.
+Each loaded standard-entry PROCESS prepares a fresh RUNTIME scope before THREAD
+publication. Its annotated anonymous/file maps join that scope. Existing exact
+source-owned runtime dependencies are attached to a new loaded child; unrelated
+visible KASPACE mappings and future foreign runtime allocations are not inherited.
+General allocations remain common even when created by a departed interpreter.
+
+Generic CLONE_VM inherits GENERAL and RUNTIME memberships and the source's
+selected runtime scope, retaining existing AND future compatible runtime maps.
+Thus a generic peer created before the creator's next DSO allocation still owns
+that allocation. Creator exit cannot revoke the peer's live code/data. A loaded
+PROCESS has a separate runtime allocation scope; merely passing a pointer to
+another scope does not export lifetime. Trusted cross-scope retention uses
+#968's authenticated exact attachment API, with destination acquired before
+source release. A PRIVATE_VM snapshot binds copied classification to fresh
+memberships and preserves an empty runtime selector for future allocations.
+
+Runtime membership retires after the final THREAD stops, independently of
+Pwaitpid or final root destruction. Final claims release canonical mappings and
+FILE_BACKING exactly once; immutable #958 backing bounds and access checks still
+apply. No parallel mapping registry, reaper or scheduler is introduced. The
+shared region limit remains96. Whole-consumer public compatibility acceptance
+and fresh native resource/DSO evidence are required before public activation.
+
+Generic shared-root execution dependencies
+------------------------------------------
+Generic NEW_PROCESS descendants need more than ordinary mapping membership:
+DSO code can call an interposed function or syscall stub in the source's main
+image. Final source exit must not allow its original staged metadata to be
+freed while that peer can execute such code. Generic same-root construction
+therefore duplicates the existing bounded R1/R2 receipts and authenticates the
+immediate source's own compatibility metadata and main/interpreter witnesses.
+A mutually exclusive inherited role uses the same shared_exec_regions storage
+(one set per PROCESS, the unchanged raw/region bounds); it carries no borrowed
+stack owner, permission journal, pending image, parent/controller or image-commit
+state. Each token is duplicated through its canonical primitive, never copied.
+
+This role is prepared after mapping-owner admission and before THREAD creation,
+committed at the existing identity-only adoption or runnable no-fail boundary,
+and released after final THREAD stop before ordinary membership retirement.
+Loaded entry/guarded-stack/RELRO and scalar-limit rules remain exclusive to the
+loaded role. SAME_PROCESS adds no PROCESS owner; PRIVATE_VM copies its root and
+never inherits source-root receipts. A failed prefix releases only its acquired
+tickets and leaves source receipts, mappings, aliases and permissions intact.
+Native regression runs real DSO code/data before and after creator normal/fault
+exit, including a call back into the source image, then checks exact45-counter
+conservation with the parent root alive. The original failing control is retained
+in the PR evidence; successful-fini unmapping is not used.
+
+Native regression corrections discovered during reconciliation
+--------------------------------------------------------------
+The original m68k peer-chain98 and GLOBALCHffff failures occur before their
+role logic: native trap PCs identify _crtinit_noargs's insufficient-TPA branch.
+Their actual TPAs were77,824 and61,440 bytes; the default64KiB CRT stack plus
+MINFREE and image exceeds those bounds. The bounded test helpers declare16KiB
+stacks (their C frames are below1KiB). No TPA inflation, libcmini change, CRT
+check bypass or lifecycle assertion change is used.
+
+The multiple-orphan cleanup failure was a real lost-guard panic, not delayed
+readiness. Native creation/removal tracing showed the guard's canonical record
+was overwritten without a retirement. Production m68k memmove copied low chunks
+first inside backward64/256-byte blocks; an88-byte move shifted22bytes corrupts
+unread records. Its odd-overlap16-byte loop had the same flaw. Descending chunks
+and byte copies correct memmove itself for classic and ColdFire while preserving
+registers, counters and return ABI. A gated actual-symbol native1600-case oracle
+covers zero/self, both parities/directions and overlap distances/boundaries. The
+old-source failure is retained; ownership guards and exact reclamation assertions
+are unchanged. Runners reject kernel panics even if a continuation resumes.
+
+The DSO peer fixture accounts for the existing isolated-child test's intentional
+parent data write on ARM/m68k; its peer compares the authenticated shared value
+before/after creator normal/fault completion. It does not change status or data
+expectations to hide a launch failure. Every new special dependency acquisition
+prefix is injected natively, checked against all45 resource counters without a
+published child, and retried successfully from the same surviving source.
+
+Loaded descendants inherit the complete source-set R1 prefix as well as R2
+receipts. The target's own TPA receipt remains raw[0] for exact PRG journal
+authentication; remaining acquisitions deduplicate the immediate source and
+respect the unchanged raw8/region96 bounds. The native loaded->generic->loaded
+fixture reaches all8 raw receipts while the last child outlives both creators.
+It executes retained DSO/main code, reads and COWs a file mapping born after the
+generic peer joined, and keeps exact source-owned runtime attachments after
+that peer exits. A later unexported runtime mapping is reclaimed independently.
+The late file is distinct from executable input: snapshots at the actual read
+and COW require one clean file page/reference, then its last-alias retirement.
+A pre-exit snapshot separates cold DSO code faults from mapping-owner release;
+after peer exit only its later unexported reservation disappears. Final45-counter
+equality remains strict.
+
+Standard ELF entry clears x32's legacy RDI argument and ARM's r0 finalizer;
+C-entry drafts retain their authenticated basepage argument. Ordinary isolated
+ARM entry applies the same documented zero-finalizer ABI. Gated LD.SO assembly
+checks the real initial registers before bootstrap overwrites them (all15 x32
+GPRs, ARM r0), so successful interpreted launches also prove the kernel handoff.
+
+Presentation compatibility boundary: the optional FreeMiNT mode104 name hint
+is currently ignored; pTOS retains the authenticated PE_LOAD basename. This
+is unchanged by Phase5 and is separate from its VM/PROCESS/result contract.
+Resolve that presentation extension before public ABI activation. No claim of
+unqualified FreeMiNT API parity or public activation follows from this candidate.
