@@ -30,6 +30,7 @@ struct proc_clone_transaction {
     KPROC *source, *process; /* owning identity references */
     KASPACE *space;          /* owning until target adopts it or rollback */
     KASPACE *source_space;   /* separately retained while private VM prepares */
+    KASPACE_MEMBER *mapping_members; /* transactional PROCESS mapping claims */
     KTHREAD *thread;         /* owns execution-resource retention, not runnable */
     PROC_CLONE_PROCESS_POLICY policy;
     BOOL owns_process;
@@ -61,6 +62,7 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
     if (ksched_test_clone_masked()) panic("clone teardown in publication exclusion");
 #endif
     thread_startup_abort(&tx->startup);
+    kproc_abort_mapping_owners(tx->process,tx->space,&tx->mapping_members);
 #if CONF_WITH_NATIVE_SCHED
     if (tx->owns_compat) kproc_clone_drop_compat(tx->process);
 #endif
@@ -97,12 +99,13 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
          args->process_policy != PROC_CLONE_NEW_PROCESS &&
          args->process_policy != PROC_CLONE_LOADED_PROCESS) ||
         (args->vm_policy != PROC_CLONE_SHARE_VM && args->vm_policy != PROC_CLONE_PRIVATE_VM &&
-         args->vm_policy != PROC_CLONE_PREPARED_VM))
+         args->vm_policy != PROC_CLONE_PREPARED_VM && args->vm_policy != PROC_CLONE_SCOPED_VM))
         return EINVAL;
     if (args->process_policy != PROC_CLONE_NEW_PROCESS && args->resources)
         return EINVAL;
     if ((args->process_policy == PROC_CLONE_LOADED_PROCESS) !=
         (args->vm_policy == PROC_CLONE_PREPARED_VM)) return EINVAL;
+    if (args->vm_policy==PROC_CLONE_SCOPED_VM && args->process_policy!=PROC_CLONE_NEW_PROCESS) return EINVAL;
     if (args->process_policy == PROC_CLONE_LOADED_PROCESS) {
         if (args->prepared_process || !args->prepared_space ||
             !kproc_thread_start_allowed(args->source) ||
@@ -146,6 +149,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     tx->source = tx->process = NULL;
     tx->space = NULL;
     tx->source_space = NULL;
+    tx->mapping_members = NULL;
     tx->thread = NULL;
     tx->startup = NULL;
     tx->observer = NULL; tx->asynchronous = FALSE;
@@ -178,6 +182,14 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     }
 #endif
     if (!tx->space || (args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(3))) goto failed;
+    if (args->process_policy!=PROC_CLONE_SAME_PROCESS && args->process_policy!=PROC_CLONE_LOADED_PROCESS) {
+        error=args->vm_policy==PROC_CLONE_SCOPED_VM ?
+              kproc_prepare_scoped_mapping_owners(tx->process,tx->source,tx->space,&tx->mapping_members) :
+              kproc_clone_prepare_mapping_owners(tx->process,tx->source,tx->space,
+                    args->vm_policy==PROC_CLONE_PRIVATE_VM,&tx->mapping_members);
+        if (error) goto failed;
+        error=ENSMEM;
+    }
     tx->thread = args->process_policy == PROC_CLONE_LOADED_PROCESS ?
         kthread_prepare(kproc_live_pd(tx->process), tx->space) :
         kthread_construct_identity(tx->process, tx->space);
@@ -225,6 +237,7 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     if (tx->policy != PROC_CLONE_SAME_PROCESS && tx->policy != PROC_CLONE_LOADED_PROCESS) {
         if (!kproc_clone_adopt_space(tx->process, tx->thread, tx->space))
             return EACCDN;
+        kproc_clone_commit_mapping_owners(tx->process,tx->space,&tx->mapping_members);
         tx->space = NULL; /* moved, not another reference */
     }
     ready.thread = tx->thread;
@@ -552,7 +565,7 @@ done:
 #endif
 
 static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup,
-                             VADDR pid, VADDR tid, BOOL return_pid)
+                             VADDR pid, VADDR tid, BOOL return_pid,BOOL scoped)
 {
     PROC_CLONE_TRANSACTION *tx = NULL;
     PROC_CLONE_OBSERVER *observer = NULL;
@@ -562,7 +575,8 @@ static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_
     LONG error;
     if (!args || !startup || (args->process_policy != PROC_CLONE_NEW_PROCESS &&
         args->process_policy != PROC_CLONE_SAME_PROCESS) ||
-        (return_pid ? (args->vm_policy != PROC_CLONE_PRIVATE_VM || args->process_policy != PROC_CLONE_NEW_PROCESS || pid || tid)
+        (scoped ? (args->vm_policy!=PROC_CLONE_SCOPED_VM || args->process_policy!=PROC_CLONE_NEW_PROCESS || return_pid) :
+         return_pid ? (args->vm_policy != PROC_CLONE_PRIVATE_VM || args->process_policy != PROC_CLONE_NEW_PROCESS || pid || tid)
                     : args->vm_policy != PROC_CLONE_SHARE_VM))
         return EINVAL;
     if (!ksched_clone_context(args->source,&controller)) return EINVFN;
@@ -589,10 +603,12 @@ done:
     return error ? error : (return_pid ? (LONG)created.pid : (LONG)identity);
 }
 LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup, VADDR pid, VADDR tid)
-{ return clone_start_entry(args, startup, pid, tid, FALSE); }
+{ return clone_start_entry(args, startup, pid, tid, FALSE,FALSE); }
 #if CONF_WITH_PRIVATE_CLONE_TEST
 LONG proc_clone_start_private_test(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup)
-{ return clone_start_entry(args, startup, 0, 0, TRUE); }
+{ return clone_start_entry(args, startup, 0, 0, TRUE,FALSE); }
+LONG proc_clone_start_scoped_test(const PROC_CLONE_ARGS *args,const THREAD_STARTUP_ARGS *startup,VADDR pid,VADDR tid)
+{ return clone_start_entry(args,startup,pid,tid,FALSE,TRUE); }
 #endif
 
 LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *created)
@@ -726,6 +742,7 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     if (tx->policy == PROC_CLONE_SAME_PROCESS) {
         kproc_clone_commit_sibling(tx->process, tx->thread);
     } else {
+        kproc_clone_commit_mapping_owners(tx->process,tx->space,&tx->mapping_members);
         kproc_clone_commit_run(tx->process, tx->space, startup, owners.syscall.physical, owners.syscall.top, tx->asynchronous);
         tx->space = NULL;
         tx->owns_compat = FALSE; /* live PROCESS now owns its compatibility maps */

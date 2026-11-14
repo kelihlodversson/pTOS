@@ -196,3 +196,6 @@ BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;CHECK(va==0x40000 && (bytes==13 || bytes==4096 || bytes==8));deferred_pins++;return TRUE; }
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes)
 { CHECK(va==0x40000 && bytes==4096); CHECK(kaspace_retirement_change(as,va,bytes,FALSE));CHECK(!kaspace_retirement_change(as,va,bytes,FALSE));CHECK(!kaspace_mapping_can_change(as,va,bytes));retired_borrows+=deferred_pins;deferred_pins=0; }
+
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;return TRUE; }

@@ -175,6 +175,9 @@ typedef struct {
 } PROCMEM_STATS;
 
 void procmem_stats(PROCMEM_STATS *stats);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG procmem_test_ownership(UWORD field); /* pure hold/pin/pending record walk */
+#endif
 
 /*
  * Address spaces
@@ -370,6 +373,9 @@ BOOL aspace_regrant(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 
 /* Number of table pages (the root included) the address space currently owns. */
 ULONG aspace_table_pages(const ASPACE *as);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG aspace_test_pin_count(const ASPACE *as,BOOL retired_only);
+#endif
 
 /*
  * Private memory.  Maps [va, va + bytes) -- va page-aligned, bytes rounded
@@ -420,6 +426,9 @@ BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
 BOOL aspace_fault_in(ASPACE *as, VADDR va, UWORD prot);
 /* Pure whole-range ownership/barrier check; no leaf or metadata mutation. */
 BOOL aspace_release_lazy_allowed(const ASPACE *as, VADDR va, VADDR bytes);
+/* Pure backend leaf-ownership check for pending retirement. This skips the
+ * ordinary mutation barrier but grants no authority to perform a release. */
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as, VADDR va, VADDR bytes);
 BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes);
 /* Existing KASPACE retirement owner only; exact range/kind authenticated at
  * the bounded leaf commit, before any pin-release callback can reenter. */

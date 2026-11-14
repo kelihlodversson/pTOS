@@ -300,6 +300,14 @@ ULONG aspace_table_pages(const ASPACE *as)
 {
     return as->count;
 }
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG aspace_test_pin_count(const ASPACE *as,BOOL retired_only)
+{
+    ULONG i,count=0;
+    for (i=0;i<as->npins;i++) if (!retired_only || as->pins[i].retired) count++;
+    return count;
+}
+#endif
 
 static BOOL map_user_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot, BOOL backing, UWORD logical)
 {
@@ -752,6 +760,8 @@ static BOOL release_lazy_allowed(const ASPACE *as, UQUAD va, UQUAD bytes, BOOL r
 
 BOOL aspace_release_lazy_allowed(const ASPACE *as,UQUAD va,UQUAD bytes)
 { return release_lazy_allowed(as,va,bytes,FALSE); }
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ return release_lazy_allowed(as,va,bytes,TRUE); }
 
 static BOOL release_lazy_pages(ASPACE *as, UQUAD va, UQUAD bytes, BOOL retired)
 {

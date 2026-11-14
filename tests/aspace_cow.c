@@ -220,7 +220,7 @@ int main(void)
     }
     one=kaspace_adopt(parent);assert(one);
     heap=kaspace_heap(one);heap->blocks=kalloc(sizeof(*heap->blocks));
-    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2,kaspace_reservation_next(),0};heap->count=heap->capacity=1;
+    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2,kaspace_reservation_next(),0,NULL};heap->count=heap->capacity=1;
     before=allocations-frees;
     for(n=1;n<32;n++) {
         LONG result;
@@ -285,3 +285,6 @@ BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(vo
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
 
 BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;return TRUE; }

@@ -60,6 +60,9 @@ void kaspace_put(KASPACE *p)
         post_unlink_checks++;
     }
 }
+void kaspace_member_release(KASPACE_MEMBER **members) { assert(members && !*members); }
+void kaspace_attachment_release_owner(KASPACE *space,UQUAD number,void *identity)
+{ assert(!space && number && identity); }
 void kstack_free(PADDR p) { assert(!p); }
 
 void doassert(const char *file, long line, const char *function, const char *expression)

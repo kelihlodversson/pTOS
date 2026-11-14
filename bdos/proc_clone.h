@@ -24,7 +24,9 @@ typedef enum {
     PROC_CLONE_LOADED_PROCESS
 } PROC_CLONE_PROCESS_POLICY;
 typedef enum { PROC_CLONE_SHARE_VM, PROC_CLONE_PRIVATE_VM,
-               PROC_CLONE_PREPARED_VM } PROC_CLONE_VM_POLICY;
+               PROC_CLONE_PREPARED_VM,
+               PROC_CLONE_SCOPED_VM /* NEW_PROCESS, explicit independent mapping lifetime */
+             } PROC_CLONE_VM_POLICY;
 #define PROC_CLONE_COPY_STANDARD_HANDLES 1U
 #define PROC_CLONE_COPY_CWD              2U
 #define PROC_CLONE_RESOURCE_MASK         3U
@@ -124,6 +126,7 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION
 LONG proc_clone_start_public(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *, VADDR pid, VADDR tid);
 #if CONF_WITH_PRIVATE_CLONE_TEST
 LONG proc_clone_start_private_test(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *);
+LONG proc_clone_start_scoped_test(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *,VADDR,VADDR);
 #endif
 /* Owned observer required. Success consumes transaction and returns identities
  * immediately into an existing group; failures preserve it for abort except

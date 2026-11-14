@@ -334,3 +334,7 @@ BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(vo
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
 
 BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+UQUAD ksched_context_id(void) { return 0; } /* one serialized hosted actor */
+
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;return TRUE; }

@@ -1298,6 +1298,7 @@ static void test_reservation_holds(void)
     KASPACE_RESERVATION_INFO first, last;
     KASPACE_RESERVATION_HOLD held = {0}, orphan = {0}, stale;
     LONG a, b;
+    VADDR foreign=0,eligible=0;
     ULONG value = 0x8941234UL, readback = 0;
     snap(&baseline);
     pd = new_basepage(); if (!pd) return;
@@ -1335,6 +1336,7 @@ static void test_reservation_holds(void)
     {
         LONG c=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
         LONG d=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        foreign=d;eligible=c;
         CHECK(c>0 && d==c+PAGE && kproc_demand_page(pd,c,ASPACE_PROT_WRITE)==1 &&
               aspace_copy_to_user(backend,c,&value,sizeof(value)) &&
               aspace_map_page(backend,d,0xfee00000UL,ASPACE_PROT_USER|ASPACE_PROT_WRITE),
@@ -1345,6 +1347,15 @@ static void test_reservation_holds(void)
               "whole-range ownership preflight rejects late foreign leaf before changing earlier range");
     }
     proc_free_owned(pd);
+    {
+        PADDR device=0;
+        CHECK(aspace_translate(backend,foreign,&device,NULL) && device==0xfee00000UL &&
+              !aspace_translate(backend,a,NULL,NULL) && !aspace_translate(backend,eligible,NULL,NULL) &&
+              kaspace_mmap(space)->bytes==2*PAGE &&
+              !kaspace_reservation_info(space,foreign,PAGE,&last) &&
+              !kaspace_mapping_can_change(backend,foreign,PAGE),
+              "foreign leaf stays pending without authority while adjacent ordinary reservations retire");
+    }
     CHECK(kproc_reservation_duplicate(&held,&orphan)==E_OK && kproc_reservation_release(&held),
           "orphan holder duplicates/releases independently of retired PD");
     x86_64_pmem_test_fail_after(1);
@@ -2380,13 +2391,22 @@ static void test_proc_clone_invalidation(void)
         args.process_policy = PROC_CLONE_PREPARED_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
         tx = NULL; extra = NULL; target_space = NULL;
         CHECK(proc_clone(&args, &tx) == E_OK && tx, "prepare target invalidation transaction");
-        saved = tx;
         switch (scenario) {
         case 0: proc_dispose_process(target); break;
         case 1:
+            snap(&invalidated);
+            CHECK(!kproc_prepare_user(target_pd, run),
+                  "prepared import excludes independent VM preparation without publication");
+            same(&invalidated, "competing VM preparation leaves importer ownership unchanged");
+            proc_clone_abort(&tx);
+            CHECK(!tx, "release exclusive import before independent VM preparation");
             CHECK(kproc_prepare_user(target_pd, run), "target independently acquires incompatible VM");
             target_space = kproc_user_aspace(target_pd);
             CHECK(target_space && target_space != kaspace_backend(space), "invalidation uses distinct real VM");
+            snap(&invalidated);
+            CHECK(proc_clone(&args, &tx) == EACCDN && !tx,
+                  "incompatible target VM rejects a new import before publication");
+            same(&invalidated, "incompatible VM rejection changes no ownership");
             break;
         case 2:
             extra = kthread_construct_identity(target, space);
@@ -2396,11 +2416,12 @@ static void test_proc_clone_invalidation(void)
         case 4: kproc_complete(source_pd, 33); break;
         case 5: proc_dispose_process(source); break;
         }
+        saved = tx;
         bzero(&sentinel, sizeof(sentinel)); memcpy(&result, &sentinel, sizeof(result));
         snap(&invalidated);
-        CHECK(proc_clone_commit(&tx, &result) == EACCDN && tx == saved &&
+        CHECK(proc_clone_commit(&tx, &result) == (scenario == 1 ? EINVAL : EACCDN) && tx == saved &&
               !memcmp(&result, &sentinel, sizeof(result)), "invalidated commit preserves handle and result");
-        CHECK(proc_clone_commit(&tx, &result) == EACCDN && tx == saved,
+        CHECK(proc_clone_commit(&tx, &result) == (scenario == 1 ? EINVAL : EACCDN) && tx == saved,
               "repeated rejected commit cannot adopt VM or repeat cleanup");
         CHECK(kproc_ref_has_basepage(target) &&
               aspace_translate(kaspace_backend(space), (VADDR)(uintptr_t)source_pd, NULL, NULL),
@@ -3821,7 +3842,11 @@ static void test_clone_execution(void)
             if (active_clone.scenario == 11) CHECK(procmem_free_ownerless_since(resident_generation) == 2,
                   "active Ptermres retains only its two resident compatibility allocations");
         }
-        CHECK(kproc_uheap_free(pd,stack) == E_OK, "scheduler root reap released final durable user-stack hold");
+        if (mode == 11)
+            CHECK(kaspace_mapping_can_change(as,stack,2*PAGE) && kproc_uheap_free(pd,stack)==EIMBA,
+                  "scheduler root reap releases stack hold without reviving disposed PROCESS mutation authority");
+        else
+            CHECK(kproc_uheap_free(pd,stack) == E_OK, "scheduler root reap released final durable user-stack hold");
         run = original; aspace_leave(previous);
         kthread_destroy(parent_execution);
         proc_dispose_process(source); kproc_release(source);
@@ -4214,6 +4239,11 @@ static void test_kproc_pending_ownership(void)
     KASPACE *second;
     LONG saved_value;
     VADDR heap_va;
+    PD *peer;
+    KPROC *source_identity,*peer_identity;
+    PROC_CLONE_ARGS policy={0};
+    PROC_CLONE_TRANSACTION *transaction=NULL;
+    PROC_CLONE_RESULT consumer=PROC_CLONE_RESULT_INIT;
 
     snap(&s);
     pd = new_basepage();
@@ -4233,6 +4263,18 @@ static void test_kproc_pending_ownership(void)
     retained = kproc_test_retain_active(pd);
     second = kaspace_share(retained);
     CHECK(retained && second, "retain active space twice");
+    /* A live shared-VM PROCESS, rather than an observer's root reference,
+     * legitimately retains ordinary reservations after creator completion. */
+    peer=new_basepage();
+    CHECK(peer!=NULL,"allocate independent shared-root consumer");
+    if (!peer) { proc_free_owned(pd);kaspace_put(retained);kaspace_put(second);return; }
+    set_owner(peer,peer);set_owner(USERPTR_TO_PTR(peer->p_env),peer);
+    source_identity=kproc_retain(pd);peer_identity=kproc_retain(peer);
+    policy.source=source_identity;policy.prepared_process=peer_identity;
+    policy.process_policy=PROC_CLONE_PREPARED_PROCESS;policy.vm_policy=PROC_CLONE_SHARE_VM;
+    CHECK(source_identity && peer_identity && proc_clone(&policy,&transaction)==E_OK &&
+          proc_clone_commit(&transaction,&consumer)==E_OK,"trusted shared-VM PROCESS inherits ordinary mapping lifetime");
+    proc_clone_abort(&transaction);kproc_release(peer_identity);kproc_release(source_identity);
     proc_free_owned(pd);
     CHECK(procmem_size(pd) && procmem_size(env) && procmem_pinned(pd) &&
           retained && aspace_translate(kaspace_backend(retained), (VADDR)(uintptr_t)pd, NULL, NULL),
@@ -4241,7 +4283,7 @@ static void test_kproc_pending_ownership(void)
           (VADDR)(uintptr_t)pd + offsetof(PD, p_dreg), sizeof(saved_value)) &&
           saved_value == 0x12345678L, "retained mapping preserves process data");
     CHECK(retained && kaspace_heap_contains(retained, heap_va),
-          "ordinary heap reservation survives KPROC destruction");
+          "shared PROCESS retains ordinary heap after creator destruction");
 #if CONF_WITH_DEMAND_PAGING
     saved_value = -1;
     CHECK(retained && kaspace_heap_demand_page(retained, heap_va, ASPACE_PROT_EXEC) == 0 &&
@@ -4267,6 +4309,14 @@ static void test_kproc_pending_ownership(void)
                                 PTOS_MMAP_BASE, sizeof(saved_value)) && !saved_value &&
           kaspace_mmap_demand_page(retained, PTOS_MMAP_BASE, 0) == 0,
           "retained anonymous reservation faults after process destruction");
+#endif
+    proc_clone_release(&consumer);
+    proc_free_owned(peer);
+    CHECK(retained && !kaspace_heap_contains(retained,heap_va),
+          "final PROCESS consumer retires heap while observer root survives");
+#if CONF_WITH_MMAP
+    CHECK(retained && !kaspace_mmap(retained)->regions && !kaspace_mmap(retained)->bytes,
+          "final PROCESS consumer retires mmap metadata before observer root release");
 #endif
     kaspace_put(retained);
     CHECK(procmem_size(pd) && procmem_size(env), "first independent release keeps mappings");
@@ -5225,6 +5275,8 @@ static void test_file_mmap(void)
     static char path[] = "C:\\MMAP.TMP";
     char block[64], value, readback;
     PD *a = NULL, *b = NULL, *c = NULL, *parent = run;
+    PD *peer = NULL;
+    PROC_CLONE_RESULT retained_consumer=PROC_CLONE_RESULT_INIT;
     ASPACE *as, *bs, *cs;
     KASPACE *retained = NULL, *lease_space = NULL;
     KASPACE_LEASE *cow_lease = NULL;
@@ -5336,6 +5388,21 @@ static void test_file_mmap(void)
     CHECK(fresh >= NUMSTD && DISK_CALL(xwrite(fresh, 1, &value)) == 1, "recreate mapped pathname");
     retained = kproc_test_retain_active(a);
     CHECK(retained != NULL, "retain file mapping space independently");
+    peer=new_basepage();
+    CHECK(peer!=NULL,"allocate independent file mapping consumer");
+    if (!peer) goto done;
+    set_owner(peer,peer);set_owner(USERPTR_TO_PTR(peer->p_env),peer);
+    {
+        KPROC *source=kproc_retain(a),*target=kproc_retain(peer);
+        PROC_CLONE_ARGS args={0};
+        PROC_CLONE_TRANSACTION *tx=NULL;
+        args.source=source;args.prepared_process=target;
+        args.process_policy=PROC_CLONE_PREPARED_PROCESS;args.vm_policy=PROC_CLONE_SHARE_VM;
+        CHECK(source && target && proc_clone(&args,&tx)==E_OK &&
+              proc_clone_commit(&tx,&retained_consumer)==E_OK,
+              "trusted shared PROCESS retains exact file and anonymous mapping lifetime");
+        proc_clone_abort(&tx);kproc_release(target);kproc_release(source);
+    }
     free_mapping_process(a);
     a = NULL;
     CHECK(retained && kaspace_mmap(retained)->regions &&
@@ -5360,6 +5427,8 @@ static void test_file_mmap(void)
     }
 done:
     run = parent;
+    proc_clone_release(&retained_consumer);
+    free_mapping_process(peer);
     kaspace_lease_release(&cow_lease);
     kaspace_put(lease_space);
     kaspace_put(retained);

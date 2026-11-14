@@ -72,6 +72,7 @@ static LONG permission_prepare(KASPACE *space,const PROCMEM_HOLD *hold,
         }
     }
     for(lease=space->leases;lease;lease=lease->next) {
+        if(lease->attachment_ticket) continue; /* lifetime claims are not permission snapshots */
         for(i=0;i<tx->pages;i++) if(lease->first<=tx->page[i].address && tx->page[i].address<=lease->last) break;
         if(i<tx->pages) tx->leases++;
     }
@@ -81,6 +82,7 @@ static LONG permission_prepare(KASPACE *space,const PROCMEM_HOLD *hold,
     }
     j=0;
     for(lease=space->leases;lease;lease=lease->next) {
+        if(lease->attachment_ticket) continue; /* lifetime claims are not permission snapshots */
         for(i=0;i<tx->pages;i++) if(lease->first<=tx->page[i].address && tx->page[i].address<=lease->last) break;
         if(i<tx->pages) { tx->lease[j].identity=lease->identity;tx->lease[j++].revoked=lease->revoked; }
     }
