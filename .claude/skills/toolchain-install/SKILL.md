@@ -66,8 +66,9 @@ against `tools/ptos-toolchain.sha256`, then installs the local files with APT:
 bash tools/install-ptos-toolchain.sh all --release
 ```
 
-The manifest pins the release version and each package checksum. Update them
-together when upgrading CI; do not select `latest` or fetch runtime checksums
+The manifest pins the release version, each package checksum and CI's matching
+Homebrew tap commit. Update them together when upgrading CI; do not select
+`latest` or fetch runtime checksums
 from the same download. GitHub Releases retain older versions independently
 of the limited APT repository storage. Local developers may use this same
 reproducible path or the current packages from apt.ptos.dev above.
@@ -104,6 +105,10 @@ Homebrew downloads the published SDK bottles from GitHub Releases; APT's
 currently cover Apple Silicon macOS 26 (Tahoe) under `/opt/homebrew`.
 Other host/CPU combinations may build from source; do not claim they were
 validated by the macOS 26 CI job.
+
+CI checks out the tap commit recorded in `tools/ptos-toolchain.sha256`, including
+that release's bottle declarations, and disables automatic updates for the
+remaining job. Local installs use the current tap normally.
 
 Use `gmake` because Apple's `/usr/bin/make` is too old. If a build tool needs
 GNU coreutils, prepend `$(brew --prefix coreutils)/libexec/gnubin` to PATH.

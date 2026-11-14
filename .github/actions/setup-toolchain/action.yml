@@ -30,7 +30,27 @@ runs:
         PTOS_ARCH: ${{ inputs.arch }}
       run: |
         options=()
-        if [ "$RUNNER_OS" = Linux ]; then options=(--release); fi
+        if [ "$RUNNER_OS" = Linux ]; then
+          options=(--release)
+        else
+          # Pin the matching bottle metadata as well as Linux's .deb assets.
+          manifest="$GITHUB_ACTION_PATH/../../../tools/ptos-toolchain.sha256"
+          tap_commit=$(sed -n 's/^# homebrew-tap: //p' "$manifest")
+          if [[ ! $tap_commit =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::Invalid Homebrew tap pin' >&2
+            exit 1
+          fi
+          brew tap kelihlodversson/ptos-toolchain https://github.com/kelihlodversson/pTOS-toolchain.git
+          tap=$(brew --repository kelihlodversson/ptos-toolchain)
+          if [ -n "$(git -C "$tap" status --porcelain)" ]; then
+            echo '::error::The pinned SDK installation needs a clean Homebrew tap' >&2
+            exit 1
+          fi
+          git -C "$tap" fetch --depth=1 origin "$tap_commit"
+          git -C "$tap" checkout --detach "$tap_commit"
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          echo 'HOMEBREW_NO_AUTO_UPDATE=1' >> "$GITHUB_ENV"
+        fi
         bash "$GITHUB_ACTION_PATH/../../../tools/install-ptos-toolchain.sh" "$PTOS_ARCH" "${options[@]}"
 
     - name: Install Python 3

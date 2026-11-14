@@ -40,6 +40,21 @@ elif name == "dpkg-query":
 '''
 
 
+class RepositoryPin(unittest.TestCase):
+    def test_complete_release_pin(self):
+        lines = (ROOT / "tools/ptos-toolchain.sha256").read_text().splitlines()
+        version = next(line[len("# release: "):] for line in lines if line.startswith("# release: "))
+        tap = next(line[len("# homebrew-tap: "):] for line in lines if line.startswith("# homebrew-tap: "))
+        self.assertRegex(version, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertRegex(tap, r"^[0-9a-f]{40}$")
+        entries = [line.split() for line in lines if line and not line.startswith("#")]
+        self.assertEqual(len(entries), len(PACKAGES))
+        self.assertEqual({entry[1] for entry in entries},
+                         {p + "_" + version + "_amd64.deb" for p in PACKAGES})
+        for checksum, _ in entries:
+            self.assertRegex(checksum, r"^[0-9a-f]{64}$")
+
+
 @unittest.skipUnless(sys.platform.startswith("linux"), "Debian package installer")
 class ReleaseInstaller(unittest.TestCase):
     def setUp(self):

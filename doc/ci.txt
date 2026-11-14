@@ -302,7 +302,9 @@ package checksum; --release never depends on an older version remaining
 on apt.ptos.dev. Update the version and hashes together when upgrading CI.
 Local developers can use the same --release option or the current packages
 from the signed apt.ptos.dev source. macOS installs the SDK formulae from
-kelihlodversson/ptos-toolchain with Homebrew. Compiler and package versions
+kelihlodversson/ptos-toolchain with Homebrew, pinned to the manifest's matching
+tap commit and bottle declarations. Automatic updates are disabled for the
+remaining job. Compiler and package versions
 are recorded in the job logs. SDK 1.0.0 fixes the m68k address-dependency
 miscompilation; the global auto-inc-dec workaround is removed.
 The kernel and userspace use pTOS compiler prefixes on both platforms;

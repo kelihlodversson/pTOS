@@ -17,7 +17,9 @@ This does not require historical packages to remain on apt.ptos.dev.
 
 Local developers may select the same release or install current packages from
 the signed apt.ptos.dev repository. macOS uses the Homebrew tap and published
-bottles on Apple Silicon macOS 26; its SDK smoke tests validate the compiler fix.
+bottles on Apple Silicon macOS 26; CI pins the tap commit recorded in the same
+manifest and disables auto-updates for the remaining job. This selects the matching
+release's bottle declarations. Its smoke tests validate the compiler fix.
 Compiler/package versions and final CI results are recorded in the PR.
 
 ## Compiler fix and performance comparison
@@ -57,8 +59,9 @@ migration. See the PR's current pBench result for the actual measured comparison
 - 256 KiB Vampire ROM with LTO: passed with 8,348 bytes free.
 - Host CUIS/GEM suite, including concurrent contexts and non-recovering
   ASan/UBSan: passed.
-- Installer selection/integrity fixtures: seven passed, including corrupt
-  files, missing checksums, unsupported hosts, installed-version mismatch and
+- Installer selection/integrity fixtures: eight passed, including a complete
+  release/tap pin, corrupt files, missing checksums, unsupported hosts,
+  installed-version mismatch and
   restoration of the pin over a newer installation.
 
 Kernel builds and QEMU system runs use the same verified SDK payload relocated

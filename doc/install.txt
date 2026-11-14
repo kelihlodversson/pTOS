@@ -21,7 +21,9 @@ and installs them with APT. To reproduce that version locally, use:
     bash tools/install-ptos-toolchain.sh all --release
 
 This remains reproducible when apt.ptos.dev retires older package versions.
-Update the manifest's release version and all hashes together to upgrade CI.
+Update the manifest's release version, hashes and matching Homebrew tap
+commit together to upgrade CI. macOS CI uses that commit's bottle declarations;
+ordinary local Homebrew installs use the current tap.
 The explicit --release option can downgrade a newer installed SDK to the pin.
 
   Target                         Default compiler prefix
