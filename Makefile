@@ -353,11 +353,6 @@ CSTANDARD = -std=gnu90
 # case a future compiler version narrows what the pass flag covers.
 OTHERFLAGS = -fomit-frame-pointer -fno-common \
              -fno-tree-loop-distribute-patterns -fno-builtin-strlen
-ifdef BUILD_TOOLCHAIN_PTOS
-# GCC 16 can post-increment a source base also used by the destination,
-# shifting page-table copies. Remove after pTOS-toolchain#15 is fixed.
-OTHERFLAGS += -fno-auto-inc-dec
-endif
 DEBUGFLAGS = $(if $(DEBUG_INFO),-g)
 
 WARNFLAGS = -Wall -Wundef -Wmissing-prototypes -Wstrict-prototypes
@@ -430,10 +425,6 @@ SFILE_FLAGS = $(strip $(CFLAGS) $($(current_dir)_sopts))
 
 # Linker: relocation information and, for most targets, a raw binary.
 LD = $(LTO_LDPREFIX) $(CC) $(MULTILIBFLAGS) $(OPTFLAGS) $(LTOFLAGS) $(LTOFLAGS_LD) -nostartfiles -nostdlib
-ifdef BUILD_TOOLCHAIN_PTOS
-# RTL generation happens at link time with LTO; retain the same workaround.
-LD += -fno-auto-inc-dec
-endif
 LIBS = -lgcc
 
 # FreeType, for the scalable fonts: a library of its own, linked into the
@@ -1668,9 +1659,6 @@ LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
 LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) \
     CROSSPREFIX=$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
-ifdef BUILD_TOOLCHAIN_PTOS
-LIBCMINI_MAKE += ARCH_CFLAGS=-fno-auto-inc-dec
-endif
 ifdef ARCH_X86_64
 # libcmini's x86-64 port is the x32 userland: built with the same compiler and
 # flags as the other x32 programs (X32_CROSS_COMPILE/X32_CFLAGS), not the
@@ -1682,7 +1670,7 @@ LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
 LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
-LIBCMINI_BUILD_ID = $(LIBCMINI_DEFCONFIG):$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE)):$(if $(BUILD_TOOLCHAIN_PTOS),-fno-auto-inc-dec)
+LIBCMINI_BUILD_ID = $(LIBCMINI_DEFCONFIG):$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
 
 # Build libcmini from the submodule.  The defconfig is arch-specific; for
 # m68k we use mintelf_defconfig, which produces ELF-compatible objects

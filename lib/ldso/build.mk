@@ -11,7 +11,7 @@ LDSO_ARCH-$(ARCH_ARM) = arm
 # Reuse the kernel prefix for the SDK choice, retaining a separate override
 # for developers who select a legacy kernel compiler.
 LDSO_M68K_PREFIX ?= $(if $(BUILD_TOOLCHAIN_PTOS),$(CROSS_COMPILE),m68k-unknown-ptos-prgelf-)
-LDSO_CFLAGS-$(ARCH_M68K) = -m68020 -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-auto-inc-dec
+LDSO_CFLAGS-$(ARCH_M68K) = -m68020 -fno-asynchronous-unwind-tables -fno-unwind-tables
 LDSO_LDFLAGS-$(ARCH_M68K) = -Wl,-z,max-page-size=4096,-z,common-page-size=4096,--build-id=none
 LDSO_ARCH-$(ARCH_M68K) = m68k
 LDSO_CC-$(ARCH_M68K) = $(LDSO_M68K_PREFIX)gcc

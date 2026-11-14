@@ -1,0 +1,5 @@
+# release: 1.0.0
+# Official pTOS-toolchain GitHub Release assets; update the version and hashes together.
+d9d46689f79398791ed0e062bb581a260900d9611d5e4359f18692484997a0b0  ptos-sdk-m68k_1.0.0_amd64.deb
+06c855912946b7a06d50c3b8f4bff8717335d43c6da4a4f3e2f824b98ec8f1d4  ptos-sdk-arm_1.0.0_amd64.deb
+5ecfed8e504475ea9d6a913e9acb9175ccd0e36656b3bd689b0ecb998a1e4665  ptos-sdk-x86-64_1.0.0_amd64.deb

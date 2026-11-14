@@ -1193,7 +1193,7 @@ class Metadata(unittest.TestCase):
         source = self.path / "m68k-sdk.c"
         source.write_text("int value = 7; int probe(void) { return value; }\n")
         output = self.path / "m68k-sdk.so"
-        run(["m68k-unknown-ptos-prgelf-gcc", "-m68020", "-fno-auto-inc-dec", "-fPIC",
+        run(["m68k-unknown-ptos-prgelf-gcc", "-m68020", "-fPIC",
              "-ffreestanding", "-nostdlib", "-shared", "-Wl,--hash-style=sysv,-z,max-page-size=4096",
              str(source), "-o", str(output)])
         raw = bytearray(output.read_bytes())

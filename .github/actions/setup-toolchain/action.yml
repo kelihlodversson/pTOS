@@ -1,4 +1,4 @@
-# The same signed APT packages / Homebrew SDKs used by local developers.
+# Pinned GitHub Release packages on Linux; Homebrew SDKs on macOS.
 name: Set up a pTOS toolchain
 description: Install the packaged pTOS SDK and the Python configuration front end.
 
@@ -28,7 +28,10 @@ runs:
       shell: bash
       env:
         PTOS_ARCH: ${{ inputs.arch }}
-      run: bash "$GITHUB_ACTION_PATH/../../../tools/install-ptos-toolchain.sh" "$PTOS_ARCH"
+      run: |
+        options=()
+        if [ "$RUNNER_OS" = Linux ]; then options=(--release); fi
+        bash "$GITHUB_ACTION_PATH/../../../tools/install-ptos-toolchain.sh" "$PTOS_ARCH" "${options[@]}"
 
     - name: Install Python 3
       uses: actions/setup-python@v5
@@ -62,6 +65,12 @@ runs:
           case "$target" in
             m68k-*)
               echo 'void f(void){}' | "$target-gcc" -mfastcall -x c -c - -o /dev/null
+              if [ "$RUNNER_OS" = Linux ]; then
+                python3 /usr/share/doc/ptos-sdk-m68k/m68k_auto_inc_dec.py "$target-gcc"
+              else
+                tests="$(brew --prefix kelihlodversson/ptos-toolchain/ptos-m68k)/share/ptos-m68k/tests"
+                python3 "$tests/m68k_auto_inc_dec.py" "$target-gcc"
+              fi
               ;;
             x86_64-*)
               "$target-ld" -V | grep i386pep

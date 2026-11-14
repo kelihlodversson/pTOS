@@ -10,7 +10,8 @@ description: >-
 
 # pTOS toolchain installation
 
-Use the same published SDKs locally and in CI. The installer is shared with
+Use SDK 1.0.0 or newer, which fixes the m68k auto-inc-dec miscompilation.
+The installer is shared with
 `.github/actions/setup-toolchain/action.yml`:
 
 ```sh
@@ -55,6 +56,21 @@ Install the individual SDKs rather than requiring the convenience metapackage:
 coexist under `/opt/ptos`, with their prefixed commands exposed in `/usr/bin`.
 There is no tarball overlay or PATH precedence between two compilers with the
 same name, and no separate Linux m68k compiler is needed for PIC.
+
+### Pinned GitHub Releases in Linux CI
+
+CI downloads the `.deb` files from GitHub Releases, validates every package
+against `tools/ptos-toolchain.sha256`, then installs the local files with APT:
+
+```sh
+bash tools/install-ptos-toolchain.sh all --release
+```
+
+The manifest pins the release version and each package checksum. Update them
+together when upgrading CI; do not select `latest` or fetch runtime checksums
+from the same download. GitHub Releases retain older versions independently
+of the limited APT repository storage. Local developers may use this same
+reproducible path or the current packages from apt.ptos.dev above.
 
 For an environment without permission to install system packages, use an
 isolated Ubuntu 24.04/26.04 container and run this same installer there. Keep
@@ -127,12 +143,11 @@ versions with the results. A missing compiler is a setup problem: fix the
 installation, then retry the original build. Only report a configuration as
 unbuildable after the appropriate installation or build has actually failed.
 
-## Current m68k compiler workaround
+## m68k compiler regression
 
-GCC 16.2 can combine source post-increment with a destination using the same
-address register, shifting page-table copies by a word. pTOS passes
-`-fno-auto-inc-dec` to SDK m68k kernel/program/library compilations until
-[toolchain issue #15](https://github.com/kelihlodversson/pTOS-toolchain/issues/15)
-is fixed in published packages. Keep this flag when reproducing current builds;
-do not remove it merely because compilation succeeds. Verify runtime boot and
-address-space tests when upgrading the compiler.
+SDK 1.0.0 fixes [toolchain issue #15](https://github.com/kelihlodversson/pTOS-toolchain/issues/15).
+pTOS uses the normal auto-inc-dec optimization again, including LTO and native
+libraries/programs. Do not reintroduce the global disabling flag. The SDK's
+installed smoke tests include assembly checks for the address-register
+dependency; Linux can also execute its bundled regression using qemu-m68k.
+Verify runtime boot and address-space tests when upgrading the compiler.

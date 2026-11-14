@@ -17,7 +17,7 @@ case $arch in
         libs= ;;
     m68k)
         config=virt-m68k-aspace; prefix=m68k-unknown-ptos-prgelf-; libc_config=mintelf_defconfig
-        flags='-m68000 -fno-auto-inc-dec'; libs=-lgcc ;;
+        flags=-m68000; libs=-lgcc ;;
     *) echo "unknown architecture: $arch" >&2; exit 2 ;;
 esac
 if [ "$layout" = shared ] && [ "$arch" = arm ]; then

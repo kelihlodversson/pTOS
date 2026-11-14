@@ -296,9 +296,15 @@ Toolchain installation
 ----------------------
 
 The shared setup-toolchain action calls tools/install-ptos-toolchain.sh.
-Linux jobs install the signed SDK packages from https://apt.ptos.dev;
-macOS installs the SDK formulae from kelihlodversson/ptos-toolchain with
-Homebrew. Compiler and package versions are recorded in the job logs.
+Linux jobs download SDK .deb files from GitHub Releases and install them
+with APT. tools/ptos-toolchain.sha256 pins the release version and every
+package checksum; --release never depends on an older version remaining
+on apt.ptos.dev. Update the version and hashes together when upgrading CI.
+Local developers can use the same --release option or the current packages
+from the signed apt.ptos.dev source. macOS installs the SDK formulae from
+kelihlodversson/ptos-toolchain with Homebrew. Compiler and package versions
+are recorded in the job logs. SDK 1.0.0 fixes the m68k address-dependency
+miscompilation; the global auto-inc-dec workaround is removed.
 The kernel and userspace use pTOS compiler prefixes on both platforms;
 CI does not silently fall back to a distro or native target compiler.
 The native host compiler remains responsible for build tools and host tests.

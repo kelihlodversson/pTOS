@@ -73,6 +73,9 @@ and the packaged pTOS SDK for the target. Install the SDKs with
 `bash tools/install-ptos-toolchain.sh all`: it uses the signed
 `https://apt.ptos.dev` APT repository on Debian/Ubuntu and the
 `kelihlodversson/ptos-toolchain` Homebrew tap on macOS.
+SDK 1.0.0 or newer is required. Linux CI uses `all --release` to install
+checksum-verified .deb files from the GitHub Release pinned by
+`tools/ptos-toolchain.sha256`; developers can use that same reproducible path.
 
 The default prefixes are `m68k-unknown-ptos-prgelf-`,
 `arm-unknown-ptos-elf-`, and `x86_64-unknown-ptos-elfx32-`. The m68k SDK

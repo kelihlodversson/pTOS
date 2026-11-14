@@ -1,66 +1,61 @@
 # Packaged toolchain migration validation (#963)
 
-pTOS now defaults to the SDKs from the signed apt.ptos.dev repository on
-Linux and the pTOS Homebrew tap on macOS. The validation SDK is 0.2.0,
-GCC 16.2.0 and Binutils 2.45. Local APT installation used the checksum-verified
-official release packages in Ubuntu 24.04 because the managed environment
-blocks apt.ptos.dev. Kernel builds and QEMU runs use the same verified SDK
-payload relocated under the managed Debian 13 workspace. CI exercises the
-public signed repository directly.
-Homebrew installation and all three target builds run on Apple Silicon macOS 26.
+pTOS defaults to the m68k, ARM and x32 SDKs. SDK 1.0.0 contains GCC 16.2.0,
+Binutils 2.45 and the fix for the m68k MOVE address-dependency bug reported in
+[pTOS-toolchain#15](https://github.com/kelihlodversson/pTOS-toolchain/issues/15).
+The integration includes the completed explicit AES context refactor on master.
 
-## m68k correctness workaround and measured cost
+## Installation and version pinning
 
-[Toolchain issue #15](https://github.com/kelihlodversson/pTOS-toolchain/issues/15)
-records a GCC 16 auto-inc-dec miscompilation: source post-increment is combined
-with a destination that also uses that address register. Page-table copies
-shift by four bytes and the address-space kernel faults immediately. Builds
-use `-fno-auto-inc-dec` for SDK m68k code, including LTO, bundled libcmini,
-programs and the runtime linker. Remove the workaround only after a fixed SDK
-has passed the runtime tests.
+Linux CI calls `tools/install-ptos-toolchain.sh ARCH --release`. The manifest
+`tools/ptos-toolchain.sha256` pins version 1.0.0 and the SHA-256 of each official
+GitHub Release `.deb`. Every selected file must have a checksum and match it
+before APT installs any SDK package. Installed versions must equal the pin.
+This does not require historical packages to remain on apt.ptos.dev.
 
-The SDK and workaround change the measured graphics performance. The new
-512 KiB and fastcall references are the complete results from
-[pBench run 43480691522](https://github.com/kelihlodversson/pTOS/actions/runs/43480691522),
-head `91cc8b3e93942e87cbd99a9e16f1541715f513db`, merge image `7e60fd53`.
-They use the same Ubuntu 26.04 Hatari 2.6.1 and benchmark workloads as the old
-references. The table preserves the comparison with the previous committed
-references; negative values mean slower. Thresholds remain 3% for the geometric
-mean and 15% for a primitive. The 256 KiB references stay unchanged because its
-comparison passed.
+Local developers may select the same release or install current packages from
+the signed apt.ptos.dev repository. macOS uses the Homebrew tap and published
+bottles on Apple Silicon macOS 26; its SDK smoke tests validate the compiler fix.
+Compiler/package versions and final CI results are recorded in the PR.
 
-| Mode | Display geometric mean | Slowest primitive change |
-| --- | ---: | ---: |
-| `atari512-f030-blitter` | -2.30% | -10.48% |
-| `atari512-f030-noblitter` | -2.20% | -7.78% |
-| `atari512-f040-blitter` | -0.72% | -10.85% |
-| `atari512-f040-noblitter` | -0.06% | -10.66% |
-| `atari512-fastcall-f030-blitter` | -1.89% | -11.24% |
-| `atari512-fastcall-f030-noblitter` | -3.10% | -10.91% |
-| `atari512-fastcall-f040-blitter` | -1.60% | -10.81% |
-| `atari512-fastcall-f040-noblitter` | -1.13% | -10.15% |
-| `atari512-high-blitter` | -2.53% | -10.85% |
-| `atari512-high-noblitter` | -2.51% | -10.84% |
-| `atari512-low-blitter` | -4.07% | -13.27% |
-| `atari512-low-noblitter` | -2.99% | -10.84% |
-| `atari512-med-blitter` | -3.60% | -11.97% |
-| `atari512-med-noblitter` | -3.00% | -10.84% |
+## Compiler fix and performance comparison
 
-## Local checks
+The fixed m68k backend rejects a MOVE whose auto-increment or auto-decrement
+register also contributes to its other operand's address. Valid auto-inc-dec
+instructions remain enabled. The global `-fno-auto-inc-dec` flag has been
+removed from the kernel, LTO links, libcmini, programs, runtime linker and
+fixtures. The installed SDK regression explicitly enables the optimization.
 
-- Actual APT installation of all three SDK 0.2.0 packages in Ubuntu 24.04,
-  followed by all three installed SDK smoke tests: passed.
-- Host metadata/admission suite using real SDK x32/ARM/m68k objects: 52 passed.
-- m68k address-space QEMU regression: 25 suites passed, zero failed; shutdown
-  and scalable-system-font replay checks passed.
-- ARM address-space QEMU regression: 26 suites passed, zero failed; shutdown
-  and scalable-system-font replay checks passed.
-- ARM shared-address-space interpreter/binfmt boot: passed after increasing
-  the feature's BDOS stack budget from the classic 2000 bytes to 8192 bytes.
-- 256 KiB Vampire ROM with LTO: passed with 7822 bytes free.
-- Native x32 interactive boot with ELF/shared libraries, libaes, VDI, callbacks
-  and mapping tests: passed, including the ring-3 memtest.
+Small Amiga ROMs still need LTO with the new compiler: the 256 KiB Vampire
+image exceeds its limit by 2,150 bytes without it, while the LTO build fits
+with 8,348 bytes free. Their LTO defaults therefore remain enabled independently
+of the removed auto-inc-dec workaround.
 
-CI additionally covers the complete configuration/release matrix, ARM and m68k
-runtime suites, native desktop consumers, Hatari, Amiberry, pBench and the macOS
-Homebrew installation/build job. Final check results are linked from the PR.
+The temporary SDK 0.2.0 workaround and its replacement pBench references are
+removed. CI compares the fixed compiler against the original committed
+references, with the existing 3% mean and 15% primitive thresholds. No benchmark
+threshold has been relaxed and no slower baseline is retained from the paused
+migration. See the PR's current pBench result for the actual measured comparison.
+
+## Local validation
+
+- Actual APT installation of all three checksum-verified 1.0.0 release SDKs in
+  Ubuntu 24.04 through the shared `--release` installer: passed. The managed
+  environment still blocks apt.ptos.dev, so its repository path was not used.
+- Installed SDK smoke tests for m68k, ARM and x32: passed as an ordinary user.
+- Installed m68k assembly and QEMU runtime checks with auto-inc-dec enabled:
+  passed across 68000/68020/68040, -Os/-O2 and stack/fastcall, covering 96 copies.
+- Full m68k address-space QEMU regression without the disabling flag: 25 suites
+  passed, zero failed; five shutdown checks and scalable-font replay passed.
+- ELF metadata/admission suite using real SDK objects: 53 passed.
+- 256 KiB Vampire ROM with LTO: passed with 8,348 bytes free.
+- Host CUIS/GEM suite, including concurrent contexts and non-recovering
+  ASan/UBSan: passed.
+- Installer selection/integrity fixtures: six passed, including corrupt files,
+  missing checksums, unsupported hosts and installed-version mismatch.
+
+Kernel builds and QEMU system runs use the same verified SDK payload relocated
+under the managed Debian workspace. CI additionally covers the full build and
+release matrix, ARM/m68k regression suites, native ELF/libaes/VDI and desktop
+consumers, Hatari, Amiberry, pBench and macOS Homebrew builds. Final results and
+any additional local runs are linked from the PR.

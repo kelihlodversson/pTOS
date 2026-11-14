@@ -3,8 +3,8 @@
 The userspace refactor is complete. `AESGLOBAL` is caller-owned and authoritative;
 its `ap_3resv` points at the private retained state. The table maps the acceptance
 criteria to executable checks, rather than treating a successful build as proof
-of lifetime or reentrancy. The existing toolchains on master remain in use;
-packaged SDK migration #964 is on hold pending pTOS-toolchain#15.
+of lifetime or reentrancy. The packaged SDK migration uses SDK 1.0.0 or newer,
+which fixes pTOS-toolchain#15 without disabling auto-inc-dec optimization.
 
 | Contract | Evidence |
 | --- | --- |
@@ -38,8 +38,8 @@ when that kernel identity contract changes.
 
 ## Reproducing validation
 
-Use `.claude/skills/toolchain-install/SKILL.md` and the current master's compiler
-prefixes, not the parked SDK migration branch. Initialize the submodules first.
+Use `.claude/skills/toolchain-install/SKILL.md` and the configured pTOS SDK
+compiler prefixes. Initialize the submodules first.
 
 ```sh
 python3 tools/test-cuis.py

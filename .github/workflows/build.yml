@@ -57,6 +57,8 @@ jobs:
         run: |
           python3 -m venv /tmp/elf-shared-venv
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
+      - name: Test pinned SDK selection and checksum rejection
+        run: python3 tools/test-toolchain-install.py
       - name: Test metadata, corrupt inputs and Kconfig isolation
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
       - name: Test executable handlers and interpreter arguments
