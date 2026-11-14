@@ -444,7 +444,11 @@ frame. Independent peers can run without entering a second scheduler root.
 Diagnostic IRQ capture deliberately excludes nested owners: there is no copied
 IRQ restart, timer preemption, SMP or independently schedulable nested THREAD.
 Cleanup scopes bind the logical KPROC/TID plus the carrier's non-recycled
-continuation identity and LIFO ticket. They cannot cross an owner transition.
+continuation identity and LIFO ticket. Each nested owner has its own ticket
+chain. Enclosing scopes remain suspended with their owner, so a child launched
+from protected destruction inherits neither cleanup suppression nor pending
+enclosing cancellation. Restoring that owner restores its exact outstanding
+scope chain; no scope may be released by another logical owner.
 
 On normal return, Pterm0, Pterm or supported user fault, xterm authenticates the
 nested THREAD and uses #893's existing final-THREAD exit preparation. Each

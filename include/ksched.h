@@ -122,7 +122,7 @@ struct kthread *ksched_exit_thread(PD *pd);
 LONG ksched_nested_prepare(PD *pd);
 void ksched_nested_cancel(PD *pd);
 void ksched_nested_enter(PD *pd);
-void ksched_nested_leave(struct kproc *process);
+BOOL ksched_nested_leave(struct kproc *process); /* TRUE if a nested owner was restored */
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 LONG ksched_test_nested(UWORD selector); /* counters 0-13, arm stage 0x10+n, 0x20 untracked */
 BOOL ksched_test_nested_injected(UWORD stage);

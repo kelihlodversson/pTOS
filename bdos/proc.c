@@ -1551,7 +1551,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     PD *p;
     FS_ERROR_STATE saved_error;
 #if CONF_WITH_NATIVE_SCHED
-    BOOL managed;
+    BOOL managed, nested;
 #endif
 
     /* Only the disk-error unwinder is supported by cleanup callbacks.
@@ -1593,14 +1593,17 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     /* Nested THREAD ownership can be the final KASPACE/allocation pin.
      * Retire it after the launcher has stopped, before making completion
      * observable. The caller's handoff reference keeps PROCESS alive. */
-    ksched_nested_leave(process);
+    nested = ksched_nested_leave(process);
 #endif
 #if CONF_WITH_NATIVE_SCHED
     if (!managed)
 #endif
         kproc_publish_observers(process);
 #if CONF_WITH_NATIVE_SCHED && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
-    ksched_test_nested_published(process);
+    if (nested) ksched_test_nested_published(process);
+#endif
+#if CONF_WITH_NATIVE_SCHED
+    UNUSED(nested);
 #endif
     *fs_error_current() = saved_error;
 }
