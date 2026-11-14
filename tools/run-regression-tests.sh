@@ -493,9 +493,6 @@ while [ "$n" -lt "$limit" ]; do
     n=$((n + 1))
 done
 suite_log=$log
-if grep -aq 'Panic:' "$suite_log"; then
-    record "kernel panic" FAIL "regression execution crossed a kernel panic"
-fi
 finish_cuis_input
 
 if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
@@ -878,6 +875,17 @@ if [ "$machine" = pc-x86_64 ] &&
 fi
 
 # -- the verdict ----------------------------------------------------------------
+
+# Final kernel panic guard: every console and QEMU diagnostic log, including
+# later GUI/font and shutdown machines whose continuations may have resumed.
+while IFS= read -r vm_log; do
+    for panic_log in "$vm_log" "${vm_log%.log}.qemu"; do
+        if [ -f "$panic_log" ] && grep -aq 'Panic:' "$panic_log"; then
+            record "kernel panic" FAIL "execution crossed a kernel panic in ${panic_log##*/}"
+        fi
+    done
+done <"$logs"
+# End final kernel panic guard.
 
 show_logs
 

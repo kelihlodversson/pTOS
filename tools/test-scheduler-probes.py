@@ -203,3 +203,22 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-dso-probes-') as directory:
             expected = 'native shared-Pexec DSO lifetime' if mask == 7 and missing else ''
             assert result.stdout == expected, (mask, missing, result.stdout)
 print('Native shared-Pexec DSO guards: 56 feature/marker cases, compiled-out or missing evidence rejected: PASS (host shell)')
+
+# Execute the final production guard against every collected console/QEMU
+# log. A resumed guest panic must still fail after later successful runs.
+block = script.split('# Final kernel panic guard:', 1)[1]
+block = block[block.index('\nwhile '):].split('# End final kernel panic guard.', 1)[0]
+with tempfile.TemporaryDirectory(prefix='ptos-panic-probes-') as directory:
+    top = Path(directory)
+    names = ['suite', 'cuis', 'poweroff', 'reboot', 'coldboot', 'halt', 'sysfont']
+    log_paths = [top / (name + suffix) for name in names for suffix in ('.log', '.qemu')]
+    collected = top / 'logs'
+    collected.write_text(''.join(str(top / (name + '.log')) + '\n' for name in names))
+    for panic_path in [None] + log_paths:
+        for path in log_paths:
+            path.write_text('Panic: resumed test fault\n' if path == panic_path else 'PASS\n')
+        shell = 'logs=$1\nrecord() { printf "%s|%s" "$1" "$2"; }\n' + block
+        result = subprocess.run(['sh', '-c', shell, 'probe', str(collected)],
+                                check=True, text=True, capture_output=True)
+        assert result.stdout == ('kernel panic|FAIL' if panic_path else ''), (panic_path, result.stdout)
+print('Native final panic guard: 15 console/QEMU cases, resumed panics in every run rejected: PASS (host shell)')
