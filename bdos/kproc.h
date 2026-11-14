@@ -216,6 +216,7 @@ void kproc_clone_commit_mapping_owners(KPROC *,KASPACE *,KASPACE_MEMBER **);
  * dependencies as exact claims; late allocations use a fresh scope. This is
  * an internal opt-in, not public FreeMiNT shared-Pexec policy. */
 LONG kproc_prepare_scoped_mapping_owners(KPROC *,KPROC *,KASPACE *,KASPACE_MEMBER **);
+LONG kproc_prepare_loaded_mapping_owners(KPROC *,KPROC *,KASPACE *,KASPACE_MEMBER **);
 void kproc_abort_mapping_owners(KPROC *,KASPACE *,KASPACE_MEMBER **);
 LONG kproc_mapping_attach(KPROC *,KPROC *,UQUAD,VADDR,VADDR,KASPACE_ATTACHMENT *);
 BOOL kproc_mapping_detach(KPROC *,KASPACE_ATTACHMENT *);
@@ -229,11 +230,13 @@ ULONG kproc_test_mapping_wait_count(void);
 /* Loader-only, distinct existing PE_LOAD PROCESS; no resource adoption on failure. */
 #include "thread_startup.h"
 LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PERMISSION_TRANSACTION **);
+LONG kproc_shared_exec_take_mapping_owners(KPROC *,KASPACE_MEMBER **);
 void kproc_shared_exec_abort(KPROC *);
 void kproc_shared_exec_finish(KPROC *);
 BOOL kproc_shared_exec_relro_range(const KPROC *,VADDR address,VADDR bytes);
 VADDR kproc_shared_exec_initial_sp(const KPROC *);
 BOOL kproc_shared_exec_ready(const KPROC *,struct kthread *);
+BOOL kproc_shared_exec_constructible(const KPROC *);
 BOOL kproc_shared_exec_active(PD *);
 BOOL kproc_shared_exec_committed(const KPROC *);
 BOOL kproc_shared_exec_retire_source(void *);

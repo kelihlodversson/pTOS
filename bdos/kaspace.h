@@ -16,6 +16,13 @@ typedef struct kaspace_member KASPACE_MEMBER;
 LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBER **result);
 LONG kaspace_member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *identity,
                            KASPACE_MEMBER **result);
+/* Loaded execution inherits general allocations (including future ones),
+ * but acquires only existing exact dependencies from loader runtime scopes.
+ * Generic CLONE_VM still inherits both kinds, including future runtime maps. */
+LONG kaspace_member_inherit_general(const KASPACE_MEMBER *,UQUAD,void *,KASPACE_MEMBER **);
+LONG kaspace_member_add_runtime(KASPACE *,UQUAD,void *,KASPACE_MEMBER **,KASPACE_SCOPE **);
+KASPACE_SCOPE *kaspace_member_runtime(const KASPACE_MEMBER *);
+BOOL kaspace_member_selects(const KASPACE_MEMBER *,const KASPACE_SCOPE *,BOOL runtime);
 KASPACE_SCOPE *kaspace_member_scope(const KASPACE_MEMBER *member); /* borrowed */
 BOOL kaspace_member_matches(const KASPACE_MEMBER *member,const KASPACE *space,
                             UQUAD number,const void *identity);
@@ -144,6 +151,7 @@ typedef struct mmap_region {
     ULONG offset;
     UQUAD reservation; /* split fragments preserve this original identity */
     KASPACE_SCOPE *scope;
+    BOOL runtime_owned; /* preserved classification when PRIVATE_VM copies metadata */
     struct mmap_region *next;
 } MMAP_REGION;
 typedef struct {

@@ -8,6 +8,13 @@
 
 static const char environment[2] = { 0, 0 };
 
+#if defined(__mc68000__) && defined(TEST_IS_PRG)
+/* Each chain level has a separate TPA. The bounded helper uses <1 KiB of
+ * C frames; declare its stack budget so an admitted, not-yet-started peer's
+ * unshrunk TPA does not force this CRT to request the default 64 KiB. */
+long _stksize = 16L * 1024;
+#endif
+
 static int exists(const char *path)
 {
     long handle = Fopen(path, 0);

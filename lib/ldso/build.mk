@@ -139,7 +139,8 @@ LDSO_START_FLAGS-$(ARCH_M68K) = -fno-tree-loop-distribute-patterns -fno-builtin
 LDSO_START_LIBS-$(ARCH_M68K) = -lgcc
 obj/ldso/ld.so: lib/ldso/runtime.c lib/ldso/launch.c lib/ldso/launch.h $(LDSO_START-y) obj/ldso/libldso.a $(AUTOCONF_H) \
                 lib/ldso/runtime.h lib/ldso/exports.map $(X32_PROBE_LDSO_HEADERS) lib/ldso/startup.h
-	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_START_FLAGS-y) -fvisibility=hidden -nostdlib -shared \
+	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_START_FLAGS-y) \
+	  -DPTOS_RUNTIME_OWNERSHIP=$(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),1,0) -fvisibility=hidden -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-e,_start,--version-script,lib/ldso/exports.map \
 	  -o $@ $(filter %.c %.S,$^) $(filter %.a,$^) $(LDSO_START_LIBS-y)
 all: obj/ldso/ld.so

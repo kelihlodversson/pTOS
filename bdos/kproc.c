@@ -83,9 +83,10 @@ struct shared_exec_regions {
     UWORD nraw,nlogical;
     VADDR stack;ULONG stack_pages;UQUAD stack_birth,guard_birth;
     KASPACE_PERMISSION_TRANSACTION *permissions;
-    BOOL committed, legacy;
+    KASPACE_MEMBER *mapping_members; /* owns the prepared token until clone takes it */
+    BOOL committed, legacy, preparing;
 #if KPROC_SHARED_INTERP
-    BOOL interpreted;
+    BOOL interpreted, preparing_interp;
     KASPACE *original_pending;
     PROG_LAYOUT original_layout,original_interpreter;
     PD original_pd;
@@ -159,6 +160,8 @@ struct kproc {
     KASPACE_MEMBER *prepared_mapping_members; /* borrowed, caller-owned construction token */
     UBYTE mapping_preparation; /* closes competing construction through rollback callbacks */
     KASPACE_SCOPE *allocation_scope; /* borrowed from those memberships */
+    KASPACE_SCOPE *runtime_scope; /* explicit ld.so allocations, never Malloc */
+    KASPACE_SCOPE *prepared_allocation_scope,*prepared_runtime_scope;
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
 #if CONF_WITH_NATIVE_SCHED
@@ -898,25 +901,68 @@ static LONG mapping_prepare_begin(KPROC *p,KPROC *source,KASPACE *space,KASPACE_
     return E_OK;
 }
 
-LONG kproc_clone_prepare_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,
-                                      BOOL private_vm,KASPACE_MEMBER **result)
+static LONG prepare_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,
+                                  BOOL private_vm,BOOL loaded,KASPACE_MEMBER **result)
 {
     LONG error;
     error=mapping_prepare_begin(p,source,space,result);
     if (error) return error;
     if (!private_vm) {
         if (source->active_space!=space || !source->mapping_members) { error=EACCDN;goto failed; }
-        error=kaspace_member_inherit(source->mapping_members,p->number,p,result);
+        error=loaded?kaspace_member_inherit_general(source->mapping_members,p->number,p,result):
+                     kaspace_member_inherit(source->mapping_members,p->number,p,result);
         if (error) goto failed;
         p->prepared_mapping_members=*result;
+        p->prepared_allocation_scope=source->allocation_scope;
+        p->prepared_runtime_scope=loaded?NULL:source->runtime_scope;
         error=kaspace_attachment_inherit(space,source->number,source,p->number,p);
         if (error) goto failed;
+        if (loaded) {
+#if CONF_WITH_MMAP
+            MMAP_REGION *region;
+            /* Only existing runtime dependencies actually owned by source.
+             * General scopes were inherited above, including future maps. */
+            for (region=kaspace_mmap(space)->regions;region;region=region->next) {
+                KASPACE_ATTACHMENT claim={0};
+                if (!region->runtime_owned ||
+                    !kaspace_mapping_owned(space,source->number,source,region->reservation,
+                                            region->address,region->length) ||
+                    kaspace_mapping_owned(space,p->number,p,region->reservation,
+                                            region->address,region->length)) continue;
+                error=kaspace_attachment_acquire(space,region->reservation,region->address,region->length,
+                                    source->number,source,p->number,p,&claim);
+                if (error) goto failed;
+            }
+#endif
+        }
     } else {
         error=kaspace_member_new(space,p->number,p,result);
         if (error) goto failed;
         p->prepared_mapping_members=*result;
+        p->prepared_allocation_scope=kaspace_member_scope(*result);
+        if (source->runtime_scope) {
+            error=kaspace_member_add_runtime(space,p->number,p,result,&p->prepared_runtime_scope);
+            if (error) goto failed;
+        }
+#if CONF_WITH_MMAP
+        {
+            MMAP_REGION *region;
+            for (region=kaspace_mmap(space)->regions;region;region=region->next)
+                if (region->runtime_owned && !p->prepared_runtime_scope) {
+                    error=kaspace_member_add_runtime(space,p->number,p,result,&p->prepared_runtime_scope);
+                    if (error) goto failed;
+                    break;
+                }
+        }
+#endif
         kaspace_member_claim_private(*result);
     }
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_ELF_SHARED
+    if (loaded && p->standard_entry) {
+        error=kaspace_member_add_runtime(space,p->number,p,result,&p->prepared_runtime_scope);
+        if (error) goto failed;
+    }
+#endif
     p->mapping_preparation=MAPPING_PREPARED;
     return E_OK;
 failed:
@@ -924,6 +970,14 @@ failed:
     else p->mapping_preparation=0;
     return error;
 }
+
+LONG kproc_clone_prepare_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,
+                                      BOOL private_vm,KASPACE_MEMBER **result)
+{ return prepare_mapping_owners(p,source,space,private_vm,FALSE,result); }
+#if CONF_WITH_NATIVE_SCHED
+LONG kproc_prepare_loaded_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,KASPACE_MEMBER **result)
+{ return prepare_mapping_owners(p,source,space,FALSE,TRUE,result); }
+#endif
 
 void kproc_abort_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members)
 {
@@ -946,6 +1000,7 @@ void kproc_abort_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members
     kaspace_member_release(&owned);
     if (p->mapping_preparation==MAPPING_ABORTING) {
         p->prepared_mapping_members=NULL;p->mapping_preparation=0;
+        p->prepared_allocation_scope=p->prepared_runtime_scope=NULL;
     }
 #if CONF_WITH_NATIVE_SCHED
     ksched_cleanup_end(&scope);
@@ -962,6 +1017,7 @@ LONG kproc_prepare_scoped_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,K
     error=kaspace_member_new(space,p->number,p,result);
     if (error) { p->mapping_preparation=0;return error; }
     p->prepared_mapping_members=*result;
+    p->prepared_allocation_scope=kaspace_member_scope(*result);
     for (i=0;i<kaspace_heap(space)->count;i++) {
         KASPACE_HEAP_BLOCK *block=&kaspace_heap(space)->blocks[i];
         KASPACE_ATTACHMENT claim={0};
@@ -1064,10 +1120,14 @@ void kproc_clone_commit_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **
 {
     if (!p || p->mapping_members || !members ||
         p->mapping_preparation!=MAPPING_PREPARED || p->prepared_mapping_members!=*members ||
-        !kaspace_member_matches(*members,space,p->number,p)) panic("unprepared mapping ownership commit");
+        !kaspace_member_matches(*members,space,p->number,p) ||
+        !kaspace_member_selects(*members,p->prepared_allocation_scope,FALSE) ||
+        (p->prepared_runtime_scope && !kaspace_member_selects(*members,p->prepared_runtime_scope,TRUE)))
+        panic("unprepared mapping ownership commit");
     p->mapping_members=*members;*members=NULL;
     p->prepared_mapping_members=NULL;p->mapping_preparation=0;
-    p->allocation_scope=kaspace_member_scope(p->mapping_members);
+    p->allocation_scope=p->prepared_allocation_scope;p->runtime_scope=p->prepared_runtime_scope;
+    p->prepared_allocation_scope=p->prepared_runtime_scope=NULL;
 }
 
 #if CONF_WITH_NATIVE_SCHED
@@ -1526,7 +1586,7 @@ void kproc_destroy(PD *pd)
             kfree(kproc->shared_interp_recipe);
 #endif
             kaspace_member_release(&kproc->mapping_members);
-            kproc->allocation_scope=NULL;
+            kproc->allocation_scope=kproc->runtime_scope=NULL;
             kaspace_attachment_release_owner(kproc->active_space,kproc->number,kproc);
             kaspace_put(kproc->pending_space);
             /* Unlinked first, so the record is gone before its address
@@ -1987,7 +2047,7 @@ static BOOL prepare_failed(KPROC *kproc, KASPACE *owner)
         kproc->lost = TRUE;
     }
     kaspace_member_release(&kproc->mapping_members);
-    kproc->allocation_scope=NULL;
+    kproc->allocation_scope=kproc->runtime_scope=NULL;
     kaspace_put(owner);
     if (kproc->kstack_phys)
         kstack_free(kproc->kstack_phys);
@@ -2112,13 +2172,21 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         return FALSE;
     }
     kproc->allocation_scope=kaspace_member_scope(kproc->mapping_members);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_ELF_SHARED
+    if (kproc->standard_entry && kaspace_member_add_runtime(owner,kproc->number,kproc,
+                                    &kproc->mapping_members,&kproc->runtime_scope)) {
+        kaspace_member_release(&kproc->mapping_members);kproc->allocation_scope=kproc->runtime_scope=NULL;
+        if (owner!=kproc->pending_space) kaspace_put(owner);
+        return FALSE;
+    }
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     if (fail_kernel_stack) { fail_kernel_stack = FALSE; kproc->kstack_phys = 0; } else
 #endif
     kproc->kstack_phys = kstack_alloc(&kproc->kstack_top);
     if (!kproc->kstack_phys) {
         kaspace_member_release(&kproc->mapping_members);
-        kproc->allocation_scope=NULL;
+        kproc->allocation_scope=kproc->runtime_scope=NULL;
         if (owner != kproc->pending_space)
             kaspace_put(owner);
         return FALSE;
@@ -3118,13 +3186,21 @@ static LONG do_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     UWORD prot;
     LONG rc;
     BOOL exact = (flags & MAP_FIXED_NOREPLACE) != 0;
+    BOOL runtime = (flags & MAP_PTOS_RUNTIME) != 0;
+    KASPACE_SCOPE *selected;
+    UQUAD allowed = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE;
 
     if (!kproc || !kproc->aspace || !kproc->allocation_scope || !mapping_owner_live(kproc))
         return EACCDN;
     /* Private anonymous or file-backed reservations; never MAP_SHARED. */
-    if ((flags & ~(UQUAD)(MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE)) ||
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    allowed |= MAP_PTOS_RUNTIME;
+#endif
+    if ((flags & ~allowed) ||
         !(flags & MAP_PRIVATE))
         return EOPNOTSUPP;
+    selected=runtime?kproc->runtime_scope:kproc->allocation_scope;
+    if (!selected) return EACCDN;
     if ((flags & MAP_ANONYMOUS) ? offset != 0 : (offset > 0x7fffffffUL || (offset & (USER_PAGE_SIZE - 1))))
         return EINVAL;
     if (address > 0xffffffffULL)
@@ -3170,7 +3246,8 @@ static LONG do_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     /* Backing acquisition may finish deferred file cleanup. Revalidate the
      * live owner, shared budget and placement after all fallible preparation;
      * no raw list cursor survives a callback. */
-    if (!mapping_owner_live(kproc) || !kproc->allocation_scope) {
+    if (!mapping_owner_live(kproc) ||
+        selected!=(runtime?kproc->runtime_scope:kproc->allocation_scope)) {
         fileback_put(region->backing);kfree(region);return EACCDN;
     }
     if (length>alloc_room(kproc)) { fileback_put(region->backing);kfree(region);return ENSMEM; }
@@ -3181,7 +3258,7 @@ static LONG do_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     region->address = (ULONG)address;
     region->length = (ULONG)length;
     region->prot = prot;
-    region->scope=kproc->allocation_scope;
+    region->scope=selected;region->runtime_owned=runtime;
     region->next = *link;
     *link = region;
     kaspace_mmap(kproc->active_space)->bytes += length;
@@ -3266,6 +3343,7 @@ static LONG do_munmap(PD *pd, UQUAD address, UQUAD length)
             tail->prot = region->prot;
             tail->reservation = region->reservation;
             tail->scope=region->scope;
+            tail->runtime_owned=region->runtime_owned;
             tail->backing = region->backing;
             tail->offset = region->offset + (ULONG)(last - region->address);
             tail->next = region->next;

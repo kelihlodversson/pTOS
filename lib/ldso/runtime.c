@@ -9,6 +9,11 @@
 
 #define FILE_LIMIT 0x00800000U
 #define MAX_HOOKS 4096U
+#if defined(PTOS_RUNTIME_OWNERSHIP) && PTOS_RUNTIME_OWNERSHIP
+#define RUNTIME_MAPPING MAP_PTOS_RUNTIME
+#else
+#define RUNTIME_MAPPING 0
+#endif
 
 typedef struct {
     uint32_t init, fini, init_array, init_size, fini_array, fini_size, pre_array, pre_size;
@@ -64,13 +69,13 @@ static uint32_t fail(void)
 static uint32_t map(uint32_t size)
 {
     int64_t at = dl_syscall(GEMDOS_MMAP, 0, size, PROT_READ | PROT_WRITE,
-                             MAP_PRIVATE | MAP_ANONYMOUS, UINT64_MAX, 0);
+                             MAP_PRIVATE | MAP_ANONYMOUS | RUNTIME_MAPPING, UINT64_MAX, 0);
     return at > 0 ? (uint32_t)at : 0;
 }
 static uint32_t map_file(uint32_t at, uint32_t size, uint32_t prot, int handle, uint32_t offset)
 {
     int64_t result = dl_syscall(GEMDOS_MMAP, at, size, prot,
-        MAP_PRIVATE | (at ? MAP_FIXED_NOREPLACE : 0), handle, offset);
+        MAP_PRIVATE | RUNTIME_MAPPING | (at ? MAP_FIXED_NOREPLACE : 0), handle, offset);
     return result > 0 ? (uint32_t)result : 0;
 }
 static void unmap(uint32_t address, uint32_t size)

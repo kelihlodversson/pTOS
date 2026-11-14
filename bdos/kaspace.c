@@ -15,6 +15,7 @@
 
 struct kaspace_scope {
     KASPACE *space; /* borrowed; members/metadata remain inside this root */
+    BOOL runtime; /* explicit loader lifetime; ordinary allocations are common */
     KASPACE_MEMBER *members;
     KASPACE_SCOPE *next;
 };
@@ -158,7 +159,7 @@ static void *mapping_alloc(ULONG bytes)
 #define mapping_alloc(bytes) kalloc(bytes)
 #endif
 
-LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBER **result)
+static LONG member_new(KASPACE *space,UQUAD number,void *identity,BOOL runtime,KASPACE_MEMBER **result)
 {
     KASPACE_SCOPE *scope;
     KASPACE_MEMBER *member;
@@ -169,7 +170,7 @@ LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBE
     member=mapping_alloc(sizeof(*member));
     if (!member) { kfree(scope);return ENSMEM; }
     if (!kaspace_share(space)) { kfree(member);kfree(scope);return ENSMEM; }
-    scope->space=space;scope->members=member;scope->next=space->scopes;
+    scope->space=space;scope->runtime=runtime;scope->members=member;scope->next=space->scopes;
     member->scope=scope;member->number=number;member->identity=identity;
     member->next=member->owner_next=NULL;
     space->scopes=scope;
@@ -177,8 +178,25 @@ LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBE
     return E_OK;
 }
 
-LONG kaspace_member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *identity,
-                           KASPACE_MEMBER **result)
+LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBER **result)
+{ return member_new(space,number,identity,FALSE,result); }
+
+LONG kaspace_member_add_runtime(KASPACE *space,UQUAD number,void *identity,
+                               KASPACE_MEMBER **members,KASPACE_SCOPE **selected)
+{
+    KASPACE_MEMBER *fresh=NULL,**tail;
+    LONG error;
+    if (!members || !selected || *selected ||
+        !kaspace_member_matches(*members,space,number,identity)) return EINVAL;
+    error=member_new(space,number,identity,TRUE,&fresh);
+    if (error) return error;
+    for (tail=members;*tail;tail=&(*tail)->owner_next) { }
+    *tail=fresh;*selected=fresh->scope;
+    return E_OK;
+}
+
+static LONG member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *identity,
+                           BOOL general_only,KASPACE_MEMBER **result)
 {
     KASPACE_MEMBER *prepared=NULL,*copy,**tail=&prepared;
     const KASPACE_MEMBER *at;
@@ -186,6 +204,7 @@ LONG kaspace_member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *iden
     for (at=source;at;at=at->owner_next) {
         if (!at->identity || !at->number || !at->scope->members ||
             at->scope->space->mutating || at->scope->space->reaping) goto denied;
+        if (general_only && at->scope->runtime) continue;
         copy=mapping_alloc(sizeof(*copy));
         if (!copy) goto failed;
         if (!kaspace_share(at->scope->space)) { kfree(copy);goto failed; }
@@ -203,8 +222,28 @@ failed:
     return ENSMEM;
 }
 
+LONG kaspace_member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *identity,
+                           KASPACE_MEMBER **result)
+{ return member_inherit(source,number,identity,FALSE,result); }
+LONG kaspace_member_inherit_general(const KASPACE_MEMBER *source,UQUAD number,void *identity,
+                                   KASPACE_MEMBER **result)
+{ return member_inherit(source,number,identity,TRUE,result); }
+
 KASPACE_SCOPE *kaspace_member_scope(const KASPACE_MEMBER *member)
 { return member && member->identity && member->number ? member->scope : NULL; }
+
+KASPACE_SCOPE *kaspace_member_runtime(const KASPACE_MEMBER *member)
+{
+    for (;member;member=member->owner_next)
+        if (member->scope->runtime) return member->scope;
+    return NULL;
+}
+BOOL kaspace_member_selects(const KASPACE_MEMBER *member,const KASPACE_SCOPE *scope,BOOL runtime)
+{
+    for (;member;member=member->owner_next)
+        if (member->scope==scope) return member->scope->runtime==runtime;
+    return FALSE;
+}
 
 BOOL kaspace_member_matches(const KASPACE_MEMBER *member,const KASPACE *space,
                             UQUAD number,const void *identity)
@@ -220,19 +259,28 @@ BOOL kaspace_member_matches(const KASPACE_MEMBER *member,const KASPACE *space,
 void kaspace_member_claim_private(KASPACE_MEMBER *member)
 {
     KASPACE *space;
+    KASPACE_SCOPE *general;
+#if CONF_WITH_MMAP
+    KASPACE_SCOPE *runtime;
+#endif
     ULONG i;
-    if (!member || member->next || member->owner_next) panic("invalid private mapping owner");
+    if (!member || member->next || member->scope->runtime) panic("invalid private mapping owner");
     space=member->scope->space;
+    general=member->scope;
+#if CONF_WITH_MMAP
+    runtime=kaspace_member_runtime(member);
+#endif
     for (i=0;i<space->heap.count;i++) {
         if (space->heap.blocks[i].scope) panic("private clone inherited mapping owner");
-        space->heap.blocks[i].scope=member->scope;
+        space->heap.blocks[i].scope=general;
     }
 #if CONF_WITH_MMAP
     {
         MMAP_REGION *region;
         for (region=space->mmap.regions;region;region=region->next) {
             if (region->scope) panic("private clone inherited mmap owner");
-            region->scope=member->scope;
+            if (region->runtime_owned && !runtime) panic("private runtime mapping has no owner");
+            region->scope=region->runtime_owned?runtime:general;
         }
     }
 #endif

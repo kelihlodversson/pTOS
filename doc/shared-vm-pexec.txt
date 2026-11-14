@@ -6,18 +6,15 @@ Implementation slice (private test kernels only until independent acceptance):
 - Preserve ordinary PE_LOAD ownership and patchable data; mark original heap grant as shared attachment on no-fail commit. Parent retirement retires attached ranges into existing R4 fences; it cannot destroy an executing child KPROC merely because its allocation was parent-owned.
 - Reuse existing canonical #909 reap, adding only an internal full-result projection to the same consumption path for Pexec4's full16 status. No second observer registry or reaper.
 
-Workstream B status (unaccepted, test-only implementation)
--------------------------------------------------------
-Current base: accepted actual epic be81959ea54a13c1ab6f4946086590083710d929.
-Normal reconciliation2a43ed804 preserves existing4f1981 consumer history.
-Whole-consumer acceptance is blocked on ordinary mapping attachment/retirement
-across shared-root creators (#891/#892), documented in pexec-clone-migration.txt.
-The expanded native failure sweep is a failing regression, not accepted evidence.
-The historical dd3 prerequisite was rejected for retained-lazy authority beyond
-its exact ticket extent. Focused correction #958 is now integrated, with all
-four actual-epic workflows and native/compatibility validation accepted. This
-consumer preserves that correction; prerequisite acceptance is not Phase5
-consumer acceptance.
+Post-#968 reconciliation (test-only, whole-consumer acceptance pending)
+--------------------------------------------------------------------
+Accepted epic: 496ceba0eb260e3de2cef52f074699df6bf6f177, identical tree
+b3fbe23151ea26ee217779d99848098f532a2829 to accepted #968 source69ccd179.
+Normal merge96e408df6 preserves existing8ece5bde consumer history and imports
+#966/#968 once. No preview or unrelated validation branch is imported.
+#958 immutable exact backing authority remains authoritative. Prerequisite
+acceptance permits development; it does not accept the combined consumer.
+Current exact consumer source and fresh evidence are recorded on PR956/#894.
 
 Historical pre-#966 merge 1903d5041ff8d3b70a8686c10dd4d191834c96f9 retains both the previous
 consumer and accepted epic histories. Fresh actual static-ELF trap suites at
@@ -59,8 +56,8 @@ inherited limits, file-backed/COW mappings, self/live relaunch rejection,
 six factory failures, and a shared-preparation prefix sweep. Interpreted
 parent-first and generic/nested-source fixtures are being verified. A green
 component or earlier source result does not establish final-head acceptance.
-#966 resolves the old #713 continuation-owner dependency. The new ordinary
-mapping lifetime dependency prevents complete repeated-interpreter reclamation.
+#966 resolves the old #713 continuation-owner dependency. #968 supplies the common mapping lifetime prerequisite; the consumer now uses
+its canonical memberships and exact attachments for ordinary mappings.
 Full final native/compatibility/GUI/pinned evidence and whole-owner review remain
 pending; see phase5-acceptance.txt and current PR956/#894 ledgers.
 Successful execution is not proof of complete shared-ASPACE allocation lifetime.
@@ -95,10 +92,17 @@ supported cooperative no-yield preparation/abort path, constructor rollback and
 scope cleanup are idempotent; committed sets with resumable THREADs remain
 protected by the existing fatal invariant.
 
-Ordinary KASPACE heap/mmap reservations use the canonical reservation-hold API.
-In particular, file-backed mmap retains its live region birth, exact bounds,
-logical rights and independent FILE_BACKING owner; missing pages and file-COW
-remain materializable through that authenticated owner. KPROC-only image/raw/
+Ordinary KASPACE heap/mmap lifetime uses #968's canonical memberships and
+exact attachments. The former all-visible-region R2 sweep is removed. Claims
+are prepared before borrowing/staging or opening the permission journal, and
+moved exactly once into the clone transaction. Commit moves membership at its
+existing no-fail boundary. Abort restores the journal after releasing its own
+conflicting special holds, before canonical claim release may call file cleanup.
+The staged image remains caller-owned and retryable. Failed competing attempts
+cannot consume an existing preparation token or committed attachment.
+File-backed mmap retains its live birth, exact bounds, logical rights and
+FILE_BACKING owner; missing pages and file-COW remain materializable only through
+that authenticated owner. Attachment tickets provide lifetime, not permission. KPROC-only image/raw/
 stack views retain captured receipts. No cleanup fence, broad source image hold
 or merely readable PTE grants new file-backing authority.
 
@@ -115,3 +119,46 @@ inherited top-stack ownership. An inherited scalar limit never creates a stack.
 Protected completion/join waits continue raw scheduler blocking while cleanup
 suppresses cancellation, retaining synchronous claims until delivery can occur.
 No additional reaper or nested execution mechanism is introduced.
+
+FreeMiNT compatibility and explicit runtime ownership
+---------------------------------------------------
+FreeMiNT's mode4/104 shares ALL parent memory, not just the initial snapshot.
+Its share_mem() returns the same p_mem; future Malloc/Mxalloc records attach to
+that shared memspace, which is released only at its last link. A surviving
+sharer can access allocations created after sharing even after their creator
+exits. Pexec4/104 therefore inherits GENERAL lifetime membership, including
+future ordinary Malloc and unannotated pTOS Mmap allocations. Existing image,
+basepage, environment, interpreter and actual stack retain their R1-R4 claims.
+
+Primary reference: FreeMiNT68be4e529ad82ea9ec2b1c215b53303f91e78d52:
+  doc/programmer/mint.txt1115-1118,1295-1297 (all memory, basepage/environment)
+  sys/k_fork.c143-146; sys/proc_help.h43-47 (shared p_mem)
+  sys/memory.c524-552; sys/proc_help.c224-261 (late allocation, final link)
+These are not evidence that FreeMiNT implements pTOS's mmap API: its
+sys/syscalls.master514-515 lists mmap/munmap as undefined.
+
+MAP_PTOS_RUNTIME is an explicit pTOS loader-owned lifetime annotation, admitted
+and emitted by ld.so ONLY with CONF_WITH_SHARED_VM_PEXEC_TEST. It is not an
+implicit change to general FreeMiNT allocations or a production ABI activation.
+Each loaded standard-entry PROCESS prepares a fresh RUNTIME scope before THREAD
+publication. Its annotated anonymous/file maps join that scope. Existing exact
+source-owned runtime dependencies are attached to a new loaded child; unrelated
+visible KASPACE mappings and future foreign runtime allocations are not inherited.
+General allocations remain common even when created by a departed interpreter.
+
+Generic CLONE_VM inherits GENERAL and RUNTIME memberships and the source's
+selected runtime scope, retaining existing AND future compatible runtime maps.
+Thus a generic peer created before the creator's next DSO allocation still owns
+that allocation. Creator exit cannot revoke the peer's live code/data. A loaded
+PROCESS has a separate runtime allocation scope; merely passing a pointer to
+another scope does not export lifetime. Trusted cross-scope retention uses
+#968's authenticated exact attachment API, with destination acquired before
+source release. A PRIVATE_VM snapshot binds copied classification to fresh
+memberships and preserves an empty runtime selector for future allocations.
+
+Runtime membership retires after the final THREAD stops, independently of
+Pwaitpid or final root destruction. Final claims release canonical mappings and
+FILE_BACKING exactly once; immutable #958 backing bounds and access checks still
+apply. No parallel mapping registry, reaper or scheduler is introduced. The
+shared region limit remains96. Whole-consumer public compatibility acceptance
+and fresh native resource/DSO evidence are required before public activation.

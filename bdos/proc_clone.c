@@ -39,6 +39,7 @@ struct proc_clone_transaction {
     PROC_CLONE_OBSERVER *observer; /* borrowed from owned startup registration */
     BOOL asynchronous;
     BOOL loaded_shared;
+    BOOL owns_shared_exec; /* exact preparation token was transferred to this attempt */
 };
 
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
@@ -62,15 +63,18 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
     if (ksched_test_clone_masked()) panic("clone teardown in publication exclusion");
 #endif
     thread_startup_abort(&tx->startup);
-    kproc_abort_mapping_owners(tx->process,tx->space,&tx->mapping_members);
 #if CONF_WITH_NATIVE_SCHED
     if (tx->owns_compat) kproc_clone_drop_compat(tx->process);
+    if(tx->owns_shared_exec) {
+        kthread_destroy(tx->thread);tx->thread=NULL;
+        if(tx->process) kproc_shared_exec_abort(tx->process);
+    }
 #endif
+    /* Special execution holds and the permission journal are gone before
+     * canonical claim release may retire mappings or call file cleanup. */
+    kproc_abort_mapping_owners(tx->process,tx->space,&tx->mapping_members);
     if (tx->owns_process) proc_dispose_process(tx->process);
     kthread_destroy(tx->thread);
-#if CONF_WITH_NATIVE_SCHED
-    if(tx->loaded_shared && tx->process) kproc_shared_exec_abort(tx->process);
-#endif
 #if CONF_WITH_PRIVATE_CLONE
     {
         BOOL rollback = tx->space && tx->source_space && tx->space != tx->source_space;
@@ -118,7 +122,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         if ((args->prepared_process && !loaded_shared) || (args->resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
         target = loaded_shared ? args->prepared_process : NULL;
 #if CONF_WITH_NATIVE_SCHED
-        if(loaded_shared && (!target || !kproc_shared_exec_ready(target,NULL))) return EACCDN;
+        if(loaded_shared && (!target || !kproc_shared_exec_constructible(target))) return EACCDN;
 #else
         if(loaded_shared) return EINVFN;
 #endif
@@ -156,6 +160,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     tx->policy = args->process_policy;
     tx->owns_process = FALSE;
     tx->loaded_shared=loaded_shared;
+    tx->owns_shared_exec=FALSE;
     tx->owns_compat = FALSE;
     tx->source = kproc_retain_live(args->source);
     if (!tx->source) { error = EACCDN; goto failed; }
@@ -183,11 +188,17 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
 #endif
     if (!tx->space || (args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(3))) goto failed;
     if (args->process_policy!=PROC_CLONE_SAME_PROCESS && args->process_policy!=PROC_CLONE_LOADED_PROCESS) {
-        error=args->vm_policy==PROC_CLONE_SCOPED_VM ?
+#if CONF_WITH_NATIVE_SCHED
+        if(loaded_shared) error=kproc_shared_exec_take_mapping_owners(tx->process,&tx->mapping_members);
+        else
+#endif
+        error=
+              args->vm_policy==PROC_CLONE_SCOPED_VM ?
               kproc_prepare_scoped_mapping_owners(tx->process,tx->source,tx->space,&tx->mapping_members) :
               kproc_clone_prepare_mapping_owners(tx->process,tx->source,tx->space,
                     args->vm_policy==PROC_CLONE_PRIVATE_VM,&tx->mapping_members);
         if (error) goto failed;
+        if(loaded_shared) tx->owns_shared_exec=TRUE;
         error=ENSMEM;
     }
     tx->thread = args->process_policy == PROC_CLONE_LOADED_PROCESS ?

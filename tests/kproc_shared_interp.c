@@ -10,6 +10,9 @@ void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(!scope->active);scope->active=TRUE; }
 void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(scope->active);scope->active=FALSE; }
+UQUAD ksched_context_id(void) { return 1; }
+BOOL ksched_wait_ready(BOOL (*ready)(void *),void *argument)
+{ CHECK(ready(argument));return TRUE; }
 struct kthread { KPROC *process;KASPACE *space;KTHREAD *next; };
 KPROC *kthread_process(const KTHREAD *thread) {return thread->process;}
 KASPACE *kthread_aspace(const KTHREAD *thread) {return thread->space;}
@@ -18,8 +21,12 @@ KTHREAD **kthread_next_link(KTHREAD *thread) {return &thread->next;}
 LONG fileback_read(FILE_BACKING *backing,ULONG offset,void *buffer,ULONG size)
 { (void)backing;(void)offset;(void)buffer;(void)size;abort();return EREADF; }
 #if CONF_WITH_MMAP
-void fileback_put(FILE_BACKING *backing) { (void)backing;abort(); }
-void fileback_hold(FILE_BACKING *backing) { (void)backing;abort(); }
+void fileback_put(FILE_BACKING *backing) { if(backing) abort(); }
+void fileback_hold(FILE_BACKING *backing) { if(backing) abort(); }
+BOOL fileback_try_hold(FILE_BACKING *backing) { CHECK(!backing);return TRUE; }
+LONG fileback_get(LONG handle,FILE_BACKING **backing)
+{ (void)handle;(void)backing;abort();return EIHNDL; }
+ULONG fileback_size(const FILE_BACKING *backing) { (void)backing;abort();return 0; }
 #endif
 #if defined(BORROW_GENERIC)
 void aspace_hw_drop_tables(PADDR root,const PADDR *pages,ULONG count)
@@ -137,6 +144,86 @@ static void supervisor_clone_metadata(void)
     CHECK(ram==physical_live && metadata==metadata_live && free_before==free_pages);
     puts("Production generic-clone metadata: USER hold rejected, exact no-access lifetime, no phantom top stack and final conservation: PASS (host MMU)");
 }
+/* Host installation adapters only: use the production mapping constructors,
+ * syscall policy and final owner release with real counted MMU providers. */
+static void runtime_install(KPROC *p,KASPACE *space)
+{ p->active_space=kaspace_share(space);CHECK(p->active_space);p->aspace=kaspace_backend(space); }
+static void runtime_drop(KPROC *p)
+{
+    KASPACE *space=p->active_space;
+    kaspace_attachment_release_owner(space,p->number,p);
+    kaspace_member_release(&p->mapping_members);
+    p->allocation_scope=p->runtime_scope=NULL;p->active_space=NULL;p->aspace=NULL;
+    kaspace_put(space);
+}
+static void runtime_mapping_policy(void)
+{
+    KPROC source={0},peer={0},loaded={0},private={0};
+    PD pd[4]={{0}};
+    KASPACE *space,*copy;
+    KASPACE_MEMBER *members=NULL;
+    LONG initial,late,general,own,probe,error;
+    ULONG metadata=metadata_live,ram=physical_live,before;
+    unsigned prefix;
+    UWORD rights;
+    space=kaspace_adopt(aspace_create());copy=kaspace_adopt(aspace_create());
+    CHECK(space && copy);
+    source.pd=&pd[0];peer.pd=&pd[1];loaded.pd=&pd[2];private.pd=&pd[3];
+    source.number=901;peer.number=902;loaded.number=903;private.number=904;
+    source.references=peer.references=loaded.references=private.references=1;
+    source.next=&peer;peer.next=&loaded;loaded.next=&private;kproc_list=&source;
+    runtime_install(&source,space);
+    CHECK(kaspace_member_new(space,source.number,&source,&source.mapping_members)==E_OK);
+    source.allocation_scope=kaspace_member_scope(source.mapping_members);
+    CHECK(kaspace_member_add_runtime(space,source.number,&source,&source.mapping_members,&source.runtime_scope)==E_OK);
+    /* Empty PRIVATE_VM snapshots preserve future runtime allocation ability. */
+    CHECK(kproc_clone_prepare_mapping_owners(&private,&source,copy,TRUE,&members)==E_OK);
+    kproc_clone_commit_mapping_owners(&private,copy,&members);runtime_install(&private,copy);
+    CHECK(private.runtime_scope && private.runtime_scope!=source.runtime_scope);
+    probe=kproc_mmap(private.pd,0,TEST_PAGE,PROT_READ|PROT_WRITE,
+                    MAP_PRIVATE|MAP_ANONYMOUS|MAP_PTOS_RUNTIME,0,0);CHECK(probe>0);
+    CHECK(kaspace_mmap_demand_page(copy,probe,ASPACE_PROT_WRITE)==1);
+    runtime_drop(&private);CHECK(!kaspace_mmap(copy)->regions && !aspace_private_pages(kaspace_backend(copy)));
+    kaspace_put(copy);
+    initial=kproc_mmap(source.pd,0,TEST_PAGE,PROT_READ|PROT_WRITE,
+                      MAP_PRIVATE|MAP_ANONYMOUS|MAP_PTOS_RUNTIME,0,0);CHECK(initial>0);
+    CHECK(kproc_clone_prepare_mapping_owners(&peer,&source,space,FALSE,&members)==E_OK);
+    kproc_clone_commit_mapping_owners(&peer,space,&members);runtime_install(&peer,space);
+    loaded.standard_entry=TRUE;
+    /* Every actual allocation prefix rolls back to the same live source. */
+    for(prefix=1;prefix<16;prefix++) {
+        before=metadata_live;fail_metadata=allocation_call+prefix;
+        error=kproc_prepare_loaded_mapping_owners(&loaded,&source,space,&members);
+        fail_metadata=0;
+        if(!error) kproc_abort_mapping_owners(&loaded,space,&members);
+        else CHECK(error==ENSMEM && !members && !loaded.mapping_preparation);
+        CHECK(metadata_live==before && kaspace_mmap_protection(space,initial,&rights) &&
+                rights==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+        if(!error) break;
+    }
+    CHECK(prefix>3 && prefix<16);
+    CHECK(kproc_prepare_loaded_mapping_owners(&loaded,&source,space,&members)==E_OK);
+    kproc_clone_commit_mapping_owners(&loaded,space,&members);runtime_install(&loaded,space);
+    CHECK(loaded.allocation_scope==source.allocation_scope && loaded.runtime_scope!=source.runtime_scope);
+    late=kproc_mmap(source.pd,0,TEST_PAGE,PROT_READ|PROT_WRITE,
+                   MAP_PRIVATE|MAP_ANONYMOUS|MAP_PTOS_RUNTIME,0,0);
+    general=kproc_mmap(source.pd,0,TEST_PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,0,0);
+    own=kproc_mmap(loaded.pd,0,TEST_PAGE,PROT_READ|PROT_WRITE,
+                  MAP_PRIVATE|MAP_ANONYMOUS|MAP_PTOS_RUNTIME,0,0);
+    CHECK(late>0 && general>0 && own>0);
+    runtime_drop(&source);
+    CHECK(kaspace_mmap_demand_page(space,late,ASPACE_PROT_WRITE)==1);
+    runtime_drop(&peer);
+    CHECK(!kaspace_mmap_protection(space,late,&rights));
+    CHECK(kaspace_mmap_demand_page(space,initial,ASPACE_PROT_WRITE)==1);
+    CHECK(kaspace_mmap_demand_page(space,general,ASPACE_PROT_WRITE)==1);
+    CHECK(kaspace_mmap_demand_page(space,own,ASPACE_PROT_WRITE)==1);
+    runtime_drop(&loaded);
+    CHECK(!kaspace_mmap(space)->regions && !aspace_private_pages(kaspace_backend(space)));
+    kproc_list=NULL;kaspace_put(space);
+    CHECK(metadata_live==metadata && physical_live==ram);
+    puts("Production common/runtime lifetime: late general sharing, exact runtime dependencies, generic future inheritance, empty private selector, allocation-prefix retry and final reclamation with surviving root: PASS (host MMU)");
+}
 int main(void)
 {
     KPROC source={0},target={0};PD source_pd={0},target_pd={0},original_pd;
@@ -148,8 +235,11 @@ int main(void)
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
     retiring_construction_borrows();
     supervisor_clone_metadata();
-    source.number=123;
+    runtime_mapping_policy();
+    source.number=123;source.references=target.references=1;
     source.pd=&source_pd;source.aspace=aspace_create();source.active_space=kaspace_adopt(source.aspace);
+    CHECK(kaspace_member_new(source.active_space,source.number,&source,&source.mapping_members)==E_OK);
+    source.allocation_scope=kaspace_member_scope(source.mapping_members);
     {
         struct shared_exec_regions stack_owner={0};UWORD rights=0;
         KASPACE_RESERVATION_INFO info={0};UQUAD before=free_pages;
@@ -344,7 +434,8 @@ int main(void)
     shared_interp_abort(&target,&set);
     CHECK(aspace_unmap_private(original,USER_IMAGE_BASE,2*TEST_PAGE));
     CHECK(aspace_unmap_private(original,INTERPRETER_BASE,TEST_PAGE));
-    kaspace_put(pending);kaspace_put(source.active_space);kfree(source.heap);
+    kaspace_put(pending);kaspace_member_release(&source.mapping_members);
+    kaspace_put(source.active_space);kfree(source.heap);
     CHECK(!metadata_live && !physical_live);
     puts("Production interpreted staging: copy/rebase, protected holes, allocation rollback, pending root/PD retry, rebuilt argc/argv/auxv, exact RELRO authority after owner retirement, ET_EXEC collision and fixed-record heap gaps: PASS (host MMU)");
     return 0;

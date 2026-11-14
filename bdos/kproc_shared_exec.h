@@ -137,15 +137,38 @@ void kproc_shared_exec_abort(KPROC *process)
 #endif
     while(set->nraw) if(!kproc_allocation_release(&set->raw[--set->nraw]))
         panic("shared exec allocation released twice");
+    kproc_abort_mapping_owners(process,set->space,&set->mapping_members);
     kproc_release(set->parent);kaspace_put(set->space);kfree(set);
 }
 BOOL kproc_shared_exec_ready(const KPROC *p,KTHREAD *thread)
 {
+    BOOL pending_ok=p && !p->pending_space;
+#if KPROC_SHARED_INTERP
+    if(p && p->shared_exec && p->shared_exec->preparing && p->shared_exec->preparing_interp &&
+        p->pending_space && p->pending_as==kaspace_backend(p->pending_space) &&
+        p->shared_interp_recipe && !p->load_parent) pending_ok=TRUE;
+#endif
     return p && p->shared_exec && !p->shared_exec->committed && p->pd &&
         !p->started && !p->completed && p->disposal_state==PROCESS_LIVE &&
-        !p->active_space && !p->pending_space && !p->kstack_phys && !p->clone_identity_only &&
+        !p->active_space && pending_ok && !p->kstack_phys && !p->clone_identity_only &&
         (thread ? p->threads==thread && !*kthread_next_link(thread) : !p->threads) &&
         procmem_gen(p->user_start)==p->tpa_gen && procmem_gen(p->env_start)==p->env_gen;
+}
+LONG kproc_shared_exec_take_mapping_owners(KPROC *p,KASPACE_MEMBER **result)
+{
+    struct shared_exec_regions *set=p?p->shared_exec:NULL;
+    if(!set || set->preparing || set->committed || !result || *result ||
+        !set->mapping_members || p->prepared_mapping_members!=set->mapping_members ||
+        p->mapping_preparation!=MAPPING_PREPARED) return EACCDN;
+    *result=set->mapping_members;set->mapping_members=NULL;
+    return E_OK;
+}
+BOOL kproc_shared_exec_constructible(const KPROC *p)
+{
+    return kproc_shared_exec_ready(p,NULL) && !p->shared_exec->preparing &&
+        p->shared_exec->mapping_members &&
+        p->prepared_mapping_members==p->shared_exec->mapping_members &&
+        p->mapping_preparation==MAPPING_PREPARED;
 }
 BOOL kproc_shared_exec_active(PD *pd)
 {
@@ -205,11 +228,35 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     set=kalloc(sizeof(*set));if(!set) return ENSMEM;memset(set,0,sizeof(*set));
     set->space=kaspace_share(source->active_space);set->parent=kproc_retain_live(source);
     set->legacy=legacy;
+    set->preparing=TRUE;
+#if KPROC_SHARED_INTERP
+    set->preparing_interp=interpreted;
+#endif
     set->inherited_stack=stack_bytes(source);
     set->inherited_core=source->lim_core;set->inherited_data=source->lim_data;
     set->inherited_priority=source->prio;
     target->shared_exec=set;
     if(!set->space || !set->parent) { error=ENSMEM;goto failed; }
+    /* Mapping admission may wait for an enclosing mutation. Do it before
+     * borrowing, image staging or opening the no-yield permission journal. */
+    error=shared_failure_point()?ENSMEM:
+        kproc_prepare_loaded_mapping_owners(target,source,set->space,&set->mapping_members);
+    if(error) goto failed;
+    if(!kproc_shared_exec_ready(target,NULL) || source->pd!=run ||
+        source->active_space!=set->space || target->creator!=source->pd ||
+        (VADDR)target->pd->p_lowtpa!=(VADDR)(uintptr_t)target->user_start ||
+        (VADDR)target->pd->p_env!=(VADDR)(uintptr_t)target->env_start ||
+        (VADDR)target->pd->p_hitpa<(VADDR)(uintptr_t)(target->user_start+sizeof(PD)) ||
+        (VADDR)target->pd->p_hitpa>(VADDR)(uintptr_t)target->user_start+procmem_size(target->user_start)) {
+        error=EIMBA;goto failed;
+    }
+    if(!legacy && !interpreted) {
+        image=heap_find(source,target->load_va);
+        if(!image || image->kind!=UH_LOADED || image->pd!=target->pd || image->pages!=target->load_pages ||
+            !layout_valid_in(&target->layout,FALSE,image->va,image->va+(VADDR)image->pages*USER_PAGE_SIZE)) {
+            error=EIMBA;goto failed;
+        }
+    }
     if(!kproc_user_access(source->pd,(VADDR)(uintptr_t)target->pd,sizeof(PD),TRUE)) {error=EACCDN;goto failed;}
 #define SHARED_TRY(call) do {error=shared_failure_point()?ENSMEM:(call);if(error) goto failed;}while(0)
 #if KPROC_SHARED_INTERP
@@ -284,22 +331,8 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         SHARED_TRY(kproc_reservation_duplicate(&source->shared_exec->logical[i],&set->logical[set->nlogical]));set->nlogical++;
     }
     SHARED_TRY(shared_source_images(set,source));
-    heap=kaspace_heap(set->space);
-    for(i=0;i<heap->count;i++) SHARED_TRY(shared_logical(set,source,heap->blocks[i].va,
-                                                     (VADDR)heap->blocks[i].pages*USER_PAGE_SIZE,
-                                                     (heap->blocks[i].flags&KASPACE_HEAP_GUARD)?0:ASPACE_PROT_USER));
-#if CONF_WITH_MMAP
-    {
-        MMAP_REGION *region;
-        for(region=kaspace_mmap(set->space)->regions;region;region=region->next) {
-            /* PROT_NONE is still a canonical reservation. Retain its exact
-             * lazy/inaccessible ownership without acquiring any USER grant. */
-            if(region->prot && !(region->prot&ASPACE_PROT_USER)) { error=EINVFN;goto failed; }
-            SHARED_TRY(shared_logical(set,source,region->address,region->length,
-                                      region->prot?ASPACE_PROT_USER:0));
-        }
-    }
-#endif
+    /* Ordinary heap/mmap lifetime is owned solely by #968 membership and
+     * exact attachments, not a second R2 sweep of all visible mappings. */
     set->stack_bytes=SHARED_STACK_BYTES;
 #if KPROC_SHARED_INTERP
     if(interpreted) set->stack_bytes+=DL_START_CAPACITY;
@@ -337,6 +370,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         startup->entry=target->interp_entry;
     }
 #endif
+    set->preparing=FALSE;
     return E_OK;
 failed:
     kproc_shared_exec_abort(target);return error;
