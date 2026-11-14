@@ -5,6 +5,7 @@
 #include "ptos.h"
 #include "cuis.h"
 #include "gem_exit.h"
+#include "autoconf.h"
 #define VERIFY(c) do { if (!(c)) return 0x8b00 | __LINE__; } while (0)
 static int32_t process(uint32_t function, uint64_t a, uint64_t b, uint64_t c, uint64_t d)
 {
@@ -87,23 +88,53 @@ static int synchronous_exit_checks(short *global)
 {
     char tail[3] = { 1,'n',0 };
     int32_t session, token, image, result;
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    uint32_t environment=0;
+#endif
     short message[8], pid;
     unsigned mode, variant;
     static const char roles[] = { 'n','f','t' };
     static const short codes[] = { 0x1234,0x0400,-1 };
     session = native_ui(CUIS_SESSION_START,0,0,0,0);
     VERIFY(session >= 0);
-    for (mode = 4; mode <= 6; mode += 2) {
+    for (mode = 4; mode <=
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+         104
+#else
+         6
+#endif
+         ; mode = mode == 4 ? 6 : mode == 6 ? 104 : 106) {
         for (variant = 0; variant < sizeof(roles); variant++) {
             tail[1] = roles[variant];
             token = native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
             VERIFY(token > 0);
-            image = process(0x4b,3,(uintptr_t)"APPS\\GEMCHILD.PRG",(uintptr_t)tail,0);
+            image = process(0x4b,3,(uintptr_t)
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+                (mode==6?"APPS\\GEMCHILD.PRG":"APPS\\GEMPIE.TOS"),
+#else
+                "APPS\\GEMCHILD.PRG",
+#endif
+                (uintptr_t)tail,0);
             VERIFY(image > 0);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+            if(mode!=6) environment=(uintptr_t)((BASEPAGE *)(uintptr_t)image)->p_env;
+#endif
             VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_BIND,token,(uint32_t)image) == 0);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+            result=process(0x4b,mode,0,(uint32_t)image,0);
+            if(mode==104) {
+                int32_t waited;
+                VERIFY(result>0);
+                waited=process(0x13a,result,0,0,0);
+                VERIFY((uint32_t)waited>>16==(uint32_t)result &&
+                    (waited&65535)==(variant==1?0x400:variant==2?255:0x34));
+                VERIFY(process(0x13a,result,1,0,0)==-33);
+            } else VERIFY(result==(variant?(mode==4 && variant==1?0x400:0xffff):0x1234));
+#else
             if (mode == 4)
                 VERIFY(process(0x4b,4,0,(uint32_t)image,0) == -32);
             VERIFY(process(0x4b,6,0,(uint32_t)image,0) == (variant ? 0xffff : 0x1234));
+#endif
             result = native_ui(CUIS_CHILD_RESULT,session,0,0,0);
             VERIFY(result > 0 && (result & 0xffff) == (uint16_t)codes[variant]);
             pid = (short)((uint32_t)result >> 16);
@@ -112,8 +143,20 @@ static int synchronous_exit_checks(short *global)
             VERIFY(native_ui(CUIS_CHILD_RESULT,session,0,0,0) == 0);
             VERIFY(native_ui(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0) == -36);
             VERIFY(receive(message,0,global) == MU_TIMER);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+            if(mode!=6) {
+                VERIFY(process(0x49,(uint32_t)image,0,0,0)==0);
+                VERIFY(process(0x49,environment,0,0,0)==0);
+            }
+#endif
         }
     }
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    {
+        static const char text[]="x32 shared-Pexec full result, canonical reap and independent CH_EXIT: PASS\r\n";
+        (void)process(0x40,1,sizeof(text)-1,(uintptr_t)text,0);
+    }
+#endif
     return 0;
 }
 

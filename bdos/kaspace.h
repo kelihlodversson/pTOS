@@ -84,6 +84,7 @@ typedef struct {
     UWORD flags; /* zero for ordinary allocations */
 } KASPACE_HEAP_BLOCK;
 #define KASPACE_HEAP_GUARD 1U
+#define KASPACE_HEAP_RETIRED 2U /* exact birth remains until final holder exits */
 typedef struct {
     KASPACE_HEAP_BLOCK *blocks;
     ULONG count, capacity;
@@ -162,6 +163,7 @@ BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_id
  * reservation lease without allocation; release after its last conflicting
  * owner, outside exclusion. These are not public destructive-mutation bypasses. */
 BOOL kaspace_retire_private(KASPACE *space, VADDR address, VADDR bytes);
+BOOL kaspace_retire_heap(KASPACE *space, VADDR address, UQUAD birth);
 BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes);
 /* Backend-only: requires an exact published, consumed, in-flight retirement
  * owner and no live conflicting holder. Ordinary mutations cannot use this. */

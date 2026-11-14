@@ -25,6 +25,7 @@
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
 #include "shared_vm_probe.h"
+void shared_vm_run_managed_tests(void);
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
 #include "../../include/mman.h"
@@ -33,6 +34,103 @@ static void shared_vm_diagnostic(const char *label,long value)
     char number[11];unsigned i;
     for(i=0;i<8;i++) number[i]="0123456789abcdef"[((unsigned long)value>>(28-4*i))&15];
     number[8]='\r';number[9]='\n';number[10]=0;conws(label);conws(number);
+}
+static void shared_vm_tail(char *,char,struct shared_vm_probe *);
+#include "../../include/shared_pexec_test.h"
+static void shared_vm_snapshot(SHARED_PEXEC_SNAPSHOT *out)
+{
+    ptest_assert_msg(trap_1_wll(GEMDOS_PCLONE,(long)out,SHARED_PEXEC_SNAPSHOT_QUERY)==0,
+        "shared resources: resident allocation-free snapshot");
+}
+static void shared_vm_snapshot_log(const char *boundary,const SHARED_PEXEC_SNAPSHOT *out)
+{
+    unsigned i;
+    conws(boundary);conws("\r\n");
+    for(i=0;i<SP_COUNT;i++) {
+        shared_vm_diagnostic("resource index=",i);
+        shared_vm_diagnostic("resource count=",(long)out->count[i]);
+    }
+}
+static void shared_vm_conserved(const SHARED_PEXEC_SNAPSHOT *before,const SHARED_PEXEC_SNAPSHOT *after)
+{
+    unsigned i;
+    for(i=0;i<SP_COUNT;i++) {
+        /* Empty root page tables and grown owner vectors remain legitimate
+         * root resources. Record them from the FIRST launch, and account
+         * their exact live blocks instead of replacing/resetting a baseline. */
+        if(i==SP_TABLE_PAGES || i==SP_VECTOR_BLOCKS || i==SP_VECTOR_BYTES ||
+           i==SP_KHEAP_PAGES || i==SP_KHEAP_BLOCKS) continue;
+        if(before->count[i]!=after->count[i]) {
+            shared_vm_diagnostic("unconserved resource index=",i);
+            shared_vm_diagnostic("before=",(long)before->count[i]);
+            shared_vm_diagnostic("after=",(long)after->count[i]);
+        }
+        ptest_assert_msg(before->count[i]==after->count[i],"shared resources: exact final owner conservation");
+    }
+    ptest_assert_msg(after->count[SP_KHEAP_BLOCKS]-before->count[SP_KHEAP_BLOCKS]==
+        after->count[SP_VECTOR_BLOCKS]-before->count[SP_VECTOR_BLOCKS],
+        "shared resources: all remaining metadata blocks belong to recorded root vectors");
+}
+static void shared_vm_multiple_lifetime(void)
+{
+    static struct shared_vm_probe probes[3];
+    static SHARED_PEXEC_SNAPSHOT snapshots[4];
+    char tail[12];BASEPAGE *image;char *env;long pid,result;unsigned spin,n;
+    memset(probes,0,sizeof(probes));memset(snapshots,0,sizeof(snapshots));
+    shared_vm_snapshot(&snapshots[0]);
+    shared_vm_tail(tail,'u',probes);
+    image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+    ptest_assert_msg((long)image>0,"shared resources: stage multi-child source");
+    if((long)image<=0) return;
+    env=image->p_env;pid=Pexec(104,0,image,0);
+    ptest_assert_msg(pid>0,"shared resources: publish independently managed source");
+    if(pid>0) {
+        for(spin=0;spin<512 && !probes[0].started && !probes[0].error;spin++) (void)Syield();
+        ptest_assert_msg(probes[0].started && !probes[0].error && probes[1].child_pid &&
+            probes[2].child_pid && probes[1].child_pid!=probes[2].child_pid,
+            "shared resources: distinct PROCESSes with two simultaneously surviving children");
+        shared_vm_snapshot(&snapshots[1]);
+        ptest_assert_msg(snapshots[1].count[SP_RAW_HOLDS]>snapshots[0].count[SP_RAW_HOLDS] &&
+            snapshots[1].count[SP_RESERVATION_HOLDS]>snapshots[0].count[SP_RESERVATION_HOLDS] &&
+            snapshots[1].count[SP_THREADS]>=snapshots[0].count[SP_THREADS]+3,
+            "shared resources: published PROCESS, THREAD, raw and logical owners counted");
+        probes[0].gate=1;result=Pwaitpid(pid,0,0);
+        ptest_assert_msg((result>>16)==pid && (result&65535)==0x32,
+            "shared resources: parent completes before both live children");
+        shared_vm_snapshot(&snapshots[2]);
+        ptest_assert_msg(snapshots[2].count[SP_RAW_HOLDS]>snapshots[0].count[SP_RAW_HOLDS] &&
+            snapshots[2].count[SP_RETIRED_HEAP]>=snapshots[0].count[SP_RETIRED_HEAP]+2,
+            "shared resources: retired parent's exact stack births and raw owners remain retained");
+        for(n=1;n<=2;n++) {
+            ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,
+                "shared resources: each remaining child independently holds source metadata");
+            probes[n].gate=1;
+            for(spin=0;spin<512 && !probes[n].done && !probes[n].error;spin++) (void)Syield();
+            for(spin=0;spin<8;spin++) (void)Syield();
+            ptest_assert_msg(probes[n].done && probes[n].steps==1 && !probes[n].error,
+                "shared resources: each orphan executes a grandchild after ancestor retirement");
+            ptest_assert_msg(Pwaitpid(probes[n].child_pid,1,0)==-33,
+                "shared resources: orphan observation creates no foreign reaping authority");
+        }
+    }
+    ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared resources: final allocation release before root destruction");
+    shared_vm_snapshot(&snapshots[3]);
+    for(n=0;n<4;n++) shared_vm_snapshot_log(n==0?"SHARED before creation":n==1?
+        "SHARED after publication":n==2?"SHARED after first PROCESS exit":"SHARED after final owner and observer",&snapshots[n]);
+    shared_vm_conserved(&snapshots[0],&snapshots[3]);
+    /* Reuse the actual released source PD and reject its old PID. */
+    {
+        BASEPAGE *again=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",0);
+        ptest_assert_msg((long)again>0,"shared resources: stage after source PD retirement");
+        if((long)again>0) {
+            char *again_env=again->p_env;
+            ptest_assert_msg(again==image,"shared resources: retired source PD address is actually reused");
+            ptest_assert_msg(Pwaitpid(pid,1,0)==-33 && Pexec(4,0,again,0)==0,
+                "shared resources: reused PD has fresh authority and retired PID is not a child");
+            ptest_assert_msg(Mfree(again)==0 && Mfree(again_env)==0,"shared resources: reused incarnation final release");
+        }
+    }
+    conws("native shared-VM four-boundary resource conservation and multiple surviving orphans: tested\r\n");
 }
 #if defined(__mc68000__)
 static void shared_vm_prg(void)
@@ -121,13 +219,45 @@ static void shared_vm_interpreted_peers(void)
     }
     conws("native shared-VM simultaneous and completed-image peers: tested\r\n");
 }
+static void shared_vm_interpreted_orphan(void)
+{
+    static struct shared_vm_probe probes[2];
+    BASEPAGE *image;char tail[12],*env;long pid,result;unsigned spin;
+    memset(probes,0,sizeof(probes));shared_vm_tail(tail,'e',probes);
+    image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+    ptest_assert_msg((long)image>0,"shared interpreter orphan: stage source");if((long)image<=0) return;
+    env=image->p_env;pid=Pexec(104,0,image,0);
+    ptest_assert_msg(pid>0,"shared interpreter orphan: source PID");
+    if(pid>0) {
+        for(spin=0;spin<512 && !probes[0].started && !probes[0].error;spin++) (void)Syield();
+        ptest_assert_msg(probes[0].started && !probes[0].error,"shared interpreter orphan: independent child publication");
+        probes[0].gate=1;result=Pwaitpid(pid,0,0);
+        ptest_assert_msg((result>>16)==pid && (result&65535)==0x32,"shared interpreter orphan: source completes first");
+        for(spin=0;spin<512 && !probes[1].started && !probes[1].error;spin++) (void)Syield();
+        ptest_assert_msg(probes[1].started && !probes[1].done && !probes[1].error,
+            "shared interpreter orphan: interpreter relocated and started after source retirement");
+        ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,"shared interpreter orphan: metadata retained by live interpreter");
+        probes[1].gate=1;
+        for(spin=0;spin<512 && !probes[1].done && !probes[1].error;spin++) (void)Syield();
+        for(spin=0;spin<8;spin++) (void)Syield();
+        ptest_assert_msg(probes[1].done && !probes[1].error,
+            "shared interpreter orphan: normal main, AUXV/RELRO and finalizers survive source death");
+        ptest_assert_msg(Pwaitpid(probes[1].child_pid,1,0)==-33,"shared interpreter orphan: independent orphan completion");
+    }
+    ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared interpreter orphan: final original owner release");
+    conws("native shared-VM parent-first interpreter execution and finalization: tested\r\n");
+}
 static void shared_vm_interpreted(void)
 {
     static const char envspec[]="CHECK=phase5\0\0";
     unsigned mode;
     for(mode=0;mode<2;mode++) {
-        BASEPAGE *bp=(BASEPAGE *)Pexec(PE_LOAD,"C:\\SHRINT.ELF","",envspec);
+        static SHARED_PEXEC_SNAPSHOT before,after;
+        BASEPAGE *bp;
         char *env;long rc;
+        memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+        shared_vm_snapshot(&before);
+        bp=(BASEPAGE *)Pexec(PE_LOAD,"C:\\SHRINT.ELF","",envspec);
         if((long)bp<=0) shared_vm_interpreted_result(2+mode,(long)bp);
         ptest_assert_msg((long)bp>0,"shared interpreter: PE_LOAD");if((long)bp<=0) continue;
         env=bp->p_env;rc=Pexec(mode?104:4,0,bp,0);
@@ -142,6 +272,12 @@ static void shared_vm_interpreted(void)
         }
         ptest_assert_msg(Mfree(bp)==0,"shared interpreter: final image cleanup");
         ptest_assert_msg(Mfree(env)==0,"shared interpreter: final environment cleanup");
+        shared_vm_snapshot(&after);
+        shared_vm_diagnostic("shared interpreter current-root regions before=",(long)before.count[SP_CURRENT_MMAP]);
+        shared_vm_diagnostic("shared interpreter current-root regions after=",(long)after.count[SP_CURRENT_MMAP]);
+        shared_vm_diagnostic("shared interpreter current-root backing before=",(long)before.count[SP_CURRENT_PRIVATE]);
+        shared_vm_diagnostic("shared interpreter current-root backing after=",(long)after.count[SP_CURRENT_PRIVATE]);
+        shared_vm_conserved(&before,&after);
     }
     conws("native shared-VM PT_INTERP Pexec4/104 standard entry: tested\r\n");
 }
@@ -256,6 +392,64 @@ static void shared_vm_relaunch_rejection(void)
 }
 
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+static void shared_vm_preparation_sweep(void)
+{
+    unsigned interpreted;
+    for(interpreted=0;interpreted<
+#if defined(TEST_WITH_ELF_SHARED)
+        2
+#else
+        1
+#endif
+        ;interpreted++) {
+        unsigned step;long last=0;
+        for(step=1;step<256;step++) {
+            static SHARED_PEXEC_SNAPSHOT before,after;
+            BASEPAGE saved,*image=(BASEPAGE *)Pexec(3,
+                interpreted?"C:\\SHRINT.ELF":"C:\\PIEPROBE.TOS","","CHECK=phase5\0\0");
+            char *env;long result,seen;
+            ptest_assert_msg((long)image>0,"shared failure sweep: original authenticated PE_LOAD");
+            if((long)image<=0) break;
+            env=image->p_env;saved=*image;
+            memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+            shared_vm_snapshot(&before);
+            ptest_assert_msg(trap_1_wll(GEMDOS_PCLONE,0,0xc8940900UL+step)==0,
+                "shared failure sweep: inject next exact preparation prefix");
+            result=Pexec(step&1?4:104,0,image,0);
+            seen=trap_1_wll(GEMDOS_PCLONE,0,0xc8940a00UL);last=seen;
+            (void)trap_1_wll(GEMDOS_PCLONE,0,0xc8940900UL);
+            if(seen<(long)step && result>=0) {
+                if(!(step&1) && result>0) {
+                    long waited=Pwaitpid(result,0,0);
+                    ptest_assert_msg((waited>>16)==result && (waited&65535)==(interpreted?77:0),
+                        "shared failure sweep: final noninjected asynchronous publication");
+                } else ptest_assert_msg(result==(interpreted?77:0),
+                    "shared failure sweep: final noninjected synchronous publication");
+                ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared failure sweep: final target release");
+                break;
+            }
+            ptest_assert_msg(result<0 && seen==(long)step,
+                "shared failure sweep: injected prefix fails before runnable publication");
+            shared_vm_snapshot(&after);shared_vm_conserved(&before,&after);
+            ptest_assert_msg(!memcmp(&saved,image,sizeof(saved)) && image->p_env==env,
+                "shared failure sweep: original basepage/environment and startup recipe preserved");
+            ptest_assert_msg(Pwaitpid(-1,1,0)==-33,
+                "shared failure sweep: no unexpected completion, stale controller or public child");
+            result=Pexec(4,0,image,0);
+            if(result!=(interpreted?77:0)) {
+                shared_vm_diagnostic("shared failed retry prefix=",step);
+                shared_vm_diagnostic("shared failed retry result=",result);
+            }
+            ptest_assert_msg(result==(interpreted?77:0),
+                "shared failure sweep: same original image executes after complete rollback");
+            ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared failure sweep: caller final ownership release");
+            if(result!=(interpreted?77:0)) break; /* preserve failure; later prefixes cannot run */
+        }
+        ptest_assert_msg(step<256 && last>16,"shared failure sweep: all finite meaningful acquisition prefixes executed");
+        shared_vm_diagnostic(interpreted?"shared interpreted preparation points=":"shared static preparation points=",last);
+    }
+    conws("native shared-VM exhaustive preparation prefixes and exact rollback conservation: tested\r\n");
+}
 static void shared_vm_constructor_rollback(void)
 {
     unsigned asynchronous,stage;
@@ -341,24 +535,26 @@ static void shared_vm_orphan(char role)
     probe.gate=1;
     for(spin=0;spin<512 && !probe.done && !probe.error;spin++) (void)Syield();
     for(spin=0;spin<8;spin++) (void)Syield();
-    ptest_assert_msg(probe.done && !probe.error,"shared orphan: child stages a further image and exits independently");
+    ptest_assert_msg(probe.done && probe.steps==1 && !probe.error,
+        "shared orphan: runnable orphan executes and reaps a new shared PROCESS after source retirement");
     if(probe.staged) ptest_assert_msg(Mvalidate(0,(void *)(uintptr_t)probe.staged,256,0)==-25 &&
         Mvalidate(0,(void *)(uintptr_t)probe.environment,1,0)==-25,
         "shared orphan: child allocations reclaimed before shared root dies");
     if(probe.grandchild) ptest_assert_msg(Mvalidate(0,(void *)(uintptr_t)probe.grandchild,256,0)==-25 &&
         Mvalidate(0,(void *)(uintptr_t)probe.grand_environment,1,0)==-25,
-        "shared orphan: unstarted grandchild allocations reclaimed exactly once");
+        "shared orphan: executed grandchild allocations reclaimed exactly once");
     ptest_assert_msg(Pwaitpid(probe.child_pid,1,0)==-33,"shared orphan: unrelated PROCESS cannot consume an orphan result");
     ptest_assert_msg(Mfree(image)==0,"shared orphan: source image final release");
     ptest_assert_msg(Mfree(env)==0,"shared orphan: source environment final release");
     if(role=='g') {
-        ptest_assert_msg(probe.worker_started && probe.steps==0 && !probe.second_tid,
+        ptest_assert_msg(probe.worker_started && probe.steps==1 && !probe.second_tid,
             "shared group: cancellation stops own worker without running its continuation");
         if(probe.worker_stack) ptest_assert_msg(Mfree((void *)(uintptr_t)probe.worker_stack)==0,
             "shared group: stopped worker stack released after independent child");
         conws("native shared-VM PROCESS-local group cancellation and orphan survival: tested\r\n");
     }
     conws("native shared-VM running orphan and nested unstarted cleanup: tested\r\n");
+    conws("native shared-VM orphan grandchild execution after source retirement: tested\r\n");
 }
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
 static void shared_vm_controller(void *argument)
@@ -440,10 +636,95 @@ static void shared_vm_last_thread(void)
     }
     conws("native shared-VM final-THREAD completion and competing waiter: tested\r\n");
 }
+static SHARED_PEXEC_PROTECTED shared_protected;
+static struct shared_vm_probe shared_origin;
+static void shared_vm_cancel_peer(void *argument)
+{
+    (void)argument;
+    /* First dispatch occurs after the protected mode4 caller has blocked. */
+    (void)trap_1_ww(GEMDOS_PTERMGRP,0x64);
+    Pterm(95);
+}
+static void shared_vm_clone_source(void *argument)
+{
+    struct shared_vm_probe *probe=argument;unsigned mode;char tail[12];long tid;
+    char environment[2]={0,0};
+    probe->pid=Pgetpid();tid=trap_1_wll(GEMDOS_PCLONE,0,0xc8920103UL);
+    if(Psetlimit(0x100,-1)!=1024UL*1024 || Mvalidate(0,(void *)0x7f001000UL,4,0)!=-25) {
+        probe->error=90;return;
+    }
+    for(mode=0;mode<3;mode++) {
+        BASEPAGE *image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",environment);char *env;long result;
+        if((long)image<=0) {probe->controller_result=(uint32_t)(long)image;probe->error=91;return;}
+        env=image->p_env;result=Pexec(104,0,image,0);
+        if(result<=0 || Pwaitpid(result,1,0)!=0) {probe->error=92;return;}
+        if(mode==0) result=Pwait();
+        else if(mode==1) result=Pwait3(0,0);
+        else {unsigned spin;for(spin=0;spin<8;spin++) (void)Syield();result=Pwaitpid(result,0,0);}
+        if((result&65535) || (result>>16)<=0 || Mfree(image) || Mfree(env)) {probe->error=93;return;}
+    }
+    shared_vm_tail(tail,'n',probe);
+    if(Pexec(0,"C:\\PIEPROBE.TOS",tail,environment)!=0x35 || probe->error ||
+       trap_1_wll(GEMDOS_PCLONE,0,0xc892070aUL)==Pgetpid() ||
+       trap_1_wll(GEMDOS_PCLONE,0,0xc892070bUL)==tid ||
+       trap_1_wll(GEMDOS_PCLONE,0,0xc8920103UL)!=tid) {probe->error=94;return;}
+    {
+        BASEPAGE *image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","\1f",environment);
+        struct ptos_clone_args args={0};void *stack=(void *)Malloc(16384);
+        if((long)image<=0 || (long)stack<=0) {probe->error=95;return;}
+        probe->worker_stack=(uint32_t)(uintptr_t)stack;
+        args.flags=CLONE_VM|CLONE_SAME_PROCESS;args.entry=shared_vm_cancel_peer;
+        args.stack_base=stack;args.stack_size=16384;
+        if(trap_1_wll(GEMDOS_PCLONE,(long)&args,sizeof(args))<=0) {probe->error=96;return;}
+        shared_protected.image=(uint32_t)(uintptr_t)image;
+        (void)trap_1_wll(GEMDOS_PCLONE,(long)&shared_protected,SHARED_PEXEC_PROTECTED_QUERY);
+        probe->error=97; /* enclosing safe checkpoint must not return */
+    }
+}
+static void shared_vm_source_origins(void)
+{
+    struct ptos_clone_args args={0};void *stack;long pid,result,limit;
+    int32_t process_pid=-1;
+    static SHARED_PEXEC_SNAPSHOT before,after;
+    memset(&shared_origin,0,sizeof(shared_origin));memset(&shared_protected,0,sizeof(shared_protected));
+    memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+    limit=Psetlimit(0x100,1024UL*1024);
+    shared_vm_snapshot(&before);
+    stack=(void *)Malloc(32768);
+    ptest_assert_msg((long)stack>0,"shared origins: generic PROCESS initial stack");if((long)stack<=0) return;
+    args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD;
+    args.entry=shared_vm_clone_source;args.argument=&shared_origin;
+    args.stack_base=stack;args.stack_size=32768;
+    args.child_pid=&process_pid;
+    result=trap_1_wll(GEMDOS_PCLONE,(long)&args,sizeof(args));
+    pid=result>0?process_pid:result;
+    ptest_assert_msg(pid>0,"shared origins: independent generic Pclone PROCESS");
+    if(pid>0) {
+        result=Pwaitpid(pid,0,0);
+        shared_vm_diagnostic("shared source-origin completion=",result);
+        shared_vm_diagnostic("shared source-origin error=",shared_origin.error);
+        shared_vm_diagnostic("shared source-origin load result=",shared_origin.controller_result);
+        shared_vm_diagnostic("shared protected child result=",shared_protected.result);
+        shared_vm_diagnostic("shared protected cancellation pending=",shared_protected.pending);
+        ptest_assert_msg((result>>16)==pid && (result&65535)==0x64 && !shared_origin.error,
+            "shared origins: canonical waits, nested source launches and protected cancellation complete");
+        ptest_assert_msg(shared_protected.result==65535 && shared_protected.pending &&
+            shared_protected.tid_before && shared_protected.tid_before==shared_protected.tid_after,
+            "shared cancellation: full child result and authentic owner restored before pending group exit");
+        ptest_assert_msg(Pwaitpid(pid,1,0)==-33,"shared cancellation: exactly one final PROCESS completion");
+    }
+    if(shared_origin.worker_stack) ptest_assert_msg(Mfree((void *)(uintptr_t)shared_origin.worker_stack)==0,
+        "shared origins: cancelled peer's user stack released after its final THREAD");
+    ptest_assert_msg(Mfree(stack)==0,"shared origins: original source stack reclaimed");
+    shared_vm_snapshot(&after);shared_vm_conserved(&before,&after);
+    (void)Psetlimit(0x100,limit);
+    conws("native shared-VM Pclone and nested source convergence, wait ABIs and protected cancellation: tested\r\n");
+}
 void shared_vm_run_managed_tests(void)
 {
     ptest_begin("shared-VM managed THREAD lifetime");
     shared_vm_last_thread();
+    shared_vm_source_origins();
     ptest_pass();
 }
 static void shared_vm_managed_worker(void)
@@ -613,6 +894,7 @@ void test_pie_load(void)
 #endif
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
+    shared_vm_multiple_lifetime();
     shared_vm_basic();
     shared_vm_status();
     shared_vm_staged_retirement();
@@ -634,9 +916,13 @@ void test_pie_load(void)
 #if defined(TEST_WITH_ELF_SHARED)
     shared_vm_interpreted();
     shared_vm_interpreted_peers();
+    shared_vm_interpreted_orphan();
 #endif
 #if defined(__mc68000__)
     shared_vm_prg();
+#endif
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    shared_vm_preparation_sweep();
 #endif
 #endif
     ptest_pass();

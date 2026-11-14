@@ -70,7 +70,7 @@ int main(void)
 {
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     if(_base->p_cmdlin[0]==10 && (_base->p_cmdlin[1]=='s' || _base->p_cmdlin[1]=='o' ||
-        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m')) {
+        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m' || _base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e' || _base->p_cmdlin[1]=='n')) {
         uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
         for(i=3;i<11;i++) {
             unsigned char c=(unsigned char)_base->p_cmdlin[i];
@@ -80,6 +80,45 @@ int main(void)
             address=(address<<4)|c;
         }
         probe=(struct shared_vm_probe *)address;
+        if(_base->p_cmdlin[1]=='n') {
+            struct shared_vm_probe nested={0};unsigned mode;
+            /* Ordinary mode0 has an isolated root. Its own stack mailbox,
+             * not its caller's pointer, belongs to this logical owner. */
+            probe=&nested;
+            probe->pid=Pgetpid();probe->worker_tid=trap_1_wll(GEMDOS_PCLONE,0,0xc8920103UL);
+            for(mode=0;mode<2;mode++) {
+                BASEPAGE *bp=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS","",0);char *env;long result;
+                if((long)bp<=0) {probe->error=81;Pterm(94);}
+                env=bp->p_env;result=Pexec(mode?104:4,0,bp,0);
+                if(mode && result>0) {
+                    long waited=Pwaitpid(result,0,0);
+                    if((waited>>16)!=result || (waited&65535) || Pwaitpid(result,1,0)!=-33) probe->error=82;
+                } else if(mode || result) probe->error=83;
+                if(Mfree(bp) || Mfree(env)) probe->error=84;
+            }
+            if((uint32_t)Pgetpid()!=probe->pid ||
+               (uint32_t)trap_1_wll(GEMDOS_PCLONE,0,0xc8920103UL)!=probe->worker_tid) probe->error=85;
+            probe->done=1;Pterm(probe->error?94:0x35);
+        }
+        if(_base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e') {
+            unsigned n,spin,count=_base->p_cmdlin[1]=='u'?2:1;
+            for(n=1;n<=count;n++) {
+                char tail[12];BASEPAGE *staged;long pid;
+                probe_tail(tail,_base->p_cmdlin[1]=='e'?'e':'b',probe+n);
+                staged=(BASEPAGE *)Pexec(3,_base->p_cmdlin[1]=='e'?"C:\\SHRINT.ELF":"C:\\PIEPROBE.TOS",
+                                         tail,"CHECK=phase5\0\0");
+                if((long)staged<=0) {probe->error=61;Pterm(94);}
+                (probe+n)->staged=(uint32_t)(uintptr_t)staged;
+                (probe+n)->environment=(uint32_t)(uintptr_t)staged->p_env;
+                pid=Pexec(104,0,staged,0);
+                if(pid<=0) {probe->error=62;Pterm(94);}
+                (probe+n)->child_pid=(uint32_t)pid;
+            }
+            probe->started=1;
+            for(spin=0;spin<512 && !probe->gate;spin++) (void)Syield();
+            if(!probe->gate) {probe->error=63;Pterm(94);}
+            Pterm(0x32);
+        }
         if(_base->p_cmdlin[1]=='m') {
             volatile uint32_t *resident=(volatile uint32_t *)(uintptr_t)probe->staged;
             volatile uint32_t *absent=(volatile uint32_t *)(uintptr_t)probe->environment;
@@ -120,7 +159,9 @@ int main(void)
             if((long)grandchild<=0) {probe->error=12;Pterm(94);}
             probe->grandchild=(uint32_t)(uintptr_t)grandchild;
             probe->grand_environment=(uint32_t)(uintptr_t)grandchild->p_env;
-            probe->done=1;Pterm(0x33);
+            if(Pexec(4,0,grandchild,0)!=0 || Mfree(grandchild) ||
+               Mfree((void *)(uintptr_t)probe->grand_environment)) {probe->error=15;Pterm(94);}
+            probe->steps++;probe->done=1;Pterm(0x33);
         }
         if(_base->p_cmdlin[1]=='o' || _base->p_cmdlin[1]=='g') {
             char tail[12];BASEPAGE *staged;

@@ -90,6 +90,10 @@ typedef struct {
 BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
         const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
         UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+BOOL procmem_hold_lifetime(const void *base,UQUAD allocation,const void *expected_owner,
+        UQUAD owner_number,void *owner_identity,PROCMEM_HOLD *result);
+#endif
 BOOL procmem_hold_info(const PROCMEM_HOLD *hold, PROCMEM_HOLD_INFO *result);
 /* An already-owned hold may be duplicated after original PROCESS retirement.
  * The supplied reference must duplicate the same canonical owner identity. */

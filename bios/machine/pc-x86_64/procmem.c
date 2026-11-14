@@ -445,3 +445,19 @@ void procmem_stats(PROCMEM_STATS *stats)
     stats->free_pages = free_pages;
     stats->bad_frees = bad_frees;
 }
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#include "shared_pexec_test.h"
+void procmem_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
+{
+    const struct alloc *a;
+    out->count[SP_RAW_ALLOCS]=live_allocs;
+    out->count[SP_RAW_FREE_PAGES]=free_pages;
+    out->count[SP_RAW_BAD_FREES]=bad_frees;
+    for(a=allocs;a;a=a->next) {
+        out->count[SP_RAW_HOLDS]+=a->hold_count;
+        out->count[SP_RAW_PINS]+=a->pins;
+        if(a->reclaim) out->count[SP_RAW_RETIRED]++;
+    }
+}
+#endif

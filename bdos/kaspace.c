@@ -32,6 +32,7 @@ struct kaspace_lease {
     void *owner_identity;
     UWORD reservation_rights, reservation_flags;
     BOOL captured, retire_private, retire_running, retire_committed;
+    UQUAD retire_heap_birth;
     VADDR retire_address, retire_bytes;
     KASPACE_LEASE *next;
 };
@@ -81,6 +82,7 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     lease->owner_identity = NULL; lease->exact_address = lease->exact_bytes = 0;
     lease->reservation_rights = lease->reservation_flags = 0; lease->captured = FALSE;
     lease->retire_address=lease->retire_bytes=0; lease->retire_private=lease->retire_running=lease->retire_committed=FALSE;
+    lease->retire_heap_birth=0;
     lease->space = space;
     lease->first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
     lease->last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
@@ -563,6 +565,7 @@ LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
     if (!kaspace_share(lease->space)) { kfree(copy); return ENSMEM; }
     *copy = *lease; copy->identity=++lease_ids; copy->reservation_ticket = ++reservation_tickets;
     copy->retire_address=copy->retire_bytes=0; copy->retire_private=copy->retire_running=copy->retire_committed=FALSE;
+    copy->retire_heap_birth=0;
     copy->first=copy->exact_address&~(VADDR)(USER_PAGE_SIZE-1);
     copy->last=(copy->exact_address+copy->exact_bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
     copy->next = lease->space->leases; lease->space->leases = copy;
@@ -573,7 +576,8 @@ LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
 /* Consume a stopped owner's range without allocating a second registry.
  * The existing overlapping reservation lease becomes the no-fail cleanup owner.
  * Expanding its mutation barrier never expands its exact authenticated bounds. */
-static BOOL retire_range(KASPACE *space, VADDR address, VADDR bytes, BOOL private)
+static BOOL retire_range(KASPACE *space, VADDR address, VADDR bytes, BOOL private,
+                         UQUAD heap_birth)
 {
     KASPACE_LEASE *lease;
     VADDR first,last;
@@ -589,6 +593,7 @@ static BOOL retire_range(KASPACE *space, VADDR address, VADDR bytes, BOOL privat
             first<=lease->last && lease->first<=last && !lease->retire_bytes) {
             lease->retire_address=address; lease->retire_bytes=bytes;
             lease->retire_private=private;
+            lease->retire_heap_birth=heap_birth;
             if (first<lease->first) lease->first=first;
             if (last>lease->last) lease->last=last;
             return TRUE;
@@ -596,7 +601,45 @@ static BOOL retire_range(KASPACE *space, VADDR address, VADDR bytes, BOOL privat
     return FALSE;
 }
 BOOL kaspace_retire_private(KASPACE *space, VADDR address, VADDR bytes)
-{ return retire_range(space,address,bytes,TRUE); }
+{ return retire_range(space,address,bytes,TRUE,0); }
+
+/* A shared stack is an ordinary reservation. Descendants must still be able
+ * to duplicate that exact birth while its backing is held after owner exit.
+ * The existing final cleanup fence also owns removal of its canonical record. */
+static void remove_retired_heap(KASPACE *space,VADDR address,VADDR bytes,UQUAD birth)
+{
+    ULONG i;
+    for(i=0;i<space->heap.count;i++) {
+        KASPACE_HEAP_BLOCK *block=&space->heap.blocks[i];
+        if(block->va==address && block->reservation==birth &&
+           (VADDR)block->pages*USER_PAGE_SIZE==bytes &&
+           (block->flags&KASPACE_HEAP_RETIRED)) {
+            memmove(block,block+1,(--space->heap.count-i)*sizeof(*block));
+            return;
+        }
+    }
+    panic("retired heap lost its exact reservation birth");
+}
+BOOL kaspace_retire_heap(KASPACE *space,VADDR address,UQUAD birth)
+{
+    ULONG i;VADDR bytes;BOOL immediate;
+    if(!space || !birth) return FALSE;
+    for(i=0;i<space->heap.count;i++) {
+        KASPACE_HEAP_BLOCK *block=&space->heap.blocks[i];
+        if(block->va!=address || block->reservation!=birth) continue;
+        if(block->flags&KASPACE_HEAP_RETIRED) return FALSE;
+        bytes=(VADDR)block->pages*USER_PAGE_SIZE;
+        immediate=kaspace_mapping_can_change(space->backend,address,bytes);
+        block->flags|=KASPACE_HEAP_RETIRED;
+        if(!retire_range(space,address,bytes,TRUE,birth)) {
+            block->flags&=~KASPACE_HEAP_RETIRED;
+            return FALSE;
+        }
+        if(immediate) remove_retired_heap(space,address,bytes,birth);
+        return TRUE;
+    }
+    return FALSE;
+}
 BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes)
 {
     VADDR first=address&~(VADDR)(USER_PAGE_SIZE-1);
@@ -681,6 +724,9 @@ static void reap_retired(KASPACE *space)
                 panic("retired reservation lost private ownership");
         } else aspace_unborrow_retired(space->backend,lease->retire_address,lease->retire_bytes);
         if (!lease->retire_committed) panic("retirement backend skipped its ownership commit");
+        if(lease->retire_heap_birth)
+            remove_retired_heap(space,lease->retire_address,lease->retire_bytes,
+                                lease->retire_heap_birth);
         for (at=&space->leases;*at && *at!=lease;at=&(*at)->next) { }
         if (!*at) panic("retirement cleanup owner lost during reentry");
         *at=lease->next; kfree(lease); roots++;
@@ -989,4 +1035,38 @@ failed:
 
 #if CONF_WITH_NATIVE_SCHED
 #include "kaspace_permission.h"
+#endif
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#include "shared_pexec_test.h"
+void kaspace_shared_snapshot(const ASPACE *current,SHARED_PEXEC_SNAPSHOT *out)
+{
+    const KASPACE *space;
+    for(space=spaces;space;space=space->next) {
+        const KASPACE_LEASE *lease;ULONG i;
+        out->count[SP_SPACES]++;out->count[SP_SPACE_REFS]+=space->refs;
+        aspace_shared_snapshot(space->backend,out);
+        for(lease=space->leases;lease;lease=lease->next) {
+            out->count[SP_LEASES]++;
+            if(lease->reservation_ticket) out->count[SP_RESERVATION_HOLDS]++;
+            if(lease->retire_bytes) out->count[SP_FENCES]++;
+        }
+        out->count[SP_HEAP_RESERVATIONS]+=space->heap.count;
+        for(i=0;i<space->heap.count;i++)
+            if(space->heap.blocks[i].flags&KASPACE_HEAP_RETIRED) out->count[SP_RETIRED_HEAP]++;
+        if(space->heap.blocks) out->count[SP_VECTOR_BLOCKS]++;
+        out->count[SP_VECTOR_BYTES]+=(uint64_t)space->heap.capacity*sizeof(*space->heap.blocks);
+#if CONF_WITH_MMAP
+        {
+            const MMAP_REGION *region;
+            for(region=space->mmap.regions;region;region=region->next) {
+                out->count[SP_MMAP_REGIONS]++;
+                if(space->backend==current) out->count[SP_CURRENT_MMAP]++;
+            }
+        }
+#else
+        UNUSED(current);
+#endif
+    }
+}
 #endif

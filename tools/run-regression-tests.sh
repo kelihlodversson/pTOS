@@ -588,6 +588,8 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
         'native shared-VM full-status/fault and canonical wait: tested' \
         'native shared-VM unstarted-child source retirement: tested' \
         'native shared-VM running orphan and nested unstarted cleanup: tested' \
+        'native shared-VM orphan grandchild execution after source retirement: tested' \
+        'native shared-VM four-boundary resource conservation and multiple surviving orphans: tested' \
         'native shared-VM inherited limits and exact stack authority: tested' \
         'native shared-VM live-target and self-relaunch ownership rejection: tested'; do
         if ! grep -aqF "$marker" "$suite_log"; then
@@ -607,6 +609,15 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
        ! grep -aqF 'native shared-VM constructor/observer/prepublication rollback and retry: tested' "$suite_log"; then
         record "native shared-Pexec rollback" FAIL "configured factory injections did not execute"
     fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        for marker in \
+            'native shared-VM exhaustive preparation prefixes and exact rollback conservation: tested' \
+            'native shared-VM Pclone and nested source convergence, wait ABIs and protected cancellation: tested'; do
+            if ! grep -aqF "$marker" "$suite_log"; then
+                record "native shared-Pexec ownership/cancellation" FAIL "missing consumer assertion: $marker"
+            fi
+        done
+    fi
     if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
        ! grep -aqF 'native shared-VM absent file backing and resident file-COW: tested' "$suite_log"; then
         record "native shared-Pexec file mappings" FAIL "file backing/COW assertions did not execute"
@@ -614,7 +625,8 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
     if grep -q '^#define CONF_WITH_ELF_SHARED 1' "$top/obj/autoconf.h"; then
         for marker in \
             'native shared-VM PT_INTERP Pexec4/104 standard entry: tested' \
-            'native shared-VM simultaneous and completed-image peers: tested'; do
+            'native shared-VM simultaneous and completed-image peers: tested' \
+            'native shared-VM parent-first interpreter execution and finalization: tested'; do
             if ! grep -aqF "$marker" "$suite_log"; then
                 record "native shared-Pexec interpreter" FAIL "missing consumer assertion: $marker"
             fi

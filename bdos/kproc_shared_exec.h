@@ -42,11 +42,38 @@ static LONG shared_source_images(struct shared_exec_regions *set,KPROC *source)
         }
     return E_OK;
 }
+/* Generic Pclone compatibility metadata is deliberately supervisor-only.
+ * Retain its exact allocation/mapping lifetime without inventing USER rights. */
+static BOOL shared_supervisor_compat(KPROC *source,void *base,UQUAD generation)
+{
+    VADDR page,address=(VADDR)(uintptr_t)base,bytes=procmem_size(base);
+    if(!source->clone_compat || source->shared_exec || !source->clone_guarded ||
+       source->clone_compat!=source->active_space || !bytes ||
+       procmem_owner(base)!=source->pd || procmem_gen(base)!=generation ||
+       !((base==source->user_start && generation==source->tpa_gen && (source->clone_maps&1)) ||
+         (base==source->env_start && generation==source->env_gen && (source->clone_maps&2)))) return FALSE;
+    for(page=address;page<address+bytes;page+=USER_PAGE_SIZE) {
+        PADDR physical;UWORD rights;
+        if(!aspace_translate(source->aspace,page,&physical,&rights) ||
+           physical!=procmem_phys_of(page) || (rights&ASPACE_PROT_USER) ||
+           !(rights&ASPACE_PROT_WRITE)) return FALSE;
+    }
+    return TRUE;
+}
 static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,UQUAD generation)
 {
     LONG error;ULONG i;
     if(set->nraw==SHARED_RAW) return ENSMEM;
     for(i=0;i<set->nraw;i++) if(set->raw[i].token.base==(VADDR)(uintptr_t)base) return E_OK;
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    if(shared_supervisor_compat(source,base,generation)) {
+        KPROC *owner=kproc_retain_live(source);
+        if(!owner) return ENSMEM;
+        error=procmem_hold_lifetime(base,generation,source->pd,kproc_ref_number(owner),owner,
+                                    &set->raw[set->nraw].token)?E_OK:ENSMEM;
+        if(error) kproc_release(owner);
+    } else
+#endif
     if(procmem_owner(base)==source->pd)
         error=kproc_allocation_hold(source->pd,base,generation,0,procmem_size(base),ASPACE_PROT_USER,
                                    &set->raw[set->nraw]);
@@ -61,6 +88,24 @@ static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,
     if(!error) set->nraw++;
     return error;
 }
+static LONG shared_compat_logical(struct shared_exec_regions *set,KPROC *source,
+                                  void *base,UQUAD generation,UQUAD *birth)
+{
+    KASPACE_RESERVATION_INFO info;KPROC *owner;LONG error;
+    VADDR bytes=base==source->user_start?(VADDR)(source->user_end-source->user_start):
+                                      (VADDR)(source->env_end-source->env_start);
+    if(!shared_supervisor_compat(source,base,generation))
+        return shared_logical(set,source,(VADDR)(uintptr_t)base,bytes,ASPACE_PROT_USER);
+    if(set->nlogical==SHARED_REGIONS) return ENSMEM;
+    if(!*birth && !(*birth=kaspace_reservation_next())) return ENSMEM;
+    owner=kproc_retain_live(source);if(!owner) return ENSMEM;
+    info.address=(VADDR)(uintptr_t)base;info.bytes=bytes;info.identity=*birth;
+    info.rights=0;info.flags=KASPACE_RESERVATION_CAPTURED|KASPACE_RESERVATION_INACCESSIBLE;
+    error=kaspace_reservation_hold_captured(set->space,&info,info.address,bytes,0,
+                kproc_ref_number(owner),owner,&set->logical[set->nlogical]);
+    if(error) kproc_release(owner);else set->nlogical++;
+    return error;
+}
 static void shared_retire_stack(struct shared_exec_regions *set)
 {
     KASPACE_HEAP *heap;ULONG i,n;
@@ -72,9 +117,8 @@ static void shared_retire_stack(struct shared_exec_regions *set)
         ULONG pages=set->guard_birth?(n?set->stack_pages-1:1):set->stack_pages;
         for(i=0;i<heap->count;i++) if(heap->blocks[i].va==address && heap->blocks[i].reservation==birth) break;
         if(i==heap->count || heap->blocks[i].pages!=pages ||
-            !kaspace_retire_private(set->space,address,(VADDR)pages*USER_PAGE_SIZE))
+            !kaspace_retire_heap(set->space,address,birth))
             panic("shared exec stack lost its exact reservation");
-        memmove(&heap->blocks[i],&heap->blocks[i+1],(--heap->count-i)*sizeof(heap->blocks[0]));
     }
     set->stack=0;
 }
@@ -157,6 +201,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         if(!image || image->kind!=UH_LOADED || image->pd!=target->pd || image->pages!=target->load_pages ||
             !layout_valid_in(&target->layout,FALSE,image->va,image->va+(VADDR)image->pages*USER_PAGE_SIZE)) return EIMBA;
     }
+    if(shared_failure_point()) return ENSMEM;
     set=kalloc(sizeof(*set));if(!set) return ENSMEM;memset(set,0,sizeof(*set));
     set->space=kaspace_share(source->active_space);set->parent=kproc_retain_live(source);
     set->legacy=legacy;
@@ -166,7 +211,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     target->shared_exec=set;
     if(!set->space || !set->parent) { error=ENSMEM;goto failed; }
     if(!kproc_user_access(source->pd,(VADDR)(uintptr_t)target->pd,sizeof(PD),TRUE)) {error=EACCDN;goto failed;}
-#define SHARED_TRY(call) do {error=(call);if(error) goto failed;}while(0)
+#define SHARED_TRY(call) do {error=shared_failure_point()?ENSMEM:(call);if(error) goto failed;}while(0)
 #if KPROC_SHARED_INTERP
     if(interpreted) SHARED_TRY(shared_interp_prepare(source,target,set));
 #endif
@@ -221,10 +266,10 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
                             target->interpreter_layout.seg[i].memsz,ASPACE_PROT_USER));
 #endif
     }
-    SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->user_start,
-                              (VADDR)(source->user_end-source->user_start),ASPACE_PROT_USER));
-    SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)source->env_start,
-                              (VADDR)(source->env_end-source->env_start),ASPACE_PROT_USER));
+    SHARED_TRY(shared_compat_logical(set,source,source->user_start,source->tpa_gen,
+                                   &source->reservation_birth[0]));
+    SHARED_TRY(shared_compat_logical(set,source,source->env_start,source->env_gen,
+                                   &source->reservation_birth[1]));
     if(!source->legacy && owns_top_stack(source)) SHARED_TRY(shared_logical(set,source,USER_STACK_TOP-stack_bytes(source),stack_bytes(source),ASPACE_PROT_USER));
     if(source->has_image) for(i=0;i<source->layout.nseg;i++)
         if(source->layout.seg[i].memsz) SHARED_TRY(shared_logical(set,source,source->layout.seg[i].vaddr,
@@ -261,13 +306,13 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
 #endif
     if(set->stack_bytes>set->inherited_stack) set->stack_bytes=set->inherited_stack;
     set->stack_pages=set->stack_bytes/USER_PAGE_SIZE+1;
-    set->stack=kproc_uheap_alloc(source->pd,set->stack_pages*USER_PAGE_SIZE);
+    set->stack=shared_failure_point()?0:kproc_uheap_alloc(source->pd,set->stack_pages*USER_PAGE_SIZE);
     if(!set->stack) {error=ENSMEM;goto failed;}
     heap=kaspace_heap(set->space);
     for(i=0;i<heap->count;i++) if(heap->blocks[i].va==set->stack) break;
     if(i==heap->count) panic("new shared exec stack missing");
     set->stack_birth=heap->blocks[i].reservation;
-    if(!ordinary_heap_room(source) || !(guard_birth=kaspace_reservation_next())) {error=ENSMEM;goto failed;}
+    if(shared_failure_point() || !ordinary_heap_room(source) || !(guard_birth=kaspace_reservation_next())) {error=ENSMEM;goto failed;}
     heap=kaspace_heap(set->space); /* growth may replace the vector */
     if(!aspace_release_lazy(kaspace_backend(set->space),set->stack,USER_PAGE_SIZE)) {error=EACCDN;goto failed;}
     body=set->stack+USER_PAGE_SIZE;
@@ -278,7 +323,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     set->guard_birth=guard_birth;
     for(i=0;i<set->stack_bytes/USER_PAGE_SIZE;i++) {
         VADDR page=body+(VADDR)i*USER_PAGE_SIZE;
-        int backed=aspace_translate(kaspace_backend(set->space),page,NULL,NULL)?1:
+        int backed=shared_failure_point()?-1:aspace_translate(kaspace_backend(set->space),page,NULL,NULL)?1:
             kaspace_heap_demand_page(set->space,page,ASPACE_PROT_WRITE);
         if(backed!=1) {error=ENSMEM;goto failed;}
     }

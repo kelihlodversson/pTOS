@@ -478,6 +478,10 @@ LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
 LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+void kproc_shared_test_fail_after(UWORD after);
+UWORD kproc_shared_test_steps(void);
+#endif
 #endif
 
 #endif

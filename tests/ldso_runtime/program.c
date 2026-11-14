@@ -1,6 +1,10 @@
 #include <stdint.h>
 #include "../../lib/ldso/runtime.h"
 #include "../../include/mman.h"
+#ifdef LDSO_TEST_SHARED_VM
+#include "../pie_load/shared_vm_probe.h"
+static struct shared_vm_probe *shared_probe;
+#endif
 extern int answer(void), dynvalue, dynbss;
 int startup_log;
 int leaf(void) { return 11; }             /* executable interposes library leaf */
@@ -61,10 +65,32 @@ static int launch_child(void)
 #endif
 int app_main(uint32_t argc, const char *const *argv, const char *const *envp, uint32_t finalizer)
 {
+#ifdef LDSO_TEST_SHARED_VM
+    if(argc==3 && argv[1] && argv[1][0]=='e' && !argv[1][1] && argv[2]) {
+        uintptr_t address=0;unsigned i,spin;
+        for(i=0;i<8;i++) {
+            unsigned c=(unsigned char)argv[2][i];
+            if(c>='0' && c<='9') c-='0';
+            else if(c>='a' && c<='f') c=c-'a'+10;
+            else return 89;
+            address=(address<<4)|c;
+        }
+        if(argv[2][8]) return 89;
+        shared_probe=(struct shared_vm_probe *)address;
+        shared_probe->started=1;
+        for(spin=0;spin<512 && !shared_probe->gate;spin++)
+            (void)dl_syscall(0xff,0,0,0,0,0,0);
+        if(!shared_probe->gate) {shared_probe->error=71;return 89;}
+    }
+#endif
 #ifdef LDSO_TEST_SHARING
     if (argc == 3 && argv[1] && argv[1][0] == 'c' && argv[2]) return child(argv);
 #endif
-    if (argc != 1 || !argv[0] || argv[1] || !envp[0]) return 90;
+    if (
+#ifdef LDSO_TEST_SHARED_VM
+        !shared_probe &&
+#endif
+        (argc != 1 || !argv[0] || argv[1] || !envp[0])) return 90;
     if (startup_log != 9123 || dynvalue != 9 || dynbss != 3 || answer() != 23) return 91;
     /* Main and interpreter RELRO are sealed too, not just Mmap-backed DSOs
      * (where the linker can make a RELRO: not the bare-metal ARM one). */
@@ -92,5 +118,12 @@ int app_main(uint32_t argc, const char *const *argv, const char *const *envp, ui
 }
 int app_after_fini(void)
 {
-    return startup_log == 9123456 && dynvalue == -7 ? 0 : 92;
+    int result=startup_log == 9123456 && dynvalue == -7 ? 0 : 92;
+#ifdef LDSO_TEST_SHARED_VM
+    if(shared_probe) {
+        if(result) shared_probe->error=72;
+        shared_probe->done=1;
+    }
+#endif
+    return result;
 }

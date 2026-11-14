@@ -51,7 +51,7 @@ static BOOL shared_interp_copy(ASPACE *from,ASPACE *to,const DL_IMAGE *plan,
         seg->filesz=load->filesz;seg->flags=load->flags;seg->src=NULL;
         for(at=0;at<load->memsz;at+=count) {
             count=load->memsz-at;if(count>USER_PAGE_SIZE) count=USER_PAGE_SIZE;
-            if(!aspace_copy_from_user(from,scratch,(VADDR)load->address+old_bias+at,count) ||
+            if(shared_failure_point() || !aspace_copy_from_user(from,scratch,(VADDR)load->address+old_bias+at,count) ||
                 !aspace_copy_to_user(to,(VADDR)load->address+bias+at,scratch,count)) return FALSE;
         }
     }
@@ -73,6 +73,7 @@ static LONG shared_interp_prepare(KPROC *source,KPROC *target,struct shared_exec
     /* The existing owning reference moves to the transaction, never to the
      * source root. Abort puts exactly this reference and metadata back. */
     set->original_pending=target->pending_space;target->pending_space=NULL;target->pending_as=NULL;
+    if(shared_failure_point()) return ENSMEM;
     if(program->type==3) {
         bytes=(UQUAD)program->size+interp->size+program->align-1+interp->align-1;
         bytes=(bytes+USER_PAGE_SIZE-1)&~(UQUAD)(USER_PAGE_SIZE-1);
@@ -98,14 +99,14 @@ static LONG shared_interp_prepare(KPROC *source,KPROC *target,struct shared_exec
     ibias=(at-interp->base+interp->align-1)&~(UQUAD)(interp->align-1);
     end=(UQUAD)interp->base+ibias+interp->size;
     if(bias>0xffffffffUL || ibias>0xffffffffUL || end>(UQUAD)va+bytes) return EPLFMT;
-    scratch=kalloc(USER_PAGE_SIZE);if(!scratch) return ENSMEM;
+    scratch=shared_failure_point()?NULL:kalloc(USER_PAGE_SIZE);if(!scratch) return ENSMEM;
     if(!shared_interp_copy(kaspace_backend(set->original_pending),source->aspace,program,recipe->bias,(ULONG)bias,&layout,scratch) ||
        !shared_interp_copy(kaspace_backend(set->original_pending),source->aspace,interp,recipe->ibias,(ULONG)ibias,&interpreter,scratch)) {
         kfree(scratch);return EIMBA;
     }
     kfree(scratch);
     /* Padding and holes retain ownership while granting no user access. */
-    if(!aspace_protect_private(source->aspace,va,bytes,0) ||
+    if(shared_failure_point() || !aspace_protect_private(source->aspace,va,bytes,0) ||
        !protect_layout(source->aspace,&layout) || !protect_layout(source->aspace,&interpreter)) return EACCDN;
     set->relro_address[0]=(VADDR)program->relro+bias;set->relro_bytes[0]=program->relro_size;
     set->relro_address[1]=(VADDR)interp->relro+ibias;set->relro_bytes[1]=interp->relro_size;
@@ -126,7 +127,7 @@ static LONG shared_interp_stack(KPROC *target,struct shared_exec_regions *set,VA
     ULONG bias=(ULONG)(target->layout.entry-recipe->program.entry);
     ULONG ibias=(ULONG)(target->interp_entry-recipe->interpreter.entry);
     if(capacity>DL_START_CAPACITY) capacity=DL_START_CAPACITY;
-    stack=kalloc(capacity);if(!stack) return ENSMEM;
+    stack=shared_failure_point()?NULL:kalloc(capacity);if(!stack) return ENSMEM;
     memset(&info,0,sizeof(info));info.phdr=recipe->program.phdr+bias;
     info.phnum=recipe->program.phnum;info.entry=target->layout.entry;
     info.base=ibias;info.pagesz=USER_PAGE_SIZE;info.basepage=(ULONG)(uintptr_t)target->pd;

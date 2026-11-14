@@ -8,14 +8,18 @@ Implementation slice (private test kernels only until independent acceptance):
 
 Workstream B status (unaccepted, test-only implementation)
 -------------------------------------------------------
-Base: accepted integrated epic 5a490963f51c08d1dddcef60cfc86c2daa082e89.
+Current base: accepted actual epic be81959ea54a13c1ab6f4946086590083710d929.
+Normal reconciliation2a43ed804 preserves existing4f1981 consumer history.
+Whole-consumer acceptance is blocked on ordinary mapping attachment/retirement
+across shared-root creators (#891/#892), documented in pexec-clone-migration.txt.
+The expanded native failure sweep is a failing regression, not accepted evidence.
 The historical dd3 prerequisite was rejected for retained-lazy authority beyond
 its exact ticket extent. Focused correction #958 is now integrated, with all
 four actual-epic workflows and native/compatibility validation accepted. This
 consumer preserves that correction; prerequisite acceptance is not Phase5
 consumer acceptance.
 
-Normal merge 1903d5041ff8d3b70a8686c10dd4d191834c96f9 retains both the previous
+Historical pre-#966 merge 1903d5041ff8d3b70a8686c10dd4d191834c96f9 retains both the previous
 consumer and accepted epic histories. Fresh actual static-ELF trap suites at
 that exact reconciliation pass x32 FAT24/0, ARM FAT27/0/PFS28/0 and m68k040
 FAT26/0/PFS27/0, with five shutdown checks each. Independent review verifies
@@ -48,15 +52,17 @@ Additional draft implementation:
 - Canonical PROCESS wait claims use PROCESS number/TID identity, skip another
   waiter's claimed zombie and release before cancellation checkpoints.
 
-Existing native fixtures now include running orphan, unstarted-child retirement,
-leader-first/final-THREAD completion, worker-created THREAD/join, inherited
-limits, file-backed/COW mappings, live/self relaunch rejection and six generic
-constructor/observer/publication failures. These do not cover the complete
-acceptance matrix: multiple surviving children, an orphan executing a further
-child, all shared-preparation failures, exact native resource conservation,
-PROT_NONE/PD-reuse/interpreter retirement, complete wait/cancellation and GUI
-observation remain unaccepted. Direct nested MMU construction also requires
-the #713 continuation-owner handoff described in pexec-clone-migration.txt.
+Existing fixtures cover running orphans that execute another shared PROCESS,
+multiple simultaneous surviving children, four-boundary resource snapshots,
+source-PD reuse, leader-first/final-THREAD completion, worker-created THREAD/join,
+inherited limits, file-backed/COW mappings, self/live relaunch rejection,
+six factory failures, and a shared-preparation prefix sweep. Interpreted
+parent-first and generic/nested-source fixtures are being verified. A green
+component or earlier source result does not establish final-head acceptance.
+#966 resolves the old #713 continuation-owner dependency. The new ordinary
+mapping lifetime dependency prevents complete repeated-interpreter reclamation.
+Full final native/compatibility/GUI/pinned evidence and whole-owner review remain
+pending; see phase5-acceptance.txt and current PR956/#894 ledgers.
 Successful execution is not proof of complete shared-ASPACE allocation lifetime.
 
 Hosted production startup, permissions, wait claims and RELRO tests use modeled
@@ -95,3 +101,17 @@ logical rights and independent FILE_BACKING owner; missing pages and file-COW
 remain materializable through that authenticated owner. KPROC-only image/raw/
 stack views retain captured receipts. No cleanup fence, broad source image hold
 or merely readable PTE grants new file-backing authority.
+
+Post-#966 lifetime corrections
+-----------------------------
+Retired shared stack guard/body records keep their immutable ordinary birth,
+extent and rights until the last conflicting R2 release. The existing R4 cleanup
+fence removes the exact marked metadata after its backend commit. Early failure
+before any hold uses immediate removal. Fences never become access authority.
+Generic clone supervisor metadata can be held by an explicitly authenticated
+no-access R1 lifetime token and inaccessible captured R2 witness. Public USER
+hold authentication is unchanged; private fork snapshots explicitly retain any
+inherited top-stack ownership. An inherited scalar limit never creates a stack.
+Protected completion/join waits continue raw scheduler blocking while cleanup
+suppresses cancellation, retaining synchronous claims until delivery can occur.
+No additional reaper or nested execution mechanism is introduced.

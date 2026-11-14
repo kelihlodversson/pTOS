@@ -183,7 +183,7 @@ int main(void)
 void panic(const char *format, ...) { (void)format; abort(); }
 
 BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
-{ CHECK(va==0x30000 && bytes==8192 && kaspace_mapping_can_change(as,va,bytes)); retired_private++;return TRUE; }
+{ CHECK((va==0x30000 || va==0x4000) && bytes==8192 && kaspace_mapping_can_change(as,va,bytes)); retired_private++;return TRUE; }
 
 void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes)
 { CHECK(va==0x40000 && bytes==13 && kaspace_mapping_can_change(as,va,bytes));retired_borrows++; }

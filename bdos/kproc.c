@@ -179,6 +179,7 @@ struct kproc {
     KPROC *clone_controller_identity; /* owning if the root is tracked */
 #endif
     BOOL clone_identity_only; /* no executable context/startup contract yet */
+    BOOL clone_top_stack; /* private fork snapshot owns its inherited top stack */
     BOOL completion_pending;
     UWORD pending_status;
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
@@ -644,6 +645,7 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     target->prio = source->prio;
     target->lim_core = source->lim_core;
     target->lim_data = source->lim_data;
+    target->stack_size = source->stack_size;
     return TRUE;
 }
 #if CONF_WITH_PRIVATE_CLONE
@@ -661,6 +663,8 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
         target->stack_low = source->stack_low;
         target->stack_top = source->stack_top;
         target->entry = source->entry;
+        target->clone_top_stack = !source->shared_exec &&
+            (!source->clone_guarded || source->clone_top_stack);
     }
     return TRUE;
 }
@@ -2615,7 +2619,7 @@ static VADDR stack_bytes(const KPROC *kproc)
 static BOOL owns_top_stack(const KPROC *kproc)
 {
 #if CONF_WITH_NATIVE_SCHED
-    return !kproc->shared_exec;
+    return !kproc->shared_exec && (!kproc->clone_guarded || kproc->clone_top_stack);
 #else
     UNUSED(kproc);
     return TRUE;
@@ -4372,6 +4376,18 @@ BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size)
 }
 
 #if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+static UWORD shared_fail_after,shared_steps;
+void kproc_shared_test_fail_after(UWORD after) {shared_fail_after=after;shared_steps=0;}
+UWORD kproc_shared_test_steps(void) {return shared_steps;}
+static BOOL shared_failure_point(void)
+{
+    shared_steps++;
+    return shared_fail_after && !--shared_fail_after;
+}
+#else
+static BOOL shared_failure_point(void) {return FALSE;}
+#endif
 #if KPROC_SHARED_INTERP
 #include "kproc_shared_interp.h"
 #endif

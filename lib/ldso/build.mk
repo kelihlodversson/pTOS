@@ -173,6 +173,9 @@ endif
 LDSO_APP_BASE = $(LDSO_APP_BASE-y)
 obj/ldso/test/soapp.elf: LDSO_RUNTIME_APP_LINK = -no-pie $(LDSO_APP_BASE)
 obj/ldso/test/soapp-pie.elf: LDSO_RUNTIME_APP_LINK = -pie -Wl,-z,noexecstack
+ifeq ($(CONF_WITH_SHARED_VM_PEXEC_TEST),y)
+obj/ldso/test/soapp-pie.elf: LDSO_TEST_DEFS-y += -DLDSO_TEST_SHARED_VM
+endif
 obj/ldso/test/soapp.elf obj/ldso/test/soapp-pie.elf: $(LDSO_TEST_START-y) tests/ldso_runtime/program.c $(LDSO_SYSCALL-y) $(LDSO_TEST_SUPPORT-y) obj/ldso/test/libdyn.so $(AUTOCONF_H)
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_TEST_DEFS-y) -nostdlib $(LDSO_RUNTIME_APP_LINK) \
 	  -Wl,--export-dynamic,--hash-style=sysv,-e,_start,--dynamic-linker,$(LDSO_INTERP-y) \

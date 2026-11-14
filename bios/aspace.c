@@ -1203,3 +1203,22 @@ LONG aspace_clone(ASPACE *source, ASPACE **out)
 #endif
 
 #endif /* CONF_WITH_USER_ASPACE */
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#include "shared_pexec_test.h"
+void aspace_shared_snapshot(const ASPACE *as,SHARED_PEXEC_SNAPSHOT *out)
+{
+    ULONG i;
+    out->count[SP_TABLE_PAGES]+=aspace_table_pages(as);
+    out->count[SP_PRIVATE_PAGES]+=aspace_private_pages(as);
+    out->count[SP_MAP_PINS]+=as->npins;
+    for(i=0;i<as->npins;i++) {
+        out->count[SP_MAP_PIN_BYTES]+=as->pins[i].bytes;
+        if(as->pins[i].retired) out->count[SP_RETIRED_PINS]++;
+    }
+    if(as->pages) out->count[SP_VECTOR_BLOCKS]++;
+    if(as->pins) out->count[SP_VECTOR_BLOCKS]++;
+    out->count[SP_VECTOR_BYTES]+=(uint64_t)as->capacity*sizeof(*as->pages)+
+                                (uint64_t)as->pin_capacity*sizeof(*as->pins);
+}
+#endif

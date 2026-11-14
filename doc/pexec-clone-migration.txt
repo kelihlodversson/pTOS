@@ -1,7 +1,9 @@
 Pexec creation and executable-transition policy audit (#894 / #895)
 =================================================================
 
-Accepted baseline: epic5a490963f51c08d1dddcef60cfc86c2daa082e89.
+Accepted baseline: epic be81959ea54a13c1ab6f4946086590083710d929.
+#966 actual-merge validation is accepted; source-PR CI alone was not used.
+Phase5 history4f1981 was reconciled by normal merge2a43ed804 with that epic.
 The mode table below records the original migration inventory. Shared4/104 now
 have a default-off test implementation; see shared-vm-pexec.txt and the current
 acceptance ledger, not this historical table, for implementation status.
@@ -21,11 +23,11 @@ Mode       Current entry/ownership                 Required migration
 3          Load-only staging; env/TPA owned        Preserve caller ownership and
            by caller, loader grant recorded;      failed mode4 rejection without
            may stage image in caller's heap.      consuming staged resources.
-4          Ring3 USER_ASPACE returns EINVFN        New distinct PROCESS+THREAD,
-           before changing image/ownership.       SHARE_VM; sync waits for full
-           Kernel/ROM legacy give-back remains.   PROCESS result, not same PID.
-104        No public implementation, EINVFN.      New distinct PROCESS+THREAD,
-                                                   SHARE_VM, async child PID.
+4          Test-gated NEW_PROCESS/SHARE_VM;        Full16 final PROCESS result;
+           production EINVFN remains.             canonical #909 one-time reap.
+           Kernel/ROM legacy give-back remains.
+104        Same test-gated creation policy;       Async PID and canonical wait.
+           production EINVFN remains.
 6          Existing staged image, isolated VM;     Preserve image-consuming launch
            check grant, prepare before changing   and rollback/error boundaries;
            env/TPA owner, then execute/free.       not shared mode4 semantics.
@@ -77,9 +79,10 @@ publication and stopped-stack reclamation are unchanged.
 
 Paths deliberately not yet migrated
 ----------------------------------
-- Direct nested proc_go and ROM/accessory launch still use their existing
-  continuation association. Already-prepared scheduler group attachment now
-  calls proc_clone_prepare_loaded_thread; it is no longer an unmigrated path.
+- Managed direct nested proc_go now uses #966's authenticated initial THREAD
+  and nested continuation association. Unmanaged ROM/accessory paths retain
+  their documented THREAD-less behavior. Already-prepared scheduler groups
+  call proc_clone_prepare_loaded_thread.
 - KPROC/env/TPA allocation and image-specific KASPACE construction still originate
   in loader policy. This increment consolidates initial managed THREAD creation;
   it does not claim complete Pexec -> proc_clone convergence.
@@ -125,25 +128,41 @@ policy, not attachment of two KPROC records to one page-table pointer. Keep4/104
 EINVFN until native x32/A32/m68k040 and owner gates pass. Non-MMU compatibility
 continues its old path, without claiming new shared-VM parity.
 
-Direct nested MMU continuation dependency (#713)
------------------------------------------------
-The full #894 creation-convergence requirement is not yet satisfied. During
-dispatch, schedule_launch deliberately uses direct prepare_launch/proc_go;
-kproc_prepare_user passes no thread_result to the factory. The nested image
-runs inside its caller's task, whose program/PROCESS identity stays the outer
-caller. ksched_exit_thread(nested_pd) therefore returns NULL.
+Accepted direct nested MMU continuation contract (#966 / #713)
+-------------------------------------------------------------
+The integrated scheduler supplies ksched_nested_prepare/cancel/enter/leave.
+Ordinary managed direct launch paths already call them. Preparation constructs
+an authentic initial KTHREAD through the existing loader/factory. The carrier
+retains its own PROCESS/THREAD anchor; the active nested frame owns the logical
+PROCESS/THREAD, cleanup tickets and stack lifetime. Leave restores the enclosing
+owner after stop and before final resource/observer publication.
 
-Creating a LOADED_PROCESS THREAD alone is unsafe: its membership would remain
-attached while kproc_prepare_thread_exit_handoff(nested_process,NULL) refuses
-the handoff, and ordinary teardown requires no attached THREADs. The missing
-contract belongs to scheduler/launcher execution ownership: associate the
-nested continuation with its THREAD, restore the outer association, and retire
-the nested execution resources only after all three architecture launchers
-have stopped using them. Current root admission cannot simply be reentered
-while entered/waiter_attached. Preserve these checks and the supported legacy
-behavior until #713 supplies that handoff; do not substitute a private loader
-scheduler or bypass the THREAD invariant. This is distinct from preemption,
-SMP, public PROCESS dispatch and the canonical #909 PROCESS reaper.
+Phase5 adds no redundant preparation, entry or leave calls. Its remaining
+shared-Pexec admission/publication checks authenticate ksched_exit_thread(run)'s
+logical PROCESS instead of comparing it with the suspended carrier anchor.
+Supported nested execution is a sole-THREAD synchronous continuation; public
+nested Pclone/Pthjoin/Ptermgrp restrictions, single CPU and cooperative admission
+remain unchanged. This is independent of production dispatch/preemption/SMP.
+
+Blocking ordinary-region consumer contract (#891 / #892 / #894)
+-------------------------------------------------------------
+MMAP_REGION and ordinary heap records currently belong to KASPACE. Generic
+NEW_PROCESS/CLONE_VM retains that root and its own execution stack; it does not
+acquire R2 lifetime attachments for every inherited region. Shared-Pexec does
+capture current ordinary regions, but runtime DSOs created after its publication
+have no PROCESS retirement owner. PROCESS teardown merely drops a root reference.
+Repeated interpreted shared launches retain obsolete runtime reservations until
+the surviving root dies and eventually exhaust the bounded consumer region set.
+
+Final reclamation before surviving-root destruction requires an owner-reviewed
+common attachment/retirement policy across all shared-root creators, including
+allocations born after peers already exist. Preserve exact births, rights,
+FILE_BACKING and split metadata, THREAD-vs-PROCESS completion and R1-R4 rollback.
+Creator-only unmap can destroy a still-runnable generic peer's code/data.
+Unmapping inside interpreter fini is also unsafe: it returns into DSO code and
+post-fini checks still read DSO data; faults/raw termination bypass fini.
+Do not increase bounds, omit maps from accounting, add another registry or
+substitute another root. Accepted R1-R4 and #966 are not the missing contract.
 
 Committed executable replacement design (200)
 --------------------------------------------

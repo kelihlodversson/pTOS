@@ -5,6 +5,11 @@
 #undef main
 #include "../bdos/kproc.c"
 WORD bootdev=2;
+/* Scheduling is modeled here; native regression checks owner/ticket nesting. */
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(!scope->active);scope->active=TRUE; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(scope->active);scope->active=FALSE; }
 /* This fixture has no file-backed reservations; an unexpected read is a bug. */
 LONG fileback_read(FILE_BACKING *backing,ULONG offset,void *buffer,ULONG size)
 { (void)backing;(void)offset;(void)buffer;(void)size;abort();return EREADF; }
@@ -74,6 +79,44 @@ static void retiring_construction_borrows(void)
         CHECK(metadata_live==metadata && physical_live==ram);
     }
 }
+static void supervisor_clone_metadata(void)
+{
+    KPROC owner={0};PD pd={0};struct shared_exec_regions held={0};
+    KASPACE_RESERVATION_INFO info={0};PROCMEM_HOLD_INFO raw;
+    ULONG ram=physical_live,metadata=metadata_live;UQUAD free_before=free_pages;
+    KPROC_ALLOCATION_HOLD refused={ {0,0,0} };
+    owner.pd=&pd;owner.number=234;owner.references=1;owner.clone_guarded=TRUE;
+    owner.aspace=aspace_create();owner.active_space=kaspace_adopt(owner.aspace);
+    owner.clone_compat=owner.active_space;owner.clone_maps=3;
+    owner.user_start=procmem_alloc(TEST_PAGE,0);owner.env_start=procmem_alloc(TEST_PAGE,0);
+    CHECK(owner.user_start && owner.env_start);
+    owner.user_end=owner.user_start+TEST_PAGE;owner.env_end=owner.env_start+TEST_PAGE;
+    owner.tpa_gen=procmem_gen(owner.user_start);owner.env_gen=procmem_gen(owner.env_start);
+    CHECK(procmem_set_owner(owner.user_start,&pd) && procmem_set_owner(owner.env_start,&pd));
+    CHECK(aspace_borrow(owner.aspace,(VADDR)(uintptr_t)owner.user_start,TEST_PAGE));
+    CHECK(aspace_borrow(owner.aspace,(VADDR)(uintptr_t)owner.env_start,TEST_PAGE));
+    kproc_list=&owner;held.space=owner.active_space;
+    CHECK(kproc_allocation_hold(&pd,owner.user_start,owner.tpa_gen,0,TEST_PAGE,
+              ASPACE_PROT_USER,&refused)==EACCDN);
+    CHECK(shared_raw(&held,&owner,owner.user_start,owner.tpa_gen)==E_OK);
+    CHECK(shared_raw(&held,&owner,owner.env_start,owner.env_gen)==E_OK);
+    CHECK(procmem_hold_info(&held.raw[0].token,&raw) && !raw.rights && raw.bytes==TEST_PAGE);
+    CHECK(shared_compat_logical(&held,&owner,owner.user_start,owner.tpa_gen,&owner.reservation_birth[0])==E_OK);
+    CHECK(shared_compat_logical(&held,&owner,owner.env_start,owner.env_gen,&owner.reservation_birth[1])==E_OK);
+    CHECK(!owns_top_stack(&owner));
+    CHECK(kproc_reservation_info(&pd,USER_STACK_TOP-TEST_PAGE,TEST_PAGE,&info)==EACCDN);
+    CHECK(kaspace_reservation_info(owner.active_space,(VADDR)(uintptr_t)owner.user_start,TEST_PAGE,&info));
+    CHECK(!info.rights && (info.flags&KASPACE_RESERVATION_INACCESSIBLE));
+    while(held.nlogical) CHECK(kproc_reservation_release(&held.logical[--held.nlogical]));
+    while(held.nraw) CHECK(kproc_allocation_release(&held.raw[--held.nraw]));
+    CHECK(owner.references==1);kproc_list=NULL;
+    aspace_unborrow(owner.aspace,(VADDR)(uintptr_t)owner.user_start,TEST_PAGE);
+    aspace_unborrow(owner.aspace,(VADDR)(uintptr_t)owner.env_start,TEST_PAGE);
+    CHECK(procmem_free(owner.user_start) && procmem_free(owner.env_start));
+    kaspace_put(owner.active_space);
+    CHECK(ram==physical_live && metadata==metadata_live && free_before==free_pages);
+    puts("Production generic-clone metadata: USER hold rejected, exact no-access lifetime, no phantom top stack and final conservation: PASS (host MMU)");
+}
 int main(void)
 {
     KPROC source={0},target={0};PD source_pd={0},target_pd={0},original_pd;
@@ -84,6 +127,7 @@ int main(void)
     PROG_LAYOUT original_layout={0};
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
     retiring_construction_borrows();
+    supervisor_clone_metadata();
     source.number=123;
     source.pd=&source_pd;source.aspace=aspace_create();source.active_space=kaspace_adopt(source.aspace);
     {
