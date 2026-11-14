@@ -760,6 +760,8 @@ static BOOL release_lazy_allowed(const ASPACE *as, UQUAD va, UQUAD bytes, BOOL r
 
 BOOL aspace_release_lazy_allowed(const ASPACE *as,UQUAD va,UQUAD bytes)
 { return release_lazy_allowed(as,va,bytes,FALSE); }
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ return release_lazy_allowed(as,va,bytes,TRUE); }
 
 static BOOL release_lazy_pages(ASPACE *as, UQUAD va, UQUAD bytes, BOOL retired)
 {

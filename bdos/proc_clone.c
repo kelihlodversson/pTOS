@@ -140,6 +140,7 @@ LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transactio
     tx->source = tx->process = NULL;
     tx->space = NULL;
     tx->source_space = NULL;
+    tx->mapping_members = NULL;
     tx->thread = NULL;
     tx->startup = NULL;
     tx->observer = NULL; tx->asynchronous = FALSE;

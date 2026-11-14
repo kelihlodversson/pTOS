@@ -17,6 +17,7 @@ static unsigned fail_allocation,fail_file_hold;
 static KASPACE_RESERVATION_HOLD *release_on_file_put;
 static KASPACE_RESERVATION_HOLD *release_on_lazy;
 static PD *mutating_pd;
+static VADDR foreign_leaf;
 static PD child;
 PD *run = &child;
 volatile LONG hz_200;
@@ -75,6 +76,8 @@ int aspace_fault_file(ASPACE *as,VADDR va,FILE_BACKING *backing,ULONG offset,UWO
 ULONG aspace_mapped_bytes(const ASPACE *as) { (void)as;return 0; }
 BOOL aspace_release_lazy_allowed(const ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;(void)va;(void)bytes;return TRUE; }
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;return !foreign_leaf || foreign_leaf<va || foreign_leaf-va>=bytes; }
 BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
 {
     unsigned i=0;
@@ -94,6 +97,7 @@ BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
 BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
 {
     unsigned i=0;
+    CHECK(aspace_release_lazy_retired_allowed(as,va,bytes));
     CHECK(kaspace_retirement_change(as,va,bytes,TRUE));as->releases++;
     while(i<as->pages) {
         if(as->page[i].address>=va && as->page[i].address-va<bytes) as->page[i]=as->page[--as->pages];
@@ -422,10 +426,51 @@ static void deferred_stack_hold(void)
     puts("Stopped stack hold: pending canonical allocation, no fresh alias/fault expansion, post-hold reclamation: PASS");
 }
 
+static void foreign_backend_leaf(void)
+{
+    ASPACE backend={0};
+    KASPACE *space=kaspace_adopt(&backend);
+    PD owner={0};
+    KASPACE_RESERVATION_INFO info;
+    KASPACE_RESERVATION_HOLD hold={0};
+    LONG mapping,adjacent;
+    UQUAD birth;
+    unsigned releases;
+    UWORD protection;
+    CHECK(space && kproc_create(&owner) && kproc_test_share_active(&owner,space));
+    mapping=kproc_mmap(&owner,0,USER_PAGE_SIZE,PROT_READ,MAP_PRIVATE,0,0);
+    adjacent=kproc_mmap(&owner,0,USER_PAGE_SIZE,PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS,0,0);
+    CHECK(mapping>0 && adjacent==mapping+(LONG)USER_PAGE_SIZE && file.references==1);
+    CHECK(kaspace_reservation_info(space,mapping,USER_PAGE_SIZE,&info));birth=info.identity;
+    CHECK(kaspace_mmap_demand_page(space,mapping,0)==1 &&
+          kaspace_mmap_demand_page(space,adjacent,0)==1);
+    /* Model a different backend owner replacing this leaf. Its physical
+     * ownership cannot be inferred from ordinary reservation metadata. */
+    foreign_leaf=mapping;
+    releases=backend.releases;
+    dispose(&owner);
+    CHECK(reservations(space)==1 && kaspace_mmap(space)->bytes==USER_PAGE_SIZE && file.references==1);
+    CHECK(backend.pages==1 && backend.releases==releases+1 && !backend.destroyed);
+    CHECK(aspace_translate(&backend,mapping,NULL,&protection) && protection==ASPACE_PROT_USER);
+    CHECK(!kaspace_reservation_info(space,mapping,USER_PAGE_SIZE,&info));
+    CHECK(kaspace_reservation_hold(space,birth,mapping,USER_PAGE_SIZE,ASPACE_PROT_USER,1,&owner,&hold)==EACCDN && !hold.ticket);
+    CHECK(!kaspace_mapping_can_change(&backend,mapping,USER_PAGE_SIZE) &&
+          !kaspace_materialization_change(&backend,mapping,USER_PAGE_SIZE,ASPACE_PROT_USER));
+    /* Only the foreign owner can remove its leaf. A subsequent ordinary
+     * mutation drain retries the still-accounted exact pending reservation. */
+    CHECK(kaspace_mutation_begin(space));
+    foreign_leaf=0;backend.pages=0;
+    kaspace_mutation_end(space);
+    CHECK(!reservations(space) && !file.references && backend.releases==releases+2);
+    kaspace_put(space);CHECK(backend.destroyed && allocations==frees);
+    puts("Foreign backend leaf: no private authority, adjacent reclamation, pending accounting and exact retry: PASS");
+}
+
 int main(void)
 {
     original_control();common_cohort();scoped_peer();deferred_exact_hold();
     attachment_r2_reentry();deferred_stack_hold();
+    foreign_backend_leaf();
     pending_predecessor(FALSE,FALSE);pending_predecessor(TRUE,FALSE);pending_predecessor(TRUE,TRUE);
     puts("Reentrant predecessor retirement: Munmap/Mfree/Mshrink cursors survive, recursive mutation rejected: PASS");
     prepared_target_exclusion();

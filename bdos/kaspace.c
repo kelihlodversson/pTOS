@@ -1120,6 +1120,8 @@ static void reap_retired(KASPACE *space)
                 KASPACE_HEAP_BLOCK *block=&space->heap.blocks[i];
                 if (!mapping_live(space,block->scope,block->reservation,block->va,(VADDR)block->pages*USER_PAGE_SIZE) &&
                         retirement_unblocked(space,block->va,
+                        (VADDR)block->pages*USER_PAGE_SIZE) &&
+                        aspace_release_lazy_retired_allowed(space->backend,block->va,
                         (VADDR)block->pages*USER_PAGE_SIZE)) {
                     address=block->va;bytes=(VADDR)block->pages*USER_PAGE_SIZE;
                     birth=block->reservation;break;
@@ -1130,7 +1132,8 @@ static void reap_retired(KASPACE *space)
                 MMAP_REGION *region;
                 for (region=space->mmap.regions;region;region=region->next)
                     if (!mapping_live(space,region->scope,region->reservation,region->address,region->length) &&
-                        retirement_unblocked(space,region->address,region->length)) {
+                        retirement_unblocked(space,region->address,region->length) &&
+                        aspace_release_lazy_retired_allowed(space->backend,region->address,region->length)) {
                         address=region->address;bytes=region->length;birth=region->reservation;break;
                     }
             }

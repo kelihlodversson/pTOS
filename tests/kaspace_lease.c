@@ -75,6 +75,8 @@ int main(void)
         assert(kaspace_heap(one)->blocks);
         kaspace_heap(one)->blocks[0].va = 0x1000;
         kaspace_heap(one)->blocks[0].pages = 1;
+        kaspace_heap(one)->blocks[0].reservation = kaspace_reservation_next();
+        kaspace_heap(one)->blocks[0].scope = NULL;
         kaspace_heap(one)->count = kaspace_heap(one)->capacity = 1;
         fail_alloc = 1;
         assert(kaspace_stack_hold_acquire(one,0x1000,4096,&hold) == ENSMEM && !hold);
@@ -137,3 +139,6 @@ BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(vo
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
 
 BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;return TRUE; }

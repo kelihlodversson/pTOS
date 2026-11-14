@@ -148,6 +148,16 @@ lease release/retirement processing retries pending canonical records; no new
 reaper or registry is introduced. Cleanup is allocation-free and runs outside
 runqueue, leaf-MMU and GUI exclusion. The backend first removes leaves, then
 the canonical metadata/accounting and its file reference are retired once.
+
+A foreign backend leaf never becomes private backing through claim loss. A
+pure backend ownership preflight excludes such a pending fragment from the
+ordinary cleanup candidates; adjacent eligible fragments still retire. The
+whole mixed fragment stays pending, with its birth, scope, file reference and
+byte accounting intact and no fresh attachment or fault authority. Existing
+hold release or mutation completion retries it after the foreign view has been
+removed. Final root destruction remains a conservative fallback for this
+exceptional backend ownership conflict. Neither preflight nor cleanup frees
+the foreign backing or grants permission to replace its translation.
 Stopped THREAD stack holds can defer this past PROCESS completion until the
 existing KTHREAD reaper releases the hold; they do not permit resumption.
 

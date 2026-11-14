@@ -26,7 +26,7 @@ void *kalloc(ULONG size)
     void *p;
     if (fail_alloc_after && !--fail_alloc_after) return NULL;
     p = malloc(size);
-    if (p) allocations++;
+    if (p) { memset(p,0xa5,size);allocations++; }
     return p;
 }
 void kfree(void *p) { if (p) { frees++; free(p); } }
@@ -337,3 +337,6 @@ BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(vo
 void aspace_unborrow_retired(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
 
 BOOL aspace_defer_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes;abort(); }
+
+BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;return TRUE; }

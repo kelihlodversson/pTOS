@@ -25,6 +25,12 @@ BOOL kaspace_mutation_busy(const KASPACE *space) { assert(space==(KASPACE *)1);r
 BOOL kaspace_mutation_reentrant(const KASPACE *space) { assert(space==(KASPACE *)1);return FALSE; }
 BOOL kaspace_mutation_begin(KASPACE *space) { assert(space==(KASPACE *)1);return TRUE; }
 void kaspace_mutation_end(KASPACE *space) { assert(space==(KASPACE *)1); }
+#if CONF_WITH_NATIVE_SCHED
+BOOL ksched_wait_ready(BOOL (*ready)(void *),void *context)
+{ (void)ready;(void)context;abort();return FALSE; }
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope) { (void)scope; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope) { (void)scope; }
+#endif
 KASPACE_HEAP *kaspace_heap(KASPACE *space) { (void)space; return &ordinary; }
 BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end)
 { (void)space;(void)from;(void)to;(void)first;(void)end;return FALSE; }
