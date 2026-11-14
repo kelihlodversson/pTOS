@@ -923,6 +923,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 #endif
 #if CONF_WITH_PLUGGABLE_FS || CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_SCHED
+    {
+    KSCHED_CLEANUP_SCOPE scope = {0};
+    /* A prepared association stays private through inherited-resource
+     * acquisition and its complete failure cleanup. */
+    ksched_cleanup_begin(&scope);
+#endif
 #if CONF_WITH_NATIVE_SCHED && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
     rc = flag == PE_LOADGO && ksched_test_nested_injected(6) ? ENSMEM : init_pd_files(cur_p);
 #else
@@ -930,8 +937,6 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
     if (rc != E_OK) {
 #if CONF_WITH_NATIVE_SCHED
-        KSCHED_CLEANUP_SCOPE scope = {0};
-        ksched_cleanup_begin(&scope);
         /* A prepared nested association is still private: retire its THREAD
          * before the PROCESS it is attached to. */
         ksched_nested_cancel(cur_p);
@@ -944,6 +949,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
         return rc;
     }
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+    }
+#endif
 #else
     (void)init_pd_files(cur_p);
 #endif

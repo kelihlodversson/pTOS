@@ -42,6 +42,9 @@ typedef struct kernel_task {
      * the carrier's anchor, completion or PID state below. */
     struct ksched_nested *nested;          /* innermost associated owner, or NULL */
     struct ksched_nested *nested_prepared; /* private until its launcher entry */
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    UQUAD nested_retiring; /* canonical identity awaiting observer publication */
+#endif
     PD *program, *parent;
     struct kernel_task *completion_owner; /* owns one dependent reference; NULL is anchor */
     ULONG dependents; /* prevents anchor retirement/reuse until worker root reap */
@@ -857,7 +860,6 @@ static struct {
     ULONG deepest;
     ULONG last_pid, last_tid, last_depth; /* most recently entered execution */
     ULONG completed, cancel_reaped;
-    UQUAD retiring; /* canonical identity awaiting observer publication */
     uintptr_t last_pd;
     UWORD fail_stage;
     BOOL untracked_next, reported;
@@ -932,13 +934,14 @@ LONG ksched_test_nested(UWORD selector)
 }
 void ksched_test_nested_published(KPROC *process)
 {
+    KERNEL_TASK *task = execution_cpu.current;
     PROCESS_COMPLETION completion;
-    if (!nested_probe.retiring || kproc_ref_number(process) != nested_probe.retiring) return;
+    if (!task || !task->nested_retiring || kproc_ref_number(process) != task->nested_retiring) return;
     if (!kproc_ref_terminal(process) || kproc_ref_has_basepage(process) ||
         !kproc_ref_completion(process, &completion) || completion.state != PROCESS_COMPLETED ||
         !(completion.order_low || completion.order_high))
         panic("scheduler: nested observer missed stopped resource release");
-    nested_probe.retiring = 0;
+    task->nested_retiring = 0;
     nested_probe.completed++;
 }
 #else
@@ -1155,8 +1158,8 @@ void ksched_nested_leave(KPROC *process)
     /* No ticket can name this stopped execution; none may outlive it. */
     ksched_waiter_retire(frame->process, frame->tid, task->execution.identity);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
-    if (nested_probe.retiring) panic("scheduler: nested completion publication skipped");
-    nested_probe.retiring = kproc_ref_number(process);
+    if (task->nested_retiring) panic("scheduler: nested completion publication skipped");
+    task->nested_retiring = kproc_ref_number(process);
 #endif
     release_nested_frame(frame);
     ksched_cleanup_end(&scope);
