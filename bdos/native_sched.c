@@ -1616,6 +1616,9 @@ KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *
 
 static BOOL cancellation_wait(BOOL (*ready)(void *), void *argument)
 {
+    /* Cancellation cannot execute while this owner has cleanup tickets.
+     * Keep dispatching its dependency instead of retrying CANCELLED forever. */
+    if (ksched_cleanup_active()) return ksched_block(ready, argument);
     return ksched_wait_cancelable(ready, argument) != KSCHED_WAIT_UNMANAGED;
 }
 
@@ -2075,7 +2078,8 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
             native_sched_irq_restore(flags);
         }
 #if CONF_WITH_PTERMGRP
-        if(completion && ksched_cancellation_pending()) process_wait_release_claim(&wait);
+        if(completion && ksched_cancellation_pending() && !ksched_cleanup_active())
+            process_wait_release_claim(&wait);
         ksched_cancel_point();
 #endif
         flags = native_sched_irq_save();
