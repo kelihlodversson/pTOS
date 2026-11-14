@@ -1,0 +1,160 @@
+Shared-root mapping attachment and retirement (#967)
+===================================================
+
+Implementation base: be81959ea54a13c1ab6f4946086590083710d929.
+Prerequisite: #894 / #956; ownership foundations: #891, #892, #958.
+This document is the design contract, written before production changes.
+Implementation, native acceptance and independent verdicts are still pending.
+
+The accepted-base negative control
+----------------------------------
+Run `python3 tools/test-shared-root-mapping.py` with kconfiglib installed.
+The test includes production kproc.c and kaspace.c. Only physical MMU and file
+resources are counted hosted models; it is not native launcher evidence.
+The source production tree is identical to the accepted base. One PROCESS
+creates anonymous PROT_NONE and closed-lifetime file reservations, Mprot splits
+the anonymous reservation, and Munmap removes the file reservation's middle.
+The last PROCESS then retires while an observer retains the root, with no
+other executing PROCESS and no mapping consumer.
+
+Original result (exit 1, unchanged assertion):
+  observer-root reservations: before=0 live=5 completed=5;
+  file refs=2; root destroyed=0
+Expected: reservations=0, mapped bytes=0, file refs=0, root still alive.
+No production assertions, counter reset or final-root destruction masks this
+failure. A generic shared-VM clone retaining its source's mappings is NOT a
+valid negative: it is a legitimate consumer under the compatibility policy.
+
+Separate ownership identities
+----------------------------
+1. KASPACE owns the root, canonical heap vector and canonical mmap fragments.
+   A root reference alone neither executes nor owns any individual mapping.
+2. A reservation has an immutable, non-recycled birth, exact current address
+   and extent, permissions, and backing/offset identity in that existing ledger.
+   Splits retain birth; replacement at the same VA gets a different birth.
+3. A PROCESS has authenticated lifetime claims. Common-VM scope membership
+   claims every current and future reservation born in that scope. An exact
+   attachment claims only its agreed live birth and interval. Neither is a
+   physical alias or an immutable-permission R2 mutation hold.
+4. A THREAD's stopped/executing state and durable stack/execution holds remain
+   independent. PROCESS attachment loss cannot remove an in-use stack or
+   invalidate an existing #892/#893 execution hold.
+5. Physical pages, COW leaves, exact backend pins and FILE_BACKING/OFD/SFT
+   references keep their established owners. A logical PROCESS attachment
+   does not manufacture another clean-file-page reference per PROCESS.
+
+Compatible common-VM policy
+--------------------------
+NEW_PROCESS | SHARE_VM inherits the source's complete common-VM scope
+memberships and its exact dependency attachments, transactionally, before
+THREAD/startup publication. SAME_PROCESS adds no PROCESS attachment. PRIVATE_VM
+gets new root-local births and fresh ownership; it must never copy owner-list
+pointers from the source root.
+
+A late mmap or ordinary Malloc belongs initially to the creator's allocation
+scope. Every PROCESS already in that common-VM scope owns it, including peers
+that have not faulted it in. Future clones join the same scope. Creator exit
+therefore cannot revoke a peer's raw shared pointer, lazy file view or COW
+mapping. A root observer, retired identity or parent relationship adds no scope
+membership. Last membership closes the scope to publication and new joins.
+
+This is deliberately coarser than independent per-mapping adoption: common VM
+is an explicit claim to future reservations, not just a snapshot. Default
+global Mfree/Mshrink/Munmap/Mprot behavior within the common VM remains shared;
+the destructive syscall changes the common reservation for all its consumers,
+subject to existing immutable execution/stack/R1-R4 barriers. Raw-address
+destructive syscalls cannot distinguish an obsolete pointer from a replacement
+at the same VA; exact internal attachment operations can and must do so.
+
+Independent executable policy: explicit opt-in only
+--------------------------------------------------
+Generic common-VM lifetime and automatic creator-only reclamation cannot both
+describe the same unannotated raw shared pointer. The kernel cannot observe a
+pointer copied into shared memory or infer that another PROCESS needs it.
+FreeMiNT's shared memspace retains late allocations while a peer survives.
+Silently changing this to creator-only cleanup would be incompatible.
+
+The proposed additional trusted contract is an explicitly independently scoped
+execution in an existing root: a fresh allocation scope for late ordinary
+regions plus exact attachments to agreed existing dependencies. It does not
+join source scopes merely to retain one image or data dependency. A peer can
+retain a late region with an exact birth/interval attachment before publishing
+a cross-scope pointer. Transfer acquires the destination claim before dropping
+the source claim. No root lookup or memory access implicitly acquires a claim.
+
+This opt-in is not transparent FreeMiNT Pexec(4/104) compatibility. Those public
+modes stay disabled. Selection of the future consumer's sharing policy remains
+an explicit Phase 5 decision. An alternative compatible extension is an explicit
+mapping-lifetime annotation used by a loader; unannotated shared mappings must
+keep common-VM behavior. No successful-fini-only DSO unmapping workaround is
+allowed: fault and cancellation exits must use the same kernel owners.
+
+Attachment authority and mutations
+---------------------------------
+Exact attachment tokens use non-recycled numeric tickets, canonical PROCESS
+identity, reservation birth and page interval, not PD or metadata-node address.
+Fresh acquisition authenticates the live canonical reservation and destination
+identity. Duplication authenticates the owned source ticket and live destination.
+An attachment confers lifetime only, never USER/WRITE/EXEC or physical access;
+PROT_NONE needs no fabricated access. Rights still come from current canonical
+metadata and the accepted #958 exact retained-lazy rules.
+
+An attachment is a distinct role in the existing ownership machinery. It does
+not become an R2 held/sealed view: Mprot/Munmap/Mshrink remain possible. Splits
+carry scope and birth, preserve file offset continuity, and keep exact claims
+on their surviving intervals. Hole replacement never inherits an old token's
+claim. Coalescing requires compatible scope, birth, rights, backing and offsets.
+Subrange acquisition must stage boundary metadata before commit so final-owner
+cleanup never allocates. All fallible clone, split and attachment preparation
+precedes irreversible leaf or metadata publication. Failure publishes no result
+and releases only the prepared prefix.
+
+Existing global destructive operations remain global within the default common
+VM. An independently scoped caller needs an owned reservation/attachment for
+ownership-sensitive operations; foreign mappings are not made mutable merely
+by sharing a root. Exact tickets cannot revive removed bytes, grant authority
+over a recycled birth, or authorize new attachment after consumption/retirement.
+
+Final-owner boundary and deferred retirement
+-------------------------------------------
+Non-final THREAD exit drops no PROCESS mapping claims. After the final THREAD
+has stopped using its launcher/syscall stack, canonical KPROC disposal drops
+that PROCESS's memberships and exact claims, before clearing resource fields.
+Completion and #909 wait/reaping remain separate once-only owners. Cleanup
+does not wait for Pwaitpid or the final root reference. Normal return, Pterm,
+group cancellation, faults and orphaning converge on this same disposal path.
+
+Final claim loss marks the canonical reservation fragment pending retirement.
+Its own metadata remains the cleanup owner, retaining exact permissions,
+FILE_BACKING, offsets and accounting while a genuine execution or R1-R4 hold
+blocks reclamation. A cleanup fence never supplies backing authority. Existing
+lease release/retirement processing retries pending canonical records; no new
+reaper or registry is introduced. Cleanup is allocation-free and runs outside
+runqueue, leaf-MMU and GUI exclusion. The backend first removes leaves, then
+the canonical metadata/accounting and its file reference are retired once.
+Stopped THREAD stack holds can defer this past PROCESS completion until the
+existing KTHREAD reaper releases the hold; they do not permit resumption.
+
+An independently attached peer keeps exactly its retained fragments, including
+untouched file/anonymous pages. Unattached portions must retire, not remain
+alive because a smaller external attachment exists. Pending retirement excludes
+destructive mutation and new attachment; it cannot be adopted as a new birth.
+Final KASPACE destruction remains the fallback for legacy/unclassified metadata
+and any remaining mappings, with the established backend-before-file teardown.
+
+Required evidence and integration boundary
+-----------------------------------------
+The accepted-base failing control above is preserved separately. Corrected
+evidence must cover real clone/construction, early creator and peer exit, late
+maps, all split cases, COW, PROT_NONE, stale/consumed tickets, rollback, final
+THREAD boundaries, deferred stack cleanup and exact counter conservation.
+Native runs and hosted policy tests must be labeled separately. In particular,
+fresh-root ELF loops or synthetic mappings do not prove repeated interpreted
+shared-root execution beyond the consumer's 96-entry exhaustion threshold.
+
+The focused PR targets the accepted epic. PR #956 is read-only consumer context;
+no consumer code is imported, no public Pexec mode is enabled, and no DSO support
+or limit is removed. Any disposable consumer preview must name both exact
+sources and remain separate from prerequisite-source acceptance. Final kernel,
+memory and loader assessments must all review the same source SHA. Integration
+requires separate authorization; nothing is merged by this workstream.
