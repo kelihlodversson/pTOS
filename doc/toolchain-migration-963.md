@@ -36,10 +36,41 @@ with 8,348 bytes free. Their LTO defaults therefore remain enabled independently
 of the removed auto-inc-dec workaround.
 
 The temporary SDK 0.2.0 workaround and its replacement pBench references are
-removed. CI compares the fixed compiler against the original committed
-references, with the existing 3% mean and 15% primitive thresholds. No benchmark
-threshold has been relaxed and no slower baseline is retained from the paused
-migration. See the PR's current pBench result for the actual measured comparison.
+removed. The fixed compiler passed against the previous committed references.
+The new SDK 1.0.0 references come from the complete green
+[pBench run 43602387432](https://github.com/kelihlodversson/pTOS/actions/runs/43602387432),
+source head `f741c117078b954ab9583d39afbea1057c4d85fb`, measured merge image
+`3c0222aa`. All 20 mode/blitter configurations and their 200 measurements use
+Ubuntu 26.04's Hatari 2.6.1. Test names, workload counts, screen geometry and
+emulator settings are unchanged. The 3% mean and 15% primitive thresholds
+remain unchanged as well.
+
+The following comparison retains the change from the previous references;
+negative values mean slower. Future changes compare against the new fixed-SDK
+measurements, not the removed workaround's results.
+
+| Mode | Display geometric mean | Slowest primitive change |
+| --- | ---: | ---: |
+| `atari256-high-blitter` | +1.46% | -3.55% |
+| `atari256-high-noblitter` | +1.44% | -3.59% |
+| `atari256-low-blitter` | +1.19% | -5.09% |
+| `atari256-low-noblitter` | +2.36% | -2.54% |
+| `atari256-med-blitter` | +0.95% | -6.81% |
+| `atari256-med-noblitter` | +1.58% | -4.35% |
+| `atari512-f030-blitter` | -1.26% | -6.23% |
+| `atari512-f030-noblitter` | -1.41% | -5.79% |
+| `atari512-f040-blitter` | +0.80% | -4.87% |
+| `atari512-f040-noblitter` | +1.32% | -5.36% |
+| `atari512-fastcall-f030-blitter` | -0.70% | -6.41% |
+| `atari512-fastcall-f030-noblitter` | -2.50% | -9.65% |
+| `atari512-fastcall-f040-blitter` | -0.15% | -4.97% |
+| `atari512-fastcall-f040-noblitter` | +0.03% | -8.46% |
+| `atari512-high-blitter` | -1.54% | -3.63% |
+| `atari512-high-noblitter` | -1.38% | -3.63% |
+| `atari512-low-blitter` | -2.37% | -8.16% |
+| `atari512-low-noblitter` | -1.42% | -4.53% |
+| `atari512-med-blitter` | -2.15% | -8.21% |
+| `atari512-med-noblitter` | -1.62% | -5.43% |
 
 ## Local validation
 
