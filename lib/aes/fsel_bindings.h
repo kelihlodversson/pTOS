@@ -26,8 +26,8 @@
 #define gsx_sclip aes_fsel_clip
 #define gsx_gclip aes_fsel_get_clip
 #define gsx_mxmy aes_fsel_pointer
-#define set_mouse_to_arrow() aes_fsel_cursor(ARROW)
-#define set_mouse_to_hourglass() aes_fsel_cursor(HOURGLASS)
+#define set_mouse_to_arrow() aes_fsel_cursor(aes_fsel, ARROW)
+#define set_mouse_to_hourglass() aes_fsel_cursor(aes_fsel, HOURGLASS)
 #define fm_do aes_fsel_form
 #define fm_dial aes_fsel_dial
 #define fm_own(begin) ((void)(begin))

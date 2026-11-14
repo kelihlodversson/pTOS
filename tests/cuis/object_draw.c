@@ -2,6 +2,7 @@
 #include "gem.h"
 #include "desktop.h"
 #include "app_context.h"
+#include "form_context.h"
 #include "gemmovegeom.h"
 #include "gemframegeom.h"
 #include "gemslidegeom.h"
@@ -1226,6 +1227,27 @@ static int menu_context_checks(void)
     return 0;
 }
 
+static BOOL nested_bounds_rejected;
+static WORD nested_bounds_callback(PARMBLK *parameters)
+{
+    FORM_CONTEXT call = { 0 };
+    OBJECT bad = { NIL,NIL,NIL,G_BOX,LASTOB|FL3DACT,OUTLINED,{0x00001100L},-32768,-32768,16,16 };
+    GRECT rect;
+    (void)parameters;
+    call.ok = TRUE;
+    aes_form_rect(&call,&bad,0,&rect);
+    nested_bounds_rejected = !call.ok && !rect.g_w && !rect.g_h;
+    return 0;
+}
+static int nested_bounds_checks(void)
+{
+    USERBLK user = { nested_bounds_callback,0 };
+    OBJECT object = { NIL,NIL,NIL,G_USERDEF,LASTOB,NORMAL,{0},0,0,16,16 };
+    object.ob_spec.userblk = &user; nested_bounds_rejected = FALSE;
+    VERIFY(objc_draw(&object,0,0,0,0,16,16) && nested_bounds_rejected);
+    return 0;
+}
+
 int main(void)
 {
     AES_APP_CONTEXT context = {0};
@@ -1424,7 +1446,7 @@ int main(void)
     VERIFY(before == 0);
     VERIFY(preflight_scaling() == 0);
     {
-        PAINTER painter = { 0 }, *saved_painter = aes_painter;
+        PAINTER painter = { 0 };
         CICONBLK colour = { 0 };
         CICON variants[4] = { { 0 } };
         void *temporary;
@@ -1436,12 +1458,11 @@ int main(void)
         VERIFY(rs_cicon_best(&colour,0) == NULL && rs_cicon_best(&colour,1) == variants);
         VERIFY(rs_cicon_best(&colour,3) == variants && rs_cicon_best(&colour,4) == variants+2);
         VERIFY(rs_cicon_best(&colour,8) == variants+1 && rs_cicon_best(&colour,32) == variants+1);
-        painter.global = &aes_global; aes_painter = &painter;
-        temporary = aes_render_alloc(70000); VERIFY(temporary != NULL);
+        painter.global = &aes_global;
+        temporary = aes_render_alloc(&painter,70000); VERIFY(temporary != NULL);
         release_error = TRUE; VERIFY(aes_render_free(temporary) == EACCDN);
         release_error = FALSE; aes_resources_reset(&aes_global);
-        allocation_error = TRUE; VERIFY(aes_render_alloc(16) == NULL); allocation_error = FALSE;
-        aes_painter = saved_painter;
+        allocation_error = TRUE; VERIFY(aes_render_alloc(&painter,16) == NULL); allocation_error = FALSE;
     }
     screen_planes = 16;
     before = gem_colour_checks(0); VERIFY(before == 0);
@@ -1676,5 +1697,6 @@ int main(void)
     VERIFY(!frame_overlay_depth && !frame_dialog_depth && !bad_overlay_scope);
     VERIFY(style_context_checks() == 0);
     VERIFY(menu_context_checks() == 0);
+    VERIFY(nested_bounds_checks() == 0);
     return 0;
 }

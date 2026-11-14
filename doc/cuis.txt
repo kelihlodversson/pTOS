@@ -17,11 +17,15 @@ reuses it. Exit frees the context and clears only the supplied slot; other
 aliases become invalid. Session, enumeration, cohort, window/frame, desktop
 and graphics/cursor/style state are per context. Private helper calls pass
 the supplied global, and reset/cleanup uses that context's retained state.
-Resource/menu/shell ownership, temporary helpers, full reentrancy and CUIS
-identity changes remain separate #953 slices. CUIS still has one session per
-process; fresh userspace
-contexts do not imply independent sessions, windows or message queues. #903 is
-separate. Historical implementation notes below predate this
+Resources, menu and shell state are also context-owned. Painter/tracker,
+modal, form, alert, file-selector, resource and shell helper chains receive
+explicit call arguments; libaes has no mutable globals or TLS. The ELF audit
+permits relocated constant tables only in sealed RELRO. The acceptance map
+and validation commands are in libaes-context-acceptance.md.
+CUIS identity remains separate work coordinated with #896/#907/#915. It still
+has one session per process: fresh userspace contexts do not imply independent
+sessions, windows or message queues. Ending their shared session invalidates
+all its users. #903 is separate. Historical implementation notes below predate this
 binding split; see doc/libaes-compatibility.md for the current ownership and API.
 
 
@@ -109,9 +113,14 @@ consumes it when each context is initialized, without a DT_INIT cache. Shell
 search work buffers and saved-DTA state are per-call. Reusable context-owned
 DTAs keep kernel search-cache addresses stable; nested calls borrow separate
 slots, released with the context.
-This does not change CUIS's current one-session-per-PD identity or make the
-remaining shared temporary libaes helper pointers concurrent. See
-libaes-compatibility.md for the lifetime contract and remaining #953 work.
+All temporary libaes helper contexts now travel through explicit parameters,
+including painter/tracker, form, alert/error, selector, resource, shell and
+menu calls. Nested object callbacks carry their painter as a callback cookie,
+without publishing an active context globally. The ELF ownership check also
+rejects mutable data outside RELRO and TLS; constant resource tables remain
+read-only after relocation. This preserves CUIS's one-session-per-PD identity;
+independent concurrent native AES sessions still require the separate kernel
+identity work. See libaes-compatibility.md for the #953 lifetime contract.
 
 Current sources expose the migration points: gemaplib/gemevlib/gemasync and
 aes_service.c combine registration, scheduling, GEM messages and waits;

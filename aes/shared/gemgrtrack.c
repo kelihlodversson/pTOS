@@ -1,6 +1,7 @@
 /* Original GEM rubber, drag and slide tracking from gemgrlib.c.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesdefs.h"
@@ -25,7 +26,7 @@
 #define GRTRACK_3D CONF_WITH_3D_OBJECTS
 #endif
 
-static void gr_clamp(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
+static void gr_clamp(AES_RENDER_PARAM WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
                      WORD *pneww, WORD *pnewh)
 {
     *pneww = max(xrat - xorigin + 1, wmin);
@@ -33,21 +34,21 @@ static void gr_clamp(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
 }
 
 
-static void gr_draw(WORD have2box, GRECT *po, GRECT *poff)
+static void gr_draw(AES_RENDER_PARAM WORD have2box, GRECT *po, GRECT *poff)
 {
     GRECT   t;
 
-    gsx_xbox(po);
+    gsx_xbox(AES_RENDER_ARG po);
     if (have2box)
     {
         r_set(&t, po->g_x + poff->g_x, po->g_y + poff->g_y,
                   po->g_w + poff->g_w, po->g_h + poff->g_h);
-        gsx_xbox(&t);
+        gsx_xbox(AES_RENDER_ARG &t);
     }
 }
 
 
-static BOOL gr_wait(GRECT *po, GRECT *poff)
+static BOOL gr_wait(AES_RENDER_PARAM GRECT *po, GRECT *poff)
 {
     WORD have2box;
     BOOL down;
@@ -56,7 +57,7 @@ static BOOL gr_wait(GRECT *po, GRECT *poff)
 
     /* draw/erase old */
     gsx_moff();
-    gr_draw(have2box, po, poff);
+    gr_draw(AES_RENDER_ARG have2box, po, poff);
     gsx_mon();
 
     /* wait for change */
@@ -64,7 +65,7 @@ static BOOL gr_wait(GRECT *po, GRECT *poff)
 
     /* draw/erase old */
     gsx_moff();
-    gr_draw(have2box, po, poff);
+    gr_draw(AES_RENDER_ARG have2box, po, poff);
     gsx_mon();
 
     /* return exit event */
@@ -77,22 +78,22 @@ static BOOL gr_wait(GRECT *po, GRECT *poff)
  *  another corner, based on mouse movement until the button comes up.
  *  Also draw a second box offset from the stretching box.
  */
-void gr_rubwind(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
+void gr_rubwind(AES_RENDER_PARAM WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
                 GRECT *poff, WORD *pwend, WORD *phend)
 {
     BOOL    down;
     GRECT   o;
 
     wm_update(BEG_UPDATE);
-    gr_setup();
+    gr_setup(AES_RENDER_ARG0);
 
     r_set(&o, xorigin, yorigin, 0, 0);
 
     /* clamp size of rubber box to no smaller than wmin, hmin */
     do
     {
-        gr_clamp(o.g_x, o.g_y, wmin, hmin, &o.g_w, &o.g_h);
-        down = gr_wait(&o, poff);
+        gr_clamp(AES_RENDER_ARG o.g_x, o.g_y, wmin, hmin, &o.g_w, &o.g_h);
+        down = gr_wait(AES_RENDER_ARG &o, poff);
     } while (down);
 
     *pwend = o.g_w;
@@ -106,10 +107,10 @@ void gr_rubwind(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
  *  another corner, based on mouse movement until the button comes up.
  *  This is also called a rubber-band box.
  */
-void gr_rubbox(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
+void gr_rubbox(AES_RENDER_PARAM WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
                WORD *pwend, WORD *phend)
 {
-    gr_rubwind(xorigin, yorigin, wmin, hmin, &gl_rzero, pwend, phend);
+    gr_rubwind(AES_RENDER_ARG xorigin, yorigin, wmin, hmin, &gl_rzero, pwend, phend);
 }
 
 
@@ -121,7 +122,7 @@ void gr_rubbox(WORD xorigin, WORD yorigin, WORD wmin, WORD hmin,
  *  is also given.  The box should not be able to be dragged out of the
  *  constraining rectangle.
  */
-void gr_dragbox(WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
+void gr_dragbox(AES_RENDER_PARAM WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
                 WORD *pdx, WORD *pdy)
 {
     WORD    offx, offy;
@@ -129,9 +130,9 @@ void gr_dragbox(WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
     GRECT   o;
 
     wm_update(BEG_UPDATE);
-    gr_setup();
+    gr_setup(AES_RENDER_ARG0);
 
-    gr_clamp(sx+1, sy+1, 0, 0, &offx, &offy);
+    gr_clamp(AES_RENDER_ARG sx+1, sy+1, 0, 0, &offx, &offy);
     r_set(&o, sx, sy, w, h);
 
     /* get box's x,y from mouse's x,y then constrain result */
@@ -140,7 +141,7 @@ void gr_dragbox(WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
         o.g_x = xrat - offx;
         o.g_y = yrat - offy;
         rc_constrain(pc, &o);
-        down = gr_wait(&o, &gl_rzero);
+        down = gr_wait(AES_RENDER_ARG &o, &gl_rzero);
     } while (down);
 
     *pdx = o.g_x;
@@ -149,14 +150,14 @@ void gr_dragbox(WORD w, WORD h, WORD sx, WORD sy, GRECT *pc,
 }
 
 
-WORD gr_slidebox(OBJECT *tree, WORD parent, WORD obj, WORD isvert)
+WORD gr_slidebox(AES_RENDER_PARAM OBJECT *tree, WORD parent, WORD obj, WORD isvert)
 {
     GRECT   t, c;
     WORD    divnd, divis;
     BOOL    xy_adjust;
     MAYBE_UNUSED(xy_adjust);
 
-    ob_actxywh(tree, parent, &c);
+    ob_actxywh(AES_RENDER_ARG tree, parent, &c);
     ob_relxywh(tree, obj, &t);
 
 #if GRTRACK_3D
@@ -179,7 +180,7 @@ WORD gr_slidebox(OBJECT *tree, WORD parent, WORD obj, WORD isvert)
     }
 #endif
 
-    gr_dragbox(t.g_w, t.g_h, t.g_x + c.g_x, t.g_y + c.g_y,
+    gr_dragbox(AES_RENDER_ARG t.g_w, t.g_h, t.g_x + c.g_x, t.g_y + c.g_y,
                 &c, &t.g_x, &t.g_y);
 
     if (isvert)

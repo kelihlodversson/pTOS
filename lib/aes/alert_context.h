@@ -4,7 +4,7 @@
 #include "libaes.h"
 #include "layout.h"
 #include "gem_rsc.h"
-typedef struct {
+typedef struct aes_alert_call {
     OBJECT objects[10];
     OBJECT *trees[2];
     char lines[MAX_LINENUM][MAX_LINELEN+1];
@@ -12,8 +12,11 @@ typedef struct {
     GRECT screen;
     LAYOUT_METRICS metrics;
 } ALERT_CONTEXT;
-extern ALERT_CONTEXT *aes_alert_context;
-OBJECT *aes_alert_tree(WORD button, char *text, GRECT *rect);
-WORD aes_error_core(WORD error);
-WORD aes_error_show(WORD string, WORD *number, WORD button);
+OBJECT *aes_alert_tree(ALERT_CONTEXT *aes_alert_context, WORD button, char *text, GRECT *rect);
+typedef struct aes_error_call {
+    AESGLOBAL *global;
+    BOOL ok;
+} ERROR_CONTEXT;
+WORD aes_error_core(ERROR_CONTEXT *aes_error, WORD error);
+WORD aes_error_show(ERROR_CONTEXT *aes_error, WORD string, WORD *number, WORD button);
 #endif

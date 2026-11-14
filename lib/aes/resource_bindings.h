@@ -18,6 +18,6 @@
 #define dos_lseek aes_resource_seek
 #define rs_obfix(tree,obj) rs_obfix_metrics(tree,obj,aes_resource->metrics.wchar,aes_resource->metrics.hchar,aes_resource->metrics.width)
 /* The library exposes the classic file API, not rs_loadmem's internal path. */
-#define rs_fixit(global) aes_resource_fix()
+#define rs_fixit(global) aes_resource_fix(aes_resource)
 #define rs_loadmem aes_resource_loadmem
 #endif

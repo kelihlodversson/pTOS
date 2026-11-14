@@ -1,6 +1,7 @@
 /* Original GEM dialog box animations.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesext.h"
@@ -14,13 +15,13 @@
 #include "gemformanim.h"
 #endif
 
-static void gr_scale(WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pystep)
+static void gr_scale(AES_RENDER_PARAM WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pystep)
 {
     WORD i;
     WORD dist;
 
 
-    gr_setup();
+    gr_setup(AES_RENDER_ARG0);
 
     dist = (xdist + ydist) / 2;
 
@@ -39,27 +40,27 @@ static void gr_scale(WORD xdist, WORD ydist, WORD *pcnt, WORD *pxstep, WORD *pys
 #ifdef AES_ANIM_BINDINGS
 /* Let the userspace adapter admit the exact native trajectory before drawing.
  * Native builds retain their original code and object size. */
-void aes_animation_scale(WORD xdist, WORD ydist, WORD *count, WORD *xstep, WORD *ystep)
+void aes_animation_scale(AES_RENDER_PARAM WORD xdist, WORD ydist, WORD *count, WORD *xstep, WORD *ystep)
 {
-    gr_scale(xdist,ydist,count,xstep,ystep);
+    gr_scale(AES_RENDER_ARG xdist,ydist,count,xstep,ystep);
 }
 #endif
 
 
-void gr_stepcalc(WORD orgw, WORD orgh, GRECT *pt, WORD *pcx, WORD *pcy,
+void gr_stepcalc(AES_RENDER_PARAM WORD orgw, WORD orgh, GRECT *pt, WORD *pcx, WORD *pcy,
                  WORD *pcnt, WORD *pxstep, WORD *pystep)
 {
     *pcx = (pt->g_w/2) - (orgw/2);
     *pcy = (pt->g_h/2) - (orgh/2);
 
-    gr_scale(*pcx, *pcy, pcnt, pxstep, pystep);
+    gr_scale(AES_RENDER_ARG *pcx, *pcy, pcnt, pxstep, pystep);
 
     *pcx += pt->g_x;
     *pcy += pt->g_y;
 }
 
 
-static void gr_xor(WORD clipped, WORD cnt, WORD cx, WORD cy, WORD cw, WORD ch,
+static void gr_xor(AES_RENDER_PARAM WORD clipped, WORD cnt, WORD cx, WORD cy, WORD cw, WORD ch,
                    WORD xstep, WORD ystep, WORD dowdht)
 {
     GRECT tmprect;
@@ -72,9 +73,9 @@ static void gr_xor(WORD clipped, WORD cnt, WORD cx, WORD cy, WORD cw, WORD ch,
         tmprect.g_h = ch;
 
         if (clipped)
-            gsx_xcbox(&tmprect);
+            gsx_xcbox(AES_RENDER_ARG &tmprect);
         else
-            gsx_xbox(&tmprect);
+            gsx_xbox(AES_RENDER_ARG &tmprect);
 
         cx -= xstep;
         cy -= ystep;
@@ -87,13 +88,13 @@ static void gr_xor(WORD clipped, WORD cnt, WORD cx, WORD cy, WORD cw, WORD ch,
 }
 
 
-void gr_2box(WORD flag1, WORD cnt, GRECT *pt, WORD xstep, WORD ystep, WORD flag2)
+void gr_2box(AES_RENDER_PARAM WORD flag1, WORD cnt, GRECT *pt, WORD xstep, WORD ystep, WORD flag2)
 {
     WORD i;
 
     gsx_moff();
     for (i = 0; i < 2; i++)
-        gr_xor(flag1, cnt, pt->g_x, pt->g_y, pt->g_w, pt->g_h, xstep, ystep, flag2);
+        gr_xor(AES_RENDER_ARG flag1, cnt, pt->g_x, pt->g_y, pt->g_w, pt->g_h, xstep, ystep, flag2);
     gsx_mon();
 }
 
@@ -103,7 +104,7 @@ void gr_2box(WORD flag1, WORD cnt, GRECT *pt, WORD xstep, WORD ystep, WORD flag2
  *  left corner is at src_x, src_y to a point at dst_x, dst_y
  */
 
-void gr_movebox(WORD w, WORD h, WORD srcx, WORD srcy, WORD dstx, WORD dsty)
+void gr_movebox(AES_RENDER_PARAM WORD w, WORD h, WORD srcx, WORD srcy, WORD dstx, WORD dsty)
 {
     WORD    signx, signy;
     WORD    cnt;
@@ -115,9 +116,9 @@ void gr_movebox(WORD w, WORD h, WORD srcx, WORD srcy, WORD dstx, WORD dsty)
     signx = (srcx < dstx) ? -1 : 1;
     signy = (srcy < dsty) ? -1 : 1;
 
-    gr_scale(signx*(srcx-dstx), signy*(srcy-dsty), &cnt, &xstep, &ystep);
+    gr_scale(AES_RENDER_ARG signx*(srcx-dstx), signy*(srcy-dsty), &cnt, &xstep, &ystep);
 
-    gr_2box(FALSE, cnt, &t, signx*xstep, signy*ystep, FALSE);
+    gr_2box(AES_RENDER_ARG FALSE, cnt, &t, signx*xstep, signy*ystep, FALSE);
 }
 
 
@@ -125,16 +126,16 @@ void gr_movebox(WORD w, WORD h, WORD srcx, WORD srcy, WORD dstx, WORD dsty)
  *  Draw a small box that moves from the origin x,y to a spot centered
  *  within the rectangle and then expands to match the size of the rectangle
  */
-void gr_growbox(GRECT *po, GRECT *pt)
+void gr_growbox(AES_RENDER_PARAM GRECT *po, GRECT *pt)
 {
     WORD    cx, cy;
     WORD    cnt, xstep, ystep;
 
-    gr_stepcalc(po->g_w, po->g_h, pt, &cx, &cy, &cnt, &xstep, &ystep);
-    gr_movebox(po->g_w, po->g_h, po->g_x, po->g_y, cx, cy);
+    gr_stepcalc(AES_RENDER_ARG po->g_w, po->g_h, pt, &cx, &cy, &cnt, &xstep, &ystep);
+    gr_movebox(AES_RENDER_ARG po->g_w, po->g_h, po->g_x, po->g_y, cx, cy);
     po->g_x = cx;
     po->g_y = cy;
-    gr_2box(TRUE, cnt, po, xstep, ystep, TRUE);
+    gr_2box(AES_RENDER_ARG TRUE, cnt, po, xstep, ystep, TRUE);
 }
 
 
@@ -142,14 +143,14 @@ void gr_growbox(GRECT *po, GRECT *pt)
  *  Draw a box that shrinks from the rectangle given down around a small
  *  box centered within the rectangle and then moves to the origin point
  */
-void gr_shrinkbox(GRECT *po, GRECT *pt)
+void gr_shrinkbox(AES_RENDER_PARAM GRECT *po, GRECT *pt)
 {
     WORD    cx, cy;
     WORD    cnt, xstep, ystep;
 
-    gr_stepcalc(po->g_w, po->g_h, pt, &cx, &cy, &cnt, &xstep, &ystep);
-    gr_2box(TRUE, cnt, pt, -xstep, -ystep, TRUE);
-    gr_movebox(po->g_w, po->g_h, cx, cy, po->g_x, po->g_y);
+    gr_stepcalc(AES_RENDER_ARG po->g_w, po->g_h, pt, &cx, &cy, &cnt, &xstep, &ystep);
+    gr_2box(AES_RENDER_ARG TRUE, cnt, pt, -xstep, -ystep, TRUE);
+    gr_movebox(AES_RENDER_ARG po->g_w, po->g_h, cx, cy, po->g_x, po->g_y);
 }
 
 

@@ -11,7 +11,6 @@
 #include "shell_arguments.h"
 #include "string.h"
 
-SHELL_CONTEXT *aes_shell;
 static ULONG bounded_length(const char *text, ULONG limit)
 {
     ULONG length = 0;
@@ -46,13 +45,13 @@ static BOOL environment_valid(const AES_SHELL_STATE *state)
     return FALSE;
 }
 
-void aes_shell_set_dta(void *dta)
+void aes_shell_set_dta(SHELL_CONTEXT *aes_shell, void *dta)
 {
     /* Fsetdta is void; its getter verifies installation and restoration. */
     (void)aes_gemdos_call(0x1a,(uintptr_t)dta,0,0);
     if (aes_gemdos_call(0x2f,0,0,0) != (uintptr_t)dta) aes_shell->ok = FALSE;
 }
-WORD aes_shell_first(char *path, WORD attributes)
+WORD aes_shell_first(SHELL_CONTEXT *aes_shell, char *path, WORD attributes)
 {
     LONG result;
     if (!aes_shell->ok || !*path) return EFILNF;
@@ -62,13 +61,13 @@ WORD aes_shell_first(char *path, WORD attributes)
 }
 WORD mt_shel_read(char *command, char *tail, AESGLOBAL *global)
 {
-    SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
+    SHELL_CONTEXT c = { 0 };
+    SHELL_CONTEXT *aes_shell = &c;
     if (!command || !tail || aes_application_session(global) < 0) return 0;
     c.state = aes_shell_state(global);
     if (!c.state->startup_ready) return 0;
-    aes_shell = &c;
-    aes_shell_read_core(command,tail);
-    aes_shell = saved; return 1;
+    aes_shell_read_core(aes_shell, command,tail);
+    return 1;
 }
 
 static WORD application_kind(const char *path)
@@ -192,14 +191,14 @@ finished:
 WORD mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global)
 {
     char *found;
-    SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
+    SHELL_CONTEXT c = { 0 };
+    SHELL_CONTEXT *aes_shell = &c;
     if (!result || bounded_length(prefix,AES_SHELL_ENV) >= AES_SHELL_ENV ||
         aes_application_session(global) < 0) return 0;
     c.state = aes_shell_state(global);
     if (!environment_valid(c.state)) return 0;
-    aes_shell = &c;
-    aes_shell_env_core(&found,prefix);
-    aes_shell = saved; *result = found; return 1;
+    aes_shell_env_core(aes_shell, &found,prefix);
+    *result = found; return 1;
 }
 
 /* Kernel directory-search caches are keyed by DTA address. Reuse one stable
@@ -221,7 +220,8 @@ static SHELL_SEARCH *acquire_search(AESGLOBAL *global)
 
 WORD mt_shel_find(char *path, AESGLOBAL *global)
 {
-    SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
+    SHELL_CONTEXT c = { 0 };
+    SHELL_CONTEXT *aes_shell = &c;
     char staged[AES_SHELL_PATH];
     UQUAD dta;
     WORD result;
@@ -235,11 +235,11 @@ WORD mt_shel_find(char *path, AESGLOBAL *global)
     search = acquire_search(global);
     if (!search) return 0;
     c.dta = &search->dta;
-    c.original_dta = (void *)(uintptr_t)dta; c.ok = TRUE; aes_shell = &c;
-    result = aes_shell_find_core(staged);
+    c.original_dta = (void *)(uintptr_t)dta; c.ok = TRUE;
+    result = aes_shell_find_core(aes_shell, staged);
     /* Retry the original DTA even if a failed search/restore set ok false. */
-    aes_shell_set_dta(c.original_dta);
-    aes_shell = saved; search->busy = FALSE;
+    aes_shell_set_dta(aes_shell, c.original_dta);
+    search->busy = FALSE;
     if (!result || !c.ok) return 0;
     strcpy(path,staged); return 1;
 }

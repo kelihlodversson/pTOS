@@ -761,7 +761,7 @@ class Metadata(unittest.TestCase):
 
     def test_image_dynamic_and_relro_admission(self):
         for ph, field, value in ((3, 0, 0), (3, 4, 0x2008), (3, 8, 0x3200),
-                (3, 16, 47), (3, 20, 0), (3, 20, 56), (5, 8, 0x1000), (5, 20, 0x2000), (5, 4, 0x2008), (5, 16, 0x2000)):
+                (3, 16, 47), (3, 20, 0), (3, 20, 56), (5, 8, 0x1000), (5, 20, 0x2001), (5, 4, 0x2008), (5, 16, 0x2000)):
             with self.subTest(ph=ph, field=field, value=value):
                 data = image_fixture()
                 struct.pack_into("<I", data, 52 + ph * 32 + field, value)
@@ -780,6 +780,31 @@ class Metadata(unittest.TestCase):
         data = image_fixture()
         struct.pack_into("<I", data, 52 + 4 * 32 + 24, 7)
         self.assertEqual(self.image_read(data)[0], -2)
+
+    def test_relro_load_tail_without_bss(self):
+        data = image_fixture()
+        # GNU ld can finish a DSO at RELRO, without adding mutable BSS.
+        struct.pack_into("<I", data, 52 + 2 * 32 + 20, 0x200)
+        struct.pack_into("<I", data, 0x250 + 4, 0x3100)
+        rc, plan, raw = self.image_read(data)
+        self.assertEqual(rc, 0)
+        self.assertEqual((plan.size, plan.relro, plan.relro_size), (0x4000, 0x3000, 0x1000))
+        self.assertEqual(self.image_copy(plan, raw)[0], 0)
+        # Mapping padding is not admitted as data or a relocation target.
+        self.assertEqual(self.lib.dl_image_range(C.byref(plan), 0x3200, 1, 6), 0)
+        self.assertEqual(self.lib.dl_image_file_range(C.byref(plan), 0x3200, 1, 4), 0)
+        for size in (0x1001, 0x2000):
+            bad = bytearray(data)
+            struct.pack_into("<I", bad, 52 + 5 * 32 + 20, size)
+            self.assertEqual(self.image_read(bad)[0], -1)
+        # An all-padding start or a nonwritable LOAD remains invalid.
+        bad = bytearray(data)
+        struct.pack_into("<III", bad, 52 + 5 * 32 + 16, 0, 0x100, 4)
+        struct.pack_into("<I", bad, 52 + 5 * 32 + 8, 0x3200)
+        self.assertEqual(self.image_read(bad)[0], -1)
+        bad = bytearray(data)
+        struct.pack_into("<I", bad, 52 + 2 * 32 + 24, 4)
+        self.assertEqual(self.image_read(bad)[0], -1)
 
     def test_image_roles_interpreter_entry_and_program_headers(self):
         data = image_fixture(executable=True)

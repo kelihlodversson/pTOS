@@ -15,11 +15,10 @@ typedef struct resource_context {
     LAYOUT_METRICS metrics;
     BOOL caller_owned;
 } RESOURCE_CONTEXT;
-extern RESOURCE_CONTEXT *aes_resource;
-WORD aes_resource_read(AESGLOBAL *global, UWORD handle);
-void aes_resource_fix(void);
-void *aes_resource_addr(UWORD type, UWORD index);
-void *aes_resource_sub(UWORD index, UWORD offset, UWORD size);
+WORD aes_resource_read(RESOURCE_CONTEXT *aes_resource, AESGLOBAL *global, UWORD handle);
+void aes_resource_fix(RESOURCE_CONTEXT *aes_resource);
+void *aes_resource_addr(RESOURCE_CONTEXT *aes_resource, UWORD type, UWORD index);
+void *aes_resource_sub(RESOURCE_CONTEXT *aes_resource, UWORD index, UWORD offset, UWORD size);
 void *aes_resource_alloc(LONG bytes, AES_RESOURCE_STATE *owner);
 /* Failed discard stays with the allocating context, including after its
  * native session has closed. Discard each allocation only once. */

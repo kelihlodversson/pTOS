@@ -28,21 +28,20 @@
 #include "gemframegeom.h"
 
 #include "render_context.h"
+#include "form_context.h"
 #include "resource_context.h"
 #include "gemcicon.h"
 #include "vdi_colmap.h"
 #include "../../aes/gemobed.h"
 #include "../../aes/gemgrlib.h"
-WORD aes_edit_core(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
+WORD aes_edit_core(PAINTER *aes_painter, OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
 #include "../../aes/shared/gemrender.h"
 
-/* Save/restore around nested USERDEF calls. */
-PAINTER *aes_painter;
 
 
 /* Only these low-level GSX bindings differ from the native renderer. They
  * translate bounded primitive buffers, never OBJECT or USERBLK pointers. */
-static void invoke(VDI_SERVICE_DRAW_REQUEST *request)
+static void invoke(PAINTER *aes_painter, VDI_SERVICE_DRAW_REQUEST *request)
 {
     VDI_SERVICE_DRAW_RESULT result = { 0 };
     if (!aes_painter->ok) return;
@@ -54,7 +53,7 @@ static void invoke(VDI_SERVICE_DRAW_REQUEST *request)
 }
 /* System GSX fonts use fixed cells and a left-aligned baseline. Drop only
  * complete off-screen cells, retaining the origin of partially clipped glyphs. */
-static BOOL visible_text(VDI_SERVICE_DRAW_REQUEST *request)
+static BOOL visible_text(PAINTER *aes_painter, VDI_SERVICE_DRAW_REQUEST *request)
 {
     PAINTER *p = aes_painter;
     LONG x = request->ptsin[0], y = request->ptsin[1];
@@ -74,7 +73,7 @@ static BOOL visible_text(VDI_SERVICE_DRAW_REQUEST *request)
     request->ptsin[0] = x+(LONG)first*width;
     return TRUE;
 }
-void gsx2(void)
+void gsx2(PAINTER *aes_painter)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     WORD i;
@@ -89,19 +88,19 @@ void gsx2(void)
     request.code = aes_painter->control.code; request.nintin = aes_painter->control.nintin; request.nptsin = aes_painter->control.nptsin;
     for (i = 0; i < aes_painter->control.nintin; i++) request.intin[i] = aes_painter->input[i];
     for (i = 0; i < aes_painter->control.nptsin*2; i++) request.ptsin[i] = aes_painter->points[i];
-    if (request.code == TEXT && !visible_text(&request)) return;
+    if (request.code == TEXT && !visible_text(aes_painter, &request)) return;
     /* Native VDI clamps style zero to one; preserve that result within the
      * typed service's canonical range (solid/hollow fills ignore the style). */
     if (request.code == SET_FILL_STYLE && request.intin[0] == 0) request.intin[0] = 1;
     if ((request.code == SET_TEXT_COLOR || request.code == SET_FILL_COLOR) && request.intin[0] < 0)
         request.intin[0] = BLACK;
-    invoke(&request);
+    invoke(aes_painter, &request);
 }
-void gsx_1code(WORD code, WORD value)
+void gsx_1code(PAINTER *aes_painter, WORD code, WORD value)
 {
     aes_painter->control.code = code; aes_painter->control.nintin = 1; aes_painter->control.nptsin = 0;
     aes_painter->input[0] = value;
-    gsx2();
+    gsx2(aes_painter);
 }
 /* Match native VDI's Cohen-Sutherland clipping and rounded intersections.
  * Wider intermediates avoid overflow with arbitrary WORD object geometry. */
@@ -110,19 +109,19 @@ static LONG line_intersection(LONG a, LONG b, LONG divisor)
     QUAD q = (QUAD)a * b * 2 / divisor;
     return (LONG)(q >= 0 ? (q+1)/2 : (q-1)/2);
 }
-static WORD line_outcode(LONG x, LONG y)
+static WORD line_outcode(PAINTER *aes_painter, LONG x, LONG y)
 {
     GRECT *c = &aes_painter->clip;
     return (x < c->g_x ? 1 : x >= (LONG)c->g_x+c->g_w ? 2 : 0) |
            (y < c->g_y ? 4 : y >= (LONG)c->g_y+c->g_h ? 8 : 0);
 }
-static BOOL clip_segment(LONG *points)
+static BOOL clip_segment(PAINTER *aes_painter, LONG *points)
 {
     LONG x1 = points[0], y1 = points[1], x2 = points[2], y2 = points[3];
     LONG x, y, dx, dy, bound;
     WORD first, last, code;
     GRECT *c = &aes_painter->clip;
-    while ((first = line_outcode(x1,y1)) | (last = line_outcode(x2,y2))) {
+    while ((first = line_outcode(aes_painter, x1,y1)) | (last = line_outcode(aes_painter, x2,y2))) {
         if (first & last) return FALSE;
         code = first ? first : last;
         dx = x2-x1; dy = y2-y1;
@@ -138,19 +137,19 @@ static BOOL clip_segment(LONG *points)
     points[0] = x1; points[1] = y1; points[2] = x2; points[3] = y2;
     return TRUE;
 }
-static void draw_segment(LONG *segment)
+static void draw_segment(PAINTER *aes_painter, LONG *segment)
 {
     WORD points[4], i;
-    if (!aes_painter->ok || !clip_segment(segment)) return;
+    if (!aes_painter->ok || !clip_segment(aes_painter, segment)) return;
     for (i = 0; i < 4; i++) points[i] = segment[i];
     aes_painter->ok = aes_graphics_call(VDI_SERVICE_LINE,aes_painter->handle,2,(uintptr_t)points,0) == E_OK;
 }
-void aes_render_line(LONG x1, LONG y1, LONG x2, LONG y2)
+void aes_render_line(PAINTER *aes_painter, LONG x1, LONG y1, LONG x2, LONG y2)
 {
     LONG segment[4] = { x1,y1,x2,y2 };
-    draw_segment(segment);
+    draw_segment(aes_painter, segment);
 }
-BOOL aes_render_extent(const GRECT *rect, WORD state, WORD thickness)
+BOOL aes_render_extent(PAINTER *aes_painter, const GRECT *rect, WORD state, WORD thickness)
 {
     GRECT *clip = &aes_painter->clip;
     LONG pad = state & OUTLINED ? 3 : 3L*thickness;
@@ -160,16 +159,16 @@ BOOL aes_render_extent(const GRECT *rect, WORD state, WORD thickness)
            (LONG)rect->g_x-pad < (LONG)clip->g_x+clip->g_w &&
            (LONG)rect->g_y-pad < (LONG)clip->g_y+clip->g_h;
 }
-void aes_render_box(LONG x, LONG y, LONG width, LONG height)
+void aes_render_box(PAINTER *aes_painter, LONG x, LONG y, LONG width, LONG height)
 {
     LONG right = x+width-1, bottom = y+height-1;
     LONG top_edge[4] = { x,y,right,y }, right_edge[4] = { right,y,right,bottom };
     LONG bottom_edge[4] = { right,bottom,x,bottom }, left_edge[4] = { x,bottom,x,y };
     if (width <= 0 || height <= 0) return;
-    draw_segment(top_edge); draw_segment(right_edge);
-    draw_segment(bottom_edge); draw_segment(left_edge);
+    draw_segment(aes_painter, top_edge); draw_segment(aes_painter, right_edge);
+    draw_segment(aes_painter, bottom_edge); draw_segment(aes_painter, left_edge);
 }
-void v_pline(WORD count, WORD *points)
+void v_pline(PAINTER *aes_painter, WORD count, WORD *points)
 {
     WORD i, j;
     LONG segment[4];
@@ -186,14 +185,14 @@ void v_pline(WORD count, WORD *points)
      * must not turn into visible edges along the clipping rectangle. */
     for (i = 1; i < count && aes_painter->ok; i++) {
         for (j = 0; j < 4; j++) segment[j] = points[(i-1)*2+j];
-        draw_segment(segment);
+        draw_segment(aes_painter, segment);
     }
 }
-void vs_clip(WORD enabled, WORD *points)
+void vs_clip(PAINTER *aes_painter, WORD enabled, WORD *points)
 {
     if (aes_painter->ok) aes_painter->ok = aes_graphics_call(VDI_SERVICE_CLIP,aes_painter->handle,enabled,(uintptr_t)points,0) == E_OK;
 }
-void aes_render_fill(LONG x, LONG y, LONG width, LONG height)
+void aes_render_fill(PAINTER *aes_painter, LONG x, LONG y, LONG width, LONG height)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     LONG left = max(x,aes_painter->clip.g_x);
@@ -204,17 +203,17 @@ void aes_render_fill(LONG x, LONG y, LONG width, LONG height)
     request.code = FILL_RECTANGLE; request.nptsin = 2;
     request.ptsin[0] = left; request.ptsin[1] = top;
     request.ptsin[2] = right; request.ptsin[3] = bottom;
-    invoke(&request);
+    invoke(aes_painter, &request);
 }
-void vr_recfl(WORD *points)
+void vr_recfl(PAINTER *aes_painter, WORD *points)
 {
-    aes_render_fill(points[0],points[1],(LONG)points[2]-points[0]+1,(LONG)points[3]-points[1]+1);
+    aes_render_fill(aes_painter, points[0],points[1],(LONG)points[2]-points[0]+1,(LONG)points[3]-points[1]+1);
 }
-void vst_height(WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
+void vst_height(PAINTER *aes_painter, WORD height, WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     request.code = SET_CHAR_HEIGHT; request.nptsin = 1; request.ptsin[1] = height;
-    invoke(&request);
+    invoke(aes_painter, &request);
     if (aes_painter->ok) { *charw = aes_painter->outpoints[0]; *charh = aes_painter->outpoints[1]; *cellw = aes_painter->outpoints[2]; *cellh = aes_painter->outpoints[3]; }
 }
 /* The VDI service protects each framebuffer write with balanced cursor
@@ -224,7 +223,7 @@ void gsx_mon(void) { }
 /* Mono forms remain in application memory. Submit only visible runs of set
  * bits through the existing solid-fill service: no bitmap or object pointers
  * cross the kernel boundary. The original image/icon painter uses MD_TRANS. */
-void gsx_blt(void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, WORD rule, WORD fg, WORD bg)
+void gsx_blt(PAINTER *aes_painter, void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, WORD rule, WORD fg, WORD bg)
 {
     const UWORD *bitmap = address;
     GRECT *clip = &aes_painter->clip;
@@ -249,7 +248,7 @@ void gsx_blt(void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, 
             if (x < right && (bitmap[source_y*stride+source_x/16] & (0x8000U >> (source_x & 15)))) {
                 if (run < 0) run = x;
             } else if (run >= 0) {
-                aes_render_bb_fill(MD_REPLACE,FIS_SOLID,IP_SOLID,run,y,x-run,1);
+                aes_render_bb_fill(aes_painter, MD_REPLACE,FIS_SOLID,IP_SOLID,run,y,x-run,1);
                 run = -1;
                 if (!aes_painter->ok) break;
             }
@@ -260,7 +259,7 @@ void gsx_blt(void *address, WORD sx, WORD sy, WORD dx, WORD dy, WORD w, WORD h, 
 /* Colour icons use unchanged standard-format planes in application memory.
  * The x32 packed-screen adapter emits palette-index runs through VDI, matching
  * native rs_cicon_pack without changing the caller's CICON or its bitmaps. */
-static WORD colour_pen(UWORD index)
+static WORD colour_pen(PAINTER *aes_painter, UWORD index)
 {
     WORD pen, colours = aes_painter->workstation.ws_ncolors;
     if (index >= (UWORD)colours) index = 0; /* Native pack's invalid-index rule. */
@@ -270,15 +269,15 @@ static WORD colour_pen(UWORD index)
         if (pen != BLACK && vdi_pen_order[pen] == index) return pen;
     return index;
 }
-void *aes_render_alloc(LONG bytes) { return aes_temporary_alloc(bytes,aes_painter->global); }
+void *aes_render_alloc(PAINTER *aes_painter, LONG bytes) { return aes_temporary_alloc(bytes,aes_painter->global); }
 WORD aes_render_free(void *memory) { return aes_resource_discard(memory); }
-CICON *aes_render_cicon(CICONBLK *block)
+CICON *aes_render_cicon(PAINTER *aes_painter, CICONBLK *block)
 {
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
     if (!aes_painter->ok || !block->mainlist) return NULL;
     if (!aes_painter->colour_planes) {
         request.code = 102; request.nintin = 1; request.intin[0] = 1;
-        invoke(&request);
+        invoke(aes_painter, &request);
         if (!aes_painter->ok) return NULL;
         aes_painter->colour_planes = aes_painter->output[4];
         /* External x32 graphics currently uses packed GOP screens. Native
@@ -290,7 +289,7 @@ CICON *aes_render_cicon(CICONBLK *block)
     }
     return rs_cicon_best(block,aes_painter->colour_planes);
 }
-void aes_render_colourblit(const WORD *data, const GRECT *rect, WORD planes)
+void aes_render_colourblit(PAINTER *aes_painter, const WORD *data, const GRECT *rect, WORD planes)
 {
     LONG left, right, top, bottom, x, y, word, stride, plane_words, start;
     WORD plane, previous, pen;
@@ -310,12 +309,12 @@ void aes_render_colourblit(const WORD *data, const GRECT *rect, WORD planes)
                 mask = 0x8000U >> ((x-rect->g_x)&15); index = 0;
                 for (plane = 0; plane < planes; plane++)
                     if ((UWORD)data[word+plane*plane_words] & mask) index |= 1U << plane;
-                pen = colour_pen(index);
+                pen = colour_pen(aes_painter, index);
             }
             if (pen != previous) {
                 if (previous >= 0) {
                     vsf_color(previous);
-                    aes_render_bb_fill(MD_REPLACE,FIS_SOLID,IP_SOLID,start,y,x-start,1);
+                    aes_render_bb_fill(aes_painter, MD_REPLACE,FIS_SOLID,IP_SOLID,start,y,x-start,1);
                     if (!aes_painter->ok) break;
                 }
                 start = x; previous = pen;
@@ -324,7 +323,7 @@ void aes_render_colourblit(const WORD *data, const GRECT *rect, WORD planes)
     }
 }
 
-BOOL ob_render_cancelled(OBJECT *tree)
+BOOL ob_render_cancelled(PAINTER *aes_painter, OBJECT *tree)
 {
     (void)tree;
     return !aes_painter->ok;
@@ -431,7 +430,7 @@ static BOOL supported(OBJECT *object, LONG x, LONG y)
     }
     return TRUE;
 }
-BOOL aes_render_ready(OBJECT *tree, WORD object, WORD x, WORD y)
+BOOL aes_render_ready(PAINTER *aes_painter, OBJECT *tree, WORD object, WORD x, WORD y)
 {
     /* USERDEF can change a later sibling after the subtree preflight. */
     if (aes_painter->ok && !supported(&tree[object],x,y)) aes_painter->ok = FALSE;
@@ -457,16 +456,17 @@ static void absolute_position(OBJECT *tree, WORD object, LONG *x, LONG *y)
         object = get_par(tree,object);
     } while (object != NIL);
 }
-static void draw_object(OBJECT *tree, WORD object, LONG x, LONG y)
+static void draw_object(void *walk_context, OBJECT *tree, WORD object, LONG x, LONG y)
 {
+    PAINTER *aes_painter = walk_context;
     if (!aes_painter->ok || (tree[object].ob_flags & HIDETREE)) return;
     if (!supported(&tree[object],x,y)) { aes_painter->ok = FALSE; return; }
-    ob_render_object(tree,object,(WORD)x,(WORD)y);
+    ob_render_object(aes_painter, tree,object,(WORD)x,(WORD)y);
 }
 static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD cw, WORD ch,
-                   AESGLOBAL *global, BOOL change, UWORD state, WORD key, WORD *index, WORD kind, void (*operation)(void *), void *argument)
+                   AESGLOBAL *global, BOOL change, UWORD state, WORD key, WORD *index, WORD kind, void (*operation)(PAINTER *, void *), void *argument)
 {
-    PAINTER p = { 0 }, *saved = aes_painter;
+    PAINTER p = { 0 }, *aes_painter = &p;
     LONG session = aes_application_session(global), right, bottom, lock, x, y;
     VDI_SERVICE_WORKSTATION ws;
     VDI_SERVICE_DRAW_REQUEST request = { 0 };
@@ -490,10 +490,10 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
     p.global = global;
     p.style = &aes_app_context(global)->graphics.style;
-    opened = TRUE; aes_painter = &p; p.handle = ws.handle; p.ok = TRUE;
+    opened = TRUE; p.handle = ws.handle; p.ok = TRUE;
     memcpy(&p.workstation,ws.intout,sizeof(ws.intout));
     memcpy((WORD *)&p.workstation+45,ws.ptsout,sizeof(ws.ptsout));
-    if (!p.style->ready) { aes_init_3d(); p.style->ready = TRUE; }
+    if (!p.style->ready) { aes_init_3d(aes_painter); p.style->ready = TRUE; }
     p.mode = p.text_color = p.line_color = p.interior = p.pattern = p.font = -1;
     p.clip.g_x = cx < 0 ? 0 : cx; p.clip.g_y = cy < 0 ? 0 : cy;
     right = (LONG)cx+cw; bottom = (LONG)cy+ch;
@@ -504,28 +504,27 @@ static WORD render(OBJECT *tree, WORD start, WORD depth, WORD cx, WORD cy, WORD 
         success = TRUE; goto done;
     }
     p.clip.g_w = right-p.clip.g_x; p.clip.g_h = bottom-p.clip.g_y;
-    gsx_sclip(&p.clip);
+    gsx_sclip(aes_painter, &p.clip);
     request.code = INQ_TEXT_ATTRIBUTES;
-    invoke(&request);
+    invoke(aes_painter, &request);
     if (!p.ok) goto done;
     p.char_width = p.outpoints[0]; p.char_top = p.outpoints[1]; p.wchar = p.outpoints[2]; p.hchar = p.outpoints[3];
     /* Same normal/small font setup as gsx_start(), without kernel globals. */
     p.workstation.ws_chmaxh = p.char_top;
-    vst_height(p.workstation.ws_chminh,&p.small_width,&p.small_top,&p.wschar,&p.hschar);
-    vst_height(p.workstation.ws_chmaxh,&dummy,&dummy,&dummy,&dummy);
+    vst_height(aes_painter, p.workstation.ws_chminh,&p.small_width,&p.small_top,&p.wschar,&p.hschar);
+    vst_height(aes_painter, p.workstation.ws_chmaxh,&dummy,&dummy,&dummy,&dummy);
     if (!p.ok || p.wchar <= 0 || p.hchar <= 0 || p.wschar <= 0 || p.hschar <= 0) goto done;
-    if (operation) operation(argument);
-    else if (index) aes_edit_core(tree,start,key,index,kind);
-    else if (change) ob_render_change(tree,start,state,TRUE);
+    if (operation) operation(aes_painter,argument);
+    else if (index) aes_edit_core(aes_painter, tree,start,key,index,kind);
+    else if (change) ob_render_change(aes_painter, tree,start,state,TRUE);
     else {
         parent = get_par(tree,start);
         if (parent != NIL) absolute_position(tree,parent,&x,&y); else x = y = 0;
-        everyobj(tree,start,start == ROOT ? NIL : tree[start].ob_next,draw_object,x,y,depth);
+        everyobj(aes_painter, tree,start,start == ROOT ? NIL : tree[start].ob_next,draw_object,x,y,depth);
     }
     success = p.ok;
 done:
     if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) success = FALSE;
-    aes_painter = saved;
     if (lock == E_OK && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) success = FALSE;
     return success ? 1 : 0;
 }
@@ -552,14 +551,19 @@ WORD mt_objc_change(OBJECT *tree, WORD object, WORD reserved, WORD x, WORD y, WO
 }
 
 
+void aes_edit_rect(PAINTER *aes_painter, OBJECT *tree, WORD object, GRECT *rect)
+{
+    if (!aes_form_bounds(tree,object,rect)) aes_painter->ok = FALSE;
+}
+
 /* The editor redraws into the same workstation and immutable update clip. */
-void aes_edit_draw(OBJECT *tree, WORD object, WORD depth)
+void aes_edit_draw(PAINTER *aes_painter, OBJECT *tree, WORD object, WORD depth)
 {
     WORD parent;
     LONG x = 0, y = 0;
     parent = get_par(tree,object);
     if (parent != NIL) absolute_position(tree,parent,&x,&y);
-    everyobj(tree,object,tree[object].ob_next,draw_object,x,y,depth);
+    everyobj(aes_painter, tree,object,tree[object].ob_next,draw_object,x,y,depth);
 }
 
 WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, AESGLOBAL *global)
@@ -593,7 +597,7 @@ WORD mt_objc_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind, A
 typedef struct { WORD kind; GRECT small, large; } FORM_ANIMATION;
 /* A native trajectory is linear in position/size. Validate its endpoints
  * with wide intermediates, including xcbox's aspect-dependent corner arms. */
-static BOOL animation_rect(LONG x, LONG y, LONG w, LONG h, BOOL corners)
+static BOOL animation_rect(PAINTER *aes_painter, LONG x, LONG y, LONG w, LONG h, BOOL corners)
 {
     LONG right = x+w, bottom = y+h;
     LONG wa = 2L*aes_painter->wbox, ha = 2L*aes_painter->hbox;
@@ -603,38 +607,38 @@ static BOOL animation_rect(LONG x, LONG y, LONG w, LONG h, BOOL corners)
     return !corners || (right <= 32767L && bottom <= 32767L &&
         x+wa <= 32767L && right-wa >= -32768L && y+ha <= 32767L && bottom-ha >= -32768L);
 }
-static BOOL animation_move(const GRECT *source, WORD dx, WORD dy)
+static BOOL animation_move(PAINTER *aes_painter, const GRECT *source, WORD dx, WORD dy)
 {
     LONG xdist = (LONG)dx-source->g_x, ydist = (LONG)dy-source->g_y;
     WORD count, xstep, ystep;
     if (xdist < -32767L || xdist > 32767L || ydist < -32767L || ydist > 32767L) return FALSE;
-    aes_animation_scale(xdist < 0 ? -xdist : xdist, ydist < 0 ? -ydist : ydist,&count,&xstep,&ystep);
-    return animation_rect(source->g_x,source->g_y,source->g_w,source->g_h,FALSE) &&
-        animation_rect((LONG)source->g_x+(xdist > 0 ? 1L : -1L)*count*xstep,
+    aes_animation_scale(aes_painter, xdist < 0 ? -xdist : xdist, ydist < 0 ? -ydist : ydist,&count,&xstep,&ystep);
+    return animation_rect(aes_painter, source->g_x,source->g_y,source->g_w,source->g_h,FALSE) &&
+        animation_rect(aes_painter, (LONG)source->g_x+(xdist > 0 ? 1L : -1L)*count*xstep,
                        (LONG)source->g_y+(ydist > 0 ? 1L : -1L)*count*ystep,source->g_w,source->g_h,FALSE);
 }
-static BOOL animation_valid(FORM_ANIMATION *a)
+static BOOL animation_valid(PAINTER *aes_painter, FORM_ANIMATION *a)
 {
     GRECT centered = a->small;
     WORD x, y, count, xstep, ystep;
     LONG delta;
-    if (a->kind == AES_ANIMATION_MOVE) return animation_move(&a->small,a->large.g_x,a->large.g_y);
-    if (!animation_rect(a->small.g_x,a->small.g_y,a->small.g_w,a->small.g_h,FALSE) ||
-        !animation_rect(a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
-    gr_stepcalc(a->small.g_w,a->small.g_h,&a->large,&x,&y,&count,&xstep,&ystep);
+    if (a->kind == AES_ANIMATION_MOVE) return animation_move(aes_painter, &a->small,a->large.g_x,a->large.g_y);
+    if (!animation_rect(aes_painter, a->small.g_x,a->small.g_y,a->small.g_w,a->small.g_h,FALSE) ||
+        !animation_rect(aes_painter, a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
+    gr_stepcalc(aes_painter, a->small.g_w,a->small.g_h,&a->large,&x,&y,&count,&xstep,&ystep);
     centered.g_x = x; centered.g_y = y;
     if (a->kind == FMD_GROW) {
-        if (!animation_move(&a->small,x,y) || !animation_rect(x,y,centered.g_w,centered.g_h,TRUE)) return FALSE;
+        if (!animation_move(aes_painter, &a->small,x,y) || !animation_rect(aes_painter, x,y,centered.g_w,centered.g_h,TRUE)) return FALSE;
         delta = -1;
     } else {
-        if (!animation_move(&centered,a->small.g_x,a->small.g_y) ||
-            !animation_rect(a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
+        if (!animation_move(aes_painter, &centered,a->small.g_x,a->small.g_y) ||
+            !animation_rect(aes_painter, a->large.g_x,a->large.g_y,a->large.g_w,a->large.g_h,TRUE)) return FALSE;
         centered = a->large; delta = 1;
     }
-    return animation_rect(centered.g_x+delta*count*xstep, centered.g_y+delta*count*ystep,
+    return animation_rect(aes_painter, centered.g_x+delta*count*xstep, centered.g_y+delta*count*ystep,
         centered.g_w-2*delta*count*xstep,centered.g_h-2*delta*count*ystep,TRUE);
 }
-static void animate_form(void *argument)
+static void animate_form(PAINTER *aes_painter, void *argument)
 {
     FORM_ANIMATION *a = argument;
     PAINTER *p = aes_painter;
@@ -648,10 +652,10 @@ static void animate_form(void *argument)
     if (wbox < (LONG)p->wchar + 4) wbox = (LONG)p->wchar + 4;
     if (wbox > 16383) { p->ok = FALSE; return; }
     p->wbox = wbox; p->hbox = hbox;
-    if (!animation_valid(a) || !p->ok) { p->ok = FALSE; return; }
-    if (a->kind == AES_ANIMATION_MOVE) gr_movebox(a->small.g_w,a->small.g_h,a->small.g_x,a->small.g_y,a->large.g_x,a->large.g_y);
-    else if (a->kind == FMD_GROW) gr_growbox(&a->small,&a->large);
-    else gr_shrinkbox(&a->small,&a->large);
+    if (!animation_valid(aes_painter, a) || !p->ok) { p->ok = FALSE; return; }
+    if (a->kind == AES_ANIMATION_MOVE) gr_movebox(aes_painter, a->small.g_w,a->small.g_h,a->small.g_x,a->small.g_y,a->large.g_x,a->large.g_y);
+    else if (a->kind == FMD_GROW) gr_growbox(aes_painter, &a->small,&a->large);
+    else gr_shrinkbox(aes_painter, &a->small,&a->large);
 }
 WORD aes_form_animation(WORD kind, const GRECT *small, const GRECT *large, AESGLOBAL *global)
 {
@@ -692,18 +696,18 @@ static BOOL drag_position(FRAME_DRAG *drag, LONG x, LONG y, GRECT *outline)
     return wm_move_position(&drag->state->border,drag->state->kind,drag->press_x,drag->press_y,x,y,
         drag->width,drag->height,drag->state->wbox,drag->state->hbox,outline);
 }
-static void drag_outline(FRAME_DRAG *drag, GRECT *outline)
+static void drag_outline(PAINTER *aes_painter, FRAME_DRAG *drag, GRECT *outline)
 {
     GRECT work;
-    gsx_xbox(outline);
+    gsx_xbox(aes_painter, outline);
     if (drag->sizing) {
         work.g_x = outline->g_x+drag->insets.left; work.g_y = outline->g_y+drag->insets.top;
         work.g_w = outline->g_w-drag->insets.left-drag->insets.right;
         work.g_h = outline->g_h-drag->insets.top-drag->insets.bottom;
-        gsx_xbox(&work); /* Native gr_rubwind's second, work-area box. */
+        gsx_xbox(aes_painter, &work); /* Native gr_rubwind's second, work-area box. */
     }
 }
-static void drag_frame(void *argument)
+static void drag_frame(PAINTER *aes_painter, void *argument)
 {
     FRAME_DRAG *drag = argument;
     PAINTER *p = aes_painter;
@@ -716,12 +720,12 @@ static void drag_frame(void *argument)
         !drag_position(drag,drag->press_x,drag->press_y,&outline)) {
         p->ok = FALSE; return;
     }
-    gsx_attr(FALSE,MD_XOR,BLACK);
+    gsx_attr(aes_painter, FALSE,MD_XOR,BLACK);
     vsl_type(7); /* gsx_xbox supplies user-defined dotted line patterns. */
     for (;;) {
         /* Native gr_dragbox uses this same patterned XOR outline. Display
          * ownership spans the wait, so peers cannot overwrite its pixels. */
-        drag_outline(drag,&outline);
+        drag_outline(aes_painter, drag,&outline);
         if (!p->ok) break;
         result = cuis_call6(CUIS_CONTROL_READ,drag->native,(uintptr_t)&event[0],
             (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
@@ -731,7 +735,7 @@ static void drag_frame(void *argument)
             result = cuis_call6(CUIS_CONTROL_READ,drag->native,(uintptr_t)&event[0],
                 (uintptr_t)&event[1],(uintptr_t)&event[2],(uintptr_t)&event[3],0);
         }
-        drag_outline(drag,&outline);
+        drag_outline(aes_painter, drag,&outline);
         if (!p->ok || result <= 0 || (event[2] & ~1L)) break;
         if (!drag_position(drag,event[0],event[1],&outline)) {
             p->ok = FALSE; break;
@@ -781,7 +785,7 @@ BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG
 
 WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD *out2, AESGLOBAL *global)
 {
-    PAINTER p = { 0 }, *saved = aes_painter;
+    PAINTER p = { 0 }, *aes_painter = &p;
     VDI_SERVICE_WORKSTATION ws;
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, first = 0, second = 0, result;
     if ((mode != SV_INQUIRE && mode != SV_SET) || aes_application_session(global) < 0) return 0;
@@ -792,10 +796,9 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
         ws.intout[13] <= 0 || ws.intout[13] > 256) return 0;
     p.global = global;
     p.style = &aes_app_context(global)->graphics.style;
-    p.workstation.ws_ncolors = ws.intout[13]; aes_painter = &p;
-    if (!p.style->ready) { aes_init_3d(); p.style->ready = TRUE; }
-    result = aes_sysvar_core(mode,which,in1,in2,&first,&second);
-    aes_painter = saved;
+    p.workstation.ws_ncolors = ws.intout[13];
+    if (!p.style->ready) { aes_init_3d(aes_painter); p.style->ready = TRUE; }
+    result = aes_sysvar_core(aes_painter, mode,which,in1,in2,&first,&second);
     if (result && !mode) {
         if (out1) *out1 = first;
         if (out2 && (which == LK3DIND || which == LK3DACT || which == AD3DVALUE)) *out2 = second;
@@ -808,30 +811,29 @@ WORD mt_objc_sysvar(WORD mode, WORD which, WORD in1, WORD in2, WORD *out1, WORD 
  * lends its private workstation; whole-screen and mouse ownership span waits. */
 #include "tracking.h"
 #include "../../aes/gemgrlib.h"
-AES_TRACK *aes_tracker;
-void aes_track_setup(void)
+void aes_track_setup(PAINTER *aes_painter)
 {
-    gsx_attr(FALSE,MD_XOR,BLACK);
+    gsx_attr(aes_painter, FALSE,MD_XOR,BLACK);
     vsl_type(7);
 }
-void aes_track_parent(OBJECT *tree, WORD object, GRECT *rect)
+void aes_track_parent(PAINTER *aes_painter, OBJECT *tree, WORD object, GRECT *rect)
 {
     (void)tree; (void)object;
-    *rect = aes_tracker->bounds;
+    *rect = aes_painter->tracker->bounds;
 }
 void aes_track_child(OBJECT *tree, WORD object, GRECT *rect)
 {
     memcpy(rect,&tree[object].ob_x,sizeof(*rect));
 }
-static BOOL track_pointer_valid(void)
+static BOOL track_pointer_valid(PAINTER *aes_painter)
 {
-    AES_TRACK *t = aes_tracker;
+    AES_TRACK *t = aes_painter->tracker;
     LONG dx = (LONG)t->mouse[0]-t->box.g_x, dy = (LONG)t->mouse[1]-t->box.g_y;
     return dx < 32767 && dy < 32767;
 }
-BOOL aes_track_wait(void)
+BOOL aes_track_wait(PAINTER *aes_painter)
 {
-    AES_TRACK *t = aes_tracker;
+    AES_TRACK *t = aes_painter->tracker;
     LONG session = aes_application_session(t->global), ready, input[5];
     ULONG mask = CUIS_READY_RECT1|CUIS_READY_BUTTON;
     if (!aes_painter->ok) return FALSE;
@@ -848,31 +850,31 @@ BOOL aes_track_wait(void)
      * than finishing it from history while the button is still down. */
     if (ready & CUIS_READY_BUTTON) {
         if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global)) goto failed;
-        if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid()) goto failed;
+        if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid(aes_painter)) goto failed;
         return (t->mouse[2] & 255) != 0;
     }
     /* Drag/slide offsets were validated and captured once at entry. Only
      * rubber dimensions continue growing relative to the original origin. */
-    if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid()) goto failed;
+    if (t->kind == AES_TRACK_RUBBER && !track_pointer_valid(aes_painter)) goto failed;
     return TRUE;
 failed:
     aes_painter->ok = FALSE;
     return FALSE;
 }
-static void track_graphics(void *argument)
+static void track_graphics(PAINTER *aes_painter, void *argument)
 {
     AES_TRACK *t = argument;
-    if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global) || !track_pointer_valid()) {
+    aes_painter->tracker = t;
+    if (!mt_graf_mkstate(t->mouse,t->mouse+1,t->mouse+2,t->mouse+3,t->global) || !track_pointer_valid(aes_painter)) {
         aes_painter->ok = FALSE; return;
     }
     if (t->kind == AES_TRACK_RUBBER)
-        gr_rubbox(t->box.g_x,t->box.g_y,t->box.g_w,t->box.g_h,&t->result1,&t->result2);
-    else if (t->kind == AES_TRACK_SLIDE) t->result1 = gr_slidebox(t->tree,0,1,t->vertical);
-    else gr_dragbox(t->box.g_w,t->box.g_h,t->box.g_x,t->box.g_y,&t->bounds,&t->result1,&t->result2);
+        gr_rubbox(aes_painter, t->box.g_x,t->box.g_y,t->box.g_w,t->box.g_h,&t->result1,&t->result2);
+    else if (t->kind == AES_TRACK_SLIDE) t->result1 = gr_slidebox(aes_painter, t->tree,0,1,t->vertical);
+    else gr_dragbox(aes_painter, t->box.g_w,t->box.g_h,t->box.g_x,t->box.g_y,&t->bounds,&t->result1,&t->result2);
 }
 BOOL aes_graphics_track(AES_TRACK *t)
 {
-    AES_TRACK *saved = aes_tracker;
     OBJECT dummy = { 0 };
     LONG session = aes_application_session(t->global);
     BOOL mouse = FALSE, ok = FALSE;
@@ -883,9 +885,7 @@ BOOL aes_graphics_track(AES_TRACK *t)
     if (mouse) {
         dummy.ob_type = G_IBOX; dummy.ob_flags = LASTOB;
         dummy.ob_next = dummy.ob_head = dummy.ob_tail = NIL;
-        aes_tracker = t;
         ok = render(&dummy,0,0,0,0,32767,32767,t->global,FALSE,0,0,NULL,0,track_graphics,t) != 0;
-        aes_tracker = saved;
     }
     if (!ok) {
         (void)cuis_call6(CUIS_DISPLAY_REDRAW,session,0,0,32767,32767,0);
