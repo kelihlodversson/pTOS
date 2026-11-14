@@ -102,7 +102,9 @@ struct shared_exec_regions {
 };
 static void shared_exec_commit(KPROC *target);
 #endif
+#if CONF_WITH_USER_ASPACE
 static BOOL owns_top_stack(const KPROC *kproc);
+#endif
 
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
