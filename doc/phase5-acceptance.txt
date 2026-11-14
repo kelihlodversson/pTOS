@@ -91,6 +91,12 @@ failed copyout without consumption, normalffff versus real fault, orphan/PID
 identity and exactly-once results:
   pie_load status/thread/wait-ABI; pclone/process_calls and canonical #909
   production wait/result models. THREAD exit alone never completes PROCESS.
+Private protected-query diagnostic copyout after its blocking mode4 execution:
+  a native child Mprots/Munmaps a separate ordinary output reservation. Final
+  copy returns EIMBA, never panic; completed mode4 is consumed once, with43/45
+  final conservation. This is separate from public Pwait's failed-copyout
+  non-consumption contract, which remains unchanged. No output lease is implied
+  by preflight and no new pin, rollback or second reap is introduced.
 Independent CUIS CH_EXIT and GUI shell/controller/deferred completion:
   gated tests/cuis/gem_exit.c plus required test-mmap-boot marker; positive
   full MEMTEST/GEM/form/input CI step is distinct from gate-off compatibility.

@@ -590,6 +590,52 @@ static void shared_vm_relaunch_rejection(void)
 }
 
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_MMAP)
+static void shared_vm_result_revocation(void)
+{
+    static struct shared_vm_probe peer;
+    static SHARED_PEXEC_SNAPSHOT before,after;
+    static MAPPING_LIFETIME_SNAPSHOT common_before,common_after;
+    unsigned mode;
+    for(mode=0;mode<2;mode++) {
+        SHARED_PEXEC_PROTECTED *output,saved;
+        BASEPAGE *image;char tail[12],*env;long address,result;
+        memset(&peer,0,sizeof(peer));memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+        memset(&common_before,0,sizeof(common_before));memset(&common_after,0,sizeof(common_after));
+        shared_vm_snapshot(&before);shared_vm_common_snapshot(&common_before);
+        address=trap_1_wllllll(GEMDOS_MMAP,0,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        ptest_assert_msg(address>0,"shared private result: independent ordinary output mapping");
+        if(address<=0) continue;
+        output=(SHARED_PEXEC_PROTECTED *)(uintptr_t)address;
+        peer.staged=(uint32_t)address;peer.controller_result=mode;
+        shared_vm_tail(tail,'c',&peer);
+        image=(BASEPAGE *)Pexec(3,"C:\\PIEPROBE.TOS",tail,0);
+        ptest_assert_msg((long)image>0,"shared private result: authenticated child staging");
+        if((long)image<=0) { (void)trap_1_wll(GEMDOS_MUNMAP,address,4096);continue; }
+        env=image->p_env;
+        memset(output,0xa5,sizeof(*output));output->image=(uint32_t)(uintptr_t)image;saved=*output;
+        result=trap_1_wll(GEMDOS_PCLONE,address,SHARED_PEXEC_PROTECTED_QUERY);
+        ptest_assert_msg(result==-40 && peer.done && peer.pid && !peer.error,
+            "shared private result: child revokes output during blocking mode4 and copyout returns EIMBA");
+        ptest_assert_msg(Pwaitpid(peer.pid,1,0)==-33,
+            "shared private result: committed mode4 completed and consumed once before diagnostic copy failure");
+        if(mode) ptest_assert_msg(trap_1_wlll(GEMDOS_MPROT,address,4096,PROT_READ|PROT_WRITE)==-40,
+            "shared private result: unmapped output never regains stale authority");
+        else {
+            ptest_assert_msg(!memcmp(output,&saved,sizeof(saved)),
+                "shared private result: rejected write leaves read-only output unchanged");
+            ptest_assert_msg(trap_1_wll(GEMDOS_MUNMAP,address,4096)==0,
+                "shared private result: release surviving caller-owned read-only mapping");
+        }
+        ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,
+            "shared private result: original staged image ownership survives completed child");
+        shared_vm_retirement(&before,0);
+        shared_vm_snapshot(&after);shared_vm_conserved(&before,&after);
+        shared_vm_common_snapshot(&common_after);shared_vm_common_equal(&common_before,&common_after);
+    }
+    conws("native shared-VM private result Mprot/Munmap during wait and exact conservation: tested\r\n");
+}
+#endif
 static void shared_vm_preparation_sweep(void)
 {
     unsigned interpreted;
@@ -1143,6 +1189,9 @@ void test_pie_load(void)
     shared_vm_prg();
 #endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_MMAP)
+    shared_vm_result_revocation();
+#endif
     shared_vm_preparation_sweep();
 #endif
 #endif

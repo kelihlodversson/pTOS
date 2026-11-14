@@ -140,8 +140,9 @@ static long clone_request(uint64_t address, uint64_t size)
         probe.tid_after=kthread_tid(ksched_exit_thread(run));
         /* xclone's enclosing cleanup scope owns this private experiment.
          * Its ordinary final checkpoint must deliver the latched request. */
-        if(!kproc_copy_to_user_resident((VADDR)address,&probe,sizeof(probe)))
-            panic("shared test lost resident result");
+        /* The shared wait can yield after preflight. An ordinary peer may
+         * revoke this diagnostic output; no retained lease protects it. */
+        if(!kproc_copy_to_user_resident((VADDR)address,&probe,sizeof(probe))) return EIMBA;
         return E_OK;
     }
     if(!address && size>=0xc8940900UL && size<=0xc89409ffUL) {

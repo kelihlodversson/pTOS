@@ -663,6 +663,15 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; th
     fi
 fi
 
+# Native revoked-result marker.
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native shared-VM private result Mprot/Munmap during wait and exact conservation: tested' "$suite_log"; then
+    record "native shared-Pexec result revocation" FAIL "configured blocked-copyout assertions did not execute"
+fi
+# End native revoked-result marker.
+
 # Configured nested ownership checks must execute as managed THREADs.
 if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h"; then

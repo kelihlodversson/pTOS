@@ -222,3 +222,21 @@ with tempfile.TemporaryDirectory(prefix='ptos-panic-probes-') as directory:
                                 check=True, text=True, capture_output=True)
         assert result.stdout == ('kernel panic|FAIL' if panic_path else ''), (panic_path, result.stdout)
 print('Native final panic guard: 15 console/QEMU cases, resumed panics in every run rejected: PASS (host shell)')
+
+block = script.split('# Native revoked-result marker.', 1)[1].split('# End native revoked-result marker.', 1)[0]
+with tempfile.TemporaryDirectory(prefix='ptos-result-revocation-probes-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    marker = 'native shared-VM private result Mprot/Munmap during wait and exact conservation: tested'
+    for mask in range(8):
+        names = ['CONF_WITH_SHARED_VM_PEXEC_TEST', 'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_MMAP']
+        (top / 'obj/autoconf.h').write_text(''.join(
+            '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
+        for present in (False, True):
+            log.write_text(marker + '\n' if present else 'PASS\n')
+            shell = 'top=$1; suite_log=$2\nrecord() { printf "%s" "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
+                                    check=True, text=True, capture_output=True)
+            assert result.stdout == ('native shared-Pexec result revocation' if mask == 7 and not present else '')
+print('Native blocked-copyout guard: 16 feature/marker cases, missing execution rejected: PASS (host shell)')

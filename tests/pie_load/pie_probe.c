@@ -24,6 +24,7 @@
 #include "shared_vm_probe.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
+#include "../../include/mman.h"
 #endif
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
@@ -70,7 +71,7 @@ int main(void)
 {
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
     if(_base->p_cmdlin[0]==10 && (_base->p_cmdlin[1]=='s' || _base->p_cmdlin[1]=='o' ||
-        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m' || _base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e' || _base->p_cmdlin[1]=='n' || _base->p_cmdlin[1]=='h')) {
+        _base->p_cmdlin[1]=='b' || _base->p_cmdlin[1]=='l' || _base->p_cmdlin[1]=='p' || _base->p_cmdlin[1]=='g' || _base->p_cmdlin[1]=='r' || _base->p_cmdlin[1]=='m' || _base->p_cmdlin[1]=='u' || _base->p_cmdlin[1]=='e' || _base->p_cmdlin[1]=='n' || _base->p_cmdlin[1]=='h' || _base->p_cmdlin[1]=='c')) {
         uintptr_t address=0;unsigned i;struct shared_vm_probe *probe;
         for(i=3;i<11;i++) {
             unsigned char c=(unsigned char)_base->p_cmdlin[i];
@@ -80,6 +81,15 @@ int main(void)
             address=(address<<4)|c;
         }
         probe=(struct shared_vm_probe *)address;
+        if(_base->p_cmdlin[1]=='c') {
+            long result;
+            probe->pid=Pgetpid();
+            if(probe->controller_result)
+                result=trap_1_wll(GEMDOS_MUNMAP,probe->staged,4096);
+            else result=trap_1_wlll(GEMDOS_MPROT,probe->staged,4096,PROT_READ);
+            if(result) probe->error=(uint32_t)result;
+            probe->done=1;Pterm(0x39);
+        }
         if(_base->p_cmdlin[1]=='n') {
             struct shared_vm_probe nested={0};unsigned mode;
             /* Ordinary mode0 has an isolated root. Its own stack mailbox,
