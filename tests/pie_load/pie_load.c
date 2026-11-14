@@ -597,7 +597,11 @@ static void shared_vm_last_thread(void)
             if(controller_tid<=0) {(void)Mfree(controller);(void)Mfree(image);(void)Mfree(env);continue;}
         }
         if(!asynchronous) {
-            volatile uint32_t *deep=(volatile uint32_t *)(uintptr_t)0x7ffb0000UL;
+            long cap=Psetlimit(0x100,-1);
+            unsigned long distance=cap>32768?32768:((unsigned long)cap/2)&~4095UL;
+            volatile uint32_t *deep=(volatile uint32_t *)(uintptr_t)(0x80000000UL-distance);
+            ptest_assert_msg(cap>=8192 && distance>=4096,
+                "shared THREAD lifetime: probe lies inside the actual inherited stack cap");
             ptest_assert_msg(Mvalidate(0,(void *)deep,4,0)==0,
                 "shared THREAD lifetime: first sibling preserves original lazy top-stack ownership");
             *deep=0x894966UL;
