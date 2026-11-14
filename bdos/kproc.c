@@ -102,6 +102,7 @@ struct shared_exec_regions {
 };
 static void shared_exec_commit(KPROC *target);
 #endif
+static BOOL owns_top_stack(const KPROC *kproc);
 
 /* PD is the public GEMDOS basepage and is writable by its process. Keep
  * native pointers and the user-range snapshot in this kernel-only record. */
@@ -663,8 +664,7 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
         target->stack_low = source->stack_low;
         target->stack_top = source->stack_top;
         target->entry = source->entry;
-        target->clone_top_stack = !source->shared_exec &&
-            (!source->clone_guarded || source->clone_top_stack);
+        target->clone_top_stack = owns_top_stack(source);
     }
     return TRUE;
 }
@@ -967,6 +967,7 @@ void kproc_clone_commit_sibling(KPROC *p, KTHREAD *thread)
     if (!kproc_clone_sibling_ready(p, thread, kthread_aspace(thread)))
         panic("unprepared sibling activation");
     p->threaded = TRUE;
+    p->clone_top_stack = owns_top_stack(p);
     p->clone_guarded = TRUE; /* ordinary backend installation stays forbidden */
 }
 BOOL kproc_clone_execution_bound(KPROC *p, KTHREAD *thread)

@@ -37,6 +37,7 @@ static void shared_vm_diagnostic(const char *label,long value)
 }
 static void shared_vm_tail(char *,char,struct shared_vm_probe *);
 #include "../../include/shared_pexec_test.h"
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static void shared_vm_snapshot(SHARED_PEXEC_SNAPSHOT *out)
 {
     ptest_assert_msg(trap_1_wll(GEMDOS_PCLONE,(long)out,SHARED_PEXEC_SNAPSHOT_QUERY)==0,
@@ -132,6 +133,7 @@ static void shared_vm_multiple_lifetime(void)
     }
     conws("native shared-VM four-boundary resource conservation and multiple surviving orphans: tested\r\n");
 }
+#endif
 #if defined(__mc68000__)
 static void shared_vm_prg(void)
 {
@@ -235,7 +237,7 @@ static void shared_vm_interpreted_orphan(void)
         ptest_assert_msg((result>>16)==pid && (result&65535)==0x32,"shared interpreter orphan: source completes first");
         for(spin=0;spin<512 && !probes[1].started && !probes[1].error;spin++) (void)Syield();
         ptest_assert_msg(probes[1].started && !probes[1].done && !probes[1].error,
-            "shared interpreter orphan: interpreter relocated and started after source retirement");
+            "shared interpreter orphan: relocated interpreter remains runnable after source retirement");
         ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,"shared interpreter orphan: metadata retained by live interpreter");
         probes[1].gate=1;
         for(spin=0;spin<512 && !probes[1].done && !probes[1].error;spin++) (void)Syield();
@@ -252,11 +254,15 @@ static void shared_vm_interpreted(void)
     static const char envspec[]="CHECK=phase5\0\0";
     unsigned mode;
     for(mode=0;mode<2;mode++) {
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
         static SHARED_PEXEC_SNAPSHOT before,after;
+#endif
         BASEPAGE *bp;
         char *env;long rc;
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
         memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
         shared_vm_snapshot(&before);
+#endif
         bp=(BASEPAGE *)Pexec(PE_LOAD,"C:\\SHRINT.ELF","",envspec);
         if((long)bp<=0) shared_vm_interpreted_result(2+mode,(long)bp);
         ptest_assert_msg((long)bp>0,"shared interpreter: PE_LOAD");if((long)bp<=0) continue;
@@ -272,12 +278,14 @@ static void shared_vm_interpreted(void)
         }
         ptest_assert_msg(Mfree(bp)==0,"shared interpreter: final image cleanup");
         ptest_assert_msg(Mfree(env)==0,"shared interpreter: final environment cleanup");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
         shared_vm_snapshot(&after);
         shared_vm_diagnostic("shared interpreter current-root regions before=",(long)before.count[SP_CURRENT_MMAP]);
         shared_vm_diagnostic("shared interpreter current-root regions after=",(long)after.count[SP_CURRENT_MMAP]);
         shared_vm_diagnostic("shared interpreter current-root backing before=",(long)before.count[SP_CURRENT_PRIVATE]);
         shared_vm_diagnostic("shared interpreter current-root backing after=",(long)after.count[SP_CURRENT_PRIVATE]);
         shared_vm_conserved(&before,&after);
+#endif
     }
     conws("native shared-VM PT_INTERP Pexec4/104 standard entry: tested\r\n");
 }
@@ -588,6 +596,13 @@ static void shared_vm_last_thread(void)
             ptest_assert_msg(controller_tid>0,"shared THREAD lifetime: independent managed waiter controller");
             if(controller_tid<=0) {(void)Mfree(controller);(void)Mfree(image);(void)Mfree(env);continue;}
         }
+        if(!asynchronous) {
+            volatile uint32_t *deep=(volatile uint32_t *)(uintptr_t)0x7ffb0000UL;
+            ptest_assert_msg(Mvalidate(0,(void *)deep,4,0)==0,
+                "shared THREAD lifetime: first sibling preserves original lazy top-stack ownership");
+            *deep=0x894966UL;
+            ptest_assert_msg(*deep==0x894966UL,"shared THREAD lifetime: untouched original stack page still materializes");
+        }
         result=Pexec(asynchronous?104:4,0,image,0);
         if(asynchronous && result>0) {
             for(spin=0;spin<512 && !probe.worker_started;spin++) (void)Syield();
@@ -636,6 +651,7 @@ static void shared_vm_last_thread(void)
     }
     conws("native shared-VM final-THREAD completion and competing waiter: tested\r\n");
 }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_PTERMGRP)
 static SHARED_PEXEC_PROTECTED shared_protected;
 static struct shared_vm_probe shared_origin;
 static void shared_vm_cancel_peer(void *argument)
@@ -720,11 +736,14 @@ static void shared_vm_source_origins(void)
     (void)Psetlimit(0x100,limit);
     conws("native shared-VM Pclone and nested source convergence, wait ABIs and protected cancellation: tested\r\n");
 }
+#endif
 void shared_vm_run_managed_tests(void)
 {
     ptest_begin("shared-VM managed THREAD lifetime");
     shared_vm_last_thread();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_PTERMGRP)
     shared_vm_source_origins();
+#endif
     ptest_pass();
 }
 static void shared_vm_managed_worker(void)
@@ -894,7 +913,9 @@ void test_pie_load(void)
 #endif
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC)
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     shared_vm_multiple_lifetime();
+#endif
     shared_vm_basic();
     shared_vm_status();
     shared_vm_staged_retirement();

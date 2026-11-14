@@ -10,6 +10,10 @@ void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(!scope->active);scope->active=TRUE; }
 void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(scope->active);scope->active=FALSE; }
+struct kthread { KPROC *process;KASPACE *space;KTHREAD *next; };
+KPROC *kthread_process(const KTHREAD *thread) {return thread->process;}
+KASPACE *kthread_aspace(const KTHREAD *thread) {return thread->space;}
+KTHREAD **kthread_next_link(KTHREAD *thread) {return &thread->next;}
 /* This fixture has no file-backed reservations; an unexpected read is a bug. */
 LONG fileback_read(FILE_BACKING *backing,ULONG offset,void *buffer,ULONG size)
 { (void)backing;(void)offset;(void)buffer;(void)size;abort();return EREADF; }
@@ -107,6 +111,22 @@ static void supervisor_clone_metadata(void)
     CHECK(kproc_reservation_info(&pd,USER_STACK_TOP-TEST_PAGE,TEST_PAGE,&info)==EACCDN);
     CHECK(kaspace_reservation_info(owner.active_space,(VADDR)(uintptr_t)owner.user_start,TEST_PAGE,&info));
     CHECK(!info.rights && (info.flags&KASPACE_RESERVATION_INACCESSIBLE));
+    {
+        KTHREAD sibling={&owner,owner.active_space,NULL};
+        owner.started=TRUE;owner.threads=&sibling;
+        kproc_clone_commit_sibling(&owner,&sibling);
+        CHECK(!owns_top_stack(&owner) && !owner.clone_top_stack);
+        /* An ordinary image's original stack survives its first and later
+         * SAME_PROCESS publications; a generic source never gains one. */
+        owner.clone_guarded=FALSE;
+        CHECK(kproc_reservation_info(&pd,USER_STACK_TOP-TEST_PAGE,TEST_PAGE,&info)==E_OK);
+        kproc_clone_commit_sibling(&owner,&sibling);
+        CHECK(owns_top_stack(&owner) && owner.clone_top_stack);
+        CHECK(kproc_reservation_info(&pd,USER_STACK_TOP-2*TEST_PAGE,TEST_PAGE,&info)==E_OK);
+        kproc_clone_commit_sibling(&owner,&sibling);
+        CHECK(owns_top_stack(&owner));
+        owner.threads=NULL;owner.started=FALSE;
+    }
     while(held.nlogical) CHECK(kproc_reservation_release(&held.logical[--held.nlogical]));
     while(held.nraw) CHECK(kproc_allocation_release(&held.raw[--held.nraw]));
     CHECK(owner.references==1);kproc_list=NULL;

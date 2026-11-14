@@ -157,10 +157,13 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/ASYNC.TOS
 endif
 
-obj/libaes/GEMPIE.TOS: GEM_TEST_LINK = -pie
+obj/libaes/GEM.TOS: GEM_TEST_FLAGS = $(LDSO_APP_LDFLAGS)
+obj/libaes/GEMPIE.TOS: GEM_TEST_FIXED_BASE = -Wl,-Ttext-segment=0x400000
+obj/libaes/GEMPIE.TOS: GEM_TEST_FLAGS = $(filter-out $(GEM_TEST_FIXED_BASE),$(LDSO_APP_LDFLAGS)) -pie
 obj/libaes/GEM.TOS obj/libaes/GEMPIE.TOS: tests/cuis/gem_explicit.c tests/cuis/gem_explicit.h obj/libaes/EXPLICIT.PRG tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so obj/ldso/libptos.so include/gem.h
-	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj $(GEM_TEST_LINK) \
+	$(CC) $(GEM_TEST_FLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/libaes -laes -Lobj/ldso -lptos
+	@if [ "$@" = obj/libaes/GEMPIE.TOS ]; then readelf -h "$@" | grep -q 'Type:.*DYN'; fi
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEM.TOS
 ifeq ($(CONF_WITH_SHARED_VM_PEXEC_TEST),y)
