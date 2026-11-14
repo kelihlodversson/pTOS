@@ -4,7 +4,9 @@ Shared-root mapping attachment and retirement (#967)
 Implementation base: be81959ea54a13c1ab6f4946086590083710d929.
 Prerequisite: #894 / #956; ownership foundations: #891, #892, #958.
 This document is the design contract, written before production changes.
-Implementation, native acceptance and independent verdicts are still pending.
+The shared-VM/default versus explicit scoped policy was approved by the task
+owner before scoped implementation. Implementation is in progress; native
+acceptance and final independent verdicts are still pending.
 
 The accepted-base negative control
 ----------------------------------
@@ -74,7 +76,7 @@ pointer copied into shared memory or infer that another PROCESS needs it.
 FreeMiNT's shared memspace retains late allocations while a peer survives.
 Silently changing this to creator-only cleanup would be incompatible.
 
-The proposed additional trusted contract is an explicitly independently scoped
+The additional trusted contract is an explicitly independently scoped
 execution in an existing root: a fresh allocation scope for late ordinary
 regions plus exact attachments to agreed existing dependencies. It does not
 join source scopes merely to retain one image or data dependency. A peer can
@@ -95,6 +97,9 @@ Exact attachment tokens use non-recycled numeric tickets, canonical PROCESS
 identity, reservation birth and page interval, not PD or metadata-node address.
 Fresh acquisition authenticates the live canonical reservation and destination
 identity. Duplication authenticates the owned source ticket and live destination.
+Heap attachments cover a complete current allocation; mmap attachments may
+cover a page subrange. Mshrink preserves the surviving heap birth and cannot
+make a ticket retain removed bytes or a subsequent allocation at that address.
 An attachment confers lifetime only, never USER/WRITE/EXEC or physical access;
 PROT_NONE needs no fabricated access. Rights still come from current canonical
 metadata and the accepted #958 exact retained-lazy rules.
@@ -108,6 +113,17 @@ Subrange acquisition must stage boundary metadata before commit so final-owner
 cleanup never allocates. All fallible clone, split and attachment preparation
 precedes irreversible leaf or metadata publication. Failure publishes no result
 and releases only the prepared prefix.
+
+Ordinary heap/mmap mutations retain their canonical PROCESS and root while an
+execution-authenticated per-root guard protects metadata cursors over backend
+and file callbacks. Another managed continuation waits through the existing
+cooperative scheduler; same-continuation reentry is rejected. Dropping a hold
+may detach it immediately, but canonical retirement/coalescing waits until the
+mutation ends. The existing reaper also authenticates its execution so a
+callback cannot wait on its own unfinished cleanup. No new scheduler or reaper
+is involved. Cancellation is deferred by the established cleanup scope until
+the metadata transfer and deferred cleanup settle. Mmap rechecks owner,
+shared-space limits and placement after fallible file-backing acquisition.
 
 Existing global destructive operations remain global within the default common
 VM. An independently scoped caller needs an owned reservation/attachment for
@@ -158,3 +174,46 @@ or limit is removed. Any disposable consumer preview must name both exact
 sources and remain separate from prerequisite-source acceptance. Final kernel,
 memory and loader assessments must all review the same source SHA. Integration
 requires separate authorization; nothing is merged by this workstream.
+
+Internal caller contract
+------------------------
+Ordinary loaded PROCESS preparation creates a fresh scope in its private root.
+The trusted proc_clone SHARE_VM path prepares inherited membership and exact
+dependencies before constructing its KTHREAD; commit moves that prepared set
+without allocation. PRIVATE_VM checks source ownership before backend cloning,
+rejects pending reservations, gives copied metadata new births and a fresh
+scope, and copies no source scope pointers. SAME_PROCESS adds no mapping owner.
+
+PROC_CLONE_SCOPED_VM is a trusted NEW_PROCESS policy, sharing the backend with
+fresh allocation scope and exact current dependencies. The public clone entry
+rejects it; only a regression-kernel adapter invokes it for native proof.
+For a loader-created target, kproc_prepare_scoped_mapping_owners(target,source,
+space,&members) prepares the same lifetime policy independently of executable
+format. The target must be empty and unlaunched. The source must own each
+dependency; merely seeing it in the root does not qualify. Preparation retains
+all current source-owned heap/mmap fragments, including PROT_NONE, through
+distinct lifetime tickets, without freezing Munmap/Mprot.
+
+The loader retains its construction root and uses its existing trusted THREAD
+factory. It must call kproc_clone_commit_mapping_owners at its no-fail root
+adoption boundary; abort calls kproc_abort_mapping_owners before dropping the
+construction root/identity. Existing image/base/env/initial stack pins remain
+the loader/execution owner's responsibility. No image or stack is transferred
+merely by preparing ordinary mapping claims. All later ordinary Mmap/Malloc
+publication uses the committed allocation scope automatically, so ld.so and
+runtime dependencies need no successful-fini unmap or mapping enumeration.
+
+kproc_mapping_attach(source,target,birth,address,bytes,&ticket) requires live,
+non-cancelling canonical PROCESS identities sharing a root, and current source
+ownership. kproc_mapping_detach(owner,&ticket) consumes only that owner's exact
+ticket. A new holder is acquired before transfer releases its old holder. These
+helpers defer cancellation through the existing cleanup scopes. They are kernel
+contracts; no raw-pointer userspace attachment ABI is introduced here.
+
+The Phase 5 worker must replace its ordinary reservation snapshot/R2 ownership
+with this contract after integration, retaining its special image/stack/pin
+rules. It must explicitly select the independently scoped policy where desired;
+unannotated generic CLONE_VM remains a common lifetime cohort. Public Pexec4/104
+semantics, arbitrary cross-scope pointer transfer and consumer acceptance remain
+that worker's separate reconciliation. This prerequisite does not claim that
+independent scopes transparently implement FreeMiNT's common memspace lifetime.

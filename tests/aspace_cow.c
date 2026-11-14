@@ -220,7 +220,7 @@ int main(void)
     }
     one=kaspace_adopt(parent);assert(one);
     heap=kaspace_heap(one);heap->blocks=kalloc(sizeof(*heap->blocks));
-    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2,kaspace_reservation_next()};heap->count=heap->capacity=1;
+    heap->blocks[0]=(KASPACE_HEAP_BLOCK){4096,2,kaspace_reservation_next(),NULL};heap->count=heap->capacity=1;
     before=allocations-frees;
     for(n=1;n<32;n++) {
         LONG result;

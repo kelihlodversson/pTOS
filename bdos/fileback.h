@@ -12,4 +12,8 @@ LONG fileback_read(FILE_BACKING *backing, ULONG offset, void *buffer, ULONG size
 void fileback_changed(void *dfd);
 void fileback_reap(void);
 LONG fileback_barrier(void);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG fileback_test_count(BOOL references); /* read-only, no reap/retain */
+ULONG fileback_test_orphan_ofd_refs(void);
+#endif
 #endif

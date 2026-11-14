@@ -264,6 +264,14 @@ ULONG aspace_table_pages(const ASPACE *as)
 {
     return as->count + as->root_pages;
 }
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG aspace_test_pin_count(const ASPACE *as,BOOL retired_only)
+{
+    ULONG i,count=0;
+    for (i=0;i<as->npins;i++) if (!retired_only || as->pins[i].retired) count++;
+    return count;
+}
+#endif
 
 PADDR aspace_kernel_root(void)
 {

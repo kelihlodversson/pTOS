@@ -171,6 +171,9 @@ typedef struct {
 } PROCMEM_STATS;
 
 void procmem_stats(PROCMEM_STATS *stats);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG procmem_test_ownership(UWORD field); /* pure hold/pin/pending record walk */
+#endif
 
 /*
  * Address spaces
@@ -356,6 +359,9 @@ BOOL aspace_regrant(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 
 /* Number of table pages (the root included) the address space currently owns. */
 ULONG aspace_table_pages(const ASPACE *as);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG aspace_test_pin_count(const ASPACE *as,BOOL retired_only);
+#endif
 
 /*
  * Private memory.  Maps [va, va + bytes) -- va page-aligned, bytes rounded

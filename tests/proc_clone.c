@@ -15,6 +15,7 @@ struct kproc {
     unsigned refs;
     BOOL live, pending, model, started;
     KASPACE *space;
+    KASPACE_MEMBER *mapping_members;
     KTHREAD *threads;
 };
 struct aspace { int marker; };
@@ -75,12 +76,31 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *t, KASPACE *space)
     if (!t || !space || !kproc_clone_target_ready(p,t)) return FALSE;
     p->space = space; p->model = TRUE; return TRUE;
 }
+LONG kproc_clone_prepare_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,
+                                      BOOL private_vm,KASPACE_MEMBER **result)
+{
+    assert(!private_vm && space==source->space && !p->mapping_members);
+    return kaspace_member_inherit(source->mapping_members,p->pid,p,result);
+}
+void kproc_clone_commit_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members)
+{
+    assert(!p->mapping_members && kaspace_member_matches(*members,space,p->pid,p));
+    p->mapping_members=*members;*members=NULL;
+}
+LONG kproc_prepare_scoped_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,KASPACE_MEMBER **result)
+{ (void)p;(void)source;(void)space;(void)result;return EINVFN; }
+void kproc_abort_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members)
+{
+    if (!members || !*members) return;
+    kaspace_attachment_release_owner(space,p->pid,p);kaspace_member_release(members);
+}
 void proc_dispose_process(KPROC *p)
 {
     if (!p->live) return;
     p->pending = TRUE;
     if (p->threads) return;
-    p->live = FALSE; resources++; kaspace_put(p->space); p->space = NULL;
+    p->live = FALSE; resources++;kaspace_member_release(&p->mapping_members);
+    kaspace_put(p->space); p->space = NULL;
 }
 /* The portable harness models PROCESS ownership; real factory allocation,
  * inheritance and rollback are exercised by the x32 production QEMU test. */
@@ -103,9 +123,11 @@ static void exercise(BOOL source_first)
     source.pid = 11; target.pid = 22; source.live = target.live = TRUE;
     source.refs = target.refs = 1;
     source.space = kaspace_adopt(&backend); assert(source.space);
+    assert(kaspace_member_new(source.space,source.pid,&source,&source.mapping_members)==E_OK);
     heap = kaspace_heap(source.space);
     heap->blocks = kalloc(sizeof(*heap->blocks)); assert(heap->blocks);
     heap->count = heap->capacity = 1; heap->blocks[0].va = 0x1000; heap->blocks[0].pages = 1;
+    heap->blocks[0].scope=NULL;heap->blocks[0].reservation=0;
     memset(&args,0,sizeof(args));
     args.source = &source; args.prepared_process = NULL;
     args.process_policy = PROC_CLONE_SAME_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;

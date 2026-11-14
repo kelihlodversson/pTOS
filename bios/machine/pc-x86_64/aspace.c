@@ -300,6 +300,14 @@ ULONG aspace_table_pages(const ASPACE *as)
 {
     return as->count;
 }
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG aspace_test_pin_count(const ASPACE *as,BOOL retired_only)
+{
+    ULONG i,count=0;
+    for (i=0;i<as->npins;i++) if (!retired_only || as->pins[i].retired) count++;
+    return count;
+}
+#endif
 
 static BOOL map_user_page(ASPACE *as, UQUAD va, UQUAD phys, UWORD prot, BOOL backing, UWORD logical)
 {

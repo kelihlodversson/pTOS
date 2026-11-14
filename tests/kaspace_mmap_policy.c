@@ -39,6 +39,8 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR va, VADDR bytes)
     as->mapped = 0; releases++; return TRUE;
 }
 void fileback_put(FILE_BACKING *backing) { if (backing) backing->references--; }
+BOOL fileback_try_hold(FILE_BACKING *backing)
+{ assert(backing && backing->references);backing->references++;return TRUE; }
 void fileback_reap(void) { reaps++; }
 
 BOOL aspace_private_range_ok(const ASPACE *as, VADDR address, VADDR bytes)
@@ -57,12 +59,14 @@ int main(void)
     assert(kaspace_heap(owner)->blocks);
     kaspace_heap(owner)->blocks[0].va = 0x4000;
     kaspace_heap(owner)->blocks[0].pages = 1;
+    kaspace_heap(owner)->blocks[0].scope=NULL;
     kaspace_heap(owner)->count = kaspace_heap(owner)->capacity = 1;
     anonymous = kalloc(sizeof(*anonymous)); file = kalloc(sizeof(*file));
     assert(anonymous && file);
     anonymous->address = 0x1000; anonymous->length = USER_PAGE_SIZE;
     anonymous->prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
     anonymous->backing = NULL; anonymous->offset = 0; anonymous->next = file;
+    anonymous->scope=file->scope=NULL;
     file->address = 0x2000; file->length = USER_PAGE_SIZE;
     file->prot = ASPACE_PROT_USER; file->backing = &backing;
     file->offset = 0; file->next = NULL;

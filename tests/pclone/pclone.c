@@ -1463,6 +1463,7 @@ static void test_group_exit(void)
 }
 #endif
 #include "public_contract.h"
+#include "mapping_lifetime.h"
 
 static void test_runnable(void)
 {
@@ -1717,6 +1718,9 @@ void pclone_run_managed_tests(void)
 #endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     test_private_aspace();
+#if defined(TEST_WITH_MMAP)
+    test_mapping_lifetime();
+#endif
 #endif
     ptest_begin("pclone managed execution");
     test_runnable();

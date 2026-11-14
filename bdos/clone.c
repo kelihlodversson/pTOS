@@ -15,6 +15,8 @@
 #include "kaspace.h"
 #include "procmem.h"
 #include "kheap.h"
+#include "mapping_lifetime_test.h"
+#include "fileback.h"
 #endif
 #endif
 
@@ -33,6 +35,47 @@ static int clone_access(void *context, uintptr_t address, uint32_t size, int kin
 }
 #endif
 
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PRIVATE_CLONE_TEST
+static LONG mapping_snapshot(VADDR output)
+{
+    MAPPING_LIFETIME_SNAPSHOT snapshot={ {0} };
+    uint32_t *v=snapshot.value;
+    ASPACE *as=kproc_user_aspace(run);
+    PROCMEM_STATS memory;
+    KHEAP_STATS heap;
+    int i,j;
+    if (!as || !aspace_copy_to_user_ok(as,output,sizeof(snapshot))) return EIMBA;
+    kaspace_test_mapping_snapshot(as,v);
+    v[MLT_PROCESSES]=kproc_count();v[MLT_IDENTITIES]=kproc_test_identities(FALSE);
+    v[MLT_PROCESS_REFS]=kproc_test_identities(TRUE);v[MLT_THREADS]=kthread_test_live();
+    v[MLT_ROOTS]=kaspace_test_live();v[MLT_SPACE_REFS]=kaspace_test_references();
+    v[MLT_KSTACKS]=kstack_test_live();v[MLT_SCHEDSTACKS]=ksched_test_nested(0x0e);
+    procmem_stats(&memory);kheap_stats(&heap);
+    v[MLT_ALLOCS]=memory.live_allocs;v[MLT_FREE_PAGES]=memory.free_pages;v[MLT_BAD_FREES]=memory.bad_frees;
+    v[MLT_ALLOC_HOLDS]=procmem_test_ownership(0);v[MLT_ALLOC_PINS]=procmem_test_ownership(1);
+    v[MLT_ALLOC_PENDING]=procmem_test_ownership(2);
+    v[MLT_KHEAP_BLOCKS]=heap.live_blocks;v[MLT_KHEAP_PAGES]=heap.pages;v[MLT_KHEAP_BAD_FREES]=heap.bad_frees;
+    v[MLT_PRIVATE_PAGES]=aspace_private_pages(as);v[MLT_TABLES]=aspace_table_pages(as);
+    v[MLT_PINS]=aspace_test_pin_count(as,FALSE);v[MLT_RETIRED_PINS]=aspace_test_pin_count(as,TRUE);
+    v[MLT_COW_FRAMES]=aspace_cow_frames();v[MLT_COW_REFS]=aspace_cow_references();
+#if CONF_WITH_MMAP
+    v[MLT_FILE_PAGES]=aspace_file_pages();v[MLT_FILE_REFS]=aspace_file_references();
+    v[MLT_BACKINGS]=fileback_test_count(FALSE);v[MLT_BACKING_REFS]=fileback_test_count(TRUE);
+    v[MLT_OFD_REFS]=fileback_test_orphan_ofd_refs();
+#endif
+    for (i=0;i<OPNFILES;i++) if (sft[i].f_use) {
+        v[MLT_SFT_SLOTS]++;v[MLT_SFT_REFS]+=sft[i].f_use;
+        if (!sft[i].f_ofd || IS_BIOS_HANDLE(sft[i].f_ofd)) continue;
+        for (j=0;j<i;j++) if (sft[j].f_use && sft[j].f_ofd==sft[i].f_ofd) break;
+#if CONF_WITH_FILE_PINS
+        if (j==i) v[MLT_OFD_REFS]+=sft[i].f_ofd->o_refs;
+#endif
+    }
+    /* No fault, retain, reap or checkpoint: only resident checked copyout. */
+    return aspace_copy_to_user(as,output,&snapshot,sizeof(snapshot))?E_OK:EIMBA;
+}
+#endif
+
 static long clone_request(uint64_t address, uint64_t size)
 {
 #if CONF_WITH_USER_ASPACE
@@ -44,6 +87,25 @@ static long clone_request(uint64_t address, uint64_t size)
         CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
 #if CONF_WITH_PRIVATE_CLONE_TEST
     BOOL private_test = FALSE;
+    BOOL scoped_test = FALSE;
+    if ((size&0xffffffffffff0000ULL)==MLT_SCOPED_CLONE) {
+        if (address>=USER_VA_LIMIT) return EIMBA;
+        if (size==MLT_SNAPSHOT) return mapping_snapshot((VADDR)address);
+        if (size>=MLT_INFO && size<=MLT_DETACH) {
+            MAPPING_LIFETIME_CLAIM claim;
+            LONG error;
+            ASPACE *as=kproc_user_aspace(run);
+            if (!as || !aspace_copy_to_user_ok(as,(VADDR)address,sizeof(claim)) ||
+                !aspace_copy_from_user(as,&claim,(VADDR)address,sizeof(claim))) return EIMBA;
+            error=kproc_test_mapping_claim((ULONG)size,&claim);
+            if (!error && !aspace_copy_to_user(as,(VADDR)address,&claim,sizeof(claim))) return EIMBA;
+            return error;
+        }
+        if (!address && size>=0xc9670200ULL && size<=0xc96702ffULL) {
+            kaspace_test_fail_mapping_after((UWORD)(size&255));return E_OK;
+        }
+        scoped_test=TRUE;size&=0xffff;
+    }
     if ((size & 0xffffffffffff0000ULL) == 0xc8920000ULL) {
         if (!address && size >= 0xc8920100ULL) {
             KPROC *source = kproc_retain(run);
@@ -107,7 +169,8 @@ static long clone_request(uint64_t address, uint64_t size)
     if (valid != CLONE_VALID) return EIMBA;
     if (!(args.flags & CLONE_VM)) return EINVFN;
 #if CONF_WITH_PRIVATE_CLONE_TEST
-    if (private_test && ((args.flags & CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) return EINVAL;
+    if ((private_test && ((args.flags & CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) ||
+        (scoped_test && (args.flags&CLONE_SAME_PROCESS))) return EINVAL;
 #endif
 #if CONF_WITH_NATIVE_SCHED
     {
@@ -121,6 +184,7 @@ static long clone_request(uint64_t address, uint64_t size)
         policy.vm_policy =
 #if CONF_WITH_PRIVATE_CLONE_TEST
             private_test ? PROC_CLONE_PRIVATE_VM :
+            scoped_test ? PROC_CLONE_SCOPED_VM :
 #endif
             PROC_CLONE_SHARE_VM;
         policy.resources = ((args.flags & CLONE_COPY_STANDARD_HANDLES) ? PROC_CLONE_COPY_STANDARD_HANDLES : 0) |
@@ -132,6 +196,8 @@ static long clone_request(uint64_t address, uint64_t size)
         result =
 #if CONF_WITH_PRIVATE_CLONE_TEST
             private_test ? proc_clone_start_private_test(&policy, &startup) :
+            scoped_test ? proc_clone_start_scoped_test(&policy,&startup,
+                    (VADDR)(uintptr_t)args.child_pid,(VADDR)(uintptr_t)args.child_tid) :
 #endif
             proc_clone_start_public(&policy, &startup,
                     (VADDR)(uintptr_t)args.child_pid, (VADDR)(uintptr_t)args.child_tid);

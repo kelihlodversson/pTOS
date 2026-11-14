@@ -9,6 +9,20 @@ struct allocation_hold {
 };
 static UQUAD hold_tickets;
 
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG procmem_test_ownership(UWORD field)
+{
+    const struct alloc *allocation;
+    ULONG value=0;
+    for (allocation=allocs;allocation;allocation=allocation->next) {
+        if (field==0) value+=allocation->hold_count;
+        if (field==1) value+=allocation->pins;
+        if (field==2 && allocation->reclaim) value++;
+    }
+    return value;
+}
+#endif
+
 static struct allocation_hold **hold_find(const PROCMEM_HOLD *hold,
                                          struct alloc ***allocation)
 {

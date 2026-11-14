@@ -31,5 +31,6 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-root-') as directory:
         '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections',
         '-iquote', 'include', '-I' + str(work), '-Iinclude/arch/x86_64',
         '-idirafter', 'include', '-iquote', 'bdos', '-iquote', 'fs',
-        'tests/shared_root_mapping.c', '-Wl,--gc-sections', '-o', str(work / 'mapping')], check=True)
+        'tests/shared_root_mapping.c', 'bdos/kthread.c',
+        '-Wl,--gc-sections', '-o', str(work / 'mapping')], check=True)
     subprocess.run([str(work / 'mapping')], check=True)

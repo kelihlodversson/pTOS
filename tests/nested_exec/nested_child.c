@@ -41,7 +41,10 @@ static int counts_are(const struct nested_chain *chain, long extra)
     expected[4] = chain->depth + extra; expected[5] = chain->identities + level;
     /* Each level: live lookup, frame, THREAD, enclosing frame retain and
      * the launch's retained logical parent identity. */
-    expected[6] = chain->procrefs + 5 * level; expected[7] = chain->spacerefs + 2 * level;
+    expected[6] = chain->procrefs + 5 * level;
+    /* Each nested PROCESS owns active-space, initial THREAD and ordinary
+     * mapping membership references. All three disappear after its stop. */
+    expected[7] = chain->spacerefs + 3 * level;
     expected[8] = chain->schedstacks;
     for (i = 0; i < 9; i++) {
         long actual = nested_query(selectors[i]);

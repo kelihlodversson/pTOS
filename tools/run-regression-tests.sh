@@ -597,6 +597,20 @@ if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
     fi
 fi
 
+# Configured shared-root lifetime probes must execute on the real launcher.
+if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h"; then
+    for marker in \
+        'native shared-root common/scoped/late mapping lifetime: PASS' \
+        'native shared-root peer/last-THREAD/orphan safety: PASS' \
+        'native shared-root exact mapping resource conservation: PASS'; do
+        if ! grep -aq "$marker" "$suite_log"; then
+            record "native shared-root mapping ownership" FAIL "missing $marker"
+        fi
+    done
+fi
+
 # The experimental VM test must execute, not merely compile.
 if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    { ! grep -aq 'native independent KASPACE/COW entry probe (not Pfork): PASS' "$suite_log" ||
