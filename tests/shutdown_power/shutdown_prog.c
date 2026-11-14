@@ -38,9 +38,9 @@ int main(void)
     if (fd >= 0)
         Fwrite(fd, DATA_SIZE, data);    /* and no Fclose() */
 
-    Cconws("shutdown: PASS (" SHUT_WHAT ")\r\n");
+    (void)Cconws("shutdown: PASS (" SHUT_WHAT ")\r\n");
     rc = Shutdown((long)SHUT_MODE);
     /* only a machine that could not do it gets here, after the message */
-    Cconws("shutdown: FAIL (it returned)\r\n");
+    (void)Cconws("shutdown: FAIL (it returned)\r\n");
     return (int)rc;
 }

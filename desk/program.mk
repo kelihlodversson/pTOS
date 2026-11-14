@@ -99,6 +99,8 @@ ifdef ARCH_ARM
 DESK_LDFLAGS = -Wl,-q -Wl,-Ttext=0
 else ifdef BUILD_TOOLCHAIN_ELF
 DESK_LDFLAGS = -Wl,-q -Wl,-Ttext=0
+else ifdef BUILD_TOOLCHAIN_PTOS
+DESK_LDFLAGS = -mmintelf
 endif
 
 ifdef ARCH_X86_64

@@ -27,11 +27,16 @@ make                     # build
 ```
 
 There are no per-target make goals such as `make rpi2` or `make 512`; each is a
-defconfig in `configs/`. Requirements are GNU make, `kconfiglib`
-(`pip3 install kconfiglib`), and a cross toolchain: `arm-none-eabi-*` for the
-Raspberry Pi, and for m68k one of `m68k-atari-mintelf-` (the default),
-`m68k-atari-mint-` or a bare `m68k-elf-`, picked under "m68k toolchain" in
-the Toolchain menu. See `doc/install.txt` for where to get them.
+defconfig in `configs/`. Requirements are GNU Make 4.3+, `kconfiglib`, a
+native C compiler and the pTOS SDK: `m68k-unknown-ptos-prgelf-`,
+`arm-unknown-ptos-elf-`, or `x86_64-unknown-ptos-elfx32-`. Install with
+`bash tools/install-ptos-toolchain.sh all` (signed apt.ptos.dev packages on
+Debian/Ubuntu; the pTOS Homebrew tap on macOS). Use `gmake` on macOS.
+SDK 1.0.0 or newer is required. Linux CI adds `--release` to use the
+GitHub Release version and package hashes in `tools/ptos-toolchain.sha256`.
+PC builds use the SDK normally; do not clear `CROSS_COMPILE`. Legacy m68k
+choices and explicit prefix overrides remain available. See `doc/install.txt`
+and `.claude/skills/toolchain-install/SKILL.md`.
 
 ## Configuration
 

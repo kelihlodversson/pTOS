@@ -1,201 +1,99 @@
-#
-# Install everything a pTOS build needs: the cross toolchain for one
-# architecture, and the Python configuration front end.
-#
-# This is a composite action rather than a copy of the same steps in every
-# job, because the build workflow and the release workflow both need it.
-#
-
+# Pinned GitHub Release packages on Linux; Homebrew SDKs on macOS.
 name: Set up a pTOS toolchain
-description: Install a cross toolchain and the kconfiglib configuration front end.
+description: Install the packaged pTOS SDK and the Python configuration front end.
 
 inputs:
   arch:
-    description: >
-      Which toolchain to set up: "m68k" for the Atari, Amiga and ColdFire
-      targets, "arm" for the Raspberry Pi ones, or "x86_64" for the PC
-      (UEFI) one.
+    description: 'SDK to install: m68k, arm, x86_64, or all.'
     required: true
 
 runs:
   using: composite
-
   steps:
-    # A typo in a matrix entry would otherwise install nothing and fail much
-    # later, in the middle of a build, with a confusing error.
-    - name: Check the requested architecture
-      shell: bash
-      run: |
-        case '${{ inputs.arch }}' in
-        m68k|arm|x86_64) ;;
-        *)
-          echo "::error::unknown arch '${{ inputs.arch }}', expected 'm68k', 'arm' or 'x86_64'"
-          exit 1
-          ;;
-        esac
-
-    # The m68k toolchain is Thorsten Otto's prebuilt m68k-atari-mintelf one
-    # (https://tho-otto.m68k.eu/crossmint.php): GCC, binutils and the mintlib
-    # development files, which carry the target headers the compiler archive
-    # lacks.  It is the only m68k toolchain CI uses.  It supports -mfastcall,
-    # which the CONF_WITH_MFASTCALL configurations need, and it does not
-    # depend on a Launchpad PPA, whose fetches fail intermittently and which
-    # tie the jobs to the Ubuntu releases the PPA has packages for.
-    #
-    # The download URLs are version- and build-date-stamped (the site keeps
-    # no "latest" alias), so a future toolchain update there needs the URLs
-    # and hashes bumped by hand, here and in .claude/skills/toolchain-install;
-    # the sha256 pins mean a stale URL fails loudly instead of silently
-    # building against whatever the site serves.  The hashes are also the
-    # cache key: a bump always changes at least one, which busts the cache.
-    #
-    # dos2unix provides unix2dos, which "make release" uses to convert the
-    # documentation in the archives to DOS line endings, and zip is what
-    # packs each archive.  Both happen to be on the runner images already;
-    # they are named here so that this action really is the whole list.
-    #
-    # gcc-m68k-linux-gnu is the one compiler that makes position-independent
-    # m68k code (-fPIC with a GOT and a PLT; the MiNT compilers refuse it): the
-    # runtime linker and its test libraries of the address-space configurations
-    # (CONF_WITH_ELF_SHARED, lib/ldso/build.mk) are built with it.  It needs no
-    # libc; the kernel and everything else is still built with the toolchain
-    # above.
-    - name: Install the m68k build tools
-      if: inputs.arch == 'm68k'
-      shell: bash
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y dos2unix zip gcc-m68k-linux-gnu
-
-    - name: Cache the m68k toolchain
-      if: inputs.arch == 'm68k'
-      id: cache-m68k
-      uses: actions/cache@v4
+    - name: Install Linux host build tools
+      if: runner.os == 'Linux'
+      uses: ./.github/actions/apt-install
       with:
-        path: ${{ runner.temp }}/th-otto-mintelf
-        key: m68k-toolchain-2c582c04d689e8fb8c3568155246fa8039a320c1fad95a02c228a001f284f57b-e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025-0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec
+        packages: make gcc binutils zip dos2unix ca-certificates curl
 
-    - name: Install the m68k cross toolchain
-      if: inputs.arch == 'm68k' && steps.cache-m68k.outputs.cache-hit != 'true'
+    - name: Install macOS host build tools
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install make coreutils dos2unix
+        echo "$(brew --prefix make)/libexec/gnubin" >>"$GITHUB_PATH"
+        echo "$(brew --prefix coreutils)/libexec/gnubin" >>"$GITHUB_PATH"
+
+    - name: Install the pTOS SDK packages
       shell: bash
       env:
-        GCC_URL: https://tho-otto.m68k.eu/download/mint/gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz
-        GCC_SHA256: 2c582c04d689e8fb8c3568155246fa8039a320c1fad95a02c228a001f284f57b
-        BINUTILS_URL: https://tho-otto.m68k.eu/download/mint/binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
-        BINUTILS_SHA256: e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025
-        MINTLIB_URL: https://tho-otto.m68k.eu/download/mint/mintlib-0.60.1-mintelf-20240718-dev.tar.xz
-        MINTLIB_SHA256: 0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec
+        PTOS_ARCH: ${{ inputs.arch }}
       run: |
-        dest="$RUNNER_TEMP/th-otto-mintelf"
-        mkdir -p "$dest"
-
-        for spec in "$GCC_URL:$GCC_SHA256" "$BINUTILS_URL:$BINUTILS_SHA256" "$MINTLIB_URL:$MINTLIB_SHA256"; do
-          url="${spec%:*}"
-          sha256="${spec##*:}"
-          archive="$RUNNER_TEMP/$(basename "$url")"
-
-          curl -sSL --fail --retry 5 --retry-all-errors -o "$archive" "$url"
-          echo "$sha256  $archive" | sha256sum -c -
-
-          # all three unpack below usr/ and merge into one toolchain
-          tar -xJf "$archive" -C "$dest"
-          rm -f "$archive"
-        done
-
-    # Runs whether the toolchain came from cache or a fresh download --
-    # PATH itself is never part of the cache.
-    - name: Add the m68k toolchain to PATH
-      if: inputs.arch == 'm68k'
-      shell: bash
-      run: echo "$RUNNER_TEMP/th-otto-mintelf/usr/bin" >>"$GITHUB_PATH"
-
-    # A plain bare metal arm-none-eabi toolchain is all the Raspberry Pi
-    # targets need, and Ubuntu packages one.
-    #
-    # (zip packs the Raspberry Pi kernels for a release.  The packages come
-    # from a cache of their files when there is one: see apt-install.)
-    - name: Install the ARM cross toolchain
-      if: inputs.arch == 'arm'
-      uses: ./.github/actions/apt-install
-      with:
-        packages: gcc-arm-none-eabi zip
-
-    # No cross toolchain: the runner's own native gcc/binutils compile and
-    # link the x86-64 EFI image directly (see the ARCH_X86_64 MULTILIBFLAGS
-    # comment in the top level Makefile). Installed explicitly, like the
-    # other two arches above, rather than assumed from the runner image --
-    # doc/install.txt documents this same "sudo apt-get install gcc
-    # binutils" as the Linux/x86-64 host requirement. The link step needs
-    # binutils' PE32+ ("i386pep") emulation specifically, not just ELF;
-    # verified below rather than assumed, so a runner image that ever
-    # drops it fails here with a clear message instead of a confusing
-    # linker error partway through a build.
-    #
-    # gcc-multilib: the built-in EmuCON and the boot self-test's probe
-    # program are x32 (-mx32) executables, built by the same gcc.  They are
-    # freestanding, but the multilib package is what guarantees the driver,
-    # its x32 specs and the linker emulation are all present.
-    - name: Install the x86-64 build tools
-      if: inputs.arch == 'x86_64'
-      uses: ./.github/actions/apt-install
-      with:
-        packages: gcc binutils gcc-multilib
-
-    - name: Check the x86-64 linker
-      if: inputs.arch == 'x86_64'
-      shell: bash
-      run: |
-        if ! ld --help | grep -q i386pep; then
-          echo "::error::this runner's ld has no i386pep (PE32+) emulation, needed to link the x86-64 EFI image"
-          exit 1
+        options=()
+        if [ "$RUNNER_OS" = Linux ]; then
+          options=(--release)
+        else
+          # Pin the matching bottle metadata as well as Linux's .deb assets.
+          manifest="$GITHUB_ACTION_PATH/../../../tools/ptos-toolchain.sha256"
+          tap_commit=$(sed -n 's/^# homebrew-tap: //p' "$manifest")
+          if [[ ! $tap_commit =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::Invalid Homebrew tap pin' >&2
+            exit 1
+          fi
+          brew tap kelihlodversson/ptos-toolchain https://github.com/kelihlodversson/pTOS-toolchain.git
+          tap=$(brew --repository kelihlodversson/ptos-toolchain)
+          if [ -n "$(git -C "$tap" status --porcelain)" ]; then
+            echo '::error::The pinned SDK installation needs a clean Homebrew tap' >&2
+            exit 1
+          fi
+          git -C "$tap" fetch --depth=1 origin "$tap_commit"
+          git -C "$tap" checkout --detach "$tap_commit"
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          echo 'HOMEBREW_NO_AUTO_UPDATE=1' >> "$GITHUB_ENV"
         fi
+        bash "$GITHUB_ACTION_PATH/../../../tools/install-ptos-toolchain.sh" "$PTOS_ARCH" "${options[@]}"
 
     - name: Install Python 3
       uses: actions/setup-python@v5
       with:
         python-version: '3.x'
 
-    # kconfiglib provides "make <name>_defconfig" and the menuconfig front
-    # ends.  Nothing can be configured, and therefore built, without it.
     - name: Install kconfiglib
       shell: bash
       run: python3 -m pip install --disable-pip-version-check kconfiglib==14.1.0
 
-    # Recorded in the log because a build that breaks only in CI is nearly
-    # always a toolchain version difference.
-    - name: Report the versions in use
+    - name: Verify and report the installed compilers
       shell: bash
+      env:
+        PTOS_ARCH: ${{ inputs.arch }}
       run: |
-        # Deliberately not "cmd | head -1".  head closes the pipe as soon as
-        # it has its line, the writer then gets a write error, and the shell
-        # runs with pipefail, so the step fails -- but only when the writer
-        # loses the race, which makes it look like an unrelated flake.
-        first_line() {
-          local output
-          output="$("$@" 2>&1)"
-          printf '%s\n' "${output%%$'\n'*}"
-        }
-
-        first_line make --version
-        first_line python3 --version
-        python3 -c 'import kconfiglib; print("kconfiglib", kconfiglib.VERSION)'
-        case '${{ inputs.arch }}' in
-        m68k)
-          echo "m68k-atari-mintelf-gcc: $(command -v m68k-atari-mintelf-gcc)"
-          first_line m68k-atari-mintelf-gcc --version
-
-          # Confirm the toolchain that just went first on PATH is the one
-          # actually running, with -mfastcall, rather than only finding out
-          # via a Kconfig capability-probe failure deep inside the build.
-          if ! echo 'void f(void){}' | m68k-atari-mintelf-gcc -mfastcall -x c -c - -o /dev/null 2>&1; then
-            echo "::error::m68k-atari-mintelf-gcc does not support -mfastcall"
-            exit 1
-          fi
-          echo "m68k-atari-mintelf-gcc supports -mfastcall"
-          ;;
-        arm)  first_line arm-none-eabi-gcc --version ;;
-        x86_64)
-          first_line gcc --version
-          first_line ld --version
-          ;;
+        case "$PTOS_ARCH" in
+          m68k) targets=(m68k-unknown-ptos-prgelf) ;;
+          arm) targets=(arm-unknown-ptos-elf) ;;
+          x86_64) targets=(x86_64-unknown-ptos-elfx32) ;;
+          all) targets=(m68k-unknown-ptos-prgelf arm-unknown-ptos-elf x86_64-unknown-ptos-elfx32) ;;
+          *) echo "::error::unknown SDK: $PTOS_ARCH"; exit 1 ;;
         esac
+        make --version
+        python3 --version
+        python3 -c 'import kconfiglib; print("kconfiglib", kconfiglib.VERSION)'
+        for target in "${targets[@]}"; do
+          command -v "$target-gcc"
+          "$target-gcc" --version
+          "$target-ld" --version
+          test "$("$target-gcc" -dumpmachine)" = "$target"
+          case "$target" in
+            m68k-*)
+              echo 'void f(void){}' | "$target-gcc" -mfastcall -x c -c - -o /dev/null
+              if [ "$RUNNER_OS" = Linux ]; then
+                python3 /usr/share/doc/ptos-sdk-m68k/m68k_auto_inc_dec.py "$target-gcc"
+              else
+                tests="$(brew --prefix kelihlodversson/ptos-toolchain/ptos-m68k)/share/ptos-m68k/tests"
+                python3 "$tests/m68k_auto_inc_dec.py" "$target-gcc"
+              fi
+              ;;
+            x86_64-*)
+              "$target-ld" -V | grep i386pep
+              ;;
+          esac
+        done

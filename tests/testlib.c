@@ -73,7 +73,7 @@ void conws(const char *s)
     for (p = s; *p; p++)
         log_char(*p);
 #endif
-    Cconws(s);
+    (void)Cconws(s);
 }
 
 /* Output a single character to the console */

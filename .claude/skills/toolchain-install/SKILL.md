@@ -1,343 +1,160 @@
 ---
 name: toolchain-install
 description: >-
-  Install and select pTOS cross toolchains on Ubuntu Intel or macOS,
-  including without sudo. Use it BEFORE you report a pTOS configuration as
-  unbuildable or skip it for lack of a compiler, whenever a build fails with
-  "x86_64-elf-gcc: No such file or directory", "m68k-atari-mintelf-gcc does
-  not support -mfastcall", "arm-none-eabi-gcc: not found", "command not
-  found", Error 127, or any other missing cross-compiler error. It also
-  covers building pc-x86_64 with the native gcc (make CROSS_COMPILE=),
-  installing Thorsten Otto's -mfastcall m68k toolchain into a user directory
-  for the amiga, amiga-kickdisk and *-fastcall configs, the ARM toolchain,
-  and the answer when a user asks how to build pTOS or install its
-  toolchains.
+  Install and select the packaged pTOS SDKs on Debian/Ubuntu or macOS.
+  Use before skipping a configuration or reporting a missing compiler,
+  unsupported -mfastcall, PIC, x32 or PE32+ linker error. Covers the signed
+  apt.ptos.dev APT repository, the pTOS Homebrew tap, compiler overrides,
+  and validation of the actual installed SDKs.
 ---
 
-# pTOS Toolchain Installation
+# pTOS toolchain installation
 
-Use the toolchain that matches the selected pTOS configuration. Verify the
-compiler prefix before building; a successful host compiler installation is
-not enough if Make is still selecting a different prefix.
-
-## Missing a toolchain? Fix it, don't skip the config
-
-Every pTOS configuration can be built on an Ubuntu x86-64 machine, and
-nothing below needs sudo unless it says so. Check what the build actually
-complains about, then follow the matching row:
-
-| Error | Configs | Fix |
-|---|---|---|
-| `x86_64-elf-gcc: No such file or directory` / Error 127 | `pc-x86_64` | `make CROSS_COMPILE=`. The host's native gcc builds it, and that is also what CI uses ([x86-32 / x32](#x86-32--x32)) |
-| `m68k-atari-mintelf-gcc does not support -mfastcall` | `amiga`, `amiga-kickdisk`, `*-fastcall`, anything with `CONF_WITH_MFASTCALL=y` | Install Thorsten Otto's toolchain into a user directory and put it first on `PATH` ([without sudo](#-mfastcall-toolchain-without-sudo)) |
-| `m68k-atari-mintelf-gcc: not found` | every other m68k/ColdFire config | If the PPA is not installed and sudo is unavailable, the user-directory toolchain below builds these too |
-| `needs m68k-linux-gnu-gcc` (from lib/ldso/build.mk) | `virt-m68k-aspace`, anything with `CONF_WITH_ELF_SHARED=y` on m68k | `sudo apt-get install gcc-m68k-linux-gnu`. It makes the position-independent code the MiNT compilers cannot. Without sudo: find the versioned names with `apt-cache depends gcc-m68k-linux-gnu` (they are `gcc-<N>-m68k-linux-gnu`, `cpp-<N>-m68k-linux-gnu` and `libgcc-<N>-dev-m68k-cross` for the compiler `<N>` of the release, besides `gcc-m68k-linux-gnu`, `cpp-m68k-linux-gnu` and `binutils-m68k-linux-gnu`), `apt-get download` them and `dpkg -x` each into `~/.local/m68k-linux`, then `PATH=$HOME/.local/m68k-linux/usr/bin:$PATH LD_LIBRARY_PATH=$HOME/.local/m68k-linux/usr/lib/x86_64-linux-gnu` |
-| `arm-none-eabi-gcc: not found` | `rpi*`, `virt-arm*` | `sudo apt-get install gcc-arm-none-eabi`. Without sudo, ask the user to run it (`! sudo apt-get install -y gcc-arm-none-eabi`) |
-
-Only after the fix itself has failed should you report a configuration as
-unbuildable, and then quote the error.
-
-Several m68k toolchains can be installed side by side. The one that comes
-first on `PATH` provides `m68k-atari-mintelf-gcc`, so prepend the Otto
-toolchain for each build command that needs it, and keep the PPA toolchain at
-`/usr/bin` for the rest:
+Use SDK 1.0.0 or newer, which fixes the m68k auto-inc-dec miscompilation.
+The installer is shared with
+`.github/actions/setup-toolchain/action.yml`:
 
 ```sh
-PATH=$HOME/.local/th-otto-mintelf/usr/bin:$PATH make amiga_defconfig
-PATH=$HOME/.local/th-otto-mintelf/usr/bin:$PATH make
+bash tools/install-ptos-toolchain.sh all
 ```
 
-Mixing toolchains in one object directory gives different code. Run
-`make distclean` when you switch.
+Pass `m68k`, `arm` or `x86_64` to install only one SDK. It uses APT on
+Debian/Ubuntu and Homebrew on macOS. It installs SDKs only; also install GNU
+Make 4.3+, a native C compiler, Python 3 and `kconfiglib==14.1.0`.
 
-## Ubuntu Intel
+| Target | APT package | Homebrew formula | Default compiler prefix |
+| --- | --- | --- | --- |
+| Atari, Amiga, ColdFire, virt-m68k | `ptos-sdk-m68k` | `ptos-m68k` | `m68k-unknown-ptos-prgelf-` |
+| Raspberry Pi, virt-arm | `ptos-sdk-arm` | `ptos-arm` | `arm-unknown-ptos-elf-` |
+| PC UEFI kernel and x32 applications | `ptos-sdk-x86-64` | `ptos-x86_64` | `x86_64-unknown-ptos-elfx32-` |
 
-### x86-32 / x32
+## Debian/Ubuntu APT
 
-Use the native Ubuntu compiler and binutils. Install the packages used by CI:
+Published host packages are amd64 and are validated on Ubuntu 24.04 and
+26.04. Other Debian/Ubuntu releases need an actual installation/build check;
+do not assume their runtime libraries are compatible.
+
+The installer configures the signed repository. Equivalent manual commands:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y gcc binutils gcc-multilib
-```
-
-The pTOS x86-64 kernel and x32 userland build must explicitly clear the cross
-compiler setting:
-
-```sh
-make pc-x86_64_defconfig
-make CROSS_COMPILE=
-```
-
-This configuration is supplied by the x32 configuration work; use a checkout
-that contains `configs/pc-x86_64_defconfig` before running these commands.
-
-The variable is `CROSS_COMPILE`, not `CROSS_PREFIX`. An empty
-`CROSS_COMPILE=` is required for this Ubuntu-native build.
-
-### ARM
-
-Install the package used by the CI workflow:
-
-```sh
+sudo apt-get install -y ca-certificates curl
+curl -fsSL https://apt.ptos.dev/ptos-archive-keyring.gpg |
+    sudo tee /usr/share/keyrings/ptos-archive-keyring.gpg >/dev/null
+printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/ptos-archive-keyring.gpg] https://apt.ptos.dev stable main' |
+    sudo tee /etc/apt/sources.list.d/ptos.list >/dev/null
 sudo apt-get update
-sudo apt-get install -y gcc-arm-none-eabi
+sudo apt-get install -y ptos-sdk-m68k ptos-sdk-arm ptos-sdk-x86-64
+sudo apt-get install -y make gcc binutils python3-venv zip dos2unix
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install kconfiglib==14.1.0
 ```
 
-Then use the normal configuration build:
+Install the individual SDKs rather than requiring the convenience metapackage:
+`ptos-toolchain` was added after the initial v0.1.0 release. All three SDKs
+coexist under `/opt/ptos`, with their prefixed commands exposed in `/usr/bin`.
+There is no tarball overlay or PATH precedence between two compilers with the
+same name, and no separate Linux m68k compiler is needed for PIC.
+
+### Pinned GitHub Releases in Linux CI
+
+CI downloads the `.deb` files from GitHub Releases, validates every package
+against `tools/ptos-toolchain.sha256`, then installs the local files with APT:
 
 ```sh
-make rpi2_defconfig
-make
+bash tools/install-ptos-toolchain.sh all --release
 ```
 
-### m68k
+The manifest pins the release version, each package checksum and CI's matching
+Homebrew tap commit. Update them together when upgrading CI; do not select
+`latest` or fetch runtime checksums
+from the same download. GitHub Releases retain older versions independently
+of the limited APT repository storage. Local developers may use this same
+reproducible path or the current packages from apt.ptos.dev above.
+The explicit release option may downgrade an already newer SDK to restore
+the pin; this permission applies only to the verified local SDK package install.
 
-Vincent Rivière's PPA is the quickest install, though CI no longer uses it (it
-uses Thorsten Otto's toolchain, below, for every m68k job):
+For an environment without permission to install system packages, use an
+isolated Ubuntu 24.04/26.04 container and run this same installer there. Keep
+build commands under the ordinary user. Consult the managed environment's
+package/network/container instructions before installing anything. If the
+repository is blocked, request access and continue independent work; official
+release `.deb` files can also be verified with their `SHA256SUMS` and installed
+with `apt-get install ./package.deb`. Report which installation path was tested.
+Do not disable APT signature checks or TLS verification.
+
+## macOS Homebrew
+
+Install Apple's Command Line Tools and Homebrew first. Then:
 
 ```sh
-sudo add-apt-repository -y ppa:vriviere/mintelf
-sudo apt-get update
-sudo apt-get install -y cross-mintelf-essential
+brew install make coreutils dos2unix python
+bash tools/install-ptos-toolchain.sh all
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install kconfiglib==14.1.0
 ```
 
-This PPA gcc has **no `-mfastcall`**. It builds every m68k config except
-the `CONF_WITH_MFASTCALL=y` ones (amiga, amiga-kickdisk, `*-fastcall`), and
-the Makefile stops those with "does not support -mfastcall". CI installs only
-Otto's toolchain (the same three archives as below). Do the same
-locally with the user-directory install below.
+The installer taps
+`kelihlodversson/ptos-toolchain` from
+`https://github.com/kelihlodversson/pTOS-toolchain.git`, trusts the individual
+formulae when Homebrew provides `brew trust`, then installs them normally.
+Homebrew downloads the published SDK bottles from GitHub Releases; APT's
+`apt.ptos.dev` endpoint is not a Homebrew package index. Published bottles
+currently cover Apple Silicon macOS 26 (Tahoe) under `/opt/homebrew`.
+Other host/CPU combinations may build from source; do not claim they were
+validated by the macOS 26 CI job.
 
-### -mfastcall toolchain without sudo
+CI checks out the tap commit recorded in `tools/ptos-toolchain.sha256`, including
+that release's bottle declarations, and disables automatic updates for the
+remaining job. Local installs use the current tap normally.
 
-These are the archives and sha256 pins that
-`.github/actions/setup-toolchain/action.yml` uses, plus mintlib for the C
-headers, which the gcc archive lacks. All three unpack below `usr/`, so they
-extract together into one directory under `$HOME`, and the result survives
-from one session to the next. If `$HOME` is not writable from a sandbox, use
-the session's scratchpad directory instead.
+Use `gmake` because Apple's `/usr/bin/make` is too old. If a build tool needs
+GNU coreutils, prepend `$(brew --prefix coreutils)/libexec/gnubin` to PATH.
+
+## Build and verify
+
+Check the actual tools before building:
 
 ```sh
-dest=$HOME/.local/th-otto-mintelf
-# The subshell keeps the cd and any exit from leaving the current shell,
-# so the build commands afterwards still run in the pTOS checkout.
-(
-    dl=$HOME/.local/th-otto-dl
-    # Download and extract exactly these files, never a *.tar.xz glob: a
-    # leftover archive in the reused download directory has not been checked.
-    archives="gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz
-              binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
-              mintlib-0.60.1-mintelf-20240718-dev.tar.xz"
-    mkdir -p "$dest" "$dl" && cd "$dl" || exit 1
-    for f in $archives; do
-        curl -sSLO --fail --retry 3 "https://tho-otto.m68k.eu/download/mint/$f" || exit 1
-    done
-    sha256sum -c - <<'EOF' || exit 1
-2c582c04d689e8fb8c3568155246fa8039a320c1fad95a02c228a001f284f57b  gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz
-e37c22f84baaf8ffc890a11265d4369498f9bc4e68aaac21dcef887d3655f025  binutils-2.45-mintelf-20250812-bin-linux64.tar.xz
-0a9f4f61c976af26b3b4c2fdfbfcaaa19c671174a6a1c874496375f775ff33ec  mintlib-0.60.1-mintelf-20240718-dev.tar.xz
-EOF
-    for f in $archives; do tar -xJf "$f" -C "$dest" || exit 1; done
-) &&
-"$dest/usr/bin/m68k-atari-mintelf-gcc" -Q --help=target | grep mfastcall
+m68k-unknown-ptos-prgelf-gcc -dumpmachine
+arm-unknown-ptos-elf-gcc -dumpmachine
+x86_64-unknown-ptos-elfx32-gcc -dumpmachine
+m68k-unknown-ptos-prgelf-gcc --version
+x86_64-unknown-ptos-elfx32-ld -V
 ```
 
-The last line should print `-mfastcall  [disabled]`. "Disabled" is just the
-default, and the pTOS Makefile turns the flag on. Then build with
-`PATH=$dest/usr/bin:$PATH make ...` as shown at the top. Before downloading,
-check whether `$dest/usr/bin/m68k-atari-mintelf-gcc` is already there.
-
-If a pin fails because the site has published a new build, do not drop the
-check. Bump the URL and hash in the CI action and here together.
-
-If using archives from the tho-otto page instead, download these three
-matching Linux 64-bit archives from the latest toolchain section:
-
-- `binutils-2.45-mintelf-20250812-bin-linux64.tar.xz`
-- `gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz`
-- `mintlib-0.60.1-mintelf-20240718-dev.tar.xz`
-
-The binutils and GCC archives share the filesystem root and are intended to be
-merged. The mintlib development archive supplies target headers such as
-`stdint.h`, which the compiler archive does not contain. Their contents include
-`/usr/bin/m68k-atari-mintelf-*`,
-`/usr/m68k-atari-mintelf/`, and the GCC runtime under `/usr/lib64/gcc/`.
-Extract and validate all three archives as an ordinary user first. Their
-`usr/m68k-atari-mintelf/sys-root` paths already match the intended destination,
-so no component stripping is needed. Do not extract unverified archives as
-root:
+Each `-dumpmachine` must match the prefix without its trailing dash. The m68k
+SDK supports `-mfastcall` and ordinary GOT/PLT PIC. Its default is plain ELF;
+the makefiles select `-mmintelf` when linking conventional TOS PRG programs.
+The PC SDK supports both the LP64 no-red-zone kernel and x32 applications,
+including the `i386pep` linker emulation needed by UEFI.
 
 ```sh
-stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
-for archive in \
-    binutils-2.45-mintelf-20250812-bin-linux64.tar.xz \
-    gcc-14.3.0-mintelf-20250702-bin-linux64.tar.xz \
-    mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
-    entries=$(tar -tJf "$archive") || exit 1
-    while IFS= read -r path; do
-        case "$path" in
-            usr/*) ;;
-            *) echo "unexpected archive path: $path" >&2; exit 1 ;;
-        esac
-    done <<EOF
-$entries
-EOF
-    tar -xJf "$archive" -C "$stage" || exit 1
-done
-# Compare `shasum -a 256 <archive>` with a trusted release record before this step.
-sudo cp -a "$stage/usr/." /usr/
+make distclean
+make virt-m68k_defconfig
+make -j4
+# Or rpi2_defconfig / pc-x86_64_defconfig; use gmake on macOS.
 ```
 
-The tools are installed in `/usr/bin`, so no PATH change is normally needed.
-Verify the merged installation:
+Do not clear `CROSS_COMPILE` for ordinary PC builds: the pTOS SDK is now the
+default on both hosts. `CROSS_COMPILE`, `X32_CROSS_COMPILE` and
+`LDSO_M68K_PREFIX` remain explicit overrides. Legacy MiNT and bare m68k-elf
+choices remain available in Kconfig; select the matching choice and flags
+when deliberately using them. Do not silently substitute a legacy toolchain
+when validating this migration.
 
-<https://tho-otto.m68k.eu/crossmint.php>
+Run `make distclean` when changing toolchains, and record compiler/package
+versions with the results. A missing compiler is a setup problem: fix the
+installation, then retry the original build. Only report a configuration as
+unbuildable after the appropriate installation or build has actually failed.
 
-```sh
-m68k-atari-mintelf-gcc --version
-m68k-atari-mintelf-gcc -Q --help=target | grep mfastcall
-m68k-atari-mintelf-ld --version
-```
+## m68k compiler regression
 
-The pTOS m68k toolchain choice automatically selects the
-`m68k-atari-mintelf-` prefix and the required compiler flags. No explicit
-`CROSS_COMPILE` override is normally required:
-
-```sh
-make atari512_defconfig
-make
-```
-
-Use `CROSS_COMPILE=m68k-atari-mintelf-` only when overriding the configured
-prefix or diagnosing tool lookup:
-
-```sh
-make CROSS_COMPILE=m68k-atari-mintelf-
-```
-
-Do not substitute `m68k-atari-mint-`; that is the plain mint/a.out toolchain
-and is not the required ELF/mfastcall-capable toolchain for these builds.
-
-## macOS
-
-Install GNU Make 4.3 or newer. Apple’s system `/usr/bin/make` is GNU Make
-3.81, which is too old for pTOS; Homebrew installs a newer GNU Make as `gmake`:
-
-```sh
-brew install make
-```
-
-### x86-32 / x32
-
-Install the bare-metal x86-64 compiler and binutils from Homebrew:
-
-```sh
-brew install x86_64-elf-gcc x86_64-elf-binutils
-```
-
-Build with the pTOS x86-64 default prefix:
-
-```sh
-gmake pc-x86_64_defconfig
-gmake
-```
-
-If Make is configured with another prefix, override it explicitly:
-
-```sh
-gmake CROSS_COMPILE=x86_64-elf-
-```
-
-### ARM
-
-Install the Homebrew ARM embedded toolchain:
-
-```sh
-brew install gcc-arm-embedded
-```
-
-Build normally after selecting an ARM configuration:
-
-```sh
-gmake rpi2_defconfig
-gmake
-```
-
-### m68k
-
-Download these matching macOS archives from the latest toolchain section at
-the tho-otto page:
-
-- `binutils-2.45-mintelf-20250812-bin-macos.tar.xz`
-- `gcc-14.3.0-mintelf-20250702-bin-macos.tar.xz`
-- `mintlib-0.60.1-mintelf-20240718-dev.tar.xz`
-
-<https://tho-otto.m68k.eu/crossmint.php>
-
-The binutils and GCC archives are designed to be extracted together and both
-contain an `opt/cross-mint/` root. The mintlib archive contains a separate
-`usr/m68k-atari-mintelf/sys-root/` root:
-
-- Binutils provides `/opt/cross-mint/bin/m68k-atari-mintelf-*` and target linker files.
-- GCC provides the matching compiler drivers, runtime, sysroot, and `mfastcall` multilibs.
-- Mintlib provides target headers such as `stdint.h` and the development libraries.
-
-Extract and validate the archives as an ordinary user first. Do not extract
-unverified downloads as root:
-
-```sh
-stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
-for archive in \
-    binutils-2.45-mintelf-20250812-bin-macos.tar.xz \
-    gcc-14.3.0-mintelf-20250702-bin-macos.tar.xz \
-    mintlib-0.60.1-mintelf-20240718-dev.tar.xz; do
-    entries=$(tar -tJf "$archive") || exit 1
-    while IFS= read -r path; do
-        case "$archive:$path" in
-            *mintlib*:usr/m68k-atari-mintelf/sys-root/*) ;;
-            *:opt/cross-mint/*) ;;
-            *) echo "unexpected archive path: $path" >&2; exit 1 ;;
-        esac
-    done <<EOF
-$entries
-EOF
-    tar -xJf "$archive" -C "$stage" || exit 1
-done
-# Compare `shasum -a 256 <archive>` with a trusted release record before this step.
-sudo mkdir -p /opt/cross-mint/m68k-atari-mintelf/sys-root
-sudo cp -a "$stage/opt/cross-mint/." /opt/cross-mint/
-sudo cp -a "$stage/usr/m68k-atari-mintelf/sys-root/." \
-    /opt/cross-mint/m68k-atari-mintelf/sys-root/
-rm -rf "$stage"
-export PATH=/opt/cross-mint/bin:$PATH
-```
-
-Use the matching `mintelf` archives, not the plain `mint` archives. The compiler must
-support `-mfastcall`.
-
-The pTOS m68k toolchain choice automatically selects the
-`m68k-atari-mintelf-` prefix and required flags. Verify the tools, then build
-normally:
-
-```sh
-m68k-atari-mintelf-gcc --version
-m68k-atari-mintelf-gcc -Q --help=target | grep mfastcall
-m68k-atari-mintelf-ld --version
-gmake atari512_defconfig
-gmake
-```
-
-Only override the prefix explicitly when needed:
-
-```sh
-gmake CROSS_COMPILE=m68k-atari-mintelf-
-```
-
-## Troubleshooting
-
-- `x86_64-elf-gcc: command not found` on Ubuntu usually means the build was not invoked with `CROSS_COMPILE=`.
-- `m68k-atari-mint-gcc` is the wrong prefix for the required mintelf ELF toolchain.
-- `m68k-atari-mintelf-gcc does not support -mfastcall` means the config has `CONF_WITH_MFASTCALL=y` and `PATH` finds the PPA gcc first. Prepend the Otto toolchain ([without sudo](#-mfastcall-toolchain-without-sudo)). The PPA gcc is fine for every other m68k config.
-- Confirm the selected prefix with `make V=1` on Ubuntu or `gmake V=1` on macOS when diagnosing a build.
+SDK 1.0.0 fixes [toolchain issue #15](https://github.com/kelihlodversson/pTOS-toolchain/issues/15).
+pTOS uses the normal auto-inc-dec optimization again, including LTO and native
+libraries/programs. Do not reintroduce the global disabling flag. The SDK's
+installed smoke tests include assembly checks for the address-register
+dependency; Linux can also execute its bundled regression using qemu-m68k.
+Verify runtime boot and address-space tests when upgrading the compiler.

@@ -118,6 +118,10 @@ What is changed
       (tools/ci-x86_64.sh and tools/ci-x86_64-boot.sh: the build, the VDI
       contract, the boot under QEMU/OVMF or the desktop tests), the last one
       also running the regression suite of pc-x86_64
+    build.yml, Homebrew SDKs and builds: 1 Apple Silicon macOS 26 job,
+      installing and testing all three pTOS SDK formulae together, then
+      building m68k/ARM address-space and PC UEFI configurations with
+      their default cross compiler prefixes
     build.yml, regression suites: 2 jobs, "regression arm" (virt-arm, its
       traditional FAT variant, raspi2b) and "regression m68k" (virt-m68k and
       its fastcall build), tools/ci-regression.sh
@@ -287,3 +291,22 @@ Not done (needs a decision)
 - The x32 job ("x32 ELF shared-library metadata") is not in the roll-up: a
   pull request can be green in "All builds" with it red.  Whether it should
   block a merge is a decision, not an audit finding.
+
+Toolchain installation
+----------------------
+
+The shared setup-toolchain action calls tools/install-ptos-toolchain.sh.
+Linux jobs download SDK .deb files from GitHub Releases and install them
+with APT. tools/ptos-toolchain.sha256 pins the release version and every
+package checksum; --release never depends on an older version remaining
+on apt.ptos.dev. Update the version and hashes together when upgrading CI.
+Local developers can use the same --release option or the current packages
+from the signed apt.ptos.dev source. macOS installs the SDK formulae from
+kelihlodversson/ptos-toolchain with Homebrew, pinned to the manifest's matching
+tap commit and bottle declarations. Automatic updates are disabled for the
+remaining job. Compiler and package versions
+are recorded in the job logs. SDK 1.0.0 fixes the m68k address-dependency
+miscompilation; the global auto-inc-dec workaround is removed.
+The kernel and userspace use pTOS compiler prefixes on both platforms;
+CI does not silently fall back to a distro or native target compiler.
+The native host compiler remains responsible for build tools and host tests.

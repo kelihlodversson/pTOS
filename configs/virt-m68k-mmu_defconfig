@@ -35,7 +35,7 @@ CONF_WITH_IDE=n
 # linker has no elf32-m68k target compiled in at all ("target elf32-m68k
 # not found").  Kconfig forbids the cross-mint toolchain for this machine
 # (BUILD_TOOLCHAIN_MINT depends on !MACHINE_VIRT_M68K), so the default
-# mintelf is guaranteed; nothing needs pinning in this defconfig.
+# pTOS ELF SDK is guaranteed; nothing needs pinning in this defconfig.
 
 # The whole point of this defconfig: leave the AES/EmuDesk out, so EmuTOS
 # boots straight into EmuCON (aes/Kconfig) instead of the graphical
