@@ -164,7 +164,9 @@ static void test_cow_vfork_continuation(void)
                 args.stack_base=(void *)Malloc(32768);args.stack_size=32768;
                 if(!args.stack_base || pclone_trap(&args,sizeof(args))<=0)bad=1;
             }
+#if defined(TEST_WITH_PTERMGRP)
             if(!bad && cycle==3) (void)trap_1_ww(GEMDOS_PTERMGRP,79);
+#endif
             if(!bad && cycle==4) *(volatile long *)0=1;
             Pterm(bad?74:73);
             for(;;) { }
@@ -174,7 +176,11 @@ static void test_cow_vfork_continuation(void)
             /* WNOHANG must already deliver final completion: parent could
              * not run user code while this exact child still used its image. */
             status=Pwaitpid(pid,1,0);
-            ptest_assert_msg((status>>16)==pid && (status&65535)==(cycle==3?79:cycle==4?0x0b00:73),
+            ptest_assert_msg((status>>16)==pid && (status&65535)==(
+#if defined(TEST_WITH_PTERMGRP)
+                             cycle==3?79:
+#endif
+                             cycle==4?0x0b00:73),
                              "COW parent remains blocked through failed exec, unrelated child and leader-only exit");
             ptest_assert_msg(Pwaitpid(pid,1,0)<0,"COW parent dependency does not consume public reap");
             ptest_assert_msg(local==0x13572468UL && private_probe.cell==0x11223344UL && private_probe.heap[17]==0x31,
