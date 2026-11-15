@@ -1,7 +1,7 @@
 Pexec(200): owned private image staging and remaining commit contract (#970)
 =========================================================================
 
-Base: accepted epic00292ebe60ef3ff31f15d56659c5c85938b57a00.
+Base: accepted epic ec1f04c65d4f7702bd16b9e655f99cceb0a0f91f.
 Consumer: Phase6 #895; architecture/scheduler owner #713; loader migration #894.
 This increment is default-off CONF_WITH_EXEC_REPLACEMENT_TEST. No shipped preset
 selects it. Public Pexec(200) still returns EINVFN. No committed-exec generation
@@ -96,6 +96,13 @@ allocation/reference counts remain unchanged with both roots still alive.
 Normal, ASan/UBSan/leak and fortified host modes are distinct from native proof.
 The host image-disposal provider fails if called: the model does not claim to
 execute the loader or successful replacement.
+
+The host tool also executes the actual native runner marker guard with generated
+Kconfig headers for all staging/Pclone on/off combinations and present/missing
+evidence. Staging=y/Pclone=n is valid and has no Pclone marker producer, so the
+runner must not require its marker. Staging=y/Pclone=y still rejects missing
+native execution evidence. This changes neither feature dependencies nor public
+mode200 availability.
 
 Native private Pclone test transport uses 0xc9700000|selector with NULL request:
   0       prepare, cooperative yield, exact-owner revalidation and abort;

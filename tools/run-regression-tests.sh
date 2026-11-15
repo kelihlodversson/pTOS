@@ -847,6 +847,7 @@ if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
 fi
 
 if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native reversible executable staging ownership (not Pexec200): PASS' "$suite_log"; then
     record "native executable staging ownership" FAIL "configured replacement preparation did not execute"
 fi
