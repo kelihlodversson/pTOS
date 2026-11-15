@@ -31,6 +31,7 @@ void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *s)
 /* This fixture exercises admission only. Real image disposal is verified by
  * the native loader selector; it must never be substituted here. */
 void proc_dispose_process(KPROC *p) { (void)p;CHECK(0); }
+BOOL ksched_wait_ready(BOOL (*ready)(void *),void *context) { return ready(context); }
 ASPACE_ROOT aspace_root(const ASPACE *as) { return (ASPACE_ROOT)(uintptr_t)as; }
 
 int main(void)
@@ -57,6 +58,45 @@ int main(void)
         CHECK(!identity && !space && !next && source.threads==&caller &&
               source.active_space==old && old->refs==roots && selected->refs==1);
     }
+    /* Neither active nor pending root fields describe a prepared THREAD's
+     * association. Test both selected-root exclusivity and source sharing. */
+    for (i=0;i<2;i++) {
+        PD prepared_pd={0};KPROC prepared={0};KTHREAD pending_thread={0};
+        KPROC *identity=NULL;KASPACE *held=NULL;KTHREAD *next=NULL;
+        LONG admitted;
+        prepared.pd=&prepared_pd;prepared.number=10;prepared.references=1;
+        source.next=&prepared;
+        CHECK(kproc_thread_attach_space(&prepared,i?old:selected,&pending_thread,&identity,&held,&next,TRUE));
+        pending_thread.process=identity;pending_thread.space=held;pending_thread.next=next;
+        CHECK(prepared.threads==&pending_thread && !prepared.active_space && !prepared.pending_space);
+        admitted=kproc_exec_replacement_prepare(&source,&caller,selected,&replacement);
+        kproc_exec_replacement_abort(&replacement);
+        (void)kproc_thread_detach(&prepared,&pending_thread,next);
+        kaspace_put(held);kproc_release(identity);source.next=NULL;
+        CHECK(selected->refs==1 && old->refs==roots && source.references==identities &&
+              !cleanup_depth && !source.exec_replacement_ticket && allocations-frees==baseline);
+        CHECK(admitted==EACCDN);
+    }
+    /* Canonical prepared mapping membership precedes even initial THREAD
+     * attachment. A shared source also has an ordinary existing membership. */
+    CHECK(kaspace_member_new(old,source.number,&source,&source.mapping_members)==E_OK);
+    source.allocation_scope=kaspace_member_scope(source.mapping_members);
+    for (i=0;i<2;i++) {
+        PD prepared_pd={0};KPROC prepared={0};KASPACE_MEMBER *members=NULL;
+        KASPACE *construction=i?old:selected;
+        LONG admitted;
+        prepared.pd=&prepared_pd;prepared.number=10;prepared.references=1;prepared.pid=32;
+        source.next=&prepared;
+        CHECK(kproc_clone_prepare_mapping_owners(&prepared,&source,construction,!i,&members)==E_OK);
+        CHECK(members && prepared.prepared_mapping_members==members &&
+              !prepared.active_space && !prepared.pending_space && !prepared.threads);
+        admitted=kproc_exec_replacement_prepare(&source,&caller,selected,&replacement);
+        kproc_exec_replacement_abort(&replacement);
+        kproc_abort_mapping_owners(&prepared,construction,&members);source.next=NULL;
+        CHECK(admitted==EACCDN && !replacement && !source.exec_replacement_ticket && !cleanup_depth);
+    }
+    kaspace_member_release(&source.mapping_members);source.allocation_scope=NULL;
+    CHECK(selected->refs==1 && old->refs==roots && source.references==identities && allocations-frees==baseline);
     CHECK(kproc_exec_replacement_prepare(&source,&caller,old,&replacement)==EACCDN && !replacement);
     other=caller;other.tid++;
     CHECK(kproc_exec_replacement_prepare(&source,&other,selected,&replacement)==EACCDN && !replacement);

@@ -5,6 +5,7 @@
 #include "kheap.h"
 #include "biosext.h"
 #include "kproc.h"
+#include "proc_clone.h"
 #include "kthread.h"
 #include "kaspace.h"
 #include "ksched.h"
@@ -142,8 +143,9 @@ BOOL kproc_exec_replacement_image_ready(const KPROC_EXEC_REPLACEMENT *replacemen
 
 LONG kproc_exec_replacement_probe(UWORD fail_after)
 {
-    KPROC *source=kproc_retain(run);
-    KTHREAD *thread=ksched_exit_thread(run);
+    KPROC *source=kproc_retain(run),*foreign=NULL;
+    KTHREAD *thread=ksched_exit_thread(run),*prepared_thread=NULL;
+    KASPACE_MEMBER *members=NULL;
     KPROC_EXEC_REPLACEMENT *replacement=NULL,*competing=NULL;
     KASPACE *selected=NULL,*original;
     ASPACE *backend;
@@ -152,7 +154,7 @@ LONG kproc_exec_replacement_probe(UWORD fail_after)
     WORD pid;
     BOOL protected;
     LONG error=EINVFN;
-    if (!source || !thread || (fail_after>4 && (fail_after<0x100 || fail_after>0x102))) goto done;
+    if (!source || !thread || (fail_after>4 && (fail_after<0x100 || fail_after>0x105))) goto done;
     original=kproc_active_space(source);
     number=kproc_ref_number(source);pid=kproc_ref_pid(source);tid=kthread_tid(thread);
     execution=ksched_context_id();protected=ksched_cleanup_active();
@@ -160,6 +162,17 @@ LONG kproc_exec_replacement_probe(UWORD fail_after)
     if (!backend) { error=ENSMEM;goto done; }
     selected=kaspace_adopt(backend);
     if (!selected) { aspace_destroy(backend);error=ENSMEM;goto done; }
+    if (fail_after>=0x103) {
+        error=proc_create_clone_process(source,0,&foreign);
+        if (error) goto done;
+        if (fail_after==0x104) {
+            error=kproc_clone_prepare_mapping_owners(foreign,source,selected,TRUE,&members);
+            if (error) goto done;
+        } else {
+            prepared_thread=kthread_construct_identity(foreign,fail_after==0x105?original:selected);
+            if (!prepared_thread) { error=ENSMEM;goto done; }
+        }
+    }
     kproc_exec_replacement_test_fail_after(fail_after<=4 ? fail_after : 0);
     error=kproc_exec_replacement_prepare(source,thread,selected,&replacement);
     kproc_exec_replacement_test_fail_after(0);
@@ -171,7 +184,7 @@ LONG kproc_exec_replacement_probe(UWORD fail_after)
         ksched_yield();
         if (kproc_exec_replacement_validate(replacement))
             panic("exec replacement: staging lost executing owner across yield");
-        if (fail_after>=0x100) {
+        if (fail_after>=0x100 && fail_after<=0x102) {
             char environment[]="STAGE=970\0";
             char *path=fail_after==0x100 ? "C:\\PIEPROBE.TOS" :
                        fail_after==0x101 ? "C:\\NO970.TOS" : "C:\\LOADFAIL.TOS";
@@ -191,6 +204,9 @@ LONG kproc_exec_replacement_probe(UWORD fail_after)
         panic("exec replacement: aborted staging changed execution or completion");
 done:
     kproc_exec_replacement_abort(&replacement);
+    if (members) kproc_abort_mapping_owners(foreign,selected,&members);
+    kthread_destroy(prepared_thread);
+    if (foreign) { proc_dispose_process(foreign);kproc_release(foreign); }
     kaspace_put(selected);kproc_release(source);
     return error;
 }

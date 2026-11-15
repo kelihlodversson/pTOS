@@ -1726,6 +1726,9 @@ void pclone_run_managed_tests(void)
                          "public mode200 remains unavailable before real execution commit");
         ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,"warm executable staging owners");
         ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,"warm real private ELF staging and disposal");
+        for(stage=0x103;stage<=0x105;stage++)
+            ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-36L,
+                             "warm canonical foreign construction rejection and cleanup");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
         ptest_assert_msg(mlt_snapshot(&before)==0,"snapshot before replacement staging");
 #endif
@@ -1741,6 +1744,9 @@ void pclone_run_managed_tests(void)
                              "missing executable leaves old execution runnable");
             ptest_assert_msg(pclone_trap(0,0xc9700102UL)<0,
                              "truncated executable rolls back staged image resources");
+            for(stage=0x103;stage<=0x105;stage++)
+                ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-36L,
+                                 "prepared THREAD/member associations reject selected and shared source roots");
             ptest_assert_msg(Pgetpid()==parent,"replacement staging never substitutes a new PID");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
             ptest_assert_msg(mlt_snapshot(&after)==0,"snapshot after replacement staging rollback");

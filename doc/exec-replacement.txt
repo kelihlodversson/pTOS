@@ -30,6 +30,14 @@ mapping mutation, final/group cancellation, nested execution and existing
 replacement preparation. The monotonic preparation ticket is an admission
 identity, not a committed-exec generation or a public completion.
 
+Root admission inspects existing canonical initial-THREAD and prepared/committed
+mapping memberships as well as active/pending root fields. A distinct unstarted
+PROCESS may already own a selected or source root through those associations
+before either root field is adopted. Both cases reject before admission and
+remain rejected by revalidation. No second mapping registry or root-reference
+count heuristic substitutes for that ownership check. The fresh loader image
+exception cannot contain a competing THREAD/mapping preparation.
+
 The receipt retains the exact source KPROC and both roots. Its existing
 KSCHED_CLEANUP_SCOPE defers cancellation delivery while preserving cancellation
 visibility; validation rejects a newly cancelled operation. It closes ordinary
@@ -94,7 +102,15 @@ Native private Pclone test transport uses 0xc9700000|selector with NULL request:
   1..4    fail each source/old-root/new-root/final-validation prefix, ENSMEM;
   0x100   stage existing PIEPROBE.TOS in selected private root and abort;
   0x101   missing file, EFILNF, old execution remains runnable;
-  0x102   truncated LOADFAIL.TOS after allocation, error and full cleanup.
+  0x102   truncated LOADFAIL.TOS after allocation, error and full cleanup;
+  0x103   selected root already bound to foreign unstarted initial THREAD;
+  0x104   selected root already owned by foreign prepared mapping membership;
+  0x105   source root bound to foreign unstarted THREAD, conservative EACCDN.
+The two selected-root controls originally returned E_OK on44a3b22aa with both
+foreign active/pending fields NULL. Production-model controls use actual
+kproc_thread_attach_space / kproc_clone_prepare_mapping_owners, perform complete
+cleanup, then assert EACCDN with both roots still alive and baseline refs restored.
+Both source-root sharing variants are also covered by the hosted owner tests.
 The managed user test repeats these paths eight times, checks stable source PID
 and all45 mapping-lifetime counters after each cycle, and explicitly verifies
 public mode200 still returns EINVFN. The accepted source root remains alive;

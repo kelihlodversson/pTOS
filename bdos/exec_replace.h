@@ -16,7 +16,9 @@ typedef struct kproc_exec_replacement KPROC_EXEC_REPLACEMENT;
  * through the existing cleanup scope until abort. No mapping or user/kernel
  * continuation changes, THREAD attachment, event or runnable publication occurs.
  * A caller must abort before returning to userspace or leaving its disk-error
- * boundary; this handle is not a scheduler continuation or a launch right. */
+ * boundary; this handle is not a scheduler continuation or a launch right.
+ * Selected-root and source-sharing admission includes unpublished initial
+ * THREADs and existing prepared/committed mapping memberships. */
 LONG kproc_exec_replacement_prepare(struct kproc *source, struct kthread *thread,
         struct kaspace *selected, KPROC_EXEC_REPLACEMENT **empty);
 /* Revalidates the exact PROCESS number, TID, execution and roots. Preparation

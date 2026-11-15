@@ -1371,6 +1371,20 @@ BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
 static UQUAD last_exec_replacement_ticket;
 
+/* A constructor may own a root before active_space/pending_space adoption.
+ * Reuse the canonical THREAD/member associations; root refs are not admission. */
+static BOOL exec_space_associated(const KPROC *process,const KASPACE *space)
+{
+    KTHREAD *thread;
+    if (process->active_space==space || process->pending_space==space ||
+        kaspace_member_matches(process->mapping_members,space,process->number,process) ||
+        kaspace_member_matches(process->prepared_mapping_members,space,process->number,process))
+        return TRUE;
+    for (thread=process->threads;thread;thread=*kthread_next_link(thread))
+        if (kthread_aspace(thread)==space) return TRUE;
+    return FALSE;
+}
+
 static BOOL exec_replacement_source(KPROC *process,KTHREAD *thread,KASPACE *selected,KPROC *image)
 {
     KPROC *peer;
@@ -1388,10 +1402,10 @@ static BOOL exec_replacement_source(KPROC *process,KTHREAD *thread,KASPACE *sele
 #endif
     for (peer=kproc_list;peer;peer=peer->next) {
         /* Initial replacement policy excludes all source peers. A selected
-         * image root is private staging, not another PROCESS's active/pending
-         * image, even when its caller happens to retain a root reference. */
-        if ((peer!=process && peer->active_space==original) ||
-            peer->active_space==selected || (peer->pending_space==selected &&
+         * image root is private staging, not another PROCESS's execution or
+         * construction, even when its caller retains a root reference. */
+        if ((peer!=process && exec_space_associated(peer,original)) ||
+            (exec_space_associated(peer,selected) &&
                 (peer!=image || !kproc_exec_image_pending(image,selected,FALSE)))) return FALSE;
     }
     return TRUE;
@@ -1426,10 +1440,11 @@ LONG kproc_exec_image_select(KPROC *image,KASPACE *selected)
 {
     KASPACE *owned;
     KPROC *peer;
-    if (!image || !selected || !kproc_clone_target_ready(image,NULL) || image->exec_image_staging)
+    if (!image || !selected || !kproc_clone_target_ready(image,NULL) || image->exec_image_staging ||
+        image->mapping_preparation || image->mapping_members || image->prepared_mapping_members)
         return EACCDN;
     for (peer=kproc_list;peer;peer=peer->next)
-        if (peer->active_space==selected || peer->pending_space==selected) return EACCDN;
+        if (exec_space_associated(peer,selected)) return EACCDN;
     owned=kaspace_share(selected);
     if (!owned) return ENSMEM;
     image->exec_image_staging=TRUE;
@@ -1441,6 +1456,7 @@ BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL co
 {
     return image && image->pd && !image->completed && image->disposal_state==PROCESS_LIVE &&
         !image->started && !image->active_space && !image->threads && !image->lost && !image->load_parent &&
+        !image->mapping_preparation && !image->mapping_members && !image->prepared_mapping_members &&
         image->exec_image_staging && image->pending_space==selected &&
         (!complete || (image->has_image && image->pending_as==kaspace_backend(selected)));
 }
