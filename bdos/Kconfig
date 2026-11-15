@@ -67,6 +67,14 @@ config CONF_WITH_NATIVE_SCHED
       Scheduling is cooperative and does not require CUIS or external libaes.
 
 
+config CONF_WITH_SHARED_VM_PEXEC_TEST
+    bool "Native shared-VM Pexec acceptance tests (experimental)"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    default n
+    help
+      Test-only modes4/104 while independent ownership/runtime acceptance is
+      pending. No shipped preset selects it. Does not enable fork or preemption.
+
 # Hidden until explicit public activation review. No preset may select this.
 config CONF_WITH_PROCESS_EXEC
     bool

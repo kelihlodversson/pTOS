@@ -59,6 +59,7 @@
 #include "../../../bdos/process_exec_internal.h"
 #if CONF_WITH_CUIS_RECEIPT_TEST
 #include "../../../aes/cuis_receipt_test.h"
+#include "../../../aes/cuis_input.h"
 #endif
 #if CONF_WITH_PROCESS_EXEC_DISPATCH
 #include "../../../bdos/ssystem.h"
@@ -1541,6 +1542,8 @@ static struct {
 static struct {
     BOOL enabled, seen, yielding, expect_yield, request_cancel, in_nested, nested_seen;
     WORD pid;
+    UQUAD nested_enclosing;
+    LONG nested_enclosing_depth;
     PROCESS_OBSERVER *observer, *peer;
 } retiring_probe;
 #endif
@@ -1582,6 +1585,8 @@ void x86_64_memtest_disposal_committed(PD *pd)
                       completion.state!=PROCESS_UNSTARTED && ksched_cancellation_pending(),
                       "pending cancellation cannot prevent another PROCESS progressing during protected Syield");
                 retiring_probe.in_nested=TRUE; retiring_probe.nested_seen=FALSE;
+                retiring_probe.nested_enclosing=kproc_ref_number(kthread_process(ksched_exit_thread(run)));
+                retiring_probe.nested_enclosing_depth=ksched_test_nested(0);
                 CHECK(Pexec(PE_LOADGO,"C:\\X32HELLO.TOS",nested_command,environment)==0xffff &&
                       retiring_probe.nested_seen && ksched_cleanup_active() && ksched_cancellation_pending(),
                       "a distinct nested Pexec child does not inherit its carrier cleanup guard");
@@ -2665,10 +2670,11 @@ extern const UBYTE clone_probe_begin[], clone_probe_end[];
 /* Kernel-only hook reached from a real ring-3 Syield. No test syscall. Each
  * child is constructed while its actual parent is executing in the group. */
 static struct {
-    BOOL enabled, waiting, reused;
+    BOOL enabled, waiting, replacement_checked;
     UWORD scenario, parent_yields, child_progress, successes, attempts;
     KPROC *parent; /* owning completion identity, never retains its old PD */
     PD *old_pd;
+    UQUAD old_generation;
     VADDR usage;
     ULONG child_ticks;
     PROC_CLONE_IDENTITIES ids[KSCHED_LIMIT];
@@ -3409,7 +3415,8 @@ static void ordinary_observation_yield(void)
     LONG waited;
     char command[] = {2,'O','n',0};
     static char environment[] = {0,0};
-    if (retiring_probe.yielding || !ordinary_observation.enabled || !(thread=ksched_exit_thread(run)) ||
+    if (retiring_probe.yielding || retiring_probe.in_nested ||
+        !ordinary_observation.enabled || !(thread=ksched_exit_thread(run)) ||
         kthread_process(thread)!=ordinary_observation.parent || ordinary_observation.checked) return;
     ordinary_observation.yields++;
     if (ordinary_observation.yields==1) {
@@ -3642,8 +3649,14 @@ void x86_64_memtest_clone_yield(void)
     UWORD i;
     KTHREAD *thread;
     if (retiring_probe.in_nested) {
-        CHECK(!ksched_cleanup_active(),"nested distinct PROCESS has no carrier cleanup suppression");
-        retiring_probe.nested_seen=TRUE;
+        KTHREAD *nested=ksched_exit_thread(run);
+        /* Admission and restored-carrier checkpoints can also reach this
+         * hook. Require the actual nested logical PROCESS, not its carrier. */
+        if (nested && ksched_test_nested(0)==retiring_probe.nested_enclosing_depth+1 &&
+            kproc_ref_number(kthread_process(nested))!=retiring_probe.nested_enclosing) {
+            CHECK(!ksched_cleanup_active(),"nested distinct PROCESS has no carrier cleanup suppression");
+            retiring_probe.nested_seen=TRUE;
+        }
     }
 #if CONF_WITH_CUIS_OBSERVER_TEST
     if (native_observer_wait.inside) {
@@ -3689,18 +3702,27 @@ void x86_64_memtest_clone_yield(void)
         }
     } else {
         if (active_clone.waiting) active_clone.child_progress++;
-        if (active_clone.scenario == 2 && !active_clone.reused && !kproc_ref_has_basepage(active_clone.parent)) {
+        if (active_clone.scenario == 2 && !active_clone.replacement_checked && !kproc_ref_has_basepage(active_clone.parent)) {
             PD *replacement = new_basepage();
             KPROC *identity;
             CHECK(replacement != NULL, "allocate replacement after actual creator retirement");
             if (!replacement) return;
             set_owner(replacement,replacement); set_owner(USERPTR_TO_PTR(replacement->p_env),replacement);
             identity = kproc_retain(replacement);
-            CHECK(replacement == active_clone.old_pd && kproc_ref_pid(identity) != kproc_ref_pid(active_clone.parent),
+            CHECK(kproc_ref_pid(identity) != kproc_ref_pid(active_clone.parent),
+                  "replacement has a fresh canonical PROCESS identity");
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+            CHECK(replacement != active_clone.old_pd &&
+                  procmem_gen(active_clone.old_pd)==active_clone.old_generation &&
+                  !procmem_mutation_allowed(active_clone.old_pd,active_clone.old_generation,0,procmem_size(active_clone.old_pd)),
+                  "surviving orphan's exact R1 receipts prevent physical source-PD reuse");
+#else
+            CHECK(replacement == active_clone.old_pd,
                   "retired parent PD really is reused under a distinct PROCESS identity");
+#endif
             CHECK(!kproc_notification_parent(run), "orphan completion cannot notify replacement at reused creator PD");
             proc_dispose_process(identity); kproc_release(identity);
-            active_clone.reused = TRUE;
+            active_clone.replacement_checked = TRUE;
         }
     }
 }
@@ -3782,6 +3804,7 @@ static void test_clone_execution(void)
             active_clone.enabled = TRUE; active_clone.scenario = mode - 12;
             active_clone.parent = kproc_retain_live(watched.process);
             active_clone.old_pd = kproc_live_pd(watched.process);
+            active_clone.old_generation = procmem_gen(active_clone.old_pd);
         }
         bzero(exit_handoff_stages,sizeof(exit_handoff_stages)); exit_handoff_watch = TRUE;
         result = proc_clone_exec(&tx,&done);
@@ -3828,7 +3851,21 @@ static void test_clone_execution(void)
                   "creator continued independently and completed before returning to group root");
             if (active_clone.scenario == 0 || active_clone.scenario == 3 || active_clone.scenario == 11)
                 CHECK(active_clone.child_progress, "blocked creator permits independent child execution");
-            if (active_clone.scenario == 2) CHECK(active_clone.reused, "orphan survived actual parent PD reuse");
+            if (active_clone.scenario == 2) {
+                CHECK(active_clone.replacement_checked,"orphan survived a fresh PROCESS after source retirement");
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+                {
+                    PD *again=new_basepage();
+                    KPROC *identity;
+                    CHECK(again==active_clone.old_pd && procmem_gen(again)!=active_clone.old_generation,
+                          "source PD is reused with fresh generation after final dependent THREAD retirement");
+                    if (again) {
+                        set_owner(again,again);set_owner(USERPTR_TO_PTR(again->p_env),again);
+                        identity=kproc_retain(again);proc_dispose_process(identity);kproc_release(identity);
+                    }
+                }
+#endif
+            }
             for (j = 0; j < KSCHED_LIMIT; j++) if (active_clone.observers[j]) {
                 PROC_CLONE_COMPLETION observed = { 0, 0, 0 };
                 if (active_clone.ids[j].pid) CHECK(proc_clone_observer_state(active_clone.observers[j]) == PROC_CLONE_OBSERVER_REAPED &&
@@ -6510,15 +6547,15 @@ static void test_ring3(void)
         same(&s, "a program loaded into the caller");
     }
 
-    /* PE_LOAD then rejected PE_GO: the staged image remains reclaimable. */
+    /* PE_LOAD then the configured PE_GO policy: staged ownership survives. */
     {
         snap(&s);
         rc = run_probe('G');
         if (rc == 0x100) {
-            kcprintf("x86-64 pexec go rejected: SKIP (no C:\\X32HELLO.TOS)\n");
+            kcprintf("x86-64 pexec go staged ownership: SKIP (no C:\\X32HELLO.TOS)\n");
         } else {
-            CHECK(rc == 0, "PE_GO rejects without altering the staged program");
-            kcprintf(rc == 0 ? "x86-64 pexec go rejected: PASS\n" : "x86-64 pexec go rejected: FAIL (0x%lx)\n", rc);
+            CHECK(rc == 0, "PE_GO policy preserves the caller's staged program ownership");
+            kcprintf(rc == 0 ? "x86-64 pexec go staged ownership: PASS\n" : "x86-64 pexec go staged ownership: FAIL (0x%lx)\n", rc);
         }
         same(&s, "PE_LOAD and rejected PE_GO from ring 3");
     }
@@ -6553,7 +6590,7 @@ static void test_ring3(void)
         snap(&s);
         rc = run_probe('H');
         if (rc != 0x100) {
-            CHECK(rc == 0, "PE_GO rejection preserves a staged image for mode 6");
+            CHECK(rc == 0, "failed PE_GO preserves a staged image for mode 6");
             kcprintf(rc == 0 ? "x86-64 pexec go rejected with a gap: PASS\n" : "x86-64 pexec go rejected with a gap: FAIL (0x%lx)\n", rc);
         }
         same(&s, "rejected PE_GO and PE_GOTHENFREE with a gap");

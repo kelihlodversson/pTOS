@@ -62,6 +62,7 @@ if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
         python3 tools/make-cuis-resource.py --colour-icons-256 "$work/GEM256.RSC"
         mkdir -p "$work/APPS" "$work/RPATH" "$work/WORK" "$work/FROM_ARG"
         cp obj/libaes/GEM.TOS "$work/APPS/GEMSHELL.TOS"
+        if [ -f obj/libaes/GEMPIE.TOS ]; then cp obj/libaes/GEMPIE.TOS "$work/APPS/GEMPIE.TOS"; fi
         cp obj/libaes/GEM.TOS "$work/APPS/GEMCHILD.PRG"
         cp obj/libaes/GEM.TOS "$work/APPS/GEMCHILD.APP"
         cp obj/libaes/GEM.TOS "$work/APPS/GEMCHILD.TOS"
@@ -218,6 +219,9 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM shell launch directories: PASS' "$log"
     grep -q 'x32 GEM explicit immediate/parallel launches: PASS' "$log"
     grep -q 'x32 GEM child exit: PASS' "$log"
+    if grep -q '^CONF_WITH_SHARED_VM_PEXEC_TEST *= *y' obj/auto.conf; then
+        grep -q 'x32 shared-Pexec full result, canonical reap and independent CH_EXIT: PASS' "$log"
+    fi
     grep -q 'x32 GEM chain handoff: PASS' "$log"
     grep -q 'x32 GEM discovery/messages: PASS' "$log"
     grep -q 'x32 GEM window messages/focus: PASS' "$log"

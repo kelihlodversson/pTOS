@@ -172,34 +172,20 @@ bcheck64:
 bloop256:
         lea      -256(a0),a0
         lea      -256(a1),a1
-#ifdef __mcoldfire__
-        movem.l  (a0),d2-d7/a2-a6      // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,(a1)
-        movem.l  44(a0),d2-d7/a2-a6    // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,44(a1)
-        movem.l  88(a0),d2-d7/a2-a6    // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,88(a1)
-        movem.l  132(a0),d2-d7/a2-a6   // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,132(a1)
-        movem.l  176(a0),d2-d7/a2-a6   // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,176(a1)
-        movem.l  220(a0),d2-d7/a2-a4   // copy  9x4 bytes
+// Each chunk must descend too: dst may be only one word above src.
+// Loading/storing low chunks first overwrites unread higher source bytes.
+        movem.l  220(a0),d2-d7/a2-a4   // highest 9x4 bytes first
         movem.l  d2-d7/a2-a4,220(a1)
-#else
-        movem.l  (a0)+,d2-d7/a2-a6     // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,(a1)
-        movem.l  (a0)+,d2-d7/a2-a6     // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,44(a1)
-        movem.l  (a0)+,d2-d7/a2-a6     // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,88(a1)
-        movem.l  (a0)+,d2-d7/a2-a6     // copy 11x4 bytes
-        movem.l  d2-d7/a2-a6,132(a1)
-        movem.l  (a0)+,d2-d7/a2-a6     // copy 11x4 bytes
+        movem.l  176(a0),d2-d7/a2-a6
         movem.l  d2-d7/a2-a6,176(a1)
-        movem.l  (a0)+,d2-d7/a2-a4     // copy  9x4 bytes
-        movem.l  d2-d7/a2-a4,220(a1)
-        lea      -256(a0),a0
-#endif
+        movem.l  132(a0),d2-d7/a2-a6
+        movem.l  d2-d7/a2-a6,132(a1)
+        movem.l  88(a0),d2-d7/a2-a6
+        movem.l  d2-d7/a2-a6,88(a1)
+        movem.l  44(a0),d2-d7/a2-a6
+        movem.l  d2-d7/a2-a6,44(a1)
+        movem.l  (a0),d2-d7/a2-a6
+        movem.l  d2-d7/a2-a6,(a1)
 bend256:
 #ifdef __mcoldfire__
         subq.l   #1,d0
@@ -220,18 +206,10 @@ bend256:
 bloop64:
         lea      -64(a0),a0
         lea      -64(a1),a1
-#ifdef __mcoldfire__
-        movem.l  (a0),d2-d7/a4-a5      // copy 8x4 bytes
-        movem.l  d2-d7/a4-a5,(a1)
-        movem.l  32(a0),d2-d7/a4-a5    // copy 8x4 bytes
+        movem.l  32(a0),d2-d7/a4-a5    // high half before overlapping low half
         movem.l  d2-d7/a4-a5,32(a1)
-#else
-        movem.l  (a0)+,d2-d7/a4-a5     // copy 8x4 bytes
+        movem.l  (a0),d2-d7/a4-a5
         movem.l  d2-d7/a4-a5,(a1)
-        movem.l  (a0)+,d2-d7/a4-a5     // copy 8x4 bytes
-        movem.l  d2-d7/a4-a5,32(a1)
-        lea      -64(a0),a0
-#endif
 bend64:
 #ifdef __mcoldfire__
         subq.l   #1,d0
@@ -281,7 +259,7 @@ end:
 back1:
         move.l   12(sp),d0       // size
         jeq      end             // if size == 0, nothing to do
-// backwards, but 16 bytes by 16 bytes forward.
+// Descending bytes even within each block: odd overlap may be one byte.
         add.l    d0,a0
         add.l    d0,a1
         move.l   #16,d1
@@ -297,26 +275,22 @@ back16:
         lsr.l    #4,d0
         jra      bend16
 bloop16:
-        lea      -16(a0),a0
-        lea      -16(a1),a1
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        move.b   (a0)+,(a1)+
-        lea      -16(a0),a0
-        lea      -16(a1),a1
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
+        move.b   -(a0),-(a1)
 bend16:
 #ifdef __mcoldfire__
         subq.l   #1,d0

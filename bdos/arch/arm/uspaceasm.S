@@ -90,11 +90,11 @@ C_SYM(bdos_trap2):
         movs    pc, lr
 
 /*
- * void arm_enter_user(ULONG entry, ULONG user_sp, ULONG basepage, ULONG kstack_top);
+ * void arm_enter_user(ULONG entry, ULONG user_sp, ULONG argument, ULONG kstack_top);
  *
  * Leaves the kernel for a process that has not run yet, and does not return:
  * the kernel stack becomes the (empty) one of the process, every register is
- * cleared but r0, which holds the basepage, and the FPU state is the reset
+ * cleared but r0, which holds the entry argument, and the FPU state is the reset
  * one, so nothing of the kernel or of the process that ran before is left
  * to read.  The address space is loaded by the caller.
  */
@@ -114,7 +114,7 @@ C_SYM(arm_enter_prepared_user):
 arm_user_entry_common:
         mov     r4, r0                  // the entry point
         mov     r5, r1                  // the user stack pointer
-        mov     r6, r2                  // the basepage
+        mov     r6, r2                  // the entry argument
         mov     sp, r3                  // the kernel stack of the process, empty
 #if FPU_ALL_BYTES
         mov     r0, #0
@@ -133,7 +133,7 @@ arm_user_entry_common:
         mov     sp, r5
         mov     lr, r7
         cps     #0x13
-        mov     r0, r6                  // the basepage
+        mov     r0, r6                  // C basepage or standard ELF finalizer
         mov     r1, #ARM_ENTRY_PROGRAM
         mov     r2, #0
         mov     r3, #0

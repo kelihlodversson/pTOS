@@ -131,3 +131,15 @@ LONG fileback_read(FILE_BACKING *b, ULONG offset, void *buffer, ULONG size)
     fd->o_bytnum = position; fd->o_curcl = cluster; fd->o_currec = record; fd->o_curbyt = byte;
     return rc == count ? E_OK : EREADF;
 }
+
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#include "shared_pexec_test.h"
+void fileback_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
+{
+    const FILE_BACKING *b;
+    for(b=backings;b;b=b->next) {
+        out->count[SP_FILE_BACKINGS]++;out->count[SP_BACKING_REFS]+=b->references;
+        if(!b->references) out->count[SP_BACKING_PENDING]++;
+    }
+}
+#endif

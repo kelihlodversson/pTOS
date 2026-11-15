@@ -38,7 +38,7 @@ static void reenter_root(void)
 }
 void proc_dispose_process(KPROC *process)
 {
-    CHILD_WAIT wait;
+    CHILD_WAIT wait = { 0 };
     CHECK(phase == 0 && process == (KPROC *)&successor);
     reenter_root(); /* Before THREAD destruction and PROCESS release. */
     wait.parent = &owner; wait.pid = 42;

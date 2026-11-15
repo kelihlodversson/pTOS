@@ -84,7 +84,7 @@ make "${config}_defconfig" 2>&1 | tee build.log
 case "$machine" in
     virt-arm-aspace|virt-m68k-aspace|pc-x86_64)
         CONFIG_= python3 - <<'PY'
-import kconfiglib
+import kconfiglib, os
 config = kconfiglib.Kconfig()
 config.load_config()
 config.syms['CONF_WITH_PCLONE'].set_value(2)
@@ -103,6 +103,16 @@ if config.syms['ARCH_X86_64'].str_value != 'y':
     config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'
+if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
+    config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'
+    for required in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_MMAP'):
+        config.syms[required].set_value(2)
+        assert config.syms[required].str_value == 'y', required
+    backend = os.environ.get('SHARED_VM_PEXEC_FS', 'fat')
+    assert backend in ('fat', 'pfs'), backend
+    config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
+    assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
 config.write_config()
 PY
         ;;
@@ -112,6 +122,16 @@ if [ "$traditional_fat" = true ]; then
 fi
 make $make_args 2>&1 | tee -a build.log
 tools/check-build-warnings.sh build.log
+if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ]; then
+    for symbol in CONF_WITH_SHARED_VM_PEXEC_TEST CONF_WITH_ELF_SHARED CONF_WITH_MMAP \
+                  CONF_WITH_PRIVATE_CLONE_TEST CONF_WITH_NATIVE_SCHED CONF_WITH_PCLONE; do
+        grep -q "^#define $symbol 1$" obj/autoconf.h || {
+            echo "positive shared-Pexec configuration missing effective $symbol" >&2
+            exit 2
+        }
+    done
+    echo 'positive shared-Pexec effective gates: shared/interpreter/mmap/private-test/scheduler/clone=1'
+fi
 make $make_args test-dir
 
 tools/run-regression-tests.sh "$script_machine"

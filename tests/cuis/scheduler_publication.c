@@ -210,7 +210,7 @@ int main(void)
     UWORD i;
     UQUAD identity;
     KERNEL_TASK *t, *grown;
-    CHILD_WAIT wait;
+    CHILD_WAIT wait = { 0 };
     { /* Inspect the exported linker ABI, not C's distinct-symbol folding. */
         volatile uintptr_t exported=(uintptr_t)&run;
         CHECK(exported==(uintptr_t)&execution_cpu.loaded_process);

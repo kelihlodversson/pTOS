@@ -142,4 +142,7 @@ void proc_launch_prepare(PD *p, void *super_sp);
 #define PROG_IMAGE_ALIGN 1UL
 #endif
 
+#if CONF_WITH_NATIVE_SCHED
+LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous);
+#endif
 #endif /* PROC_H */

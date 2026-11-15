@@ -48,6 +48,7 @@ BOOL kproc_callbacks_set(PD *pd, USER_CALLBACK_STATE *state);
 UQUAD kproc_resume_rsp(PD *pd);
 void kproc_record_rsp(PD *pd, UQUAD rsp);
 UQUAD kproc_stack_bottom(PD *pd);
+UQUAD kproc_stack_top(PD *pd);
 /* A callback stack cannot borrow pages whose loaded-child lifetime can
  * release or transfer them independently of this process's stack pins. */
 BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size);
@@ -215,6 +216,7 @@ void kproc_clone_commit_mapping_owners(KPROC *,KASPACE *,KASPACE_MEMBER **);
  * dependencies as exact claims; late allocations use a fresh scope. This is
  * an internal opt-in, not public FreeMiNT shared-Pexec policy. */
 LONG kproc_prepare_scoped_mapping_owners(KPROC *,KPROC *,KASPACE *,KASPACE_MEMBER **);
+LONG kproc_prepare_loaded_mapping_owners(KPROC *,KPROC *,KASPACE *,KASPACE_MEMBER **);
 void kproc_abort_mapping_owners(KPROC *,KASPACE *,KASPACE_MEMBER **);
 LONG kproc_mapping_attach(KPROC *,KPROC *,UQUAD,VADDR,VADDR,KASPACE_ATTACHMENT *);
 BOOL kproc_mapping_detach(KPROC *,KASPACE_ATTACHMENT *);
@@ -225,6 +227,27 @@ VADDR kproc_test_contended_allocation(void);
 ULONG kproc_test_mapping_wait_count(void);
 #endif
 #if CONF_WITH_NATIVE_SCHED
+/* Loader-only, distinct existing PE_LOAD PROCESS; no resource adoption on failure. */
+#include "thread_startup.h"
+LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PERMISSION_TRANSACTION **);
+LONG kproc_shared_exec_take_mapping_owners(KPROC *,KASPACE_MEMBER **);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST
+LONG kproc_shared_dependencies_prepare(KPROC *,KPROC *);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+void kproc_shared_dependency_test_fail_after(UWORD);
+UWORD kproc_shared_dependency_test_steps(void);
+#endif
+#endif
+void kproc_shared_exec_abort(KPROC *);
+void kproc_shared_exec_finish(KPROC *);
+BOOL kproc_shared_exec_relro_range(const KPROC *,VADDR address,VADDR bytes);
+VADDR kproc_shared_exec_initial_sp(const KPROC *);
+BOOL kproc_shared_exec_ready(const KPROC *,struct kthread *);
+BOOL kproc_shared_exec_constructible(const KPROC *);
+BOOL kproc_shared_exec_active(PD *);
+BOOL kproc_shared_exec_committed(const KPROC *);
+BOOL kproc_shared_exec_retire_source(void *);
+void kproc_shared_exec_release_base(void *);
 BOOL kproc_clone_prepare_compat(KPROC *, struct kthread *, struct kaspace *);
 void kproc_clone_drop_compat(KPROC *);
 BOOL kproc_clone_run_ready(KPROC *, struct kthread *, struct kaspace *);
@@ -482,6 +505,10 @@ LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
 LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size);
+#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+void kproc_shared_test_fail_after(UWORD after);
+UWORD kproc_shared_test_steps(void);
+#endif
 #endif
 
 #endif

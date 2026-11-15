@@ -1902,6 +1902,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_ELF_LOADER),-DTEST_WITH_ELF_LOADER) \
               $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
+              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),-DTEST_WITH_SHARED_VM_PEXEC) \
               $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
               $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_PRIVATE_CLONE_TEST) \
               $(if $(filter y,$(CONF_WITH_NATIVE_SCHED)),-DTEST_WITH_NATIVE_SCHED) \
@@ -1917,7 +1918,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(MACHINE_AMIGA),-DTEST_LOG_FILE) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
               $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
-              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K)),-DTEST_WITH_ELF_SHARED)) \
+              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST))),-DTEST_WITH_ELF_SHARED)) \
               $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 
@@ -2250,6 +2251,45 @@ obj/process_transport_child.o: tests/process_transport/child.c $(AUTOCONF_H) | o
 PROCXIT.TOS: $(TEST_STARTUP) obj/process_transport_child.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/process_transport_child.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 TEST_PROCESS_EXEC_FILES = PROCXIT.TOS
+endif
+
+# Explicit shared-Pexec test kernels exercise standard ELF interpreter entry.
+# This adds fixtures only; no shipped preset selects the test gate.
+ifdef CONF_WITH_SHARED_VM_PEXEC_TEST
+ifdef CONF_WITH_ELF_SHARED
+LDSO_TEST_APP += obj/ldso/runtime/SHRINT.ELF
+obj/ldso/runtime/SHRINT.ELF: obj/ldso/test/soapp-pie.elf
+	@mkdir -p $(@D)
+	cp $< $@
+ifdef ARCH_X86_64
+# The existing runtime fixture exercises a nested ordinary isolated launch.
+LDSO_TEST_APP += obj/ldso/runtime/LDSOAPP.ELF obj/ldso/runtime/NEEDMISS.ELF \
+                 obj/ldso/runtime/NEEDBAD.ELF obj/ldso/runtime/NOINTRP.ELF
+obj/ldso/runtime/NEEDMISS.ELF: obj/ldso/test/needmiss.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/NEEDBAD.ELF: obj/ldso/test/needbad.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/NOINTRP.ELF: obj/ldso/test/nointrp.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/LDSOAPP.ELF: obj/ldso/test/soapp.elf
+	@mkdir -p $(@D)
+	cp $< $@
+LDSO_RUNTIME_FILES += $(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO \
+                      $(LDSO_RUNTIME_DIR)/LIB/X32/LIBBAD.SO
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBBAD.SO: obj/ldso/test/libbad.so
+	@mkdir -p $(@D)
+	head -c 100 $< > $@
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO: obj/ldso/test/librt.so
+	@mkdir -p $(@D)
+	cp $< $@
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO: obj/ldso/test/libdyn.so
+	@mkdir -p $(@D)
+	cp $< $@
+endif
+endif
 endif
 
 TEST_HD_FILES = $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)

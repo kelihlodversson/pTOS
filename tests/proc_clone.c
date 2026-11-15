@@ -127,7 +127,7 @@ static void exercise(BOOL source_first)
     heap = kaspace_heap(source.space);
     heap->blocks = kalloc(sizeof(*heap->blocks)); assert(heap->blocks);
     heap->count = heap->capacity = 1; heap->blocks[0].va = 0x1000; heap->blocks[0].pages = 1;
-    heap->blocks[0].scope=NULL;heap->blocks[0].reservation=0;
+    heap->blocks[0].scope=NULL;heap->blocks[0].reservation=0;heap->blocks[0].flags=0;
     memset(&args,0,sizeof(args));
     args.source = &source; args.prepared_process = NULL;
     args.process_policy = PROC_CLONE_SAME_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;

@@ -3,6 +3,25 @@
         .globl _start
         .hidden _start
 _start:
+#if PTOS_RUNTIME_OWNERSHIP
+        /* Positive native test kernels check the actual standard entry,
+         * before bootstrap can overwrite a leaked legacy C argument. */
+        orq %rbx, %rax
+        orq %rcx, %rax
+        orq %rdx, %rax
+        orq %rdi, %rax
+        orq %rsi, %rax
+        orq %rbp, %rax
+        orq %r8, %rax
+        orq %r9, %rax
+        orq %r10, %rax
+        orq %r11, %rax
+        orq %r12, %rax
+        orq %r13, %rax
+        orq %r14, %rax
+        orq %r15, %rax
+        jnz entry_failed
+#endif
         movq %rsp, %r12
         movq %rsp, %rdi
         call dl_bootstrap
@@ -20,6 +39,12 @@ _start:
         jmp *%r11
 failed:
         movl $127, %edi
+#if PTOS_RUNTIME_OWNERSHIP
+        jmp terminate
+entry_failed:
+        movl $126, %edi
+terminate:
+#endif
         movabsq $0x10000004c, %rax
         syscall
         ud2

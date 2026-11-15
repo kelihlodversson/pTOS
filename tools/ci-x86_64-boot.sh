@@ -147,8 +147,8 @@ if ! grep -q 'x86-64 unaligned relocation: PASS' boot.log; then
   exit 1
 fi
 
-if ! grep -q 'x86-64 pexec go rejected: PASS' boot.log; then
-  echo "::error::PE_GO rejection did not preserve the staged program"
+if ! grep -q 'x86-64 pexec go staged ownership: PASS' boot.log; then
+  echo "::error::PE_GO policy did not preserve the caller's staged ownership"
   exit 1
 fi
 
