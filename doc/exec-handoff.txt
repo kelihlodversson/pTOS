@@ -116,7 +116,13 @@ Reproduce with the repository's installed toolchains/QEMU/fonts:
     SHARED_VM_PEXEC_FS=fat tools/ci-regression.sh pc-x86_64
   Substitute virt-arm-aspace or virt-m68k-aspace; repeat those with FS=pfs.
   tools/run-regression-tests.sh also performs its five shutdown checks.
-  PROCESS_FILES_TEST=1 PROCESS_FILES_FS=fat may additionally select #975.
+  Run a separate #975 matrix with EXEC_REPLACEMENT_TEST=1 EXEC_HANDOFF_TEST=1
+  PROCESS_FILES_TEST=1 PROCESS_FILES_FS=fat (or pfs), REGRESSION_RAW_DISK=1 and
+  without SHARED_VM_PEXEC_TEST. CI exercises both five-configuration matrices.
+  The all-gates combination also reproduces an accepted-base m68k full-suite
+  self-reload failure before transport: the third large classic PRG cannot
+  satisfy libc startup's TPA reserve and exits65535 before main. This is not
+  a handoff failure or an excuse to omit the separate descriptor matrix.
 
 Remaining concrete owner contract (NOT implemented)
 ---------------------------------------------------

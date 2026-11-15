@@ -484,9 +484,6 @@ jobs:
         env:
           EXEC_REPLACEMENT_TEST: '1'
           EXEC_HANDOFF_TEST: '1'
-          PROCESS_FILES_TEST: '1'
-          PROCESS_FILES_FS: ${{ matrix.fs }}
-          REGRESSION_RAW_DISK: '1'
           SHARED_VM_PEXEC_TEST: '1'
           SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
         run: tools/ci-regression.sh "${{ matrix.machine }}"
@@ -517,6 +514,8 @@ jobs:
         run: python3 -m pip install fonttools
       - name: Run real-trap descriptor ownership and complete regression/shutdown checks
         env:
+          EXEC_REPLACEMENT_TEST: '1'
+          EXEC_HANDOFF_TEST: '1'
           PROCESS_FILES_TEST: '1'
           PROCESS_FILES_FS: ${{ matrix.fs }}
           REGRESSION_RAW_DISK: '1'
