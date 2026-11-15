@@ -104,11 +104,21 @@ check() {
       echo "error: a combination is in two groups of $event: $(sorted $got | uniq -d)" >&2
       status=1
     fi
-    # the matrix of the workflow names the same groups
-    json=$(printf '"%s",' $groups); json="[${json%,}]"
-    grep -qF "'$json'" .github/workflows/hatari-tests.yml ||
-      { echo "error: .github/workflows/hatari-tests.yml has no matrix '$json' (the groups of $event)" >&2; status=1; }
   done
+  # The matrix of the workflow is these groups: its one matrix has to be
+  # exactly this group: line (a list in a comment, or elsewhere, does not count).
+  json() { j=$(printf '"%s",' $*); echo "[${j%,}]"; }
+  want="group: \${{ fromJSON(github.event_name == 'pull_request' && '$(json $PR_GROUPS)' || '$(json $ALL_GROUPS)') }}"
+  # (the first line under each matrix: that is not a comment)
+  lines=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' .github/workflows/hatari-tests.yml |
+          awk '/^matrix:$/ { m = 1; next } m && /^(#|$)/ { next } m { print; m = 0 }')
+  if [ "$lines" != "$want" ]; then
+    echo "error: the matrix of .github/workflows/hatari-tests.yml is not the groups of this script; its group: line has to be" >&2
+    echo "  $want" >&2
+    echo "and is" >&2
+    printf '  %s\n' "${lines:-(none)}" >&2
+    status=1
+  fi
   [ $status -eq 0 ] && echo "The Hatari groups run every combination once."
   return $status
 }
