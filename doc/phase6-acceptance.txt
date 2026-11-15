@@ -1,6 +1,73 @@
 Phase 6 (#895): private continuation increment and acceptance ledger
 ==================================================================
 
+Current binding decision: COW Pfork AND COW Pvfork
+-------------------------------------------------
+Both calls use proc_clone(NEW_PROCESS,PRIVATE_VM). One saved-return constructor,
+one resource/snapshot/THREAD/publication/rollback path. Only parent continuation
+policy differs: immediate Pfork or exact-child suspended Pvfork. This is an
+accepted deliberate FreeMiNT memory-sharing deviation: ordinary private child
+writes do not change parent memory; the child has its own logical user stack.
+No shared parent/child KASPACE, shared writable stack or parent-root detach
+requirement applies. Explicitly shared mappings retain their semantics, but
+pTOS public MAP_SHARED remains unsupported. Non-MMU fork stays outside Phase6.
+
+Accepted prior checkpoint: PR9722042d866802bfb0cea6e23fb148d0c53eca9d088,
+with the reported25/28/29/27/28 native suites and5shutdown each, four CI SUCCESS
+and four scoped independent assessments. That evidence belongs to that SHA;
+it is not acceptance of the new parent dependency or public syscalls.
+
+New parent-dependency increment (native acceptance in progress):
+- Exact child KPROC observer; parent retained KPROC number + calling KTHREAD/TID
+  and non-recycled scheduler execution identity. One THREAD-owned dependency,
+  PREPARED before child publication; PUBLISHED within its no-fail guard before
+  TASK_NEW. Existing scheduler owns the blocked parent continuation/stacks.
+- Cancellable block/recheck on canonical final PROCESS completion/delivery order
+  or exact child committed-exec generation. Cancellation wins over readiness.
+  Normal cleanup detaches/releases before checkpoint; quiescent THREAD reap
+  cancels any abandoned dependency after predicate/backend unpublication.
+- KPROC exec-generation query is inert until #970's authenticated replacement
+  commit supplies its producer. Host modeled epoch events are NOT native exec.
+  Native exit/fault/group/final-THREAD tests are incremental exit-only coverage,
+  never full Pvfork acceptance. Public Pfork/Pvfork still return EINVFN.
+- #969 and #971 are developed as isolated epic-based prerequisite Drafts.
+  #970 is same-PROCESS replacement only; no COW-vfork parent VM detach is needed.
+  None of these unaccepted branches may be integrated without separate user
+  authorization after independent acceptance. Main PR972 does not import them.
+
+The new private trap selector0x895fc000 changes only the parent continuation
+policy of0x895f8000; it is not public opcode0x113. Both use the same PRIVATE_VM
+transaction. A SHARE_VM+suspend request is rejected before resource acquisition.
+Eight preparation prefixes and final publication cancellation are exercised.
+Native tests check a genuinely blocked parent, nested suspension, unrelated
+completion, failed Pexec200, leader-only THREAD exit followed by final completion,
+Ptermgrp and fault completion, private stack/global/heap isolation and independent
+public reap. A child also cancels its exact blocked parent through existing group
+exit, survives as an orphan in its own VM and completes independently. That case
+restores seven exact PROCESS/THREAD/root/stack/identity-reference counters and
+the dependency count, without resetting counters or destroying the source root.
+Hosted production-owner tests cover early/late completion, missing delivery order,
+false wakes, exact modeled exec epochs, acquisition rollback and quiescent reap.
+These are scoped controls, not the complete Phase6 resource-conservation matrix.
+
+Separate prerequisite candidates (not imported here):
+- #969 / Draft975: independently owned descriptor bindings and coherent snapshot
+  admission, scoped source873a43936d430cbd01d8a05639de72523b6983dd.
+- #971 / Draft974: captured lazy authority and shared controller ownership,
+  scoped source5798b91c600ac35d7125e0d0123c4fdee8402b03. Moved image/basepage/
+  environment/DTA ownership remains a separate unresolved part of #971.
+- #970 / Draft973: authenticated reversible same-PROCESS loader staging,
+  scoped source44a3b22aa257a9035d7ceffe1e58341bfbeca508. No safe-stack
+  NORETURN commit or committed-exec notification is implemented by that increment.
+Candidate tests and owner-role assessments do not authorize their integration.
+
+Current exact-source progress, tests and reviews remain on #895 and Draft972.
+The historical matrix below records the accepted2042 checkpoint, not current
+completion percentages for new work. Its earlier shared-stack design is
+superseded by this binding COW decision.
+
+Historical accepted-checkpoint audit
+------------------------------------
 Audit base (remote refreshed before work):
   00292ebe60ef3ff31f15d56659c5c85938b57a00
 Accepted Phase5 source f9b9e00005eccb7048cff6d11073b47d2075faec has
@@ -185,7 +252,7 @@ P6-EXEC / #970 (Pvfork; loader #894 / execution #713):
   remains independently once-only after child's later completion.
   Pfork can continue independently. No exit-only public Pvfork is implemented.
 
-P6-SNAPSHOT / #971 (general Pfork sources; #891/#892/#958/#894):
+P6-SNAPSHOT / #971 (general Pfork AND Pvfork sources; #891/#892/#958/#894):
   Production path: kaspace_clone copies heap/mmap, not captured reservation
   leases; shared_dependencies_prepare may retain ancestor lazy stack via R2;
   private_runtime copies clone_top_stack only for its original top-stack owner.

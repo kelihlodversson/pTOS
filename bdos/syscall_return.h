@@ -43,6 +43,7 @@ typedef struct syscall_return {
 /* Reserved Pclone(NULL, size) test transport; no production ABI assignment. */
 #define FORK_RETURN_PROBE 0x895f0000UL
 #define FORK_RETURN_PRIVATE 0x8000U /* requires both private native test gates */
+#define FORK_RETURN_VFORK   0x4000U /* PRIVATE required; exact-child parent wait */
 LONG proc_clone_return_probe(SYSCALL_RETURN *, UWORD fail_stage);
 LONG proc_clone_prepare_saved_return(struct proc_clone_transaction *, const SYSCALL_RETURN *);
 LONG thread_startup_prepare_saved_return(struct kaspace *, const SYSCALL_RETURN *, THREAD_STARTUP_DRAFT **);

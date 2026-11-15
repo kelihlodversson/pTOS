@@ -136,6 +136,15 @@ config CONF_WITH_FORK_RETURN_TEST
       VFP-only target is not supported by the D32 register probe.
       This is not Pfork or Pvfork; both public calls remain unsupported.
 
+config CONF_WITH_FORK_CORE
+    bool
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PRIVATE_CLONE
+    default y if CONF_WITH_FORK_RETURN_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+    help
+      Internal common PRIVATE_VM/COW fork and exact-child parent dependency.
+      Currently exercised only by the native test transport. This does not
+      activate public Pfork/Pvfork, descriptor inheritance or Pexec200.
+
 
 config CONF_LOGSEC_SIZE
 	int "Maximum logical sector size, in bytes"

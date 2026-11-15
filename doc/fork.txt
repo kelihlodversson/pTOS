@@ -1,6 +1,35 @@
 Pfork / Pvfork prerequisite audit (#895)
 ======================================
 
+Binding MMU fork policy (#895, COW Pvfork)
+------------------------------------------
+Pfork and Pvfork use ONE NEW_PROCESS/PRIVATE_VM/COW saved-return construction.
+Both create an independent PROCESS/PID, initial THREAD/TID and KASPACE with
+private COW user stack and mappings. Pfork lets the parent continue immediately;
+Pvfork suspends only the calling parent THREAD until the exact child's final
+PROCESS completion or authenticated successful same-PROCESS/PID Pexec200 commit.
+Parent returns child PID, child returns0, errors are signed GEMDOS errors.
+
+This deliberately differs from FreeMiNT Pvfork's shared memory: ordinary private
+child writes are NOT visible in the parent's private memory. Explicitly shared
+mappings keep their mapping semantics; public MAP_SHARED is currently unsupported
+by pTOS and is not enabled here. No special shared user stack, shared parent-root
+attachment or VM detachment is required for COW Pvfork. Pexec200 still needs
+safe same-PROCESS executable replacement and committed-exec notification.
+
+Public opcodes0x11b/0x113 remain EINVFN until common resource/snapshot prerequisites
+and public native acceptance. The existing0x895f0000 shared-return experiment is
+historical CPU startup coverage ONLY, never the Pvfork implementation. New private
+selectors share one constructor;0x895fc000 adds exact-child parent suspension.
+See fork-return.txt and phase6-acceptance.txt for current source/test evidence,
+#969 descriptors, #971 private snapshots (BOTH calls), and #970 executable
+replacement (full Pvfork). See freemint-compatibility.txt for user-facing scope.
+
+Historical audit and shared-stack proposal (superseded)
+-------------------------------------------------------
+The historical capability table and shared-stack Pvfork constraints below are
+retained for attribution. They are NOT current backend status or Pvfork policy.
+
 Current Phase6 matrix and remaining verified blockers: phase6-acceptance.txt.
 The historical independent-VM "EINVFN" capability table below predates #934.
 Do not use it as current backend status. Private saved-return continuation is

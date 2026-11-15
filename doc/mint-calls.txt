@@ -243,3 +243,25 @@ until retirement; it does not retain PD, descriptors, ASPACE or execution state.
 Live/retired lookup plus retain, final unlink/release and counter allocation must
 share PROCESS-owner synchronization before preemption/SMP. Local IRQ exclusion
 alone is not that lock. GUI locks must not acquire a blocking PROCESS lock.
+
+
+Planned MMU Pfork/Pvfork policy (#895, explicit FreeMiNT deviation)
+----------------------------------------------------------------
+Pfork(): GEMDOS0x11b, no arguments. Pvfork(): GEMDOS0x113, no arguments.
+Both will create a distinct PROCESS/PID and privately owned COW address space,
+resuming after the originating trap with child0 and parent positive child PID.
+Failures use signed negative GEMDOS errors; a TID is never returned as a PID.
+Pfork returns the parent immediately after publication. Pvfork blocks only the
+calling parent THREAD until the exact child finally completes or successfully
+commits same-PROCESS/PID Pexec(200) executable replacement. Failed exec, another
+PROCESS's completion/launch or a THREAD-only exit cannot release that parent.
+
+Unlike FreeMiNT Pvfork, pTOS MMU Pvfork does NOT share ordinary private memory:
+child writes to private/anonymous memory and its private user stack are not
+visible in parent private memory. Explicitly shared mappings retain their
+semantics; public MAP_SHARED currently remains unsupported. This difference is
+intentional, not full FreeMiNT Pvfork memory compatibility. Non-MMU shadow fork
+is outside this policy. Public Pfork/Pvfork currently remain EINVFN pending
+#969/#971 resource/snapshot acceptance and #970 full exec behavior. Native
+Pclone test selectors are not public fork ABI acceptance. See fork.txt,
+phase6-acceptance.txt and freemint-compatibility.txt.

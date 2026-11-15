@@ -1,0 +1,25 @@
+pTOS MMU fork compatibility
+===========================
+
+The planned Pfork and Pvfork APIs use private copy-on-write memory on MMU pTOS.
+After either call, parent and child have separate process identities and logically
+independent address spaces and user stacks. Each initially observes the memory
+contents at the call; later writes to ordinary private memory are isolated.
+
+Pvfork additionally suspends the calling parent thread until that exact child
+exits or successfully replaces its executable with Pexec(200), keeping its PID.
+A failed exec does not resume the parent. The child receives0 and the resumed
+parent receives the child PID. Pfork lets the parent continue immediately.
+
+This is a deliberate difference from FreeMiNT Pvfork, where child memory writes
+are shared with the parent. Programs relying on that sharing are not compatible
+with pTOS's MMU Pvfork policy. Explicitly shared mappings retain their own
+semantics; pTOS's public MAP_SHARED is currently unsupported. Non-MMU fork is
+outside this initial implementation.
+
+Public Pfork/Pvfork are currently unavailable (EINVFN). The tested private
+construction and suspended-parent probes do not establish public API support.
+Full descriptor inheritance, private snapshot ownership and same-process exec
+acceptance are tracked by #969, #971 and #970. No general signals/TLS/preemption
+or arbitrary CPU/FPU restart support is implied. See fork.txt and
+phase6-acceptance.txt for the current supported configuration and evidence.

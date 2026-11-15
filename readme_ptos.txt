@@ -18,3 +18,9 @@ https://github.com/emutos/emutos
 
 For pTOS source code, build instructions, and issue tracking, visit:
 https://github.com/kelihlodversson/pTOS
+
+MMU fork compatibility: the planned pTOS Pvfork uses private copy-on-write
+memory, deliberately differing from FreeMiNT's shared-memory Pvfork. Public
+Pfork/Pvfork remain unavailable pending acceptance. See
+ doc/freemint-compatibility.txt
+for the precise memory and parent-suspension policy.

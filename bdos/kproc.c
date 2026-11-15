@@ -118,6 +118,7 @@ struct kproc {
     LONG cleanup_error;
     ULONG cleanup_transferred;
     UQUAD completion_order;
+    UQUAD exec_generation; /* canonical committed executable replacement only */
     UQUAD reservation_birth[5]; /* TPA, env, initial stack, image, interpreter */
     BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
     WORD exit_signal; /* Pending only for final execution; immutable at completion. */
@@ -635,6 +636,12 @@ static BOOL completion_flag(const BOOL *flag)
 BOOL kproc_ref_terminal(const KPROC *process)
 {
     return process && completion_flag(&process->observer_ready);
+}
+UQUAD kproc_ref_exec_generation(const KPROC *process)
+{
+    /* Owner exclusion serializes this on the cooperative CPU. No public
+     * setter: #970's authenticated safe-stack commit is the only producer. */
+    return process?*(const volatile UQUAD *)&process->exec_generation:0;
 }
 void kproc_publish_observers(KPROC *process)
 {

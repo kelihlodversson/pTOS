@@ -10,6 +10,9 @@
 #include "proc_clone.h"
 #include "syscall_return.h"
 #include "process_observer.h"
+#if CONF_WITH_FORK_CORE
+#include "fork_parent.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #include "ksched_lifetime.h"
@@ -40,6 +43,9 @@ struct proc_clone_transaction {
     BOOL asynchronous;
     BOOL loaded_shared;
     BOOL owns_shared_exec; /* exact preparation token was transferred to this attempt */
+#if CONF_WITH_FORK_CORE
+    FORK_PARENT_DEPENDENCY *parent_dependency; /* borrowed from calling THREAD */
+#endif
 };
 
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
@@ -59,6 +65,9 @@ static BOOL injected(UWORD stage)
 
 static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 {
+#if CONF_WITH_FORK_CORE
+    if (tx->parent_dependency) fork_parent_cancel(tx->parent_dependency,FORK_PARENT_ABORT);
+#endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
     if (ksched_test_clone_masked()) panic("clone teardown in publication exclusion");
 #endif
@@ -162,6 +171,9 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     tx->loaded_shared=loaded_shared;
     tx->owns_shared_exec=FALSE;
     tx->owns_compat = FALSE;
+#if CONF_WITH_FORK_CORE
+    tx->parent_dependency=NULL;
+#endif
     tx->source = kproc_retain_live(args->source);
     if (!tx->source) { error = EACCDN; goto failed; }
     tx->source_space = kaspace_share(space);
@@ -550,13 +562,30 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
     LONG error = EINVFN;
     UWORD stage = 0;
     BOOL private_vm = FALSE;
+#if CONF_WITH_FORK_CORE
+    BOOL suspend_parent=FALSE,cancelled=FALSE;
+    FORK_PARENT_DEPENDENCY *dependency=NULL;
+    FORK_PARENT_REASON reason=FORK_PARENT_NONE;
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
     if (!source || !saved) goto done;
     saved->owner = ksched_exit_thread(run);
     saved->space = kproc_active_space(source);
-    if (!saved->owner || !ksched_clone_context(source, &controller) ||
-        !kproc_thread_is_sole(source, saved->owner)) goto done;
+    if (!saved->owner || !ksched_clone_context(source, &controller)) goto done;
     /* Private native assertion aid: identity, not an execution-stack address. */
     if (fail_stage == 0xfffe) { error = kthread_tid(saved->owner); goto done; }
+#if CONF_WITH_FORK_CORE
+    if (fail_stage==0xfffd) { error=ksched_test_fork_parent_blocked(source);goto done; }
+    if (fail_stage==0xfffc) { error=(LONG)fork_parent_test_live();goto done; }
+    if (fail_stage==0xfffb) { error=ksched_test_fork_cancel_parent(source)?E_OK:EACCDN;goto done; }
+    if (fail_stage==0xfffa) { error=ksched_test_fork_cancel_survived(source)?E_OK:EACCDN;goto done; }
+    if (fail_stage==0xfff9) { error=(LONG)ksched_test_fork_cancel_survivors();goto done; }
+    suspend_parent=(fail_stage&FORK_RETURN_VFORK)!=0;
+    if (suspend_parent && !(fail_stage&FORK_RETURN_PRIVATE)) goto done;
+    fail_stage&=~FORK_RETURN_VFORK;
+#endif
+    if (!kproc_thread_is_sole(source,saved->owner)) goto done;
 #if CONF_WITH_PRIVATE_CLONE_TEST
     private_vm = (fail_stage & FORK_RETURN_PRIVATE) != 0;
     fail_stage &= ~FORK_RETURN_PRIVATE;
@@ -564,7 +593,13 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
      * Refuse conservatively before resources; never drop valid source rights. */
     if (private_vm && kaspace_has_captured_lazy(saved->space)) { error = EACCDN; goto done; }
 #endif
-    if (fail_stage > 7 || kproc_has_aspace_peer(source)) goto done;
+    if (fail_stage >
+#if CONF_WITH_FORK_CORE
+        (suspend_parent?8:7)
+#else
+        7
+#endif
+        || kproc_has_aspace_peer(source)) goto done;
     args.source = source; args.prepared_process = NULL;
     args.process_policy = PROC_CLONE_NEW_PROCESS;
     args.vm_policy = private_vm ? PROC_CLONE_PRIVATE_VM : PROC_CLONE_SHARE_VM;
@@ -579,6 +614,12 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
     RETURN_STAGE(proc_clone_prepare_outputs(tx, 0, 0));
     RETURN_STAGE(proc_clone_observe_async(tx, &observer));
     RETURN_STAGE(thread_startup_validate(tx->startup));
+#if CONF_WITH_FORK_CORE
+    if (suspend_parent) {
+        RETURN_STAGE(fork_parent_prepare(saved->owner,tx->process,&dependency));
+        tx->parent_dependency=dependency;
+    }
+#endif
 #undef RETURN_STAGE
     error = proc_clone_spawn(&tx, &created);
     if (!error) {
@@ -586,12 +627,28 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
          * non-consuming: the caller still owns one public Pwaitpid reap. */
         if (!private_vm && !ksched_wait_ready(return_child_completed, observer))
             panic("saved return lost managed parent");
+#if CONF_WITH_FORK_CORE
+        if (suspend_parent) {
+            error=fork_parent_wait(dependency,&reason);
+            cancelled=ksched_cancellation_pending();
+            if (error) goto done;
+        }
+#endif
         error = created.pid;
     }
 done:
     proc_clone_abort(&tx);
+#if CONF_WITH_FORK_CORE
+    fork_parent_release(&dependency);
+#endif
     proc_clone_observer_release(&observer);
     kproc_release(source);
+#if CONF_WITH_FORK_CORE
+    ksched_cleanup_end(&scope);
+#if CONF_WITH_PTERMGRP
+    if (cancelled || ksched_cancellation_pending()) ksched_cancel_point();
+#endif
+#endif
     return error;
 }
 #endif
@@ -674,6 +731,9 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     }
     error = thread_startup_run_preflight(tx->startup);
     if (error) goto failed;
+#if CONF_WITH_FORK_CORE
+    if (tx->parent_dependency && !fork_parent_validate(tx->parent_dependency)) { error=EACCDN;goto failed; }
+#endif
     if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
           kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) :
           kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
@@ -771,6 +831,12 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     ULONG tid = kthread_tid(tx->thread);
     THREAD_STARTUP_DRAFT *startup = tx->startup;
     if (!thread_startup_take_stacks(startup, &owners)) panic("clone publication: missing prepared stacks");
+#if CONF_WITH_FORK_CORE
+    if (tx->parent_dependency) {
+        fork_parent_publish(tx->parent_dependency);
+        tx->parent_dependency=NULL; /* parent THREAD keeps it through suspension */
+    }
+#endif
     if (tx->policy == PROC_CLONE_SAME_PROCESS) {
         kproc_clone_commit_sibling(tx->process, tx->thread);
     } else {

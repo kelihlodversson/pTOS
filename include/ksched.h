@@ -168,6 +168,14 @@ KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *
                                                  const struct ksched_wait_observation *observation);
 #endif
 BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
+#if CONF_WITH_FORK_CORE
+/* Private native assertion: find existing blocked parent execution whose
+ * THREAD-owned dependency names this exact current child, never a PID lookup. */
+BOOL ksched_test_fork_parent_blocked(const struct kproc *child);
+BOOL ksched_test_fork_cancel_parent(struct kproc *child);
+BOOL ksched_test_fork_cancel_survived(struct kproc *child);
+ULONG ksched_test_fork_cancel_survivors(void);
+#endif
 /* Standard async process calls are admitted only within a managed group.
  * Spawn consumes an unprepared, loaded basepage only on success. */
 BOOL ksched_spawn_allowed(void);

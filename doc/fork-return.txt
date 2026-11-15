@@ -1,6 +1,23 @@
 Saved syscall-return startup (#895 F1)
 =====================================
 
+COW parent continuation policy increment
+----------------------------------------
+The binding #895 policy is PRIVATE_VM/COW for BOTH Pfork and Pvfork. The private
+saved-return constructor is shared;0x895fc000 (private test transport) additionally
+prepares an exact-child THREAD-owned parent suspension before publication. The
+older0x895f0000 SHARE_VM probe is a separate historical startup experiment and
+must never be used as Pvfork.0x895f8000 remains the immediate private probe.
+
+Pvfork private user-stack/global/heap writes are not visible in parent memory.
+Native tests require the existing scheduler to report the calling parent's
+actual TASK_BLOCKED predicate/argument/execution while the exact child runs.
+They check failed mode200, nested unrelated/private children, final-THREAD
+completion, faults/group exit and exactly-once dependency retirement/public reap.
+The exec-generation observation query exists but no native replacement event is
+published until #970 implements reviewed same-PROCESS/PID commit. Hosted epoch
+models test readiness ownership only. Public opcodes remain unsupported.
+
 Phase6 private continuation increment
 ------------------------------------
 Pclone(NULL,0x895f8000|stage) requires FORK_RETURN_TEST and PRIVATE_CLONE_TEST.

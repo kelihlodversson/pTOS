@@ -9,6 +9,12 @@ struct kproc;
 struct kaspace;
 struct kaspace_lease;
 struct _pd;
+struct fork_parent_dependency;
+#if CONF_WITH_FORK_CORE
+BOOL kthread_fork_attach(KTHREAD *,struct fork_parent_dependency *);
+BOOL kthread_fork_detach(KTHREAD *,const struct fork_parent_dependency *);
+struct fork_parent_dependency *kthread_fork_dependency(const KTHREAD *);
+#endif
 
 /* Create a detached-from-scheduler identity associated with a prepared process.
  * The caller owns the result. Detached-process disposal waits for its release.

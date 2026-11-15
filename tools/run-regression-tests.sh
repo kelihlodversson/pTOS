@@ -835,6 +835,11 @@ if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
     record "native saved syscall return" FAIL "configured shared-VM return probe did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_FORK_CORE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native COW Pvfork parent dependency (test-only, no exec commit): PASS' "$suite_log"; then
+    record "native COW parent dependency" FAIL "configured suspended-parent probe did not pass"
+fi
+
 if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
     for marker in 'native private-VM syscall-return registers (not Pfork): PASS' \

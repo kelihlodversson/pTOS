@@ -1,6 +1,9 @@
 /* Cooperative kernel tasks, independent of the legacy AES scheduler.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
 #include "emutos.h"
+#if CONF_WITH_FORK_CORE
+#include "fork_parent.h"
+#endif
 #include "biosext.h"
 #include "ksched.h"
 #include "ksched_lifetime.h"
@@ -1289,6 +1292,49 @@ UQUAD ksched_context_id(void)
     return scheduler.active && task &&
            (task->state == TASK_RUNNING || task->state == TASK_BLOCKED) ? task->execution.identity : 0;
 }
+#if CONF_WITH_FORK_CORE
+static UQUAD fork_cancel_child; /* private regression receipt, never an owner */
+static ULONG fork_cancel_survivors; /* monotonic, never reset */
+static KERNEL_TASK *fork_blocked_parent(const KPROC *child)
+{
+    KERNEL_TASK *task;
+    for (task=scheduler.tasks;task;task=task->next_task) {
+        FORK_PARENT_DEPENDENCY *dep=kthread_fork_dependency(task->thread);
+        if (task->state==TASK_BLOCKED && dep && fork_parent_child(dep)==child &&
+            fork_parent_state(dep)==FORK_PARENT_PUBLISHED &&
+            fork_parent_execution(dep)==task->execution.identity && task->ready==fork_parent_ready &&
+            task->argument==dep) return task;
+    }
+    return NULL;
+}
+BOOL ksched_test_fork_parent_blocked(const KPROC *child)
+{
+    return fork_blocked_parent(child)!=NULL;
+}
+BOOL ksched_test_fork_cancel_parent(KPROC *child)
+{
+#if CONF_WITH_PTERMGRP
+    KERNEL_TASK *parent;
+    KTHREAD *thread=ksched_exit_thread(run);
+    if (!thread || kthread_process(thread)!=child || fork_cancel_child ||
+        !(parent=fork_blocked_parent(child)) || !kproc_request_group_exit(parent->process,82)) return FALSE;
+    fork_cancel_child=kproc_ref_number(child);
+    ksched_irq_notify();return TRUE;
+#else
+    UNUSED(child);return FALSE;
+#endif
+}
+BOOL ksched_test_fork_cancel_survived(KPROC *child)
+{
+    KTHREAD *thread=ksched_exit_thread(run);
+    if (!thread || kthread_process(thread)!=child || !fork_cancel_child ||
+        fork_cancel_child!=kproc_ref_number(child) || kproc_parent_pid(run)!=0 ||
+        fork_blocked_parent(child) || fork_cancel_survivors==~(ULONG)0) return FALSE;
+    fork_cancel_child=0; /* consume exact non-recycled receipt, not a counter reset */
+    fork_cancel_survivors++;return TRUE;
+}
+ULONG ksched_test_fork_cancel_survivors(void) { return fork_cancel_survivors; }
+#endif
 
 void ksched_context_restore(UQUAD identity)
 {
