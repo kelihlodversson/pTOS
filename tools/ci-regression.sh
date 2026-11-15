@@ -109,6 +109,9 @@ if os.environ.get('EXEC_REPLACEMENT_TEST') == '1':
 if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
     config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'
+    for required in ('CONF_WITH_IMAGE_POLICY', 'CONF_WITH_IMAGE_POLICY_TEST'):
+        config.syms[required].set_value(2)
+        assert config.syms[required].str_value == 'y', required
     config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].set_value(2)
     assert config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].str_value == 'y'
     for required in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_MMAP'):

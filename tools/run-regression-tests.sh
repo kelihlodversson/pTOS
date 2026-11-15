@@ -593,6 +593,10 @@ fi
 
 # A positive shared-Pexec build must execute every configured consumer fixture.
 # The ordinary gate-off jobs remain independent compatibility evidence.
+if grep -q '^#define CONF_WITH_IMAGE_POLICY_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native immutable image policy capture/activation/rollback and exact resource conservation: PASS' "$suite_log"; then
+    record "native immutable image policy" FAIL "configured capture/activation/rollback assertions did not execute"
+fi
 if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; then
     for marker in \
         'native shared-VM Pexec4/104 execution and canonical reap: tested' \

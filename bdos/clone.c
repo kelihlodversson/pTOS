@@ -15,6 +15,10 @@
 #include "process_files.h"
 #endif
 #include "ksched.h"
+#if CONF_WITH_IMAGE_POLICY_TEST
+#include "kproc_image_policy.h"
+#include "image_policy_test.h"
+#endif
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
 #include "exec_replace.h"
 #endif
@@ -130,6 +134,9 @@ static long clone_request(uint64_t address, uint64_t size)
 #endif
     static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
         CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
+#if CONF_WITH_IMAGE_POLICY_TEST
+    BOOL image_policy_test=FALSE;
+#endif
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
     if (!address && (size&0xffffffffffff0000ULL)==EXEC_REPLACEMENT_PROBE)
         return kproc_exec_replacement_probe((UWORD)size);
@@ -137,6 +144,17 @@ static long clone_request(uint64_t address, uint64_t size)
 #if CONF_WITH_PRIVATE_CLONE_TEST
     BOOL private_test = FALSE;
     BOOL scoped_test = FALSE;
+#endif
+#if CONF_WITH_IMAGE_POLICY_TEST
+    if (size==IMAGE_POLICY_QUERY_DIGEST || size==IMAGE_POLICY_QUERY_INSTALLED) {
+        KPROC *source=kproc_retain(run);
+        LONG result=kproc_image_policy_test_query(source,(UWORD)(size&255));
+        kproc_release(source);return result;
+    }
+    if (!address && size>=IMAGE_POLICY_FAIL_AFTER && size<=IMAGE_POLICY_FAIL_AFTER+2) {
+        kproc_image_policy_test_fail_after((UWORD)(size&255));return E_OK;
+    }
+    if ((size&0xffffffffffff0000ULL)==IMAGE_POLICY_CLONE) { image_policy_test=TRUE;size&=0xffff; }
 #endif
 #if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
     if(!address && size==SHARED_PEXEC_MOVE_QUERY) return shared_move_probe();
@@ -319,6 +337,9 @@ static long clone_request(uint64_t address, uint64_t size)
     if (valid == CLONE_INVALID) return EINVAL;
     if (valid != CLONE_VALID) return EIMBA;
     if (!(args.flags & CLONE_VM)) return EINVFN;
+#if CONF_WITH_IMAGE_POLICY_TEST
+    if (image_policy_test && ((args.flags&CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) return EINVAL;
+#endif
 #if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
     if (files_test && (args.flags&CLONE_SAME_PROCESS)) return EINVAL;
 #endif
@@ -351,6 +372,9 @@ static long clone_request(uint64_t address, uint64_t size)
         startup.stack_base = (VADDR)(uintptr_t)args.stack_base;
         startup.stack_size = args.stack_size;
         result =
+#if CONF_WITH_IMAGE_POLICY_TEST
+            image_policy_test ? proc_clone_start_image_policy_test(&policy,&startup) :
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
             private_test ? proc_clone_start_private_test(&policy, &startup) :
             scoped_test ? proc_clone_start_scoped_test(&policy,&startup,

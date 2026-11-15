@@ -9,6 +9,25 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_IMAGE_POLICY
+    bool "Experimental immutable executable-policy preparation"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+    default n
+    help
+      Capture validated executable metadata by value and prepare it for the
+      existing unpublished NEW_PROCESS activation. This conveys no mapping,
+      loader, basepage, stack or cleanup ownership and cannot replace a live
+      executable. No public fork or Pexec(200) is enabled.
+
+config CONF_WITH_IMAGE_POLICY_TEST
+    bool "Native immutable executable-policy tests (test transport only)"
+    depends on CONF_WITH_IMAGE_POLICY && CONF_WITH_PRIVATE_CLONE_TEST
+    depends on CONF_WITH_SHARED_VM_PEXEC_TEST
+    default n
+    help
+      Test policy capture and its existing trusted NEW_PROCESS publication
+      using the ordinary shared-VM clone. This is not private image ownership,
+      public fork or same-PROCESS executable replacement.
 config CONF_WITH_EXEC_REPLACEMENT_TEST
     bool "Private executable image staging (test only)"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER

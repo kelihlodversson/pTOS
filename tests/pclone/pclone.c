@@ -1986,6 +1986,16 @@ void test_pclone(void)
                 conws("native CUIS retained stream ownership: PASS (parent verified)\r\n");
 #endif
         }
+#if defined(TEST_WITH_IMAGE_POLICY_TEST)
+        ptest_log_flush();
+        child=Pexec(100,"IMAGEPOL.TOS","",0);
+        ptest_assert_msg(child>0,"immutable image-policy companion starts managed");
+        if(child>0) {
+            status=Pwaitpid(child,0,0);
+            ptest_assert_msg((status>>16)==child && !(status&65535),"immutable image-policy companion passes");
+            ptest_assert_msg(Pwaitpid(child,1,0)<0,"immutable image-policy companion reaped once");
+        }
+#endif
     }
 #endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
