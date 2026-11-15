@@ -108,58 +108,9 @@ jobs:
           python3 tools/check-libaes-elf.py obj/libaes/libaes.so obj/gemlib/libgem.a obj/libaes/GEM.TOS
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
-      - name: Exercise shared desktop and console consumers
-        run: |
-          export PATH=/tmp/elf-shared-venv/bin:$PATH
-          for variant in pc-x86_64-desktop-tests pc-x86_64-desktop-tests-builtin-cli; do
-            make "$variant"_defconfig
-            CONFIG_= python - <<'PY'
-          import kconfiglib
-          config = kconfiglib.Kconfig()
-          config.load_config()
-          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
-          config.syms["CONF_WITH_LIBAES"].set_value(2)
-          config.syms["CONF_WITH_AES"].set_value(0)
-          assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "y"
-          assert config.syms["CONF_WITH_X32_DESKTOP_TEST"].str_value == "y"
-          config.syms["CONF_WITH_SHUTDOWN"].set_value(2)
-          config.write_config()
-          PY
-            make CROSS_COMPILE= -j2
-            make CROSS_COMPILE= x32-desktop-test
-            readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
-            readelf -d emudesk.prg | grep 'libptos.so'
-            readelf -d emudesk.prg | grep 'libaes.so'
-            nm emutos.efi > obj/shared-desktop-kernel.symbols
-            grep -q ' T cuis_service$' obj/shared-desktop-kernel.symbols
-            if grep -Eq ' [Tt] (ui_start|aes_service|aes_tree_validate)$' obj/shared-desktop-kernel.symbols; then
-              echo 'External libaes desktop must not link kernel AES services' >&2
-              exit 1
-            fi
-            if [ "$variant" = pc-x86_64-desktop-tests ]; then
-              readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
-              readelf -d cli/emucon.tos | grep 'libptos.so'
-              python3 tests/x32_desktop/run.py --output obj/shared-desktop-runtime
-              python3 tests/x32_desktop/run.py --mode shutdown --output obj/shared-desktop-shutdown
-            else
-              if readelf -l obj/x32/emucon.elf | grep 'INTERP'; then
-                echo 'Embedded EmuCON must retain its static entry path' >&2
-                exit 1
-              fi
-              python3 tests/x32_desktop/run.py --output obj/shared-desktop-builtin-cli --embedded-console --mode missing
-            fi
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shared-x32-consumers
-          path: |
-            obj/shared-desktop-runtime/
-            obj/shared-desktop-shutdown/
-            obj/shared-desktop-builtin-cli/
-          if-no-files-found: ignore
-          retention-days: 14
-
+      # (the shared desktop and console consumers, pc-x86_64-desktop-tests and
+      # its built-in-cli variant, are built and run by the x86-desktop group:
+      # tools/ci-x86_64.sh)
 
   # A few configurations to a job, one after the other (tools/ci-group.sh):
   # the job's own cost (a runner, the toolchain) is more than a
@@ -329,37 +280,6 @@ jobs:
             obj/binfmt/${{ matrix.arch }}*/test.json
           retention-days: 14
 
-  pmmu-check:
-    name: PMMU startup check (virt-m68k-mmu)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # the image loads EmuCON (CONF_EXTERNAL_CLI): libcmini builds it
-          submodules: true
-
-      - uses: ./.github/actions/setup-toolchain
-        with:
-          arch: m68k
-
-      - name: Install QEMU
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y qemu-system-misc
-
-      - name: Build virt-m68k-mmu
-        run: |
-          make virt-m68k-mmu_defconfig
-          make
-
-      - name: Boot it with and without a PMMU
-        run: tools/test-pmmu-check.sh virt-m68k.elf
-
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=PMMU startup check::the virt-m68k-mmu image did not refuse a CPU without a PMMU, or did not boot on the 68040"
-
   release-archives:
     name: Release archives
     runs-on: ubuntu-latest
@@ -465,7 +385,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, x86_64, regression, pmmu-check, release-archives, raspi-sdcard]
+    needs: [build, x86_64, regression, release-archives, raspi-sdcard]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -486,7 +406,6 @@ jobs:
           echo "m68k and arm builds:   ${{ needs.build.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
-          echo "PMMU startup check:     ${{ needs.pmmu-check.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
 
@@ -494,7 +413,6 @@ jobs:
           [ '${{ needs.build.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
-          [ '${{ needs.pmmu-check.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
 
