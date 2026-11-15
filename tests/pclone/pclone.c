@@ -1464,6 +1464,7 @@ static void test_group_exit(void)
 #endif
 #include "public_contract.h"
 #include "mapping_lifetime.h"
+#include "process_files.h"
 
 static void test_runnable(void)
 {
@@ -1756,6 +1757,9 @@ void pclone_run_managed_tests(void)
         ptest_pass();
         if(!ptest_failures())conws("native reversible executable staging ownership (not Pexec200): PASS\r\n");
     }
+#endif
+#if defined(TEST_WITH_PROCESS_FILES)
+    test_process_files();
 #endif
 #if defined(TEST_WITH_FORK_RETURN_TEST)
     test_saved_return();

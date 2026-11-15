@@ -44,6 +44,9 @@
 #include "kthread.h"
 #include "proc_clone.h"
 #include "progimage.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/startup.h"
 #endif
@@ -118,6 +121,9 @@ struct kproc {
     PD *destroying_pd; /* Non-owning address only during active destruction. */
     LONG cleanup_error;
     ULONG cleanup_transferred;
+#if CONF_WITH_PROCESS_FILES_TEST
+    PROCESS_FILES files; /* identity-owned table; empty after resource retirement */
+#endif
     UQUAD completion_order;
     UQUAD reservation_birth[5]; /* TPA, env, initial stack, image, interpreter */
     BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
@@ -458,6 +464,11 @@ BOOL kproc_create(PD *pd)
      * mistaken for state. */
     memcpy(kproc->uft, pd->p_uft, sizeof kproc->uft);
     memcpy(kproc->curdir, pd->p_curdir, sizeof kproc->curdir);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (!process_files_init(&kproc->files,kproc,kproc->uft)) {
+        KPROC_FREE(kproc);return FALSE;
+    }
+#endif
     bzero(pd->p_uft, sizeof pd->p_uft);
     bzero(pd->p_curdir, sizeof pd->p_curdir);
 #if CONF_WITH_USER_ASPACE
@@ -1643,6 +1654,11 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_PROCESS_FILES_TEST
+            /* Close callbacks can destroy this or a preceding PROCESS. The
+             * live cursor is detached and lookup ownership still pins self. */
+            process_files_retire(&kproc->files);
+#endif
 #if CONF_WITH_USER_ASPACE
             /* A shared root may outlive this record. Root destruction cannot
              * stand in for disposing this PROCESS's construction pin rights. */
@@ -1861,6 +1877,52 @@ BOOL kproc_file_references_allowed(PD *pd)
     KPROC *p=file_admission_owner(pd);
     return !p || !p->file_cleanup_started;
 }
+#if CONF_WITH_PROCESS_FILES_TEST
+PROCESS_FILES *kproc_files(PD *pd)
+{
+    KPROC *p=file_admission_owner(pd);
+    return p ? &p->files : NULL;
+}
+PROCESS_FILES *kproc_ref_files(KPROC *p) { return p ? &p->files : NULL; }
+LONG kproc_files_test_count(UWORD field)
+{
+    KPROC *p;
+    ULONG count=0;
+    WORD i;
+    for (p=kproc_list;p;p=p->next) {
+        if (field==3) count+=p->references;
+        if (field==4) count++;
+        if (field==0) for(i=0;i<NUMHANDLES;i++) {
+            PROCESS_FILE_BINDING *binding=&p->files.binding[i];
+            if (binding->state && binding->handle>=NUMSTD) count++;
+        }
+        if (field==1 && p->files.snapshot) count++;
+        if (field==2) count+=p->files.operations;
+    }
+    for (p=retired_processes;p;p=p->next) {
+        if (field==3) count+=p->references;
+        if (field==4) count++;
+        if (field==1 && p->files.snapshot) count++;
+        if (field==2) count+=p->files.operations;
+    }
+    return (LONG)count;
+}
+void kproc_files_shutdown(void)
+{
+    KPROC *p;
+    /* No backend callback can publish another managed binding after this
+     * first pass. Retirement itself uses exact operation-owned references. */
+    for (p=kproc_list;p;p=p->next) p->file_cleanup_started=TRUE;
+    for (;;) {
+        for (p=kproc_list;p && p->files.retiring;p=p->next) { }
+        if (!p) break;
+        p=kproc_retain_identity(p);
+        if (!p) panic("shutdown descriptor identity saturation");
+        process_files_retire(&p->files);
+        kproc_release(p);
+    }
+}
+#endif
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
 {
     KPROC *p=kproc_find(pd);
@@ -1871,6 +1933,17 @@ void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
         p->cleanup_transferred++;
     }
 }
+#if CONF_WITH_PROCESS_FILES_TEST
+void kproc_note_file_owner_cleanup(KPROC *p,LONG error,BOOL transferred)
+{
+    if (!p) return;
+    if (!p->cleanup_error && error<0) p->cleanup_error=error;
+    if (transferred) {
+        if (p->cleanup_transferred==~(ULONG)0) panic("file cleanup count exhausted");
+        p->cleanup_transferred++;
+    }
+}
+#endif
 LONG kproc_ref_file_cleanup(const KPROC *p, ULONG *transferred)
 {
     if (!p) return EINVAL;
@@ -1882,8 +1955,12 @@ void kproc_standard_file_invalidate(WORD handle)
     KPROC *p;
     WORD i;
     for (p=kproc_list;p;p=p->next)
+#if CONF_WITH_PROCESS_FILES_TEST
+        process_files_invalidate(&p->files,handle,sft[handle-NUMSTD].f_incarnation);
+#else
         for (i=0;i<NUMSTD;i++)
             if (p->uft[i]==handle) p->uft[i]=get_default_handle(i);
+#endif
     /* The currently loaded boot/kernel PD can lack a KPROC record. All
      * ordinary USER_ASPACE PROCESS tables above are authoritative. */
     if (run && !kproc_find(run))
@@ -1897,11 +1974,21 @@ void kproc_standard_file_refs(ULONG *references)
 
     bzero(references,OPNFILES*sizeof(*references));
     for (kproc = kproc_list; kproc; kproc = kproc->next)
+#if CONF_WITH_PROCESS_FILES_TEST
+        {
+            for (i=0;i<NUMHANDLES;i++) {
+                PROCESS_FILE_BINDING *binding=&kproc->files.binding[i];
+                if (binding->state && binding->handle>=NUMSTD && binding->handle<NUMHANDLES)
+                    references[binding->handle-NUMSTD]++;
+            }
+        }
+#else
         for (i = 0; i < NUMSTD; i++) {
             WORD handle = kproc->uft[i];
             if (handle >= NUMSTD && handle < NUMHANDLES)
                 references[handle-NUMSTD]++;
         }
+#endif
 }
 #endif
 

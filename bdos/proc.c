@@ -22,6 +22,9 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #if CONF_WITH_USER_ASPACE
 #include "proc_clone.h"
 #include "process_observer.h"
@@ -414,6 +417,12 @@ static void release_pd_files(PD *r)
     /* Close admission before any callback can attach another reference to
      * this retiring table, including an already-visited standard index. */
     if (!kproc_begin_file_cleanup(r)) return;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(r)) {
+        process_files_retire(kproc_files(r));
+        goto directories;
+    }
+#endif
     /* Snapshot before removing aliases. Residual kernel references are not
      * a retiring PROCESS's explicit handle, nor another live alias. */
     kproc_standard_file_refs(explicit_refs);
@@ -448,6 +457,9 @@ static void release_pd_files(PD *r)
 #endif
         }
 
+#if CONF_WITH_PROCESS_FILES_TEST
+directories:
+#endif
 #if CONF_WITH_PLUGGABLE_FS
     pfs_proc_exit(r);
 #else
@@ -1116,6 +1128,10 @@ static LONG init_pd_standard_files_from(PD *p, PD *source)
 {
     int i;
     LONG error = E_OK, rc;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(p))
+        return process_files_inherit_standard(p,source);
+#endif
 
     /* Preserve existing Pexec inheritance while allowing checked factory use. */
     for (i = 0; i < NUMSTD; i++) {
@@ -1171,7 +1187,7 @@ static LONG init_pd_files(PD *p)
 }
 
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
 static UWORD clone_factory_fail_stage;
 void proc_clone_factory_test_fail_after(UWORD stage) { clone_factory_fail_stage = stage; }
 static BOOL clone_factory_injected(UWORD stage)
@@ -1193,6 +1209,10 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
     KPROC *process;
 
     if (!result || *result || (resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
+#if CONF_WITH_PROCESS_FILES_TEST
+    /* The factory alone cannot admit full inheritance through publication. */
+    if (resources&PROC_CLONE_COPY_FILES) return EINVAL;
+#endif
     parent = kproc_live_pd(source);
     if (!parent) return EACCDN;
     /* Existing allocation helpers map their temporary construction buffers in
