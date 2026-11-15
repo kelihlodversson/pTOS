@@ -42,3 +42,12 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-files-') as directory:
         'bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c',
         '-Wl,--gc-sections','-o',str(work/'retirement')],check=True)
     subprocess.run([str(work/'retirement')],check=True)
+
+    # The existing FAT host provider uses the non-PFS split pointer cookie.
+    config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(0)
+    config.write_config(str(work/'config'))
+    subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
+                    '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
+    subprocess.run(flags+['tests/fat_reclaim/process_files_admission.c','bdos/process_files.c',
+        '-Wl,--gc-sections','-o',str(work/'driver-admission')],check=True)
+    subprocess.run([str(work/'driver-admission')],check=True)

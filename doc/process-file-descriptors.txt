@@ -108,6 +108,9 @@ revocation, consuming and retained callbacks, source-first retirement and final
 reference conservation. A second harness uses production KPROC destruction and
 a consuming file callback that reenters the same PD and destroys its live-list
 predecessor; identity, registry and file counters must return to baseline.
+Direct driver-create, mkdir and rename controls also require rejected admission
+before any directory scan/write. The initial dd541aa candidate failed mkdir with
+EACCDN after one write; early FAT/PFS admission now rejects before side effects.
 ASan/UBSan/leak and fortified variants run the same production controls.
 
 tests/pclone/process_files.h exercises actual user traps through the existing

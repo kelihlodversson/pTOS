@@ -922,6 +922,9 @@ LONG pfs_do_open(const char *path, WORD mode)
     BOOL owned;
     LONG rc;
 
+#if CONF_WITH_PROCESS_FILES_TEST
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
@@ -960,6 +963,9 @@ LONG pfs_do_create(const char *path, UWORD attr)
     BOOL owned;
     LONG rc;
 
+#if CONF_WITH_PROCESS_FILES_TEST
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;

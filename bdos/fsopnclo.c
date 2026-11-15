@@ -102,7 +102,7 @@ long xcreat(char *name, UBYTE attr)
 #if CONF_WITH_PROCESS_FILES_TEST
     {
         LONG admission=process_files_change_admission(run);
-        if (admission) return admission;
+        if (admission<0) return admission;
     }
 #endif
 #endif
@@ -132,7 +132,7 @@ long xopen(char *name, WORD mod)
 #if CONF_WITH_PROCESS_FILES_TEST
     {
         LONG admission=process_files_change_admission(run);
-        if (admission) return admission;
+        if (admission<0) return admission;
     }
 #endif
 #endif

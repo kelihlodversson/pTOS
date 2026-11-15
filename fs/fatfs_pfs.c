@@ -196,6 +196,9 @@ static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *
     char n[2], a[11];                       /*  M01.01.03   */
     int i, f2;                              /*  M01.01.03   */
     LONG pos, rc;
+#if CONF_WITH_PROCESS_FILES_TEST
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
 
     n[0] = (char)ERASE_MARKER; n[1] = 0;
 
@@ -571,6 +574,9 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     LONG fileln, rc;
     PFSCOOKIE newfc;
     BOOL was_locked, destination_locked;
+#if CONF_WITH_PROCESS_FILES_TEST
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
 
     posp = 0L;
     was_locked = dn1->d_flag & DND_LOCKED;
