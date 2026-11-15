@@ -27,7 +27,7 @@ long errcode,rwerr;
 int errdrv;
 #endif
 static unsigned freed,flushes,invalidations,closes,releases;
-static BOOL fail_disk,probe_busy,rebind_standard,retiring;
+static BOOL fail_disk,fail_disk_once,probe_busy,rebind_standard,retiring;
 static LONG pfs_error,release_error;
 static BOOL chain_fixture;
 static CLNO cluster_chain[4];
@@ -56,7 +56,7 @@ void flush(BCB *b)
             CHECK(nested.disposition==FS_CLOSE_NOT_OWNED);
         }
     }
-    if (fail_disk) { errcode=EWRITF; errdrv=0; rwerr=EWRITF; longjmp(errbuf,1); }
+    if (fail_disk || fail_disk_once) { fail_disk_once=FALSE; errcode=EWRITF; errdrv=0; rwerr=EWRITF; longjmp(errbuf,1); }
     b->b_dirty=FALSE;
 }
 long ixlseek(OFD *fd,long n) { (void)fd;(void)n; abort(); }
@@ -111,6 +111,7 @@ int main(void)
     open_file(); probe_busy=TRUE; fail_disk=TRUE;
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF);
     CHECK(result.disposition==FS_CLOSE_TRANSFERRED && !freed);
+    CHECK(result.first_disk_error && result.first_drive==0 && result.first_rw==EWRITF);
     CHECK(flushes==BLKDEVNUM+1 && invalidations==BLKDEVNUM+1);
     CHECK(sft[0].f_use==1 && sft[0].f_cleanup_refs==1 && !fs_sft_accessible(0));
     old=result.token;
@@ -126,6 +127,7 @@ int main(void)
     /* Normal-return FAT error retains the reference. */
     file.o_refs=0;
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EINTRN && result.disposition==FS_CLOSE_TRANSFERRED);
+    CHECK(!result.disk_error && !result.first_disk_error); /* an ordinary failure is not a hard error */
     old=result.token; file.o_refs=1;
     CHECK(fs_cleanup_retry(&old,&result)==0 && freed==2);
     /* A live inherited alias and a residual owner release independently. */
@@ -217,6 +219,14 @@ int main(void)
     CHECK(fs_close_once(NUMSTD,FALSE,&result)==E_OK && sft[0].f_use==1 &&
           sft[0].f_cleanup_refs==1 && owner.p_uft[0]==get_default_handle(0));
     CHECK(fs_cleanup_retry(&second,&result)==E_OK && !sft[0].f_use);
+    /* A later attempt can succeed (another drive's buffers interrupted the
+     * first): the first hard error is still what a caller with its own cleanup
+     * must rethrow to the GEMDOS recovery, even though the last step is clean. */
+    open_file(); fail_disk_once=TRUE;
+    CHECK(fs_close_bounded(NUMSTD,FALSE,&result)==EWRITF && result.disposition==FS_CLOSE_CONSUMED);
+    CHECK(!result.disk_error && result.first_disk_error && result.first_drive==0 && result.first_rw==EWRITF);
+    CHECK(!sft[0].f_use && !sft[0].f_own);
+    puts("Bounded close reports its first hard error after a later attempt succeeds: PASS");
     retiring=TRUE;
     CHECK(!fs_sft_claim(0));
     CHECK(ixforce(0,-1,&owner)==EACCDN);
