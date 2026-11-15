@@ -835,6 +835,16 @@ if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
     record "native saved syscall return" FAIL "configured shared-VM return probe did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+    for marker in 'native private-VM syscall-return registers (not Pfork): PASS' \
+                  'native private-VM original-stack syscall-return COW (not Pfork): PASS'; do
+        if ! grep -aqF "$marker" "$suite_log"; then
+            record "native private saved syscall return" FAIL "missing $marker"
+        fi
+    done
+fi
+
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"

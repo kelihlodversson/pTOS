@@ -231,8 +231,17 @@ struct aspace *kaspace_backend(const KASPACE *space);
 /* Drop one owning reference. The final drop destroys the backend, then
  * releases mapping metadata and its backing references. */
 void kaspace_put(KASPACE *space);
-/* Independent cloning requires an architecture backend; none exists yet. */
+/* Independent cloning uses the test-gated architecture backend. Captured
+ * reservation receipts are not copied; fork consumers must reject them. */
 LONG kaspace_clone(const KASPACE *source, KASPACE **result);
+#if CONF_WITH_PRIVATE_CLONE
+BOOL kaspace_has_captured_lazy(const KASPACE *source);
+#if CONF_WITH_FORK_RETURN_TEST
+/* Authenticated independent saved-return startup only. Holds resident private
+ * writable leaves in the selected root, without creating lazy authority. */
+LONG kaspace_stack_hold_private_copy(KASPACE *, VADDR, VADDR, KASPACE_LEASE **);
+#endif
+#endif
 
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 ULONG kaspace_test_live(void); /* address spaces with at least one owner */

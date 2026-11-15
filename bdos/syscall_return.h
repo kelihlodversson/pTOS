@@ -42,9 +42,14 @@ typedef struct syscall_return {
 } SYSCALL_RETURN;
 /* Reserved Pclone(NULL, size) test transport; no production ABI assignment. */
 #define FORK_RETURN_PROBE 0x895f0000UL
+#define FORK_RETURN_PRIVATE 0x8000U /* requires both private native test gates */
 LONG proc_clone_return_probe(SYSCALL_RETURN *, UWORD fail_stage);
 LONG proc_clone_prepare_saved_return(struct proc_clone_transaction *, const SYSCALL_RETURN *);
 LONG thread_startup_prepare_saved_return(struct kaspace *, const SYSCALL_RETURN *, THREAD_STARTUP_DRAFT **);
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_prepare_cloned_return(struct kaspace *source, struct kaspace *selected,
+                                         const SYSCALL_RETURN *, THREAD_STARTUP_DRAFT **);
+#endif
 LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *);
 #endif
 #endif

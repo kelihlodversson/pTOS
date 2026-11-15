@@ -1,6 +1,11 @@
 Pfork / Pvfork prerequisite audit (#895)
 ======================================
 
+Current Phase6 matrix and remaining verified blockers: phase6-acceptance.txt.
+The historical independent-VM "EINVFN" capability table below predates #934.
+Do not use it as current backend status. Private saved-return continuation is
+now combined behind BOTH native test gates; public Pfork/Pvfork still reject.
+
 Baseline: epic/889-process-scheduling, 7ae4f508cc26df4d0efae19dd3849738f1de114f.
 The original unsupported-capability audit is retained below. The F1 saved-
 return increment is described in doc/fork-return.txt: a test-only shared-VM

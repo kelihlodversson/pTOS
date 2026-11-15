@@ -155,9 +155,9 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     case GEMDOS_PFORK:
     case GEMDOS_PVFORK:
         /* Recognize the no-argument MiNT ABI, but fail before constructing
-         * identities or suspending the caller. Function-entry Pclone startup
-         * is not a fork return continuation. Private-VM clone and committed
-         * Pexec(200) detach are also unavailable; see doc/fork.txt. */
+         * identities or suspending the caller. Test-gated saved-return/COW
+         * is not complete PROCESS inheritance; committed Pexec(200) replacement
+         * is still missing. See doc/phase6-acceptance.txt. */
         return EINVFN;
 #if CONF_WITH_PCLONE
     case GEMDOS_PCLONE:

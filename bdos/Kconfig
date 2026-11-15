@@ -129,6 +129,9 @@ config CONF_WITH_FORK_RETURN_TEST
     help
       Enable a private Pclone test selector for shared-VM saved-return startup.
       The sole-thread parent is blocked while the child uses its user stack.
+      With PRIVATE_CLONE_TEST, the private selector also tests independent
+      saved-return COW execution; its parent returns without waiting. Neither
+      selector supplies full PROCESS resource inheritance or a public fork ABI.
       ARM admission is limited to the reviewed ARMv7 backend; the RPi1's
       VFP-only target is not supported by the D32 register probe.
       This is not Pfork or Pvfork; both public calls remain unsupported.

@@ -412,6 +412,21 @@ KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold)
     return hold && hold->stack && hold->held && kaspace_lease_valid(hold) ? hold->space : NULL;
 }
 
+#if CONF_WITH_PRIVATE_CLONE && CONF_WITH_FORK_RETURN_TEST
+LONG kaspace_stack_hold_private_copy(KASPACE *space,VADDR address,VADDR bytes,KASPACE_LEASE **result)
+{
+    KASPACE_LEASE *lease=NULL;
+    LONG error;
+    if (!result || *result) return EINVAL;
+    error=kaspace_lease_acquire(space,address,bytes,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&lease);
+    if (error) return error;
+    if (!kaspace_lease_hold_private(lease)) { kaspace_lease_release(&lease);return EACCDN; }
+    lease->stack=TRUE;
+    *result=lease;
+    return E_OK;
+}
+#endif
+
 BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count)
 {
     UWORD i;
@@ -1706,6 +1721,18 @@ void kaspace_put(KASPACE *space)
     }
     kfree(space);
 }
+
+#if CONF_WITH_PRIVATE_CLONE
+BOOL kaspace_has_captured_lazy(const KASPACE *source)
+{
+    const KASPACE_LEASE *lease;
+    if (!source) return TRUE;
+    for (lease=source->leases;lease;lease=lease->next)
+        if (lease->reservation_ticket && lease->captured && lease->held && !lease->revoked &&
+            (lease->reservation_flags & KASPACE_RESERVATION_LAZY)) return TRUE;
+    return FALSE;
+}
+#endif
 
 LONG kaspace_clone(const KASPACE *source, KASPACE **result)
 {

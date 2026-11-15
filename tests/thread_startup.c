@@ -18,32 +18,34 @@
 struct aspace { int marker; };
 static unsigned allocations, frees, destroys, stacks, fail_alloc, fail_stack;
 static BOOL live[8], stack_present = TRUE, bridge_present;
+static BOOL copied_bridge_present, nonprivate_stack;
+static BOOL *bridge_state(const ASPACE *as) { return as->marker == 43 ? &copied_bridge_present : &bridge_present; }
 static UBYTE bridge_code[4096];
 #define BRIDGE (USER_VA_LIMIT - USER_PAGE_SIZE)
 void panic(const char *fmt, ...) { (void)fmt; abort(); }
 BOOL aspace_load_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot, const void *src, ULONG filesz)
 {
     (void)as;
-    assert(va == BRIDGE && bytes == 4096 && filesz <= 4096 && !bridge_present);
+    assert(va == BRIDGE && bytes == 4096 && filesz <= 4096 && !*bridge_state(as));
     assert(prot == (ASPACE_PROT_USER | ASPACE_PROT_EXEC));
-    memcpy(bridge_code, src, filesz); bridge_present = TRUE; return TRUE;
+    memcpy(bridge_code, src, filesz); *bridge_state(as) = TRUE; return TRUE;
 }
 BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes)
 {
-    assert(va == BRIDGE && bytes == 4096 && bridge_present);
+    assert(va == BRIDGE && bytes == 4096 && *bridge_state(as));
     if (!kaspace_mapping_change(as,va,bytes)) return FALSE;
-    bridge_present = FALSE; return TRUE;
+    *bridge_state(as) = FALSE; return TRUE;
 }
 BOOL aspace_copy_from_user(const ASPACE *as, void *dst, VADDR va, ULONG bytes)
 {
     (void)as;
-    if (va != BRIDGE || bytes > 4096 || !bridge_present) return FALSE;
+    if (va != BRIDGE || bytes > 4096 || !*bridge_state(as)) return FALSE;
     memcpy(dst,bridge_code,bytes); return TRUE;
 }
 BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes)
 {
     UWORD prot;
-    return bytes && aspace_translate(as,va,NULL,&prot);
+    return !nonprivate_stack && bytes && aspace_translate(as,va,NULL,&prot);
 }
 static UWORD code_prot = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
 static UWORD stack_prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
@@ -65,20 +67,22 @@ void *kalloc(ULONG size)
     p = malloc(size); if (p) allocations++; return p;
 }
 void kfree(void *p) { if (p) { frees++; free(p); } }
-void aspace_destroy(ASPACE *as) { assert(as->marker == 42); destroys++; }
-ASPACE_ROOT aspace_root(const ASPACE *as) { assert(as->marker == 42); return 0xabc000; }
+void aspace_destroy(ASPACE *as) { assert(as->marker == 42 || as->marker == 43); destroys++; }
+ASPACE_ROOT aspace_root(const ASPACE *as) { assert(as->marker == 42 || as->marker == 43); return as->marker == 43 ? 0xcde000 : 0xabc000; }
 BOOL aspace_translate(const ASPACE *as, VADDR address, PADDR *physical, UWORD *prot)
 {
     UWORD bits;
-    (void)as; (void)physical;
+    if (physical) *physical = address & ~(VADDR)4095;
     if (address >= CODE && address < CODE + 4096) bits = code_prot;
     else if (stack_present && address >= STACK && address < STACK + 8192) bits = stack_prot;
     else if (address >= OUTPUT && address < OUTPUT + 4096) bits = stack_prot;
-    else if (bridge_present && address >= BRIDGE && address < BRIDGE + 4096) bits = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
+    else if (*bridge_state(as) && address >= BRIDGE && address < BRIDGE + 4096) bits = ASPACE_PROT_USER | ASPACE_PROT_EXEC;
     else return FALSE;
     if (prot) *prot = bits;
     return TRUE;
 }
+BOOL aspace_logical_protection(const ASPACE *as,VADDR address,UWORD *prot)
+{ return aspace_translate(as,address,NULL,prot); }
 BOOL aspace_user_range_ok(const ASPACE *as, VADDR va, VADDR size, BOOL write)
 {
     (void)as;
@@ -135,7 +139,7 @@ int main(void)
     THREAD_STARTUP_ARGS args, bad;
     THREAD_STARTUP_DRAFT *draft = NULL, *held;
     const X32_THREAD_STARTUP_DRAFT *image;
-    unsigned i, before;
+    unsigned i, before, copied_destroys=0;
     THREAD_STARTUP_OBSERVER observer = { observer_acquire, observer_release };
     KASPACE_LEASE *lease = NULL, *old;
     UQUAD regs[15];
@@ -182,6 +186,65 @@ int main(void)
         saved.user.fs_base = 0x1000;
         assert(thread_startup_prepare_saved_return(space, &saved, &draft) == EINVFN);
         assert(!draft && !stacks && !bridge_present && allocations - frees == before);
+    }
+#endif
+#if CONF_WITH_FORK_RETURN_TEST && CONF_WITH_PRIVATE_CLONE
+    {
+        ASPACE copied_backend={43};
+        KASPACE *copied=kaspace_adopt(&copied_backend);
+        SYSCALL_RETURN saved;
+        X32_RETURN_BRIDGE *original=NULL;
+        KASPACE_LEASE *copy_hold=NULL;
+        LONG error=ENSMEM;
+        unsigned baseline;
+        assert(copied);
+        memset(&saved,0,sizeof(saved));saved.space=space;saved.mappings=args;
+        saved.user.cs=0x2b;saved.user.ss=saved.user.ds=saved.user.es=0x23;
+        saved.user.rip=CODE;saved.user.rsp=STACK+512;saved.user.cr3=0xdead000;
+        assert(x32_return_bridge_acquire(space,&original)==E_OK);
+        copied_bridge_present=TRUE; /* backend clone copied trusted RX page */
+        baseline=allocations-frees;
+        assert(thread_startup_prepare_cloned_return(copied,copied,&saved,&draft)==EACCDN);
+        assert(thread_startup_prepare_cloned_return(copied,space,&saved,&draft)==EACCDN);
+        /* Independent constructor/root/bridge with every allocation failed. */
+        for(i=1;i<32;i++) {
+            copied_bridge_present=TRUE;
+            fail_alloc=i;
+            error=thread_startup_prepare_cloned_return(space,copied,&saved,&draft);
+            fail_alloc=0;
+            if(!error) {
+                image=thread_startup_image(draft);
+                assert(image->user.cr3==aspace_root(&copied_backend) && image->user.cr3!=saved.user.cr3);
+                assert(image->user.rax==0 && image->user.rsp==saved.user.rsp);
+                assert(thread_startup_retain_stack(draft,&copy_hold)==E_OK);
+                assert(kaspace_stack_hold_space(copy_hold)==copied);
+                assert(!kaspace_mapping_change(&copied_backend,STACK,4096));
+                kaspace_lease_release(&copy_hold);
+                assert(kaspace_mapping_change(&copied_backend,CODE,1));
+                assert(thread_startup_validate(draft)==EIMBA);
+                thread_startup_abort(&draft);
+                break;
+            }
+            assert(error==ENSMEM && !draft && !stacks);
+            assert(allocations-frees==baseline);
+        }
+        assert(!error && i<32 && !draft && !stacks && allocations-frees==baseline);
+        /* Only copied private resident leaves may bypass heap/mmap lookup. */
+        assert(kaspace_stack_hold_acquire(copied,STACK,512,&copy_hold)==EACCDN);
+        nonprivate_stack=TRUE;
+        assert(kaspace_stack_hold_private_copy(copied,STACK,512,&copy_hold)==EACCDN);
+        nonprivate_stack=FALSE;stack_present=FALSE;
+        assert(kaspace_stack_hold_private_copy(copied,STACK,512,&copy_hold)==EIMBA);
+        stack_present=TRUE;stack_prot=ASPACE_PROT_USER;
+        assert(kaspace_stack_hold_private_copy(copied,STACK,512,&copy_hold)==EIMBA);
+        stack_prot=ASPACE_PROT_USER|ASPACE_PROT_WRITE;
+        fail_alloc=1;
+        assert(kaspace_stack_hold_private_copy(copied,STACK,512,&copy_hold)==ENSMEM);
+        assert(!copy_hold && allocations-frees==baseline);
+        /* Last aborted draft removed its own copied bridge, original is live. */
+        assert(bridge_present && !copied_bridge_present);
+        x32_return_bridge_release(&original);kaspace_put(copied);
+        assert(destroys==1);copied_destroys=1;
     }
 #endif
     {
@@ -310,7 +373,7 @@ int main(void)
     assert(thread_startup_validate(draft) == EIMBA);
     stack_present = FALSE;
     thread_startup_abort(&draft); thread_startup_abort(&draft);
-    assert(!draft && !stacks && !destroys);
+    assert(!draft && !stacks && destroys==copied_destroys);
     /* Generic lease ownership and sticky revocation, including occupied handle. */
     assert(kaspace_lease_acquire(space,CODE,1,ASPACE_PROT_USER|ASPACE_PROT_EXEC,&lease) == E_OK);
     old = lease; before = allocations - frees;
@@ -319,9 +382,9 @@ int main(void)
     assert(kaspace_mapping_change(&backend,CODE,4096) && !kaspace_lease_valid(lease));
     assert(!kaspace_lease_seal(&lease,1));
     kaspace_put(space); /* lease independently keeps backend alive */
-    assert(!destroys);
+    assert(destroys==copied_destroys);
     kaspace_lease_release(&lease); kaspace_lease_release(&lease);
-    assert(destroys == 1 && allocations == frees && !bridge_present);
+    assert(destroys == 1+copied_destroys && allocations == frees && !bridge_present);
     return 0;
 }
 

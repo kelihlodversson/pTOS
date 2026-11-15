@@ -1,6 +1,39 @@
 Saved syscall-return startup (#895 F1)
 =====================================
 
+Phase6 private continuation increment
+------------------------------------
+Pclone(NULL,0x895f8000|stage) requires FORK_RETURN_TEST and PRIVATE_CLONE_TEST.
+Stage0 creates PRIVATE_VM; stages1..7 fail after the same acquisition boundaries
+as the shared probe. The original shared selector and admission are unchanged.
+The private parent returns PID before any child dispatch, without a wait.
+Child returns zero at the same actual trap, using a copied user-only image,
+constructor-selected root, cloned trusted bridge and fresh kernel stacks.
+The selected child's initial stack window is backed before startup validation.
+An authenticated cloned-return draft may retain resident private stack leaves
+outside heap/mmap (original top stack); this creates no lazy reservation or
+permission grant. Full top-stack lifetime remains KPROC clone_top_stack and
+selected KASPACE ownership. The ordinary/shared stack policy is unchanged.
+
+Native fixtures test actual original C frames, not a new entry function or
+synthetic fork stack. They test both write orders, DATA/BSS/heap/stack,
+anonymous/lazy/file-backed COW, nested continuation and canonical public reap.
+The existing assembly register probe also runs with a private root, reporting
+child integer/condition/FPU checks through PROCESS status rather than shared
+diagnostic globals. A nonblocking wait immediately after construction proves
+parent independence. Architecture admission remains unchanged (040 only on
+m68k; no new 030/060/FPIAR proof is implied).
+
+Captured LAZY receipts are conservatively rejected before construction: their
+authority is not cloned by kaspace_clone (#971). Moved image nheap and other
+existing private-runtime restrictions remain. No complete descriptor, basepage,
+environment, DTA/search or signal inheritance is claimed (#969). No public
+Pfork/Pvfork activation or Pexec200 replacement (#970) follows from this probe.
+Final source evidence/limits live in phase6-acceptance.txt and its Draft PR.
+
+Historical shared proof contract follows
+---------------------------------------
+
 This is a tightly gated, shared-VM native continuation proof, NOT Pfork or
 Pvfork. Public opcodes 0x11b and 0x113 still return EINVFN. The independent
 COW prerequisite is integrated separately; this saved-return probe remains

@@ -104,6 +104,77 @@ static unsigned char private_copyout[32] __attribute__((aligned(4096)));
 static struct { int32_t pid, tid; } private_outputs __attribute__((aligned(4096)));
 static void private_shared_entry(void *argument) { (void)argument; (void)Pterm(75); }
 static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+/* Actual original C continuation and stack: no new user stack or entry PC.
+ * Child has no descriptor inheritance and reports exclusively through the
+ * canonical PROCESS status. Parent is free to run before the child dispatches. */
+static void test_private_continuation(void)
+{
+    volatile unsigned long local=0x13572468UL;
+    long pid,status,parent=Pgetpid(),tid=private_query(3),root=private_query(0);
+    int cycle,stage,bad;
+    for(stage=1;stage<=7;stage++)
+        ptest_assert_msg(pclone_trap(0,0x895f8000UL+stage)==-39L,
+                         "private saved-return preparation failure rolls back before publication");
+    for(cycle=0;cycle<8;cycle++) {
+        private_probe.cell=0x11223344UL;private_probe.heap[17]=0x31;
+        private_probe.heap[4096+31]=0x42;local=0x13572468UL;
+        if(private_probe.mapping)private_probe.mapping[5]=0x21;
+        if(private_probe.filemap)private_probe.filemap[11]=0x35;
+        pid=pclone_trap(0,0x895f8000UL);
+        if(pid==0) {
+            bad=Pgetpid()==parent || Pgetppid()!=parent || private_query(0)==root || private_query(3)==tid;
+            if(local!=0x13572468UL || private_probe.cell!=0x11223344UL ||
+               private_probe.heap[17]!=0x31 || private_probe.heap[4096+31]!=0x42 ||
+               private_probe.heap[8192+45]!=0)bad=1;
+            if(private_probe.mapping && (private_probe.mapping[5]!=0x21 || private_probe.mapping[4096+7]))bad=1;
+            if(private_probe.filemap && (private_probe.filemap[11]!=0x35 || private_probe.filemap[4096+13]!=0x46))bad=1;
+            local=0x24681357UL;private_probe.cell=0x66778899UL;
+            private_probe.heap[17]=0x71;private_probe.heap[8192+45]=0x91;
+            if(private_probe.mapping)private_probe.mapping[5]=0x41;
+            if(private_probe.filemap)private_probe.filemap[11]=0x55;
+            /* Nested original-stack fork and canonical late wait. */
+            if(cycle==0) {
+                long nested=pclone_trap(0,0x895f8000UL);
+                if(nested==0) { local=0;private_probe.heap[17]=0xff;Pterm(75); }
+                if(nested<=0)bad=1;
+                else {
+                    long waited=Pwaitpid(nested,0,0);
+                    if((waited>>16)!=nested || (waited&65535)!=75 || local!=0x24681357UL ||
+                       private_probe.heap[17]!=0x71 || Pwaitpid(nested,1,0)>=0)bad=1;
+                }
+            }
+            Pterm(bad?74:73);
+            for(;;) { }
+        }
+        ptest_assert_msg(pid>0 && pid!=parent,"private saved-return parent receives distinct PID");
+        if(pid>0) {
+            /* No dispatch is possible between constructor publication and
+             * this nonblocking check. A completion-only vfork would fail. */
+            ptest_assert_msg(Pwaitpid(pid,1,0)==0,"private parent returns before child completion");
+            if(cycle&1) (void)Syield(); /* child writes first */
+            else { /* parent writes first */
+                local=0xaabbccddUL;private_probe.cell=0xaabbccddUL;private_probe.heap[17]=0x61;
+                if(private_probe.filemap)private_probe.filemap[11]=0x75;
+            }
+            status=Pwaitpid(pid,0,0);
+            ptest_assert_msg((status>>16)==pid && (status&65535)==73,
+                             "child resumes original C trap/stack, private root/data/lazy/file/COW and nested fork");
+            ptest_assert_msg(Pwaitpid(pid,1,0)<0,"private saved-return PROCESS reaped exactly once");
+            ptest_assert_msg(local==((cycle&1)?0x13572468UL:0xaabbccddUL) &&
+                             private_probe.cell==((cycle&1)?0x11223344UL:0xaabbccddUL) &&
+                             private_probe.heap[17]==((cycle&1)?0x31:0x61) && !private_probe.heap[8192+45],
+                             "independent original stack/global/heap writes in both orders");
+            if(private_probe.mapping)ptest_assert_msg(private_probe.mapping[5]==0x21 && !private_probe.mapping[4096+7],
+                             "private saved-return anonymous mapping isolation");
+            if(private_probe.filemap)ptest_assert_msg(private_probe.filemap[11]==((cycle&1)?0x35:0x75),
+                             "private saved-return file backing and COW isolation");
+        }
+    }
+    if(!ptest_failures())conws("native private-VM original-stack syscall-return COW (not Pfork): PASS\r\n");
+}
+#endif
+
 static void private_entry(void *argument)
 {
     volatile unsigned long local=0x5a5aa5a5UL;
@@ -202,6 +273,9 @@ static void test_private_aspace(void)
 #endif
     private_probe.filemap=filemap>0?(unsigned char *)filemap:0;
     if(private_probe.filemap)ptest_assert_msg(private_probe.filemap[11]==0x35,"clean file page before clone");
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+    test_private_continuation();
+#endif
     for(stage=1;stage<=24;stage++) {
         ptest_assert_msg(pclone_trap(0,0xc8920200UL+stage)==0,"arm private clone allocation failure");
         child=pclone_trap(&args,0xc8920000UL|sizeof(args));
@@ -356,6 +430,22 @@ static void test_saved_return(void)
             ptest_assert_msg(Pwaitpid(pid, 1, 0) < 0,"saved-return child cannot be reaped twice");
         }
     }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    for (cycle = 0; cycle < 8; cycle++) {
+        fork_return_bad = fork_return_child_pid = 0;
+        pid = fork_return_native(stack + 4096, 0x8000);
+        ptest_assert_msg(pid > 0 && !fork_return_bad && !fork_return_child_pid,
+                         "private register continuation parent returns before child writes");
+        if (pid > 0) {
+            status = Pwaitpid(pid,0,0);
+            ptest_assert_msg((status >> 16) == pid && (status & 65535) == 73,
+                             "private same-trap child integer/condition/FPU register image preserved");
+            ptest_assert_msg(!fork_return_bad && !fork_return_child_pid,
+                             "private register child writes cannot change parent report");
+        }
+    }
+    if (!ptest_failures()) conws("native private-VM syscall-return registers (not Pfork): PASS\r\n");
+#endif
     Prusage(pages);
     ptest_assert_msg(pages[4] == baseline,"saved-return repeated rollback/exit restores mapped pages");
     free(stack);

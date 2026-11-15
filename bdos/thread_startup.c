@@ -21,6 +21,7 @@ struct thread_startup_draft {
     THREAD_STARTUP_STATE state;
     BOOL outputs_prepared;
     BOOL saved_return;
+    BOOL cloned_return;
     BOOL elf_entry;
     VADDR initial_sp;
     VADDR outputs[2]; /* exact destinations retained; never written yet */
@@ -53,6 +54,7 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->state = THREAD_STARTUP_PREPARED;
         draft->outputs_prepared = FALSE;
         draft->saved_return = saved != NULL;
+        draft->cloned_return = saved != NULL && source != NULL;
         draft->elf_entry = initial_sp != 0;
         draft->initial_sp = initial_sp;
         draft->outputs[0] = draft->outputs[1] = 0;
@@ -123,6 +125,17 @@ LONG thread_startup_prepare_saved_return(KASPACE *space, const SYSCALL_RETURN *s
     if (!saved || saved->space != space) return EACCDN;
     return startup_prepare(space, &saved->mappings, out, FALSE, NULL, saved, 0);
 }
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_prepare_cloned_return(KASPACE *source, KASPACE *selected,
+                                         const SYSCALL_RETURN *saved, THREAD_STARTUP_DRAFT **out)
+{
+    if (!source || !selected || source == selected || !saved || saved->space != source)
+        return EACCDN;
+    /* The capture authenticates the source. Mappings, bridge and execution
+     * stacks belong to the selected child root, never the captured root. */
+    return startup_prepare(selected, &saved->mappings, out, FALSE, source, saved, 0);
+}
+#endif
 #endif
 #if CONF_WITH_PRIVATE_CLONE
 LONG thread_startup_prepare_cloned(KASPACE *source, KASPACE *space, const THREAD_STARTUP_ARGS *args,
@@ -298,6 +311,10 @@ LONG thread_startup_retain_stack(THREAD_STARTUP_DRAFT *draft, KASPACE_LEASE **ho
         if (draft->state != THREAD_STARTUP_PREPARED && draft->state != THREAD_STARTUP_OBSERVED) return EINVAL;
         error = thread_startup_validate(draft);
         if (error) return error;
+#if CONF_WITH_PRIVATE_CLONE && CONF_WITH_FORK_RETURN_TEST
+        if (draft->cloned_return)
+            return kaspace_stack_hold_private_copy(draft->space,draft->args.stack_base,draft->args.stack_size,hold);
+#endif
         return kaspace_stack_hold_acquire(draft->space, draft->args.stack_base, draft->args.stack_size, hold);
     }
 #else

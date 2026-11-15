@@ -1,0 +1,98 @@
+Phase 6 (#895): private continuation increment and acceptance ledger
+==================================================================
+
+Audit base (remote refreshed before work):
+  00292ebe60ef3ff31f15d56659c5c85938b57a00
+Accepted Phase5 source f9b9e00005eccb7048cff6d11073b47d2075faec has
+an identical tree. No newer epic integration was present. Feature branch:
+feature/895-fork-vfork. No public experimental activation is authorized.
+This file records the dependency matrix BEFORE production modifications.
+Final-source tests, reviews, blockers and scope follow below as available.
+
+Milestone A: actual production capability matrix
+------------------------------------------------
+IMPLEMENTED AND ACCEPTED:
+- GEMDOS no-argument Pfork0x11b/Pvfork0x113 decoding and signed EINVFN;
+  positive WORD PID allocator. mintproc_call(), kproc PID owner.
+- Trusted proc_clone transaction, KPROC/KTHREAD/KASPACE identity retention,
+  two child-owned kernel stacks, prepared/no-fail scheduler publication,
+  cooperative block/wake, final PROCESS completion and canonical public reap.
+  proc_clone.c; thread_startup.c; kthread.c; native_sched.c; kproc.c.
+- Checked exact SFT incarnation references, staged/ordinary/cleanup/transfer
+  rights and bounded close retry. fsclose.c/fsopnclo.c/fsmain.c (#933/#943).
+- Exact reservation/backing authority (#958), nested exit handoff (#966),
+  canonical shared mapping memberships/attachments (#968), Phase5 loader
+  convergence. These are retained prerequisites, not reopened phases.
+
+IMPLEMENTED BUT TEST-GATED:
+- Actual user trap saved-return capture/restore (#932): x32 default segment
+  and FS/GS state, ARMv7 A32 with enabled/non-pending VFP, 040 format0 and
+  null/idle admitted FPU images. syscall_return.h, trap.c, uspace.c,
+  thread_startup{32,_x32}.c, uspaceasm.S. Parent blocked in shared proof.
+- Independent KASPACE/COW (#934): kaspace_clone(), aspace_clone(), existing
+  architecture backends. x32, A7, virt040, private_runtime eligibility only.
+  File-backed private pages, anonymous COW, reservations, logical rights,
+  fresh births/backing references are existing owners, not wrapper algorithms.
+- Shared Pexec4/104 (#894): new PROCESS launch, not same-PROCESS replacement.
+
+IMPLEMENTED BUT INCOMPLETE:
+- Saved-return + independent VM: source/selected-space equality checks in
+  proc_clone_prepare_saved_return and thread_startup_prepare_saved_return
+  prevent combination. Existing cloned-bridge path can supply this safely.
+  x32 already preserves constructor CR3 when copying captured registers.
+- PROCESS inheritance: factory proc_create_clone_process creates an empty
+  environment and selected standard handles/CWD. clone_inherit_identity
+  copies parent/group/priority/limits but not full fork resources.
+- Ordinary loaded-source private eligibility: kproc_clone_private_runtime
+  rejects nheap/pending/giveback/lender/lost sources and live ASPACE peers.
+  Generic managed source used by existing native private tests is admitted.
+  This is not arbitrary PE_LOAD/GO image/ledger clone support.
+- Architecture coverage: saved return and private clone restrictions below;
+  accepted legacy 030/060 boot is not native fork continuation proof.
+
+MISSING:
+- Public Pfork implementation and complete fork-specific resource policy.
+- Authoritative all-descriptor PROCESS namespace, binding generations and
+  reversible source snapshot admission. Global explicit SFT-number resolution
+  in getofd/getpfsslot/xclose cannot represent independent child bindings.
+- Complete supported signal inheritance (no mask/disposition contract in
+  current KPROC/KTHREAD); do not invent or claim unsupported signal semantics.
+- Pvfork exact-child committed-detach dependency and full cancellation policy.
+- Pexec200 executable replacement, currently exec_common() default EINVFN.
+
+ARCHITECTURALLY BLOCKED (within public Phase6 consumer):
+- Full descriptor inheritance on the current resolver requires coherent
+  namespace migration across all managed consumers, not a fork-only registry.
+- Pvfork compatibility requires same-PROCESS replacement/root and continuation
+  handoff. Existing clone_target_ready/clone_adopt_space only admit new empty
+  PROCESSes; thread_attach_space rejects roots differing from active_space.
+  Final THREAD exit handoff completes PROCESS and cannot be reused unchanged.
+  Precise reproducible controls and follow-up interfaces appear below.
+
+Seven essential answers
+-----------------------
+1. Same trap instruction: yes only within saved-return admission above;
+   no claim for Thumb, 030/6888x, 060, fastcall, arbitrary TLS/segments or
+   pending/other FPU/exception frames. Native proof required for new path.
+2. Selected child root: backend already supports it; common equality guards
+   and cloned bridge must be extended, authenticating captured source identity.
+3. All PROCESS resources: no. Checked refs do not create descriptor bindings.
+   Environment/basepage and raw image metadata need explicit fork policy too.
+4. Parent blocking without kernel-stack sharing: existing bounded shared probe
+   does this via ksched_wait_ready(non-consuming exact KPROC snapshot), fresh
+   child stacks. Arbitrary shared-stack C use is not an accepted vfork API.
+5. Executable replacement preserving PROCESS/PID: no accepted transaction.
+6. Exact child release: final completion observation already exact/non-consuming;
+   committed replacement release is missing. Pexec4/104 launch is insufficient.
+7. Cooperative scheduler: sufficient for restricted private construction and
+   independent dispatch. No preemption/SMP, public PROCESS dispatch, public
+   Pexec4/104 or GUI dependency is needed for this increment.
+
+Initial policy
+--------------
+Reject non-sole THREAD and other live same-root PROCESS callers before resources.
+Do not copy C stacks, jmp_buf, scheduler continuations, borrowed parent PD or
+return-frame pointers. Copy only user state into child-owned startup. Public
+Pfork/Pvfork remain EINVFN until resource/architecture acceptance. Test-only
+private continuation has no descriptor inheritance claim. Neither an exit-only
+Pvfork approximation nor a passing prerequisite completes public fork.

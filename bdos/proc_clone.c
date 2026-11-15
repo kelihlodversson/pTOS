@@ -519,10 +519,14 @@ static LONG public_back_range(KASPACE *space, VADDR address, ULONG bytes, UWORD 
 LONG proc_clone_prepare_saved_return(PROC_CLONE_TRANSACTION *tx, const SYSCALL_RETURN *saved)
 {
     if (!tx || !saved || tx->startup || tx->policy != PROC_CLONE_NEW_PROCESS ||
-        saved->space != tx->space || saved->owner != ksched_exit_thread(run) ||
+        saved->space != tx->source_space || saved->owner != ksched_exit_thread(run) ||
         kthread_process(saved->owner) != tx->source ||
         kthread_tid(tx->thread) == kthread_tid(saved->owner) ||
         !kproc_thread_is_sole(tx->source, saved->owner)) return EACCDN;
+#if CONF_WITH_PRIVATE_CLONE
+    if (tx->space != tx->source_space)
+        return thread_startup_prepare_cloned_return(tx->source_space, tx->space, saved, &tx->startup);
+#endif
     return thread_startup_prepare_saved_return(tx->space, saved, &tx->startup);
 }
 static BOOL return_child_completed(void *context)
@@ -545,6 +549,7 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
     PROC_CLONE_ARGS args = { 0 };
     LONG error = EINVFN;
     UWORD stage = 0;
+    BOOL private_vm = FALSE;
     if (!source || !saved) goto done;
     saved->owner = ksched_exit_thread(run);
     saved->space = kproc_active_space(source);
@@ -552,14 +557,22 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
         !kproc_thread_is_sole(source, saved->owner)) goto done;
     /* Private native assertion aid: identity, not an execution-stack address. */
     if (fail_stage == 0xfffe) { error = kthread_tid(saved->owner); goto done; }
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    private_vm = (fail_stage & FORK_RETURN_PRIVATE) != 0;
+    fail_stage &= ~FORK_RETURN_PRIVATE;
+    /* kaspace_clone copies heap/mmap ledgers, not captured lazy receipts.
+     * Refuse conservatively before resources; never drop valid source rights. */
+    if (private_vm && kaspace_has_captured_lazy(saved->space)) { error = EACCDN; goto done; }
+#endif
     if (fail_stage > 7 || kproc_has_aspace_peer(source)) goto done;
     args.source = source; args.prepared_process = NULL;
     args.process_policy = PROC_CLONE_NEW_PROCESS;
-    args.vm_policy = PROC_CLONE_SHARE_VM; args.resources = 0;
+    args.vm_policy = private_vm ? PROC_CLONE_PRIVATE_VM : PROC_CLONE_SHARE_VM;
+    args.resources = 0; /* this probe does not claim PROCESS inheritance */
 #define RETURN_STAGE(call) do { error = (call); if (error) goto done; \
     if (++stage == fail_stage) { error = ENSMEM; goto done; } } while (0)
     RETURN_STAGE(proc_clone(&args, &tx));
-    RETURN_STAGE(public_back_range(saved->space, saved->mappings.stack_base,
+    RETURN_STAGE(public_back_range(tx->space, saved->mappings.stack_base,
         saved->mappings.stack_size, ASPACE_PROT_USER | ASPACE_PROT_WRITE));
     RETURN_STAGE(proc_clone_prepare_saved_return(tx, saved));
     RETURN_STAGE(proc_clone_retain_startup_stack(tx));
@@ -571,7 +584,7 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
     if (!error) {
         /* No dispatch occurred after publication. Retained observation is
          * non-consuming: the caller still owns one public Pwaitpid reap. */
-        if (!ksched_wait_ready(return_child_completed, observer))
+        if (!private_vm && !ksched_wait_ready(return_child_completed, observer))
             panic("saved return lost managed parent");
         error = created.pid;
     }

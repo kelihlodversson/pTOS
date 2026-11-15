@@ -104,7 +104,7 @@ k = kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/pc-x86_64_defconfig')
 k.syms['CONF_WITH_ELF_SHARED'].set_value(2)
 k.syms['CONF_WITH_LIBAES'].set_value(2)
-for name in ('CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN', 'CONF_WITH_FORK_RETURN_TEST'):
+for name in ('CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN', 'CONF_WITH_FORK_RETURN_TEST', 'CONF_WITH_PRIVATE_CLONE'):
     k.syms[name].set_value(2)
 assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
 assert k.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'y'
