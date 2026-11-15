@@ -18,6 +18,14 @@ The exec-generation observation query exists but no native replacement event is
 published until #970 implements reviewed same-PROCESS/PID commit. Hosted epoch
 models test readiness ownership only. Public opcodes remain unsupported.
 
+The parent-policy cases run in the small FORKPAR.TOS companion after the
+existing managed self-test, preserving the classic two-MiB procmem limit and
+the original self-Pexec ABI controls. Both canonical child status and its
+required marker gate acceptance. On x32 the checked 512-byte capture window
+ends 1..16 bytes above RSP, retaining the 128-byte red zone without requiring
+256 bytes above a shallow C frame. Native stack-top and underflow controls
+exercise that boundary; resident mapping, rights and lease checks still apply.
+
 Phase6 private continuation increment
 ------------------------------------
 Pclone(NULL,0x895f8000|stage) requires FORK_RETURN_TEST and PRIVATE_CLONE_TEST.

@@ -1997,6 +1997,16 @@ endif
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
+ifeq ($(CONF_WITH_FORK_CORE),y)
+TEST_FORK_PARENT_FILES = FORKPAR.TOS
+obj/fork_parent_native.o: tests/pclone/fork_parent_native.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+FORKPAR.TOS: $(TEST_STARTUP) obj/fork_parent_native.o obj/testlib.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/fork_parent_native.o obj/testlib.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TOCLEAN += FORKPAR.TOS
+
 # Test both loader formats: m68k normally links a classic TOS PRG. Link the
 # same native objects as ELF too, with independent segment pages and holes.
 # The PRG loader snapshots its text extent; neither test relies on CPU NX.
@@ -2292,7 +2302,7 @@ endif
 endif
 endif
 
-TEST_HD_FILES = $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
+TEST_HD_FILES = $(TEST_FORK_PARENT_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2308,7 +2318,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_FORK_PARENT_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 

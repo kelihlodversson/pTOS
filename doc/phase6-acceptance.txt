@@ -50,14 +50,36 @@ Hosted production-owner tests cover early/late completion, missing delivery orde
 false wakes, exact modeled exec epochs, acquisition rollback and quiescent reap.
 These are scoped controls, not the complete Phase6 resource-conservation matrix.
 
+The native parent-policy controls live in the small FORKPAR.TOS companion,
+launched by existing Pexec100 after the large managed self-test has completed.
+Its canonical status and independently required log marker both gate acceptance.
+An earlier inlined fixture grew the classic self-loading RUNTTESTS image beyond
+the third copy's remaining TPA: the production allocator reported622592 bytes
+free for a554602-byte image, before the CRT's65536-byte stack and8192-byte
+minimum free area. The CRT returned65535 before main. Keeping the new controls
+in a companion preserves the two-MiB window and all existing self-Pexec tests,
+stack requirements, memory bounds and deadlines. The failing native control is
+retained as evidence; no libcmini or allocator limit was changed.
+
+The companion also exposed an x32 saved-return capture defect: the old symmetric
+512-byte window required256 bytes above live RSP, so shallow valid C frames
+failed preparation with EIMBA. The checked512-byte window now starts at
+(RSP-496)&~15 and ends1..16 bytes above RSP, preserving the128-byte red zone.
+Subtraction underflow rejects before construction. Native controls include an
+actual syscall at RSP=0x7ffffff8 and an underflow attempt, without test padding.
+The full selected-root resident/range/rights/lease checks remain. This is still
+the restricted saved-return admission, not arbitrary stack/lazy-source coverage.
+
 Separate prerequisite candidates (not imported here):
 - #969 / Draft975: independently owned descriptor bindings and coherent snapshot
   admission, scoped source873a43936d430cbd01d8a05639de72523b6983dd.
 - #971 / Draft974: captured lazy authority and shared controller ownership,
   scoped source5798b91c600ac35d7125e0d0123c4fdee8402b03. Moved image/basepage/
   environment/DTA ownership remains a separate unresolved part of #971.
-- #970 / Draft973: authenticated reversible same-PROCESS loader staging,
-  scoped source44a3b22aa257a9035d7ceffe1e58341bfbeca508. No safe-stack
+- #970 / Draft973: authenticated reversible same-PROCESS loader staging.
+  Initial source44a3 required a review fix for prepared THREAD/mapping-member
+  associations; the corrected candidate and exact-head validation are tracked
+  on that PR. No safe-stack
   NORETURN commit or committed-exec notification is implemented by that increment.
 Candidate tests and owner-role assessments do not authorize their integration.
 

@@ -1,0 +1,192 @@
+/* Real user-trap COW parent-policy controls, kept small so the classic
+ * two-MiB procmem window can still run the full self-Pexec ABI fixture. */
+#include "test.h"
+#include "../../include/pclone.h"
+#include "../../include/threadcalls.h"
+#include <mint/osbind.h>
+#include <mint/mintbind.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "trap.h"
+
+static volatile struct {
+    unsigned long cell;
+    unsigned char *heap;
+} private_probe;
+static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
+#if defined(__x86_64__)
+/* Real syscall at a deliberately selected source-stack boundary. R8 carries
+ * this C continuation's original SP in both private return images. */
+static long stack_edge_trap(unsigned long stack)
+{
+    register unsigned long long result __asm__("rax")=(1ULL<<32)|GEMDOS_PCLONE;
+    register unsigned long long argument __asm__("rdx")=stack;
+    __asm__ volatile("mov %%rsp,%%r8\n\tmov %%rdx,%%rsp\n\tsyscall\n\tmov %%r8,%%rsp"
+        : "+a"(result), "+d"(argument) : "D"(0ULL), "S"(0x895fc000ULL)
+        : "rcx", "r11", "r8", "memory", "cc");
+    return (long)(int)result;
+}
+#endif
+/* Actual original C continuation and private stack, no fresh user entry.
+ * The parent blocks through this exact child's final completion. */
+static void cow_vfork_worker(void *argument)
+{
+    int bad;
+    (void)argument;
+    /* Leader has stopped before this fresh THREAD's first dispatch. The
+     * exact child's PROCESS still lives; original parent must remain blocked. */
+    bad=pclone_trap(0,0x895ffffdUL)!=1;
+    (void)Syield();
+    if(pclone_trap(0,0x895ffffdUL)!=1)bad=1;
+    Pterm(bad?74:73);
+}
+static void test_cow_vfork_continuation(void)
+{
+    volatile unsigned long local=0x13572468UL;
+    long pid,status,parent=Pgetpid(),tid=private_query(3),root=private_query(0);
+    long dependencies=pclone_trap(0,0x895ffffcUL),rollback;
+    int cycle,stage;
+#if defined(__x86_64__)
+    ptest_assert_msg(stack_edge_trap(0)==-32L && pclone_trap(0,0x895ffffcUL)==dependencies,
+                     "saved-return stack-window subtraction rejects underflow before resources");
+    pid=stack_edge_trap(0x7ffffff8UL);
+    if(pid==0)Pterm(73);
+    ptest_assert_msg(pid>0,"saved-return accepts valid shallow top-of-stack continuation");
+    if(pid>0) {
+        status=Pwaitpid(pid,1,0);
+        ptest_assert_msg((status>>16)==pid && (status&65535)==73 && Pwaitpid(pid,1,0)<0,
+                         "top-of-stack child resumes after trap and completes before parent return");
+    }
+#endif
+    ptest_assert_msg(pclone_trap(0,0x895f4000UL)==-32L &&
+                     pclone_trap(0,0x895ffffcUL)==dependencies,
+                     "suspended-parent selector rejects SHARE_VM policy before resources");
+    for(stage=1;stage<=8;stage++) {
+        rollback=pclone_trap(0,0x895fc000UL+stage);
+        if(rollback!=-39L) {
+            char message[96];
+            sprintf(message,"COW parent preparation stage=%d error=%ld\r\n",stage,rollback);
+            conws(message);
+        }
+        ptest_assert_msg(rollback==-39L,
+                         "COW suspended-parent preparation rollback publishes no child");
+        ptest_assert_msg(pclone_trap(0,0x895ffffcUL)==dependencies,
+                         "failed COW suspended-parent preparation releases exact dependency");
+    }
+    ptest_assert_msg(pclone_trap(0,0xc8920600UL)==0,"arm final publication cancellation for COW parent wait");
+    ptest_assert_msg(pclone_trap(0,0x895fc000UL)==-326L &&
+                     pclone_trap(0,0x895ffffcUL)==dependencies,
+                     "cancelled final publication releases dependency and leaves parent runnable");
+    for(cycle=0;cycle<8;cycle++) {
+        private_probe.cell=0x11223344UL;private_probe.heap[17]=0x31;
+        local=0x13572468UL;
+        pid=pclone_trap(0,0x895fc000UL);
+        if(pid==0) {
+            int bad=Pgetpid()==parent || Pgetppid()!=parent || private_query(0)==root || private_query(3)==tid;
+            if(local!=0x13572468UL || private_probe.cell!=0x11223344UL || private_probe.heap[17]!=0x31)bad=1;
+            if(pclone_trap(0,0x895ffffdUL)!=1)bad=1;
+            local=0x24681357UL;private_probe.cell=0x66778899UL;private_probe.heap[17]=0x71;
+            if(Pexec(200,"MISSING.TOS","",0)!=-32L || pclone_trap(0,0x895ffffdUL)!=1)bad=1;
+            if(cycle==0 || cycle==1) {
+                long nested=pclone_trap(0,cycle?0x895fc000UL:0x895f8000UL);
+                if(nested==0) { local=0;private_probe.heap[17]=0xff;Pterm(75); }
+                if(nested<=0)bad=1;
+                else {
+                    long reaped=Pwaitpid(nested,0,0);
+                    if((reaped>>16)!=nested || (reaped&65535)!=75 || local!=0x24681357UL ||
+                       private_probe.heap[17]!=0x71 || pclone_trap(0,0x895ffffdUL)!=1)bad=1;
+                }
+            }
+            if(!bad && cycle==2) {
+                struct ptos_clone_args args={0};
+                args.flags=CLONE_VM|CLONE_SAME_PROCESS;args.entry=cow_vfork_worker;
+                args.stack_base=(void *)Malloc(32768);args.stack_size=32768;
+                if(!args.stack_base || pclone_trap(&args,sizeof(args))<=0)bad=1;
+            }
+#if defined(TEST_WITH_PTERMGRP)
+            if(!bad && cycle==3) (void)trap_1_ww(GEMDOS_PTERMGRP,79);
+#endif
+            if(!bad && cycle==4) *(volatile long *)0=1;
+            Pterm(bad?74:73);
+            for(;;) { }
+        }
+        ptest_assert_msg(pid>0 && pid!=parent,"COW suspended parent resumes with child PID");
+        if(pid>0) {
+            /* WNOHANG must already deliver final completion: parent could
+             * not run user code while this exact child still used its image. */
+            status=Pwaitpid(pid,1,0);
+            ptest_assert_msg((status>>16)==pid && (status&65535)==(
+#if defined(TEST_WITH_PTERMGRP)
+                             cycle==3?79:
+#endif
+                             cycle==4?0x0b00:73),
+                             "COW parent remains blocked through failed exec, unrelated child and leader-only exit");
+            ptest_assert_msg(Pwaitpid(pid,1,0)<0,"COW parent dependency does not consume public reap");
+            ptest_assert_msg(local==0x13572468UL && private_probe.cell==0x11223344UL && private_probe.heap[17]==0x31,
+                             "COW Pvfork child private writes do not change parent stack/global/heap");
+            ptest_assert_msg(pclone_trap(0,0x895ffffcUL)==dependencies,
+                             "COW parent dependency releases exactly once before continuation");
+        }
+    }
+#if defined(TEST_WITH_PTERMGRP)
+    {
+        long survived=pclone_trap(0,0x895ffff9UL);
+        long before[7],after[7];
+        static const unsigned query[]={0x80,0x81,0x82,0x83,0x85,0x86,0x87};
+        unsigned q;
+        for(q=0;q<7;q++)before[q]=pclone_trap(0,0xc8920700UL+query[q]);
+        pid=pclone_trap(0,0x895f8000UL);
+        if(pid==0) {
+            long child=pclone_trap(0,0x895fc000UL);
+            if(child==0) {
+                /* Let the existing native admission wait/resume probe run
+                 * while its parent-BLOCKED precondition holds. Cancellation
+                 * deliberately ends that precondition in the next step. */
+                if(pclone_trap(0,0x895ffffdUL)!=1)Pterm(74);
+                (void)Syield();
+                if(pclone_trap(0,0x895ffffdUL)!=1)Pterm(74);
+                if(pclone_trap(0,0x895ffffbUL)!=0)Pterm(74);
+                (void)Syield();(void)Syield();
+                if(Pgetppid()!=0 || pclone_trap(0,0x895ffffaUL)!=0)Pterm(74);
+                Pterm(73);
+            }
+            /* Exact parent cancellation must terminate before user resume. */
+            Pterm(74);
+        }
+        ptest_assert_msg(pid>0,"COW cancellation fixture publishes independently");
+        if(pid>0) {
+            status=Pwaitpid(pid,0,0);
+            ptest_assert_msg((status>>16)==pid && (status&65535)==82,
+                             "COW suspended parent cancellation delivered after dependency cleanup");
+            (void)Syield();(void)Syield();
+            ptest_assert_msg(pclone_trap(0,0x895ffff9UL)==survived+1 &&
+                             pclone_trap(0,0x895ffffcUL)==dependencies,
+                             "COW child survives parent cancellation in its own VM and exits independently");
+            for(q=0;q<7;q++) {
+                after[q]=pclone_trap(0,0xc8920700UL+query[q]);
+                ptest_assert_msg(before[q]==after[q],"COW cancellation restores exact PROCESS/THREAD/root/stack identity references");
+            }
+        }
+    }
+#endif
+}
+
+int main(void)
+{
+    int failures;
+    ptest_log_append();
+    ptest_begin("COW suspended parent dependency (test-only)");
+    private_probe.heap=(unsigned char *)Malloc(12288);
+    ptest_assert_msg(private_probe.heap!=NULL,"COW parent-policy private heap reservation");
+    if(private_probe.heap) {
+        test_cow_vfork_continuation();
+        ptest_assert_msg(Mfree(private_probe.heap)==0,"COW parent-policy heap released after final child reap");
+    }
+    ptest_pass();
+    failures=ptest_failures();
+    if(!failures)conws("native COW Pvfork parent dependency (test-only, no exec commit): PASS\r\n");
+    ptest_log_flush();
+    Pterm(failures);
+    return failures;
+}

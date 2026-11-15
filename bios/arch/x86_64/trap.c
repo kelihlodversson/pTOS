@@ -192,7 +192,12 @@ static LONG return_probe(x86_64_trap_frame_t *f)
     u->gs_base=return_read_msr(0xc0000102); /* user half while SWAPGS is active */
     memcpy(u->fpu, (const UBYTE *)f - 512, 512);
     saved.mappings.entry=u->rip;
-    saved.mappings.stack_base=(u->rsp - 256) & ~15ULL;
+    if (u->rsp<496) return EINVFN;
+    /* Keep the checked resident window below the actual continuation.
+     * A shallow SysV frame need not own 256 bytes above RSP. The end is
+     * RSP+1..16, with the 128-byte red zone inside the unchanged 512-byte
+     * window. Full selected-root range/rights validation still applies. */
+    saved.mappings.stack_base=(u->rsp - 496) & ~15ULL;
     saved.mappings.stack_size=512;
     return proc_clone_return_probe(&saved, (UWORD)f->rsi);
 }
