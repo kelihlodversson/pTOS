@@ -40,6 +40,7 @@
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"
 #include "kaspace.h"
+#include "exec_replace.h"
 #include "kthread.h"
 #include "proc_clone.h"
 #include "progimage.h"
@@ -170,6 +171,10 @@ struct kproc {
      * same bounded special R1/R2 receipts without loaded-entry/stack policy. */
     struct shared_exec_regions *shared_inherited;
     BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+    UQUAD exec_replacement_ticket; /* reversible replacement, not launch selection */
+    BOOL exec_image_staging; /* loader container bound to a replacement root */
+#endif
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
@@ -539,7 +544,11 @@ struct process_exec_handle **kproc_exec_handles(KPROC *owner)
 }
 BOOL kproc_exec_commit_begin(KPROC *owner)
 {
-    if (!kproc_live_pd(owner) || owner->exec_committing) return FALSE;
+    if (!kproc_live_pd(owner) || owner->exec_committing
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+        || owner->exec_replacement_ticket
+#endif
+        ) return FALSE;
     owner->exec_committing = TRUE;
     return TRUE;
 }
@@ -824,6 +833,9 @@ BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
 #endif
 #if CONF_WITH_NATIVE_SCHED
         (p->clone_guarded && !identity_only) ||
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+        p->exec_replacement_ticket ||
+#endif
 #endif
         (p->active_space && p->active_space != construction_space) ||
         !kproc_retain_live(p))
@@ -1355,6 +1367,84 @@ BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
         process->pd && !process->completed && process->threads == thread &&
         !*kthread_next_link(thread) && kthread_process(thread) == process;
 }
+
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+static UQUAD last_exec_replacement_ticket;
+
+static BOOL exec_replacement_source(KPROC *process,KTHREAD *thread,KASPACE *selected,KPROC *image)
+{
+    KPROC *peer;
+    KASPACE *original=kproc_active_space(process);
+    if (!original || !selected || original==selected ||
+        !kproc_thread_is_sole(process,thread) || !kthread_is_executing(thread) ||
+        kthread_aspace(thread)!=original || !process->started || process->pending_space ||
+        process->mapping_preparation || process->exec_committing || process->lost ||
+        process->give_back || process->lender ||
+        kaspace_mutation_busy(original) || kaspace_mutation_busy(selected) ||
+        !aspace_root(kaspace_backend(selected)) ||
+        aspace_root(kaspace_backend(selected))==aspace_root(kaspace_backend(original))) return FALSE;
+#if CONF_WITH_PTERMGRP
+    if (process->group_exiting) return FALSE;
+#endif
+    for (peer=kproc_list;peer;peer=peer->next) {
+        /* Initial replacement policy excludes all source peers. A selected
+         * image root is private staging, not another PROCESS's active/pending
+         * image, even when its caller happens to retain a root reference. */
+        if ((peer!=process && peer->active_space==original) ||
+            peer->active_space==selected || (peer->pending_space==selected &&
+                (peer!=image || !kproc_exec_image_pending(image,selected,FALSE)))) return FALSE;
+    }
+    return TRUE;
+}
+
+LONG kproc_exec_replacement_claim(KPROC *process,KTHREAD *thread,KASPACE *selected,UQUAD *ticket)
+{
+    if (!ticket || *ticket) return EINVAL;
+    if (!exec_replacement_source(process,thread,selected,NULL) || process->exec_replacement_ticket)
+        return EACCDN;
+    if (last_exec_replacement_ticket==~(UQUAD)0) return EAGAIN;
+    *ticket=++last_exec_replacement_ticket;
+    process->exec_replacement_ticket=*ticket;
+    return E_OK;
+}
+
+BOOL kproc_exec_replacement_matches(KPROC *process,KTHREAD *thread,KASPACE *source,
+                                  KASPACE *selected,KPROC *image,UQUAD ticket)
+{
+    return process && ticket && process->exec_replacement_ticket==ticket &&
+        process->active_space==source && exec_replacement_source(process,thread,selected,image);
+}
+
+void kproc_exec_replacement_drop(KPROC *process,UQUAD ticket)
+{
+    if (!process || !ticket || process->exec_replacement_ticket!=ticket)
+        panic("exec replacement: preparation ticket ownership lost");
+    process->exec_replacement_ticket=0;
+}
+
+LONG kproc_exec_image_select(KPROC *image,KASPACE *selected)
+{
+    KASPACE *owned;
+    KPROC *peer;
+    if (!image || !selected || !kproc_clone_target_ready(image,NULL) || image->exec_image_staging)
+        return EACCDN;
+    for (peer=kproc_list;peer;peer=peer->next)
+        if (peer->active_space==selected || peer->pending_space==selected) return EACCDN;
+    owned=kaspace_share(selected);
+    if (!owned) return ENSMEM;
+    image->exec_image_staging=TRUE;
+    image->pending_space=owned;
+    return E_OK;
+}
+
+BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL complete)
+{
+    return image && image->pd && !image->completed && image->disposal_state==PROCESS_LIVE &&
+        !image->started && !image->active_space && !image->threads && !image->lost && !image->load_parent &&
+        image->exec_image_staging && image->pending_space==selected &&
+        (!complete || (image->has_image && image->pending_as==kaspace_backend(selected)));
+}
+#endif
 
 static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)
 {
@@ -2464,12 +2554,23 @@ BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes)
 
     if (!kproc || kproc->aspace || kproc->pending_as || kproc->has_image || kproc->lost)
         return FALSE;
-    as = aspace_create();
-    if (!as)
-        return FALSE;
-    owner = kaspace_adopt(as);
-    if (!owner) { aspace_destroy(as); return FALSE; }
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+    if (kproc->exec_image_staging) {
+        owner=kproc->pending_space;
+        if (!owner) return FALSE;
+        as=kaspace_backend(owner);
+    } else
+#endif
+    {
+        as = aspace_create();
+        if (!as) return FALSE;
+        owner = kaspace_adopt(as);
+        if (!owner) { aspace_destroy(as); return FALSE; }
+    }
     if (!aspace_map_private(as, va, bytes, ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+        if (!kproc->exec_image_staging)
+#endif
         kaspace_put(owner);
         return FALSE;
     }

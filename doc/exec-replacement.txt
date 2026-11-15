@@ -1,0 +1,172 @@
+Pexec(200): owned private image staging and remaining commit contract (#970)
+=========================================================================
+
+Base: accepted epic00292ebe60ef3ff31f15d56659c5c85938b57a00.
+Consumer: Phase6 #895; architecture/scheduler owner #713; loader migration #894.
+This increment is default-off CONF_WITH_EXEC_REPLACEMENT_TEST. No shipped preset
+selects it. Public Pexec(200) still returns EINVFN. No committed-exec generation
+producer is installed. This is a concrete preparation prerequisite, not completed
+replacement or Pvfork exec acceptance.
+
+Binding Phase6 policy
+---------------------
+Both Pfork and MMU Pvfork use the same NEW_PROCESS/PRIVATE_VM COW constructor.
+Pvfork additionally suspends its calling parent THREAD until that exact child
+finally completes or successfully commits same-PROCESS executable replacement.
+The child already has an independent KASPACE and private user stack. There is no
+shared parent/child VM attachment or shared writable parent stack to detach.
+Ordinary private child writes are invisible to the parent, a deliberate
+FreeMiNT Pvfork compatibility deviation. Explicit shared mappings retain their
+own mapping policy. Legacy non-MMU execution remains outside this increment.
+
+Implemented ownership
+---------------------
+exec_replace.c owns an opaque KPROC_EXEC_REPLACEMENT receipt. Preparation
+requires the exact current, sole, executing managed THREAD and live started
+PROCESS, the current execution number, and a distinct unpublished selected
+KASPACE with a distinct backend root. Initial admission rejects source root
+peers, other PROCESS use of the selected root, loader loans, pending launch or
+mapping mutation, final/group cancellation, nested execution and existing
+replacement preparation. The monotonic preparation ticket is an admission
+identity, not a committed-exec generation or a public completion.
+
+The receipt retains the exact source KPROC and both roots. Its existing
+KSCHED_CLEANUP_SCOPE defers cancellation delivery while preserving cancellation
+visibility; validation rejects a newly cancelled operation. It closes ordinary
+THREAD attachment and launch-selection admission on that PROCESS until abort.
+It holds no scheduler lock, IRQ exclusion or KASPACE mutation guard across a
+yield, allocation, filesystem call or destructor. Final/group cancellation is
+not blocked from being requested. The receipt cannot leave its owning execution
+or disk-error boundary and cannot survive a return to userspace.
+
+The loader's private proc_exec_replacement_stage consumer reuses exec_common,
+kpgmhdrld/kpgmld and the ordinary ELF loader. It uses PE_LOAD internally with a
+receipt parameter unavailable to public mode3. ELF loading selects the supplied
+private pending KASPACE instead of a caller-heap load. An existing unstarted
+loader KPROC/PD is only an owned image container: it receives no THREAD, scheduler
+slot, observer, runnable publication, inherited descriptor/CWD references or
+mode3 launch grant. The original source KPROC/PID/PD, its descriptor ownership,
+THREAD and active root remain unchanged. Nothing moves the staged PROCESS's
+resource table into the source. Legacy PRG staging is rejected before allocation
+because its moved-TPA ownership requires its own bundle contract.
+
+The receipt retains and owns disposal of the unstarted loader container.
+Ordinary loader failure may retire it first; abort then releases the retained
+identity idempotently. Abort disposes the staged image, releases its root holds,
+drops admission and releases the source before ending cancellation protection.
+The caller still owns its selected root and releases it normally after abort.
+A disk error uses the existing FS_ERROR_SCOPE / DISK_CALL cleanup path. Successful
+staging means a checked pending ELF layout and private root, not a complete new
+initial user/kernel execution context or an execution transition.
+
+Kernel-only interface
+---------------------
+kproc_exec_replacement_prepare(source, thread, selected, &empty_receipt)
+  Acquire reversible admission and references; output only after all prefixes.
+kproc_exec_replacement_validate(receipt)
+  Revalidate exact PROCESS number, TID, execution, source/selected roots and
+  current cancellation; selected pending ownership may belong only to the
+  receipt's exact unstarted image container.
+proc_exec_replacement_stage(receipt, trusted_path, trusted_tail, trusted_env)
+  Load a real ELF into selected root using existing loader and checked errors.
+kproc_exec_replacement_image_ready(receipt)
+  Validate private completed pending image without preparing execution.
+kproc_exec_replacement_abort(&receipt)
+  Unique owning execution consumes all staged obligations; NULL is idempotent.
+
+No prepare, validation, staging-ready or abort step is an exec event. Public
+Pexec(200), its no-return success path and final same-PROCESS handoff are absent.
+
+Verified controls
+-----------------
+Host tools/test-exec-replacement.py compiles production kproc.c/kaspace.c and
+exec_replace.c with modeled CPU/scheduler/already-live THREAD/MMU providers. It
+checks wrong identity/root/execution/TID, competing preparation, source sharing,
+selected-root use, cancellation, allocation failure and all four retained-owner
+failure prefixes. Original PROCESS, sole THREAD, completion, roots and exact
+allocation/reference counts remain unchanged with both roots still alive.
+Normal, ASan/UBSan/leak and fortified host modes are distinct from native proof.
+The host image-disposal provider fails if called: the model does not claim to
+execute the loader or successful replacement.
+
+Native private Pclone test transport uses 0xc9700000|selector with NULL request:
+  0       prepare, cooperative yield, exact-owner revalidation and abort;
+  1..4    fail each source/old-root/new-root/final-validation prefix, ENSMEM;
+  0x100   stage existing PIEPROBE.TOS in selected private root and abort;
+  0x101   missing file, EFILNF, old execution remains runnable;
+  0x102   truncated LOADFAIL.TOS after allocation, error and full cleanup.
+The managed user test repeats these paths eight times, checks stable source PID
+and all45 mapping-lifetime counters after each cycle, and explicitly verifies
+public mode200 still returns EINVFN. The accepted source root remains alive;
+normal disposal of the temporary staging root does not replace any counter.
+The transport exists only in the test configuration; it is not a public API.
+
+BLOCKER970 / issue970: same-PROCESS execution commit
+--------------------------------------------------
+Affected capability: full Pvfork exec release. Pfork is independent. Exit-only
+COW Pvfork testing may proceed without pretending this blocker is resolved.
+
+Production path:
+  proc.c exec_common -> kproc_load_begin/load_commit ->
+  kproc_prepare_user_thread -> thread_startup -> architecture launcher.
+Existing launch metadata and ownership are fields of KPROC, not a separately
+owned replacement image bundle. kproc_prepare_user_thread adopts the pending
+root and mutates those fields of an unstarted PROCESS. Existing active THREAD
+root association cannot change through this constructor.
+
+Smallest reproducible controls:
+  python3 tools/test-exec-replacement.py (requires kconfiglib):
+  before any replacement ticket, a fresh THREAD
+  passed to real kproc_thread_attach_space(source, selected_private_root, ...)
+  is rejected while source->active_space differs; source/refcounts unchanged.
+  Native gated managed test: Pexec(200,"C:\\PIEPROBE.TOS","",0) == EINVFN.
+These are expected negative controls. Header/segment staging succeeds through
+existing production loader; that does not bypass the execution association.
+
+Required invariant and missing mechanism:
+  Preserve exact source KPROC/PID/PD and PROCESS resource owner, prepare an
+  owned image/root/startup bundle without touching the old execution, seal it
+  after all fallible work, then perform one reviewed NORETURN commit under
+  scheduler/launcher ownership. Keep the source TID initially. Both KPROC and
+  KTHREAD root bindings, user return context and architecture syscall/TSS/GS or
+  banked supervisor-stack binding must refer to the committed image together.
+  Old user continuation must become impossible before the exec generation
+  advances. Old syscall/image/root resources must be reclaimed only off their
+  executing stacks, by the existing owner. No fabricated PROCESS exit,
+  THREAD-only completion, zombie, observer registry or reaper is permitted.
+
+Why available constructors are insufficient:
+  proc_clone LOADED_PROCESS/PREPARED_VM requires an unstarted target and
+  kproc_thread_attach_space authenticates active_space. Using another PROCESS
+  returns a different PID. Replacing the PD pointer would bypass legacy
+  SFT.f_own and other identity bindings. Dropping association checks would make
+  the THREAD's root disagree with its PROCESS. Existing proc_defer_exit /
+  architecture launcher longjmp transfers off the syscall stack for final
+  termination and invokes ksched_finish_exit / proc_finalize_exit; using that
+  event as exec would publish a false completion and consume live ownership.
+  Freeing the active syscall stack or copying its C continuation is invalid.
+
+Smallest safe follow-up:
+  Extend the current KPROC loader image owner with an opaque movable bundle
+  prepared from this receipt's selected root and staged layout. Add existing
+  scheduler/launcher replacement prepare + seal + NORETURN commit, preserving
+  source identity and rejecting cancellation/stale execution before seal. Share
+  ordinary launch image preparation instead of adding another loader. Preserve
+  source descriptor/CWD/resource ownership (#969); do not transplant a temporary
+  loader PROCESS table. #971 defines independent source snapshot authority for
+  fork; replacement's newly loaded image does not manufacture source rights.
+  Committed notification: increment a monotonic generation on the exact retained
+  source KPROC only once the new execution is installed and old return impossible;
+  call ksched_irq_notify as a readiness hint. No callback registry is needed.
+
+Acceptance to close issue970:
+  Real user Pexec200 starts the new program as the same PID/PROCESS (and initial
+  sole TID policy), never returns through the old image, and later completes and
+  reaps once. Failed/missing/truncated/preparation-fault exec returns an error
+  to the original child with its parent still blocked and every reference
+  conserved. Successful commit advances only the exact child's generation and
+  wakes its parent before independent child completion. Unrelated exec/exit,
+  entry/preparation, public waits and THREAD-only exit do not release it. Prove
+  syscall/TSS/GS/SVC/RTE state and off-stack old-root reclamation natively on
+  x32, ARM A32 and m68k040, both filesystems and five shutdown checks. Unsupported
+  CPU/FPU frame classes remain gated. Review #894/#895/#713 ownership together.

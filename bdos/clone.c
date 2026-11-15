@@ -12,6 +12,9 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "proc_clone.h"
 #include "ksched.h"
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#include "exec_replace.h"
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "kthread.h"
 #include "kaspace.h"
@@ -120,6 +123,10 @@ static long clone_request(uint64_t address, uint64_t size)
     enum clone_validate_result valid;
     static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
         CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+    if (!address && (size&0xffffffffffff0000ULL)==EXEC_REPLACEMENT_PROBE)
+        return kproc_exec_replacement_probe((UWORD)size);
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     BOOL private_test = FALSE;
     BOOL scoped_test = FALSE;
