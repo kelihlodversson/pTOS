@@ -30,6 +30,12 @@ inheritance lets a shared descendant outlive that first child. Final member
 loss consumes canonical authority, even when cleanup is deferred or a
 callback drops the final member reentrantly. Existing stopped-stack and R2
 holds defer backing retirement through the accepted retirement protocol.
+The consumed record keeps its held cleanup barrier until retirement: ticket
+revocation removes logical authority, while the full fence still prevents
+reuse and permits resident COW writes through an independent surviving R2.
+Private cloning rejects such a pending dead-scope snapshot before allocation;
+an exact subrange hold cannot authorize copying other doomed resident pages.
+After retirement, ordinary clone admission can be retried.
 An earlier cleanup fence keeps its exact mode and dimensions, then the same
 record retires its own private captured extent. No new cleanup registry or
 fallible teardown allocation is needed. An identity/observer root reference
@@ -90,6 +96,10 @@ observer root remains live. No counter reset or forced root destruction
 conceals logical or page ownership. Run it normally, with ASan/UBSan/leaks,
 and fortified GCC. This is production ownership evidence, not hardware COW
 or native CPU evidence.
+
+tools/test-private-aspace.sh also exercises production COW writes through a
+surviving narrow R2 after final snapshot-member loss, full pending cleanup
+barriers, rejected fresh cloning and retry after exact final retirement.
 
 The same fixture prepares the real cloned return bridge with deliberately
 poisoned allocator storage and fails every allocation prefix. Reverting only

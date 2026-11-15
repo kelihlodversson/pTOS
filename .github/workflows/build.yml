@@ -126,7 +126,10 @@ jobs:
       - name: Test address-space ownership
         run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
       - name: Test independent VM COW ownership and rollback
-        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-private-aspace.sh
+        run: |
+          PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-private-aspace.sh
+          PATH=/tmp/elf-shared-venv/bin:$PATH HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" sh tools/test-private-aspace.sh
+          PATH=/tmp/elf-shared-venv/bin:$PATH ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-private-aspace.sh
       - name: Test private captured reservation ownership and final conservation
         run: |
           /tmp/elf-shared-venv/bin/python tools/test-private-snapshot.py

@@ -1346,7 +1346,10 @@ static void reap_retired(KASPACE *space)
         for (lease=space->leases;lease;lease=lease->next)
             if (lease->private_snapshot && lease->snapshot_scope &&
                 !scope_live(lease->snapshot_scope)) {
-                lease->reservation_ticket=0;lease->revoked=TRUE;lease->held=FALSE;
+                /* Logical authority ends now; the held cleanup barrier must
+                 * still protect its whole extent while an independent R2
+                 * holds retirement, including valid resident COW writes. */
+                lease->reservation_ticket=0;lease->revoked=TRUE;
                 if (!lease->retire_bytes) {
                     lease->retire_private=TRUE;lease->snapshot_cleanup=TRUE;
                     lease->retire_address=lease->exact_address&~(VADDR)(USER_PAGE_SIZE-1);
@@ -1863,10 +1866,16 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result)
 {
 #if CONF_WITH_PRIVATE_CLONE
     KASPACE *copy;
+    const KASPACE_LEASE *lease;
     LONG error = ENSMEM;
     if (!source || !result || *result) return EINVAL;
     if (kaspace_mutation_busy(source)) return EACCDN;
     if (pending_overlap((KASPACE *)source,0,USER_VA_LIMIT)) return EACCDN;
+    /* A surviving subrange hold does not own the rest of a consumed snapshot
+     * cleanup fence. Keep COW usable for that hold, but do not copy the whole
+     * backend until final retirement removes the unowned resident leaves. */
+    for (lease=source->leases;lease;lease=lease->next)
+        if (lease->private_snapshot && !snapshot_live(lease)) return EACCDN;
     copy = kalloc(sizeof(*copy));
     if (!copy) return ENSMEM;
     memset(copy,0,sizeof(*copy));
