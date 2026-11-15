@@ -1,3 +1,34 @@
+Native AES global-state and binding ABI (#953)
+---------------------------------------------
+Native libaes exports only mt_* functions taking AESGLOBAL * from the canonical
+include/aesglobal.h. include/libaes.h declares this API. Classic wrappers,
+aes_global, gl_apid/gl_ap_version and public rectangle helpers are supplied by
+GEMlib's pTOS backend, linked into each caller from obj/gemlib/libgem.a before
+-laes. include/gem.h forwards to that backend. Initialize the GEMlib submodule
+before building, and rebuild native clients against this private ABI change.
+GEMlib's appl_init and successful appl_exit update its binding id/version;
+direct mt_* calls initialize/clear only their supplied global, without updating
+another array or GEMlib's binding data. ap_private remains caller-owned.
+EmuDesk supplies its historical bindings and passes its own typed global.
+The m68k trap ABI remains 30 bytes; ARM/x32 use native layout and pointers.
+Kernel AES retains its area-D use of ap_3resv. Userspace mt_appl_init now owns
+an opaque heap context through that slot: null allocates, non-null explicitly
+reuses it. Exit frees the context and clears only the supplied slot; other
+aliases become invalid. Session, enumeration, cohort, window/frame, desktop
+and graphics/cursor/style state are per context. Private helper calls pass
+the supplied global, and reset/cleanup uses that context's retained state.
+Resources, menu and shell state are also context-owned. Painter/tracker,
+modal, form, alert, file-selector, resource and shell helper chains receive
+explicit call arguments; libaes has no mutable globals or TLS. The ELF audit
+permits relocated constant tables only in sealed RELRO. The acceptance map
+and validation commands are in libaes-context-acceptance.md.
+CUIS identity remains separate work coordinated with #896/#907/#915. It still
+has one session per process: fresh userspace contexts do not imply independent
+sessions, windows or message queues. Ending their shared session invalidates
+all its users. #903 is separate. Historical implementation notes below predate this
+binding split; see doc/libaes-compatibility.md for the current ownership and API.
+
+
 pTOS - userspace AES and kernel CUIS (#661)
 ==========================================
 
@@ -72,6 +103,24 @@ shel_*         GEM launch/desktop adapters      Process/desktop ownership and
                                                 privileged coordination only
 scrp_*         Compatibility and file helpers   Any shared selection/ownership
                                                 policy must be explicit
+
+External userspace libaes (#953) now owns retained menu metadata/pending GEM
+messages and shell launch metadata through AESGLOBAL.ap_3resv, alongside its
+window, graphics, resource and lifecycle state. Explicit aliases share that
+private context; fresh contexts do not copy another global's public fields.
+The loader saves launch metadata before executable preinitializers; libaes
+consumes it when each context is initialized, without a DT_INIT cache. Shell
+search work buffers and saved-DTA state are per-call. Reusable context-owned
+DTAs keep kernel search-cache addresses stable; nested calls borrow separate
+slots, released with the context.
+All temporary libaes helper contexts now travel through explicit parameters,
+including painter/tracker, form, alert/error, selector, resource, shell and
+menu calls. Nested object callbacks carry their painter as a callback cookie,
+without publishing an active context globally. The ELF ownership check also
+rejects mutable data outside RELRO and TLS; constant resource tables remain
+read-only after relocation. This preserves CUIS's one-session-per-PD identity;
+independent concurrent native AES sessions still require the separate kernel
+identity work. See libaes-compatibility.md for the #953 lifetime contract.
 
 Current sources expose the migration points: gemaplib/gemevlib/gemasync and
 aes_service.c combine registration, scheduling, GEM messages and waits;
@@ -2468,15 +2517,20 @@ Shell startup, environment and file queries (#826)
 External libaes implements shel_read, shel_envrn and shel_find, with their
 standard mt_* counterparts and GEMlib signatures. Shell launching and shared
 shell/desktop context are separate work; these queries add no kernel service.
-They require the caller's registered GEM global array.
+They require the caller's registered AESGLOBAL and live private context.
 
 shel_read writes the complete startup executable specification and the original
 128-byte GEMDOS command tail, including its leading length byte. The command
 buffer must have at least 260 bytes. With CONF_WITH_LIBAES, the startup stack
 builder saves the original tail in an optional AT_PTOS_LAUNCH record. LD.SO
 qualifies AT_EXECFN in that record before executable preinitializers or any
-dependency constructor. The library consumes the saved command and tail in
-DT_INIT; preinitializer cwd changes or default-DTA searches cannot alter them.
+dependency constructor. The library copies the saved command and tail into
+each fresh AES_APP_CONTEXT, even if executable hooks have already changed
+cwd or the default DTA. Registration before libptos auxiliary-vector setup
+leaves capture pending; the first shell/resource lookup after setup completes
+it from the saved record. Early shell queries return 0 without changing
+outputs. Explicit aliases reuse the context without recapturing completed
+metadata; libaes has no DT_INIT startup cache.
 The resource loader consumes the same captured command with a 260-byte bound.
 Extended ARGV[0] remains independent of the supplied executable pathname.
 Missing or invalid startup metadata returns 0 without changing either output.
@@ -2490,8 +2544,9 @@ variable-looking arguments never supply environment values. Empty values remain
 empty; PATH parsing does not treat the next environment variable as a path.
 The snapshot retains the original environment address and actual allocation
 extent, so validation does not scan a short block up to the 32 KB ABI maximum.
-NULL arguments, invalid globals or a malformed unterminated environment return
-0 without changing the output pointer.
+NULL arguments, failed native registration or a malformed unterminated
+environment return 0 without changing the output pointer. Invalid private
+context pointers remain undefined behavior under the #953 lifetime contract.
 
 shel_find uses the original native AES search core in aes/shared/gemshquery.c:
 first the basename in the launch application directory, then the supplied
@@ -2505,10 +2560,13 @@ missing files, invalid inputs or operational failures return 0 with the input
 buffer unchanged. Overlong PATH candidates are skipped within private bounded
 workspace. Ordinary EFILNF/EPTHNF/ENMFIL results continue the search; other
 Fsfirst errors stop further probes and fail without committing a later match.
-The search uses one stable private DTA address across calls, so lookups at
-different stack depths do not accumulate hidden kernel search-cache entries
-and evict an outstanding caller search. Cleanup restores the original DTA
-pointer without changing its bytes, current drive or current directory.
+The search reuses a stable context-owned DTA across ordinary calls, so lookups
+at different stack depths do not accumulate hidden kernel search-cache entries
+and evict an outstanding caller search. Simultaneous nested lookups, including
+through explicit aliases, borrow separate reusable slots. Extra slots are
+freed at context exit; failed frees enter that context's resource retry queue.
+Per-call cleanup restores the original DTA pointer without changing its bytes,
+current drive or current directory.
 
 Native AES uses the same separately compiled query source with its existing
 state and bindings. Startup directory discovery is also shared with libaes's

@@ -20,15 +20,18 @@ def check(root=ROOT):
     matrix = (root / "doc/libaes-compatibility.md").read_text()
     export_map = c_code((root / "lib/aes/exports.map").read_text())
     exports = set(re.findall(r"\b\w+\b", export_map.split("global:")[1].split("local:")[0]))
-    # Only standard binding state is outside the GEM/helper function inventory.
-    # Native CUIS coordination must stay inside the library boundary.
     state = {"aes_global", "gl_apid", "gl_ap_version"}
-    assert state <= exports, "missing standard binding globals: " + ", ".join(sorted(state - exports))
-    private = {name for name in exports if name.startswith("aes_") and name not in state}
-    assert not private, "private CUIS exports: " + ", ".join(sorted(private))
-    functions = exports - state
-    declarations = c_code((root / "include/gem.h").read_text())
+    private = {name for name in exports if not name.startswith("mt_")}
+    assert not private, "non-mt libaes exports: " + ", ".join(sorted(private))
+    functions = exports
+    declarations = c_code((root / "include/libaes.h").read_text())
+    binding_header = c_code((root / "lib/gemlib/ptos/gem.h").read_text())
+    binding_code = c_code("\n".join(path.read_text() for path in sorted((root / "lib/gemlib/ptos").glob("*.c"))))
+    helper_code = binding_code
     helpers = c_code((root / "include/rectfunc.h").read_text())
+    for name in state:
+        assert re.search(r"\b" + name + r"\s*(?:;|,)", binding_header), "missing GEMlib binding declaration: " + name
+        assert re.search(r"\b" + name + r"\s*(?:=|;)", binding_code), "missing GEMlib binding definition: " + name
     rows = {}
     for line in matrix.splitlines():
         if not line.startswith("`") or " | " not in line:
@@ -53,11 +56,13 @@ def check(root=ROOT):
         if status == "unavailable":
             assert name not in exports and "mt_" + name not in exports, "update support status: " + name
             continue
-        bindings = [name] if status == "helper" else [name, "mt_" + name]
-        for binding in bindings:
-            expected.add(binding)
-            header = helpers if status == "helper" else declarations
-            assert re.search(r"\b" + re.escape(binding) + r"\s*\(", header), "missing public declaration: " + binding
+        if status != "helper":
+            expected.add("mt_" + name)
+            assert re.search(r"\bmt_" + re.escape(name) + r"\s*\(", declarations), "missing public declaration: mt_" + name
+        header = helpers if status == "helper" else binding_header
+        code = helper_code if status == "helper" else binding_code
+        assert re.search(r"\b" + re.escape(name) + r"\s*\(", header), "missing public declaration: " + name
+        assert re.search(r"\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*\{", code), "missing GEMlib definition: " + name
     assert functions == expected, {
         "undocumented_exports": sorted(functions - expected),
         "missing_exports": sorted(expected - functions),
@@ -67,7 +72,7 @@ def check(root=ROOT):
     aliases = {"GRAF_RUBBOX": "graf_rubberbox"}
     missing = {opcode for opcode in operations if aliases.get(opcode, opcode.lower()) not in rows}
     assert not missing, "unclassified legacy operations: " + ", ".join(sorted(missing))
-    print("libaes compatibility: %d GEM/helper exports and %d legacy operations classified" %
+    print("libaes compatibility: %d mt_* exports and %d legacy operations classified" %
           (len(functions), len(operations)))
 
 

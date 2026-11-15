@@ -3,7 +3,7 @@
  *  the two alternative resource loaders (legacy in-place and portable
  *  canonical).  Exactly one of the loaders is linked, selected by build.mk.
  */
-
+#include "aescontext.h"
 #ifndef RSLOAD_H
 #define RSLOAD_H
 
@@ -33,11 +33,11 @@
 extern RSHDR   *rs_hdr;
 extern AESGLOBAL *rs_global;
 
-WORD rs_readit(AESGLOBAL *pglobal, UWORD fd);
-void fix_objects(void);
+WORD rs_readit(AES_RESOURCE_PARAM AESGLOBAL *pglobal, UWORD fd);
+void fix_objects(AES_RESOURCE_PARAM0);
 
-void *get_addr(UWORD rstype, UWORD rsindex);
-void *get_sub(UWORD rsindex, UWORD offset, UWORD rsize);
+void *get_addr(AES_RESOURCE_PARAM UWORD rstype, UWORD rsindex);
+void *get_sub(AES_RESOURCE_PARAM UWORD rsindex, UWORD offset, UWORD rsize);
 CICONBLK **get_ciconblkptr(RSHDR *hdr);
 void transform_all_cicons(LONG num_cicons, CICONBLK **ciconblkptr);
 

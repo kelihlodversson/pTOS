@@ -1,9 +1,10 @@
 /* GEM IDs and plain-window geometry are private to each application.
  * CUIS retains authoritative ownership, visibility and global stacking. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
+#include "app_context.h"
 #include "layout.h"
 #include "gemframegeom.h"
 #include "gemmovegeom.h"
@@ -15,6 +16,11 @@
 #include "graphics.h"
 #include "frame_colours.h"
 #include "string.h"
+
+static __inline__ AES_WINDOW_STATE *window_state(AESGLOBAL *global)
+{
+    return &aes_app_context(global)->windows;
+}
 
 struct visible_region {
     struct visible_region *next;
@@ -29,90 +35,98 @@ static void discard_regions(struct visible_region **head)
     }
 }
 
-#define GEM_WINDOW_LIMIT 64
-static struct gem_window {
-    short id;
-    WORD top_colours[NUM_ELEM], bottom_colours[NUM_ELEM];
-    UWORD kind;
-    char *name, *info;
-    LONG native, drag_x, drag_y, arrow_tick;
-    BOOL open, control_selected;
-    WORD control, control_message, control_action;
-    WORD hslide, vslide, hslsiz, vslsiz;
-    WM_SLIDER_GEOMETRY drag_slider;
-    GRECT control_rectangle;
-    struct visible_region *regions;
-    GRECT current, previous, full;
-} windows[GEM_WINDOW_LIMIT];
-static BOOL frame_notice_blocked, frame_display_blocked;
-static ULONG frame_overlays, frame_dialogs;
 #define ARROW_GADGETS (UPARROW|DNARROW|LFARROW|RTARROW)
 #define CONTROL_GADGETS (CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS|VSLIDE|HSLIDE)
-static BOOL control_display_blocked, control_pipe_blocked;
 static BOOL thumb_control(WORD object) { return object == W_HELEV || object == W_VELEV; }
 static BOOL drag_control(WORD object) { return object == W_NAME || object == W_SIZER || thumb_control(object); }
 static BOOL repeat_control(WORD object) { return wm_arrow_action(object) >= 0 || object == W_VSLIDE || object == W_HSLIDE; }
-BOOL aes_controls_listening(void)
+BOOL aes_controls_listening(AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     short i;
-    if (frame_overlays || control_display_blocked || control_pipe_blocked) return FALSE;
+    if (retained->frame_overlays || retained->control_display_blocked || retained->control_pipe_blocked) return FALSE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
-        if (windows[i].id) return TRUE;
+        if (retained->entries[i].id) return TRUE;
     return FALSE;
 }
-BOOL aes_controls_repeating(void)
+BOOL aes_controls_repeating(AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     short i;
-    if (!aes_controls_listening()) return FALSE;
+    if (!aes_controls_listening(global)) return FALSE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
-        if (windows[i].id && windows[i].open && repeat_control(windows[i].control)) return TRUE;
+        if (retained->entries[i].id && retained->entries[i].open && repeat_control(retained->entries[i].control)) return TRUE;
     return FALSE;
 }
-BOOL aes_frames_suspended(void) { return frame_overlays != 0; }
-BOOL aes_windows_pending(void) { return frame_notice_blocked || control_pipe_blocked; }
-BOOL aes_frames_wait_display(void) { return (frame_display_blocked || control_display_blocked) && !frame_overlays; }
-BOOL aes_frames_suspend(void)
+BOOL aes_frames_suspended(AESGLOBAL *global)
 {
-    if (frame_overlays == 0xffffffffUL) return FALSE;
-    frame_overlays++; return TRUE;
+    AES_WINDOW_STATE *retained = window_state(global);
+    return retained->frame_overlays != 0;
 }
-void aes_frames_resume(void) { if (frame_overlays) frame_overlays--; }
-BOOL aes_frames_dialog(BOOL begin)
+BOOL aes_windows_pending(AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
+    return retained->frame_notice_blocked || retained->control_pipe_blocked;
+}
+BOOL aes_frames_wait_display(AESGLOBAL *global)
+{
+    AES_WINDOW_STATE *retained = window_state(global);
+    return (retained->frame_display_blocked || retained->control_display_blocked) && !retained->frame_overlays;
+}
+BOOL aes_frames_suspend(AESGLOBAL *global)
+{
+    AES_WINDOW_STATE *retained = window_state(global);
+    if (retained->frame_overlays == 0xffffffffUL) return FALSE;
+    retained->frame_overlays++; return TRUE;
+}
+void aes_frames_resume(AESGLOBAL *global)
+{
+    AES_WINDOW_STATE *retained = window_state(global);
+    if (retained->frame_overlays) retained->frame_overlays--;
+}
+BOOL aes_frames_dialog(BOOL begin, AESGLOBAL *global)
+{
+    AES_WINDOW_STATE *retained = window_state(global);
     if (begin) {
-        if (!aes_frames_suspend()) return FALSE;
-        frame_dialogs++;
-    } else if (frame_dialogs) { frame_dialogs--; aes_frames_resume(); }
+        if (!aes_frames_suspend(global)) return FALSE;
+        retained->frame_dialogs++;
+    } else if (retained->frame_dialogs) { retained->frame_dialogs--; aes_frames_resume(global); }
     return TRUE;
 }
-BOOL aes_frames_registered(void)
+BOOL aes_frames_registered(AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     short i;
-    if (aes_desktop_registered()) return TRUE;
+    if (aes_desktop_registered(global)) return TRUE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
-        if (windows[i].id && windows[i].open && windows[i].kind) return TRUE;
+        if (retained->entries[i].id && retained->entries[i].open && retained->entries[i].kind) return TRUE;
     return FALSE;
 }
-BOOL aes_frames_listening(void) { return !frame_notice_blocked && !frame_overlays && aes_frames_registered(); }
-
-void aes_windows_reset(void)
+BOOL aes_frames_listening(AESGLOBAL *global)
 {
-    short i;
-    for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
-        discard_regions(&windows[i].regions);
-        windows[i].id = 0;
-    }
-    frame_notice_blocked = frame_display_blocked = FALSE;
-    control_display_blocked = control_pipe_blocked = FALSE;
-    frame_overlays = frame_dialogs = 0;
+    AES_WINDOW_STATE *retained = window_state(global);
+    return !retained->frame_notice_blocked && !retained->frame_overlays && aes_frames_registered(global);
 }
 
-static struct gem_window *lookup(short id, short *global)
+void aes_windows_reset(AESGLOBAL *global)
+{
+    AES_WINDOW_STATE *retained = window_state(global);
+    short i;
+    for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
+        discard_regions(&retained->entries[i].regions);
+        retained->entries[i].id = 0;
+    }
+    retained->frame_notice_blocked = retained->frame_display_blocked = FALSE;
+    retained->control_display_blocked = retained->control_pipe_blocked = FALSE;
+    retained->frame_overlays = retained->frame_dialogs = 0;
+}
+
+static struct gem_window *lookup(short id, AESGLOBAL *global)
 {
     short i;
     if (id <= 0 || aes_application_session(global) < 0) return NULL;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++)
-        if (windows[i].id == id) return &windows[i];
+        if (window_state(global)->entries[i].id == id) return &window_state(global)->entries[i];
     return NULL;
 }
 
@@ -124,17 +138,17 @@ static void output(const GRECT *r, short *x, short *y, short *w, short *h)
     if (h) *h = r->g_h;
 }
 
-short mt_wind_find(short x, short y, short *global)
+short mt_wind_find(short x, short y, AESGLOBAL *global)
 {
     LONG identifier;
     if (aes_application_session(global) < 0) return -1;
     identifier = cuis_call6(CUIS_WINDOW_AT, (QUAD)x, (QUAD)y, 0, 0, 0, 0);
     return identifier >= 0 && identifier <= 32767 ? (short)identifier : -1;
 }
-short wind_find(short x, short y) { return mt_wind_find(x,y,aes_global); }
+
 
 short mt_wind_calc(short type, short kind, short x, short y, short w, short h,
-                   short *ox, short *oy, short *ow, short *oh, short *global)
+                   short *ox, short *oy, short *ow, short *oh, AESGLOBAL *global)
 {
     GRECT r;
     WM_FRAME_INSETS insets;
@@ -155,13 +169,9 @@ short mt_wind_calc(short type, short kind, short x, short y, short w, short h,
     output(&r, ox, oy, ow, oh);
     return 1;
 }
-short wind_calc(short type, short kind, short x, short y, short w, short h,
-                short *ox, short *oy, short *ow, short *oh)
-{
-    return mt_wind_calc(type, kind, x, y, w, h, ox, oy, ow, oh, aes_global);
-}
 
-static BOOL prepare_window(struct gem_window *window, const GRECT *border, WM_FRAME_STATE *state, WORD *global)
+
+static BOOL prepare_window(struct gem_window *window, const GRECT *border, WM_FRAME_STATE *state, AESGLOBAL *global)
 {
     if (!aes_frame_prepare(state,window->kind,border,window->name,window->info,global)) return FALSE;
     state->hslide = window->hslide; state->vslide = window->vslide;
@@ -173,11 +183,12 @@ static BOOL prepare_window(struct gem_window *window, const GRECT *border, WM_FR
     }
     return TRUE;
 }
-static BOOL paint_window(struct gem_window *window, short *global)
+static BOOL paint_window(struct gem_window *window, AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     WM_FRAME_STATE state;
     if (!window->kind || !window->open) return TRUE;
-    if (frame_overlays) {
+    if (retained->frame_overlays) {
         LONG session = aes_application_session(global);
         return session >= 0 && cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)window->current.g_x,
             (QUAD)window->current.g_y,window->current.g_w+2,window->current.g_h+2,0) == E_OK;
@@ -186,8 +197,9 @@ static BOOL paint_window(struct gem_window *window, short *global)
         aes_frame_paint_control(window->native,&state,window->control,window->control_selected,global);
 }
 
-static short local_wind_create(short kind, short x, short y, short w, short h, short *global)
+static short local_wind_create(short kind, short x, short y, short w, short h, AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained;
     struct gem_window *window;
     short i;
     LONG native, identifier;
@@ -196,7 +208,8 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     WORD top[NUM_ELEM], bottom[NUM_ELEM];
     LONG value;
     if (((UWORD)kind & ~(NAME|INFO|CLOSER|FULLER|MOVER|SIZER|ARROW_GADGETS|VSLIDE|HSLIDE)) || aes_application_session(global) < 0) return -1;
-    for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
+    retained = window_state(global);
+    for (i = 0; i < GEM_WINDOW_LIMIT && retained->entries[i].id; i++) ;
     if (i == GEM_WINDOW_LIMIT) return -1;
     if ((kind && !aes_frame_metrics(&wbox,&hbox,&width,&height,global)) ||
         !wm_frame_insets(kind,wbox,hbox,TRUE,width,height,&insets)) return -1;
@@ -208,7 +221,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
         if (value != EFILNF && (value < 0 || value > 65535)) return -1;
         bottom[i] = value == EFILNF ? aes_bottom_colours[i] : (WORD)value;
     }
-    for (i = 0; i < GEM_WINDOW_LIMIT && windows[i].id; i++) ;
+    for (i = 0; i < GEM_WINDOW_LIMIT && retained->entries[i].id; i++) ;
     /* GEM starts closed with zero current/previous geometry. CUIS requires
      * positive extents even for hidden metadata, so use an invisible placeholder. */
     native = cuis_call6(CUIS_WINDOW_CREATE, 0, 0, 1, 1, 0, 0);
@@ -223,7 +236,7 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
         (void)cuis_call6(CUIS_WINDOW_DESTROY, native, 0, 0, 0, 0, 0);
         return -1;
     }
-    window = &windows[i];
+    window = &retained->entries[i];
     memcpy(window->top_colours,top,sizeof(top));
     memcpy(window->bottom_colours,bottom,sizeof(bottom));
     window->native = native;
@@ -242,12 +255,9 @@ static short local_wind_create(short kind, short x, short y, short w, short h, s
     window->id = (short)identifier;
     return window->id;
 }
-short wind_create(short kind, short x, short y, short w, short h)
-{
-    return mt_wind_create(kind, x, y, w, h, aes_global);
-}
 
-static BOOL configure(struct gem_window *window, short x, short y, short w, short h, short *global)
+
+static BOOL configure(struct gem_window *window, short x, short y, short w, short h, AESGLOBAL *global)
 {
     WM_FRAME_STATE state;
     GRECT border = { x,y,w,h };
@@ -257,7 +267,7 @@ static BOOL configure(struct gem_window *window, short x, short y, short w, shor
         cuis_call6(CUIS_WINDOW_CONFIGURE, window->native,
                      (QUAD)x, (QUAD)y, w, h, 0) == E_OK;
 }
-static short local_wind_open(short id, short x, short y, short w, short h, short *global)
+static short local_wind_open(short id, short x, short y, short w, short h, AESGLOBAL *global)
 {
     struct gem_window *window = lookup(id, global);
     GRECT current, previous;
@@ -278,11 +288,8 @@ static short local_wind_open(short id, short x, short y, short w, short h, short
     }
     return 1;
 }
-short wind_open(short id, short x, short y, short w, short h)
-{
-    return mt_wind_open(id, x, y, w, h, aes_global);
-}
-static short local_wind_close(short id, short *global)
+
+static short local_wind_close(short id, AESGLOBAL *global)
 {
     struct gem_window *window = lookup(id, global);
     if (!window || !window->open ||
@@ -295,8 +302,8 @@ static short local_wind_close(short id, short *global)
     discard_regions(&window->regions);
     return 1;
 }
-short wind_close(short id) { return mt_wind_close(id, aes_global); }
-static short local_wind_delete(short id, short *global)
+
+static short local_wind_delete(short id, AESGLOBAL *global)
 {
     struct gem_window *window = lookup(id, global);
     /* Native destruction hides an open window and reclaims its input queues. */
@@ -305,9 +312,9 @@ static short local_wind_delete(short id, short *global)
     window->id = 0;
     return 1;
 }
-short wind_delete(short id) { return mt_wind_delete(id, aes_global); }
 
-static short visible_work(struct gem_window *window, BOOL first, GRECT *out, short *global)
+
+static short visible_work(struct gem_window *window, BOOL first, GRECT *out, AESGLOBAL *global)
 {
     LONG state[4], result, left, top, right, bottom, edge;
     ULONG index;
@@ -321,7 +328,7 @@ static short visible_work(struct gem_window *window, BOOL first, GRECT *out, sho
                 (uintptr_t)&state[2],(uintptr_t)&state[3]);
             if (result < 0) { discard_regions(&snapshot); return 0; }
             if (!result) break;
-            item = aes_temporary_alloc(sizeof(*item));
+            item = aes_temporary_alloc(sizeof(*item),global);
             if (!item) { discard_regions(&snapshot); return 0; }
             item->next = NULL;
             item->bounds[0] = state[0]; item->bounds[1] = state[1];
@@ -359,15 +366,16 @@ static short visible_work(struct gem_window *window, BOOL first, GRECT *out, sho
 }
 
 static LONG publish_notice(struct gem_window *window, LONG session, LONG kind,
-                            short message[8], short *global)
+                            short message[8], AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     WM_FRAME_STATE state;
     LONG result;
     BOOL frame = kind == CUIS_NOTICE_REDRAW && window->kind && window->open;
     if (!frame) return cuis_call6(CUIS_NOTICE_PUBLISH,session,window->native,kind,
                                  (uintptr_t)message,sizeof(short)*8,0);
     result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
-    if (result == EAGAIN) { frame_display_blocked = TRUE; return result; }
+    if (result == EAGAIN) { retained->frame_display_blocked = TRUE; return result; }
     if (result != E_OK) return result;
     if (!prepare_window(window,&window->current,&state,global)) {
         result = EACCDN; goto done;
@@ -388,8 +396,9 @@ done:
 /* Border input is serviced without grabbing the ordinary button history.
  * CUIS keeps capture and cancels stale topology/ownership; this private
  * watch-box state uses the native frame's objects and SELECTED appearance. */
-static LONG flush_control(struct gem_window *window, LONG session)
+static LONG flush_control(struct gem_window *window, LONG session, AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     WORD message[8] = { 0,0,0,0,0,0,0,0 };
     LONG result;
     if (!window->control_message) return E_OK;
@@ -397,12 +406,12 @@ static LONG flush_control(struct gem_window *window, LONG session)
     message[4] = window->control_rectangle.g_x; message[5] = window->control_rectangle.g_y;
     message[6] = window->control_rectangle.g_w; message[7] = window->control_rectangle.g_h;
     result = cuis_call6(CUIS_STREAM_WRITE,session,(uintptr_t)message,16,0,(UQUAD)session+1,0);
-    if (result == EAGAIN) { control_pipe_blocked = TRUE; return E_OK; }
+    if (result == EAGAIN) { retained->control_pipe_blocked = TRUE; return E_OK; }
     if (result != 16) return result < 0 ? result : EACCDN;
     window->control_message = 0;
     return E_OK;
 }
-static LONG service_drag(struct gem_window *window, const WM_FRAME_STATE *state, LONG session, WORD *global)
+static LONG service_drag(struct gem_window *window, const WM_FRAME_STATE *state, LONG session, AESGLOBAL *global)
 {
     BOOL sizing = window->control == W_SIZER;
     window->control_selected = TRUE;
@@ -415,9 +424,9 @@ static LONG service_drag(struct gem_window *window, const WM_FRAME_STATE *state,
             window->control == W_VELEV ? WM_VSLID : WM_MOVED;
     window->control = 0; window->control_selected = FALSE;
     (void)paint_window(window,global);
-    return flush_control(window,session);
+    return flush_control(window,session,global);
 }
-static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
+static LONG poll_drag(struct gem_window *window, LONG session, AESGLOBAL *global)
 {
     LONG current[4], event[4], result;
     WORD wbox, hbox, width, height, n, value;
@@ -452,11 +461,11 @@ static LONG poll_drag(struct gem_window *window, LONG session, WORD *global)
                              &window->control_rectangle)))
             window->control_message = sizing ? WM_SIZED : WM_MOVED;
         window->control = 0;
-        return flush_control(window,session);
+        return flush_control(window,session,global);
     }
     return E_OK;
 }
-static LONG arrow_message(struct gem_window *window, LONG session)
+static LONG arrow_message(struct gem_window *window, LONG session, AESGLOBAL *global)
 {
     LONG now = aes_clock_ticks();
     if (now < 0) return now;
@@ -464,41 +473,42 @@ static LONG arrow_message(struct gem_window *window, LONG session)
     window->control_message = WM_ARROWED;
     window->control_rectangle.g_x = window->control_action;
     window->control_rectangle.g_y = window->control_rectangle.g_w = window->control_rectangle.g_h = 0;
-    return flush_control(window,session);
+    return flush_control(window,session,global);
 }
-static LONG service_controls(LONG session, WORD *global, BOOL polling)
+static LONG service_controls(LONG session, AESGLOBAL *global, BOOL polling)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     short i, n, object;
     LONG result = E_OK, event[4];
     BOOL selected, completed;
     WM_FRAME_STATE state;
     struct gem_window *window;
-    control_display_blocked = control_pipe_blocked = FALSE;
+    retained->control_display_blocked = retained->control_pipe_blocked = FALSE;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
-        window = &windows[i];
+        window = &retained->entries[i];
         if (!window->id) continue;
-        result = flush_control(window,session);
+        result = flush_control(window,session,global);
         if (result < 0) return result;
     }
-    if (control_pipe_blocked) return E_OK;
-    if (!aes_controls_listening()) return E_OK;
+    if (retained->control_pipe_blocked) return E_OK;
+    if (!aes_controls_listening(global)) return E_OK;
     result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
-    if (result == EAGAIN) { control_display_blocked = TRUE; return E_OK; }
+    if (result == EAGAIN) { retained->control_display_blocked = TRUE; return E_OK; }
     if (result != E_OK) return result;
     for (i = 0; i < GEM_WINDOW_LIMIT; i++) {
-        window = &windows[i];
+        window = &retained->entries[i];
         if (!window->id) continue;
         /* A poll retains the captured press, without painting or waiting.
          * The next blocking service resumes from the original anchor. */
         if (drag_control(window->control)) {
             if (polling) {
                 result = poll_drag(window,session,global);
-                if (result < 0 || control_pipe_blocked) goto done;
+                if (result < 0 || retained->control_pipe_blocked) goto done;
                 continue;
             }
             if (prepare_window(window,&window->current,&state,global)) {
                 result = service_drag(window,&state,session,global);
-                if (result < 0 || control_pipe_blocked) goto done;
+                if (result < 0 || retained->control_pipe_blocked) goto done;
             } else window->control = 0;
         }
         /* Bounded even under a continuously moving producer. */
@@ -532,11 +542,11 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
                 window->drag_x = event[0]; window->drag_y = event[1];
                 if (polling) {
                     result = poll_drag(window,session,global);
-                    if (result < 0 || control_pipe_blocked) goto done;
+                    if (result < 0 || retained->control_pipe_blocked) goto done;
                     break;
                 }
                 result = service_drag(window,&state,session,global);
-                if (result < 0 || control_pipe_blocked) goto done;
+                if (result < 0 || retained->control_pipe_blocked) goto done;
                 continue;
             }
             if (repeat_control(window->control)) {
@@ -553,8 +563,8 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
                     }
                 }
                 if (completed) {
-                    result = arrow_message(window,session);
-                    if (result < 0 || control_pipe_blocked) goto done;
+                    result = arrow_message(window,session,global);
+                    if (result < 0 || retained->control_pipe_blocked) goto done;
                 }
                 if (event[2] != 1) window->control = 0;
                 continue;
@@ -576,8 +586,8 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
                     if (!completed) continue;
                 }
             }
-            result = flush_control(window,session);
-            if (result < 0 || control_pipe_blocked) goto done;
+            result = flush_control(window,session,global);
+            if (result < 0 || retained->control_pipe_blocked) goto done;
         }
         /* Read cancellation/release before generating any repeat. Only
          * repeat after draining the bounded queue, at most once per native
@@ -587,8 +597,8 @@ static LONG service_controls(LONG session, WORD *global, BOOL polling)
             LONG now = aes_clock_ticks();
             if (now < 0) { result = now; goto done; }
             if ((((ULONG)now-(ULONG)window->arrow_tick) & 0x7fffffffUL) >= 2) {
-                result = arrow_message(window,session);
-                if (result < 0 || control_pipe_blocked) goto done;
+                result = arrow_message(window,session,global);
+                if (result < 0 || retained->control_pipe_blocked) goto done;
             }
         }
     }
@@ -598,16 +608,17 @@ done:
     return result;
 }
 
-static LONG window_messages(LONG session, short *global, BOOL polling)
+static LONG window_messages(LONG session, AESGLOBAL *global, BOOL polling)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     LONG native, identifier, kind, result;
     short message[8], i, j;
     struct gem_window *window;
     GRECT work;
-    if (frame_overlays) return E_OK;
-    frame_notice_blocked = frame_display_blocked = FALSE;
+    if (retained->frame_overlays) return E_OK;
+    retained->frame_notice_blocked = retained->frame_display_blocked = FALSE;
     result = aes_desktop_dispatch(global);
-    if (result == EAGAIN) { frame_display_blocked = TRUE; return E_OK; }
+    if (result == EAGAIN) { retained->frame_display_blocked = TRUE; return E_OK; }
     if (result < 0) return result;
     result = service_controls(session,global,polling);
     if (result < 0) return result;
@@ -616,9 +627,9 @@ static LONG window_messages(LONG session, short *global, BOOL polling)
         kind = cuis_call6(CUIS_NOTICE_PEEK, session, (uintptr_t)&native, (uintptr_t)&identifier, 0, 0, 0);
         if (kind <= 0) return kind;
         for (j = 0; j < GEM_WINDOW_LIMIT; j++)
-            if (windows[j].id == identifier && windows[j].native == native) break;
+            if (retained->entries[j].id == identifier && retained->entries[j].native == native) break;
         if (j == GEM_WINDOW_LIMIT) return EACCDN;
-        window = &windows[j];
+        window = &retained->entries[j];
         for (j = 0; j < 8; j++) message[j] = 0;
         message[3] = window->id;
         if (kind == CUIS_NOTICE_REDRAW) {
@@ -634,36 +645,37 @@ static LONG window_messages(LONG session, short *global, BOOL polling)
         result = publish_notice(window,session,kind,message,global);
         /* A full pipe already has enough data to satisfy every legal read.
          * Leave the notice pending and let the caller free pipe capacity. */
-        if (result == EAGAIN) { frame_notice_blocked = TRUE; return E_OK; }
+        if (result == EAGAIN) { retained->frame_notice_blocked = TRUE; return E_OK; }
         if (result < 0) return result;
     }
     /* Exhausting the pump budget is not proof that all notices were flushed.
      * A lifecycle packet waits for a later pass to observe the empty queue. */
-    frame_notice_blocked = TRUE;
+    retained->frame_notice_blocked = TRUE;
     return E_OK;
 }
 
-LONG aes_window_messages(LONG session, short *global)
+LONG aes_window_messages(LONG session, AESGLOBAL *global)
 {
     return window_messages(session,global,FALSE);
 }
 
-LONG aes_window_messages_poll(LONG session, short *global)
+LONG aes_window_messages_poll(LONG session, AESGLOBAL *global)
 {
+    AES_WINDOW_STATE *retained = window_state(global);
     LONG result;
-    if (frame_overlays) return E_OK;
-    if (!aes_frames_registered()) return window_messages(session,global,TRUE);
+    if (retained->frame_overlays) return E_OK;
+    if (!aes_frames_registered(global)) return window_messages(session,global,TRUE);
     /* APR_NOWAIT may paint only after a nonblocking acquisition. Nested
      * frame/renderer locks then borrow our already-owned display scope. */
     result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,0,0,0,0);
-    if (result == EAGAIN) { frame_display_blocked = TRUE; return E_OK; }
+    if (result == EAGAIN) { retained->frame_display_blocked = TRUE; return E_OK; }
     if (result != E_OK) return result;
     result = window_messages(session,global,TRUE);
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) return EACCDN;
     return result;
 }
 
-short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, short *global)
+short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d, AESGLOBAL *global)
 {
     struct gem_window *window;
     GRECT r;
@@ -791,10 +803,7 @@ short mt_wind_get(short id, short field, short *a, short *b, short *c, short *d,
     output(&r, a, b, c, d);
     return 1;
 }
-short wind_get(short id, short field, short *a, short *b, short *c, short *d)
-{
-    return mt_wind_get(id, field, a, b, c, d, aes_global);
-}
+
 static WORD *slider_field(struct gem_window *window, WORD field)
 {
     switch (field) {
@@ -805,7 +814,7 @@ static WORD *slider_field(struct gem_window *window, WORD field)
     }
     return NULL;
 }
-static short local_wind_set(short id, short field, short a, short b, short c, short d, short *global)
+static short local_wind_set(short id, short field, short a, short b, short c, short d, AESGLOBAL *global)
 {
     struct gem_window *window = lookup(id, global);
     WORD *slot, old;
@@ -871,12 +880,9 @@ static short local_wind_set(short id, short field, short a, short b, short c, sh
     }
     return 0; /* Decorated fields migrate with the frame renderer. */
 }
-short wind_set(short id, short field, short a, short b, short c, short d)
-{
-    return mt_wind_set(id, field, a, b, c, d, aes_global);
-}
 
-short mt_wind_update(short code, short *global)
+
+short mt_wind_update(short code, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
     ULONG function = CUIS_DISPLAY_LOCK;
@@ -890,9 +896,9 @@ short mt_wind_update(short code, short *global)
     if (code != BEG_UPDATE && code != (BEG_UPDATE | NO_BLOCK)) return 0;
     return cuis_call6(function, session, 1, !(code & NO_BLOCK), 0, 0, 0) == E_OK ? 1 : 0;
 }
-short wind_update(short code) { return mt_wind_update(code, aes_global); }
 
-short mt_wind_create(short kind, short x, short y, short w, short h, short *global)
+
+short mt_wind_create(short kind, short x, short y, short w, short h, AESGLOBAL *global)
 {
     short result;
     if (!mt_wind_update(BEG_UPDATE, global)) return -1;
@@ -901,7 +907,7 @@ short mt_wind_create(short kind, short x, short y, short w, short h, short *glob
     return result;
 }
 
-short mt_wind_open(short id, short x, short y, short w, short h, short *global)
+short mt_wind_open(short id, short x, short y, short w, short h, AESGLOBAL *global)
 {
     short result;
     if (!mt_wind_update(BEG_UPDATE, global)) return 0;
@@ -910,7 +916,7 @@ short mt_wind_open(short id, short x, short y, short w, short h, short *global)
     return result;
 }
 
-short mt_wind_close(short id, short *global)
+short mt_wind_close(short id, AESGLOBAL *global)
 {
     short result;
     if (!mt_wind_update(BEG_UPDATE, global)) return 0;
@@ -919,7 +925,7 @@ short mt_wind_close(short id, short *global)
     return result;
 }
 
-short mt_wind_delete(short id, short *global)
+short mt_wind_delete(short id, AESGLOBAL *global)
 {
     short result;
     if (!mt_wind_update(BEG_UPDATE, global)) return 0;
@@ -928,7 +934,7 @@ short mt_wind_delete(short id, short *global)
     return result;
 }
 
-short mt_wind_set(short id, short field, short a, short b, short c, short d, short *global)
+short mt_wind_set(short id, short field, short a, short b, short c, short d, AESGLOBAL *global)
 {
     short result;
     if (!mt_wind_update(BEG_UPDATE, global)) return 0;
@@ -937,7 +943,7 @@ short mt_wind_set(short id, short field, short a, short b, short c, short d, sho
     return result;
 }
 
-short mt_wind_set_str(short id, short field, const char *text, short *global)
+short mt_wind_set_str(short id, short field, const char *text, AESGLOBAL *global)
 {
     struct gem_window *window = lookup(id,global);
     char *old;
@@ -956,12 +962,9 @@ short mt_wind_set_str(short id, short field, const char *text, short *global)
     if (!mt_wind_update(END_UPDATE,global)) ok = FALSE;
     return ok ? 1 : 0;
 }
-short wind_set_str(short id, short field, const char *text)
-{
-    return mt_wind_set_str(id,field,text,aes_global);
-}
 
-LONG aes_windows_reset_policy(short *global, BOOL polling, LONG token)
+
+LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token)
 {
     LONG session = aes_application_session(global), result;
     if (session < 0) return session;
@@ -977,27 +980,25 @@ LONG aes_windows_reset_policy(short *global, BOOL polling, LONG token)
         if (polling || token > 0) (void)cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0);
         return result;
     }
-    aes_windows_reset(); aes_graphics_wind_new();
+    aes_windows_reset(global); aes_graphics_wind_new(global);
     return E_OK;
 }
-short mt_wind_new(short *global)
+short mt_wind_new(AESGLOBAL *global)
 {
     return aes_windows_reset_policy(global,FALSE,0) == E_OK;
 }
-short wind_new(void) { return mt_wind_new(aes_global); }
-short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, short *global)
+
+short mt_wind_set_ptr_int(short id, short field, void *pointer, short value, AESGLOBAL *global)
 {
     if (field == WF_NEWDESK) return id == 0 ? aes_desktop_set(pointer,value,global) : 0;
     if (field == WF_NAME || field == WF_INFO) return mt_wind_set_str(id,field,pointer,global);
     return 0;
 }
-short wind_set_ptr_int(short id, short field, void *pointer, short value)
-{ return mt_wind_set_ptr_int(id,field,pointer,value,aes_global); }
-short mt_wind_set_ptr(short id, short field, void *pointer, short *global)
+
+short mt_wind_set_ptr(short id, short field, void *pointer, AESGLOBAL *global)
 { return mt_wind_set_ptr_int(id,field,pointer,0,global); }
-short wind_set_ptr(short id, short field, void *pointer)
-{ return mt_wind_set_ptr(id,field,pointer,aes_global); }
-short mt_wind_get_ptr(short id, short field, void **pointer, short *global)
+
+short mt_wind_get_ptr(short id, short field, void **pointer, AESGLOBAL *global)
 {
     struct gem_window *window;
     void *value;
@@ -1015,42 +1016,33 @@ short mt_wind_get_ptr(short id, short field, void **pointer, short *global)
     else return 0;
     *pointer = value; return 1;
 }
-short wind_get_ptr(short id, short field, void **pointer)
-{ return mt_wind_get_ptr(id,field,pointer,aes_global); }
-short mt_wind_get_int(short id, short field, short *value, short *global)
+
+short mt_wind_get_int(short id, short field, short *value, AESGLOBAL *global)
 { return mt_wind_get(id,field,value,NULL,NULL,NULL,global); }
-short wind_get_int(short id, short field, short *value)
-{ return mt_wind_get_int(id,field,value,aes_global); }
-short mt_wind_set_int(short id, short field, short value, short *global)
+
+short mt_wind_set_int(short id, short field, short value, AESGLOBAL *global)
 { return mt_wind_set(id,field,value,0,0,0,global); }
-short wind_set_int(short id, short field, short value)
-{ return mt_wind_set_int(id,field,value,aes_global); }
-short mt_wind_get_grect(short id, short field, GRECT *rect, short *global)
+
+short mt_wind_get_grect(short id, short field, GRECT *rect, AESGLOBAL *global)
 {
     GRECT result = { 0,0,0,0 };
     if (!rect || !mt_wind_get(id,field,&result.g_x,&result.g_y,&result.g_w,&result.g_h,global)) return 0;
     *rect = result; return 1;
 }
-short wind_get_grect(short id, short field, GRECT *rect)
-{ return mt_wind_get_grect(id,field,rect,aes_global); }
-short mt_wind_set_grect(short id, short field, const GRECT *rect, short *global)
+
+short mt_wind_set_grect(short id, short field, const GRECT *rect, AESGLOBAL *global)
 { return rect ? mt_wind_set(id,field,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : 0; }
-short wind_set_grect(short id, short field, const GRECT *rect)
-{ return mt_wind_set_grect(id,field,rect,aes_global); }
-short mt_wind_create_grect(short kind, const GRECT *rect, short *global)
+
+short mt_wind_create_grect(short kind, const GRECT *rect, AESGLOBAL *global)
 { return rect ? mt_wind_create(kind,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : -1; }
-short wind_create_grect(short kind, const GRECT *rect)
-{ return mt_wind_create_grect(kind,rect,aes_global); }
-short mt_wind_open_grect(short id, const GRECT *rect, short *global)
+
+short mt_wind_open_grect(short id, const GRECT *rect, AESGLOBAL *global)
 { return rect ? mt_wind_open(id,rect->g_x,rect->g_y,rect->g_w,rect->g_h,global) : 0; }
-short wind_open_grect(short id, const GRECT *rect)
-{ return mt_wind_open_grect(id,rect,aes_global); }
-short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, short *global)
+
+short mt_wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out, AESGLOBAL *global)
 {
     GRECT result;
     if (!in || !out || !mt_wind_calc(type,kind,in->g_x,in->g_y,in->g_w,in->g_h,
         &result.g_x,&result.g_y,&result.g_w,&result.g_h,global)) return 0;
     *out = result; return 1;
 }
-short wind_calc_grect(short type, short kind, const GRECT *in, GRECT *out)
-{ return mt_wind_calc_grect(type,kind,in,out,aes_global); }

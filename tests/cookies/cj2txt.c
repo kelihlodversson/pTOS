@@ -11,7 +11,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <inttypes.h>
-#include <osbind.h>
+#include <mint/osbind.h>
 #include "nat_feat.h"
 
 struct cookie

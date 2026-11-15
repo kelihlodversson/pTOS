@@ -1,12 +1,13 @@
 /* Internal interface shared by native AES and libaes drawing units. */
+#include "aescontext.h"
 #ifndef GEMRENDER_H
 #define GEMRENDER_H
 #include "emutos.h"
 #include "obdefs.h"
 
-void ob_render_object(OBJECT *tree, WORD object, WORD x, WORD y);
-void ob_render_change(OBJECT *tree, WORD object, UWORD state, WORD redraw);
-BOOL ob_render_cancelled(OBJECT *tree);
+void ob_render_object(AES_RENDER_PARAM OBJECT *tree, WORD object, WORD x, WORD y);
+void ob_render_change(AES_RENDER_PARAM OBJECT *tree, WORD object, UWORD state, WORD redraw);
+BOOL ob_render_cancelled(AES_RENDER_PARAM OBJECT *tree);
 
 /* Native GSX caches, initialised by gsx_start() and used by shared painting.
  * The userspace binding substitutes fields of its per-call context. */

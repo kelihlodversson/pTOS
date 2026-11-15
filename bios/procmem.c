@@ -3,7 +3,7 @@
  *
  * See include/procmem.h for the contract.  The window is PROCMEM_WINDOW_BYTES
  * of virtual address space at PROCMEM_WINDOW_BASE (doc/mmu-address-space.txt:
- * 0x00200000 - 0x003fffff of the user half), below USER_VA_LIMIT, so any
+ * 0x0e000000 - 0x0e1fffff of the user half), below USER_VA_LIMIT, so any
  * address in it fits the 32-bit GEMDOS ABI fields.  Its physical backing is
  * one contiguous block of pages taken from the page allocator wherever it
  * happens to lie; aspace.c maps it (supervisor-only) into the kernel's own
@@ -36,10 +36,11 @@
 typedef char window_is_below_limit[
     (PROCMEM_WINDOW_BASE + PROCMEM_WINDOW_BYTES <= USER_VA_LIMIT) ? 1 : -1];
 
-/* The documented program image region starts past the process window and
+/* The default program image region does not overlap the process window and
  * the stack ends at the top of the user half. */
-typedef char image_follows_window[
-    (USER_IMAGE_BASE >= PROCMEM_WINDOW_BASE + PROCMEM_WINDOW_BYTES) ? 1 : -1];
+typedef char image_outside_window[
+    (USER_IMAGE_BASE + USER_IMAGE_SIZE <= PROCMEM_WINDOW_BASE ||
+     USER_IMAGE_BASE >= PROCMEM_WINDOW_BASE + PROCMEM_WINDOW_BYTES) ? 1 : -1];
 typedef char stack_below_limit[
     (USER_STACK_TOP <= USER_VA_LIMIT &&
      USER_STACK_SIZE <= USER_STACK_TOP &&   /* before subtracting: no wrap */

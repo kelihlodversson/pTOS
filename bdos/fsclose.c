@@ -106,6 +106,7 @@ static LONG close_once(volatile WORD h, BOOL cleanup, BOOL staged, FS_CLOSE_REPO
     if (setjmp(errbuf)) {
         if (consumed) panic("filesystem: consuming close finalizer escaped");
         error=errcode; out->disk_error=TRUE; out->drive=errdrv; out->rw=rwerr;
+        out->first_disk_error=TRUE; out->first_drive=errdrv; out->first_rw=rwerr;
     } else {
 #if CONF_WITH_X86_64_MEMTEST
         if (h==test_exhaust_handle) {
@@ -163,14 +164,21 @@ static LONG bounded_close(WORD h, BOOL cleanup, BOOL staged, BOOL dispose, FS_CL
 {
     FS_CLOSE_REPORT step;
     LONG first=0;
+    BOOL first_disk=FALSE;
+    int first_drive=0;
+    LONG first_rw=0;
     UWORD tries;
     for (tries=0;tries<=BLKDEVNUM;tries++) {
         close_once(h,cleanup,staged,&step);
-        if (!tries) first=step.error;
+        if (!tries) {
+            first=step.error;
+            first_disk=step.disk_error;first_drive=step.drive;first_rw=step.rw;
+        }
         if (step.disk_error) mark_bcbs_invalid(step.drive);
         if (step.disposition==FS_CLOSE_CONSUMED || !step.disk_error) break;
     }
     *out=step; out->error=first;
+    out->first_disk_error=first_disk; out->first_drive=first_drive; out->first_rw=first_rw;
     if (dispose && out->disposition==FS_CLOSE_RETAINED) {
         FTAB *f=&sft[out->token.handle-NUMSTD];
         /* Retained EACCDN from a recursive numeric close is not an independent

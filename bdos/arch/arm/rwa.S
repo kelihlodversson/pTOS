@@ -149,7 +149,13 @@ C_SYM(termuser):
         .bss
         .even
 
+#if CONF_WITH_BINFMT
+        /* Interpreter launch/argument construction nests filesystem calls.
+         * GCC 16's frames overflow the classic 2000-byte BDOS stack. */
+        .ds.b   8192
+#else
         .ds.w   1000
+#endif
         // AAPCS requires the stack to be 8-byte aligned at every public
         // C function call boundary; .even here only guarantees 2 bytes
         // (a leftover from the m68k original). GCC relies on the

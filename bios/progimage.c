@@ -3,7 +3,7 @@
  *               configurations)
  *
  * See include/progimage.h for the contract.  The ELF loader (bdos/elfld.c)
- * builds a layout from a file, relocated into the image window, and
+ * builds a layout from a file, preserving its link address where possible, and
  * kproc_set_loaded_image() maps it with layout_load(); the rules it must
  * satisfy are checked here.  There is no program embedded in the kernel on
  * these configurations (EmuCON is a program, CONF_EXTERNAL_CLI), so
@@ -26,6 +26,7 @@
 #include "string.h"
 #include "procmem.h"
 #include "progimage.h"
+#include "userlayout.h"
 
 #define PAGE            USER_PAGE_SIZE
 #define PF_X            1
@@ -40,8 +41,24 @@ BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout)
 
 BOOL layout_valid(const PROG_LAYOUT *layout, BOOL strict)
 {
-    return layout_valid_in(layout, strict, USER_IMAGE_BASE,
-                                      USER_IMAGE_BASE + USER_IMAGE_SIZE);
+    VADDR first = USER_VA_LIMIT, end;
+    ULONG i;
+
+    if (!layout_valid_in(layout, strict, USER_ALLOC_MIN, USER_ALLOC_LIMIT))
+        return FALSE;
+    for (i = 0; i < layout->nseg; i++) {
+        if (layout->seg[i].vaddr < first)
+            first = layout->seg[i].vaddr;
+        if (layout->seg[i].vaddr + layout->seg[i].memsz > layout->end)
+            return FALSE;
+    }
+    first &= ~(USER_PAGE_SIZE - 1);
+    if (layout->end > USER_ALLOC_LIMIT)
+        return FALSE;
+    end = (layout->end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
+    if (end < first || end > USER_ALLOC_LIMIT - USER_IMAGE_SLACK)
+        return FALSE;
+    return user_layout_range(first, end + USER_IMAGE_SLACK - first, USER_ALLOC_LIMIT);
 }
 
 BOOL layout_valid_in(const PROG_LAYOUT *layout, BOOL strict, VADDR window_lo, VADDR window_hi)

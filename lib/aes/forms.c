@@ -1,15 +1,14 @@
 /* Standard modal GEM forms in the application's address space.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "application.h"
 #include "transport.h"
 #include "modal_context.h"
 #include "animation.h"
 
-MODAL_CONTEXT *aes_modal;
 
-BOOL aes_modal_enter(void)
+BOOL aes_modal_enter(MODAL_CONTEXT *aes_modal)
 {
     MODAL_CONTEXT *c = aes_modal;
     c->display = cuis_call6(CUIS_DISPLAY_LOCK,c->session,1,1,0,0,0) == E_OK;
@@ -17,11 +16,11 @@ BOOL aes_modal_enter(void)
     c->mouse = cuis_call6(CUIS_MOUSE_LOCK,c->session,1,1,0,0,0) == E_OK;
     if (c->mouse) c->keyboard = cuis_call6(CUIS_KEYBOARD_LOCK,c->session,1,0,0,0,0) == E_OK;
     if (!c->mouse || !c->keyboard) {
-        c->ok = FALSE; aes_modal_leave();
+        c->ok = FALSE; aes_modal_leave(aes_modal);
     }
     return c->ok;
 }
-void aes_modal_leave(void)
+void aes_modal_leave(MODAL_CONTEXT *aes_modal)
 {
     MODAL_CONTEXT *c = aes_modal;
     if (c->keyboard && cuis_call6(CUIS_KEYBOARD_LOCK,c->session,0,0,0,0,0) != E_OK) c->ok = FALSE;
@@ -29,7 +28,7 @@ void aes_modal_leave(void)
     if (c->display && cuis_call6(CUIS_DISPLAY_LOCK,c->session,0,0,0,0,0) != E_OK) c->ok = FALSE;
     c->keyboard = c->mouse = c->display = FALSE;
 }
-WORD aes_modal_wait(WORD *results)
+WORD aes_modal_wait(MODAL_CONTEXT *aes_modal, WORD *results)
 {
     WORD ready;
     if (!aes_modal->ok) return 0;
@@ -38,7 +37,7 @@ WORD aes_modal_wait(WORD *results)
     if (!ready) aes_modal->ok = FALSE;
     return ready;
 }
-WORD aes_modal_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
+WORD aes_modal_edit(MODAL_CONTEXT *aes_modal, OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
 {
     WORD result;
     if (!aes_modal->ok && kind != ED_END) return 0;
@@ -46,39 +45,38 @@ WORD aes_modal_edit(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind)
     if (!result) aes_modal->ok = FALSE;
     return result;
 }
-WORD aes_modal_keybd(OBJECT *tree, WORD object, WORD *key, WORD *next)
+WORD aes_modal_keybd(MODAL_CONTEXT *aes_modal, OBJECT *tree, WORD object, WORD *key, WORD *next)
 {
     BOOL ok;
     WORD result = aes_form_keybd_checked(tree,object,*next,*key,next,key,aes_modal->global,&ok);
     if (!ok) aes_modal->ok = FALSE;
     return result;
 }
-WORD aes_modal_button(OBJECT *tree, WORD object, WORD clicks, WORD *next)
+WORD aes_modal_button(MODAL_CONTEXT *aes_modal, OBJECT *tree, WORD object, WORD clicks, WORD *next)
 {
     BOOL ok;
     WORD result = aes_form_button_checked(tree,object,clicks,next,aes_modal->global,&ok);
     if (!ok) aes_modal->ok = FALSE;
     return result;
 }
-WORD mt_form_do(OBJECT *tree, WORD start, WORD *global)
+WORD mt_form_do(OBJECT *tree, WORD start, AESGLOBAL *global)
 {
-    MODAL_CONTEXT c = { 0 }, *saved = aes_modal;
+    MODAL_CONTEXT c = { 0 };
+    MODAL_CONTEXT *aes_modal = &c;
     WORD result;
     if (!tree || start < 0) return 0;
     c.session = aes_application_session(global);
     if (c.session < 0 || !aes_layout_metrics(&c.metrics,global)) return 0;
     c.global = global; c.ok = TRUE;
-    if (!aes_frames_suspend()) return 0;
-    aes_modal = &c;
-    result = aes_form_do_core(tree,start);
-    aes_modal = saved;
-    aes_frames_resume();
+    if (!aes_frames_suspend(global)) return 0;
+    result = aes_form_do_core(aes_modal, tree,start);
+    aes_frames_resume(global);
     return c.ok ? result : 0;
 }
-WORD form_do(OBJECT *tree, WORD start) { return mt_form_do(tree,start,aes_global); }
+
 
 WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
-                   WORD x, WORD y, WORD w, WORD h, WORD *global)
+                   WORD x, WORD y, WORD w, WORD h, AESGLOBAL *global)
 {
     LONG session = aes_application_session(global);
     GRECT small, large;
@@ -87,22 +85,18 @@ WORD mt_form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh,
     small.g_x = sx; small.g_y = sy; small.g_w = sw; small.g_h = sh;
     large.g_x = x; large.g_y = y; large.g_w = w; large.g_h = h;
     /* No allocation or kernel ownership; retain only local overlay scope. */
-    if (kind == FMD_START) return aes_frames_dialog(TRUE);
+    if (kind == FMD_START) return aes_frames_dialog(TRUE,global);
     if (w <= 0 || h <= 0) return 0;
     if (kind == FMD_GROW || kind == FMD_SHRINK) {
         if (sw <= 0 || sh <= 0 || sw > w || sh > h) return 0;
-        if (!aes_frames_suspend()) return 0;
+        if (!aes_frames_suspend(global)) return 0;
         ok = aes_form_animation(kind,&small,&large,global);
-        aes_frames_resume();
+        aes_frames_resume(global);
         return ok;
     }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) return 0;
     ok = cuis_call6(CUIS_DISPLAY_REDRAW,session,(QUAD)x,(QUAD)y,w,h,0) == E_OK;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
-    if (ok) (void)aes_frames_dialog(FALSE);
+    if (ok) (void)aes_frames_dialog(FALSE,global);
     return ok ? 1 : 0;
-}
-WORD form_dial(WORD kind, WORD sx, WORD sy, WORD sw, WORD sh, WORD x, WORD y, WORD w, WORD h)
-{
-    return mt_form_dial(kind,sx,sy,sw,sh,x,y,w,h,aes_global);
 }

@@ -5,7 +5,7 @@
 #define edblk (aes_painter->edit)
 #define ob_edit aes_edit_core
 #define ob_draw aes_edit_draw
-#define ob_actxywh aes_form_rect
-void aes_form_rect(OBJECT *tree, WORD object, GRECT *rect);
-WORD aes_edit_core(OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
+#define ob_actxywh aes_edit_rect
+
+WORD aes_edit_core(PAINTER *aes_painter, OBJECT *tree, WORD object, WORD key, WORD *index, WORD kind);
 #endif

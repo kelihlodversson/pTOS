@@ -6,7 +6,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #ifndef _AESEXT_H
 #define _AESEXT_H
 
@@ -26,14 +26,14 @@ void set_aes_background(UBYTE patcol);
 #endif
 
 /* functions used by AES and desktop, found in gemgraf.c */
-void bb_fill(WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh);
+void bb_fill(AES_RENDER_PARAM WORD mode, WORD fis, WORD patt, WORD hx, WORD hy, WORD hw, WORD hh);
 void bb_screen(WORD scsx, WORD scsy, WORD scdx, WORD scdy, WORD scw, WORD sch);
-void gsx_attr(UWORD text, UWORD mode, UWORD color);
-void gsx_gclip(GRECT *pt);
+void gsx_attr(AES_RENDER_PARAM UWORD text, UWORD mode, UWORD color);
+void gsx_gclip(AES_RENDER_PARAM GRECT *pt);
 void gsx_pline(WORD offx, WORD offy, WORD cnt, const Point *pts);
-void gsx_sclip(const GRECT *pt);
+void gsx_sclip(AES_RENDER_PARAM const GRECT *pt);
 void gsx_start(void);
-void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc);
+void gsx_tblt(AES_RENDER_PARAM WORD tb_f, WORD x, WORD y, WORD tb_nc);
 void gsx_trans(void *addr, UWORD wb, UWORD h);
 
 /* functions used by AES and desktop, found in gemrslib.c */

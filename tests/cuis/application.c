@@ -5,6 +5,7 @@
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/application.h"
+#include "../../lib/aes/app_context.h"
 #include "../../lib/aes/frames.h"
 #include "../../lib/aes/desktop.h"
 #include "../../lib/aes/lifecycle.h"
@@ -18,8 +19,21 @@
 extern void *malloc(__SIZE_TYPE__ bytes);
 extern void free(void *memory);
 static BOOL region_alloc_failure;
-void *aes_temporary_alloc(LONG bytes) { return region_alloc_failure ? NULL : malloc(bytes); }
-WORD aes_resource_discard(void *memory) { free(memory); return 0; }
+static ULONG region_allocations, region_releases;
+UQUAD aes_memory_call(ULONG function, UQUAD argument)
+{
+    if (function == 0x48) return (uintptr_t)malloc(argument);
+    if (function == 0x49) { free((void *)(uintptr_t)argument); return E_OK; }
+    return (QUAD)EINVFN;
+}
+void *aes_temporary_alloc(LONG bytes, AESGLOBAL *global)
+{
+    void *memory = region_alloc_failure ? NULL : malloc(bytes);
+    (void)global;
+    if (memory) region_allocations++;
+    return memory;
+}
+WORD aes_resource_discard(void *memory) { if (memory) region_releases++; free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static ULONG published_tag;
 static ULONG client_id = 7;
@@ -35,8 +49,8 @@ static BOOL live;
 static LONG child_status, child_on_wait, child_publish_error;
 static ULONG starts, closes, yields, delays;
 static ULONG graphics_resets;
-void aes_graphics_reset(void) { graphics_resets++; }
-void aes_graphics_wind_new(void) { }
+void aes_graphics_reset(AESGLOBAL *global) { (void)global; graphics_resets++; }
+void aes_graphics_wind_new(AESGLOBAL *global) { (void)global; }
 static UQUAD interval;
 static UBYTE pipe_data[64];
 static ULONG pipe_count, pipe_block;
@@ -72,6 +86,7 @@ static void publish_peer_colours(void)
     colour_peer_pending = FALSE;
 }
 static ULONG background_state;
+static BOOL background_regions;
 static ULONG background_on_wait, background_only_wakes;
 static LONG background_error, reset_error;
 static ULONG desktop_paints;
@@ -107,24 +122,26 @@ static LONG window_transport(ULONG fn, UQUAD a)
     return E_OK;
 }
 short mt_objc_draw(OBJECT *tree, short object, short depth, short x, short y,
-                    short w, short h, short *global)
+                    short w, short h, AESGLOBAL *global)
 {
     (void)tree; (void)object; (void)depth; (void)x; (void)y; (void)global;
     if (w > 0 && h > 0) desktop_paints++;
     return 1;
 }
 static int resource_resets;
-void aes_resources_reset(void) { resource_resets++; }
-BOOL aes_menu_registered(void) { return menu_test; }
-BOOL aes_menu_listening(void) { return menu_test; }
-LONG aes_menu_flush(WORD *global) { (void)global; return E_OK; }
-LONG aes_menu_dispatch(WORD *global)
+BOOL aes_resources_reset(AESGLOBAL *global) { (void)global; resource_resets++; return TRUE; }
+BOOL aes_menu_registered(AESGLOBAL *global) { (void)global; return menu_test; }
+BOOL aes_menu_listening(AESGLOBAL *global) { (void)global; return menu_test; }
+LONG aes_menu_flush(AESGLOBAL *global) { (void)global; return E_OK; }
+LONG aes_menu_dispatch(AESGLOBAL *global)
 {
     (void)global;
     if (menu_test) { menu_ticks += menu_dispatch_ticks; menu_dispatch_ticks = 0; }
     return E_OK;
 }
-void aes_menu_reset(void) { }
+void aes_menu_reset(AESGLOBAL *global) { (void)global; }
+void aes_shell_reset(AESGLOBAL *global) { (void)global; }
+void aes_shell_init(AES_APP_CONTEXT *context) { (void)context; }
 UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
 {
     if (fn == 0x154 && a == 0xfff8) {
@@ -269,6 +286,12 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         return E_OK;
     }
     if (fn == CUIS_BACKGROUND_REGION) {
+        if (background_regions) {
+            if (b >= region_count) return 0;
+            *(LONG *)(uintptr_t)c = region_values[b][0]; *(LONG *)(uintptr_t)d = region_values[b][1];
+            *(LONG *)(uintptr_t)e = region_values[b][2]; *(LONG *)(uintptr_t)f = region_values[b][3];
+            return 1;
+        }
         if (b) return 0;
         *(LONG *)(uintptr_t)c = 0; *(LONG *)(uintptr_t)d = 0;
         *(LONG *)(uintptr_t)e = 640; *(LONG *)(uintptr_t)f = 400;
@@ -522,11 +545,13 @@ static int child_message_checks(void)
 static int event_checks(void)
 {
     short x = 99, y = 99, buttons = 99, mods = 99, key = 99, clicks = 99;
-    short message[8] = { 1, 7, 0, 4, 5, 6, 7, 8 }, output[8], global[15];
+    short message[8] = { 1, 7, 0, 4, 5, 6, 7, 8 }, output[8];
+    AESGLOBAL global = { 0 };
     ULONG before;
-    CHECK(mt_appl_init(global) == 7);
+    global.ap_3resv = aes_global.ap_3resv;
+    CHECK(mt_appl_init(&global) == 7);
     CHECK(graf_mkstate(&x, &y, &buttons, &mods) == 1 && x == 17 && y == 23 && buttons == 2 && mods == 5);
-    CHECK(mt_graf_mkstate(NULL, NULL, NULL, NULL, global) == 1);
+    CHECK(mt_graf_mkstate(NULL, NULL, NULL, NULL, &global) == 1);
     state_values[0] = 40000; state_values[1] = -40000;
     CHECK(graf_mkstate(&x, &y, &buttons, &mods) == 1 && x == 32767 && y == -32768);
     state_values[0] = 17; state_values[1] = 23;
@@ -547,30 +572,32 @@ static int event_checks(void)
     CHECK(!__builtin_memcmp(message, output, 16) && x == 17 && y == 23 && buttons == 2 && mods == 5 && !key && !clicks);
     CHECK(appl_write(7, 16, message) == 1);
     CHECK(mt_evnt_multi(MU_MESAG, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        output, ~0UL, NULL, NULL, NULL, NULL, NULL, NULL, global) == MU_MESAG);
+                        output, ~0UL, NULL, NULL, NULL, NULL, NULL, NULL, &global) == MU_MESAG);
     CHECK(!pipe_count && waited_mask == (CUIS_READY_STREAM | CUIS_READY_NOTICE | CUIS_READY_CHILD));
     return 0;
 }
 static int input_api_checks(void)
 {
-    short x, y, buttons, mods, key, clicks, global[15], message[8] = { 0 };
+    short x, y, buttons, mods, key, clicks, message[8] = { 0 };
+    AESGLOBAL global = { 0 };
     ULONG before;
-    CHECK(mt_appl_init(global) == 7);
+    global.ap_3resv = aes_global.ap_3resv;
+    CHECK(mt_appl_init(&global) == 7);
     input_ready = CUIS_READY_KEY;
-    CHECK(evnt_keybd() == 0x1e61 && mt_evnt_keybd(global) == 0x1e61);
+    CHECK(evnt_keybd() == 0x1e61 && mt_evnt_keybd(&global) == 0x1e61);
     input_key = 0x00ff00ff;
     CHECK((UWORD)evnt_keybd() == 0xffff); input_key = 0x001e0061;
     input_ready = CUIS_READY_BUTTON;
     CHECK(evnt_button(0x102, 3, 1, &x, &y, &buttons, &mods) == 2);
     CHECK(input_configuration == CUIS_INPUT_BUTTON && input_arguments[0] == 3 &&
           input_arguments[1] == 1 && input_arguments[2] == 2 && input_arguments[3] == 1);
-    CHECK(mt_evnt_button(1, 1, 0, NULL, NULL, NULL, NULL, global) == 2);
+    CHECK(mt_evnt_button(1, 1, 0, NULL, NULL, NULL, NULL, &global) == 2);
     input_ready = CUIS_READY_RECT1;
     CHECK(evnt_mouse(1, -3, -5, 7, 9, &x, &y, &buttons, &mods) == 1);
     CHECK(input_configuration == CUIS_INPUT_RECT && input_arguments[0] == 2 &&
           input_arguments[1] == (UQUAD)(QUAD)-3 && input_arguments[2] == (UQUAD)(QUAD)-5);
-    CHECK(mt_evnt_mouse(0, 0, 0, 1, 1, NULL, NULL, NULL, NULL, global) == 1);
-    CHECK(evnt_dclick(4, 1) == 4 && mt_evnt_dclick(-1, 0, global) == 4 && evnt_dclick(0, 1) == 0);
+    CHECK(mt_evnt_mouse(0, 0, 0, 1, 1, NULL, NULL, NULL, NULL, &global) == 1);
+    CHECK(evnt_dclick(4, 1) == 4 && mt_evnt_dclick(-1, 0, &global) == 4 && evnt_dclick(0, 1) == 0);
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
@@ -600,7 +627,7 @@ static int input_api_checks(void)
 /* Deterministic native system-font box metrics for the window binding. */
 static BOOL frame_metrics_failure;
 static WORD frame_screen_width = 640, frame_screen_height = 400;
-BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, WORD *global)
+BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, AESGLOBAL *global)
 {
     if (frame_metrics_failure || aes_application_session(global) < 0) return FALSE;
     *wbox = 19; *hbox = 19;
@@ -608,7 +635,7 @@ BOOL aes_frame_metrics(WORD *wbox, WORD *hbox, WORD *width, WORD *height, WORD *
     if (height) *height = frame_screen_height;
     return TRUE;
 }
-BOOL aes_layout_metrics(LAYOUT_METRICS *metrics, WORD *global)
+BOOL aes_layout_metrics(LAYOUT_METRICS *metrics, AESGLOBAL *global)
 {
     (void)global;
     if (frame_metrics_failure) return FALSE;
@@ -625,7 +652,7 @@ static ULONG frame_paint_ticks;
 static char *last_frame_name;
 static WORD last_sliders[4];
 BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
-                       char *name, char *info, WORD *global)
+                       char *name, char *info, AESGLOBAL *global)
 {
     (void)kind; (void)global;
     if (border->g_w < 5 || border->g_h < 50) return FALSE;
@@ -636,7 +663,7 @@ BOOL aes_frame_prepare(WM_FRAME_STATE *state, UWORD kind, const GRECT *border,
     state->border = *border; state->name = name; state->info = info;
     return TRUE;
 }
-BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
+BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, AESGLOBAL *global)
 {
     (void)native; (void)global;
     if (!state->name || !state->info) return FALSE;
@@ -647,7 +674,7 @@ BOOL aes_frame_paint(LONG native, const WM_FRAME_STATE *state, WORD *global)
     if (frame_damage_once) { frame_damage_once = FALSE; notice_kind = CUIS_NOTICE_REDRAW; }
     return !frame_paint_failure;
 }
-BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, WORD *global)
+BOOL aes_frame_paint_control(LONG native, const WM_FRAME_STATE *state, WORD object, BOOL selected, AESGLOBAL *global)
 {
     control_object = object; control_selection = selected;
     return aes_frame_paint(native,state,global);
@@ -683,7 +710,7 @@ WORD aes_frame_control(const WM_FRAME_STATE *state, LONG x, LONG y)
     if ((state->kind & FULLER) && x >= state->border.g_x+state->border.g_w-18 && x < state->border.g_x+state->border.g_w-2) return W_FULLER;
     return (state->kind & MOVER) ? W_NAME : 0;
 }
-BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, WORD *global)
+BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, AESGLOBAL *global)
 {
     LONG event[4], result;
     (void)global; move_calls++;
@@ -695,7 +722,7 @@ BOOL aes_frame_move(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG
             event[0],event[1],frame_screen_width,frame_screen_height,state->wbox,state->hbox,out);
     }
 }
-BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, WORD *global)
+BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG press_y, GRECT *out, AESGLOBAL *global)
 {
     LONG event[4], result;
     (void)global; (void)press_x; (void)press_y; size_calls++;
@@ -707,7 +734,7 @@ BOOL aes_frame_size(LONG native, const WM_FRAME_STATE *state, LONG press_x, LONG
             event[0],event[1],8,16,state->wbox,state->hbox,frame_screen_width,frame_screen_height,out);
     }
 }
-BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *out, WORD *global)
+BOOL aes_frame_slide(LONG native, const WM_FRAME_STATE *state, WORD object, LONG press_x, LONG press_y, GRECT *out, AESGLOBAL *global)
 {
     WM_SLIDER_GEOMETRY slider;
     GRECT outline;
@@ -851,14 +878,14 @@ static int frame_event_checks(void)
     pipe_count = 0;
     /* Nested overlays leave damage queued and suppress notice readiness
      * in both pre- and post-wait pumps until the outer scope ends. */
-    CHECK(aes_frames_suspend() && aes_frames_suspend());
+    CHECK(aes_frames_suspend(&aes_global) && aes_frames_suspend(&aes_global));
     notice_kind = CUIS_NOTICE_REDRAW; before = frame_paints;
     CHECK(evnt_timer(0) == 1 && notice_kind && frame_paints == before);
     CHECK(!(waited_mask & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY)));
     CHECK(appl_read(APR_NOWAIT,16,message) == 0 && notice_kind);
-    aes_frames_resume();
+    aes_frames_resume(&aes_global);
     CHECK(evnt_timer(0) == 1 && notice_kind && frame_paints == before);
-    aes_frames_resume();
+    aes_frames_resume(&aes_global);
     CHECK(evnt_timer(0) == 1 && !notice_kind && frame_paints == before+1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_REDRAW);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
@@ -936,9 +963,9 @@ static int control_api_checks(void)
     display_error = EAGAIN; pipe_count = 16; before = control_at;
     CHECK(evnt_mesag(message) == 1 && control_at == before);
     display_error = 0;
-    CHECK(aes_frames_suspend());
+    CHECK(aes_frames_suspend(&aes_global));
     CHECK(evnt_timer(0) == 1 && control_at == before && !(waited_mask & CUIS_READY_CONTROL));
-    aes_frames_resume();
+    aes_frames_resume(&aes_global);
     CHECK(evnt_mesag(message) == 1 && message[0] == WM_CLOSED);
     control_at = control_count = 0;
     control_event(25,35,1,1); control_event(25,35,0,1);
@@ -1032,7 +1059,7 @@ static int arrow_api_checks(void)
         control_event(points[i][0],points[i][1],1,1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_ARROWED && message[3] == id && message[4] == actions[i]);
         CHECK(!message[1] && !message[2] && !message[5] && !message[6] && !message[7]);
-        CHECK(aes_controls_repeating() && control_selection);
+        CHECK(aes_controls_repeating(&aes_global) && control_selection);
         before = wait_calls;
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && wait_calls == before);
         /* Selection and original action persist when dragged outside. */
@@ -1040,7 +1067,7 @@ static int arrow_api_checks(void)
         CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == actions[i] && control_selection);
         /* A due repeat must not overtake a queued release. */
         menu_ticks += 2; control_event(300,250,0,1);
-        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating() && !control_selection);
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global) && !control_selection);
     }
     /* Blocking reads repeat without pointer motion and let cooperative
      * peers run. Internal wakes never masquerade as the caller's timer. */
@@ -1061,14 +1088,14 @@ static int arrow_api_checks(void)
     CHECK(pipe_count && pipe_count <= sizeof(pipe_data));
     control_event(210,60,0,1);
     while (appl_read(APR_NOWAIT,16,message) == 1) CHECK(message[0] == WM_ARROWED);
-    CHECK(!aes_controls_repeating()); menu_test = FALSE;
+    CHECK(!aes_controls_repeating(&aes_global)); menu_test = FALSE;
     control_at = control_count = 0; menu_ticks = 0x7fffffffUL;
     control_event(210,60,1,1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1);
     menu_ticks += 2;
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == WA_UPLINE);
     control_event(210,60,0,1);
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     menu_ticks = 0;
     /* Full streams retain a single pending action and preserve ordinary
      * progress. A later release stops future repeat, not that accepted press. */
@@ -1078,15 +1105,15 @@ static int arrow_api_checks(void)
     control_event(30,180,0,1);
     for (i = 0; i < 3; i++) CHECK(appl_read(APR_NOWAIT,16,message) == 1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == WM_ARROWED && message[4] == WA_LFLINE);
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     control_at = control_count = 0; control_event(210,60,1,1);
     CHECK(appl_read(APR_NOWAIT,16,message) == 1);
     control_read_error = ERANGE; menu_ticks += 2;
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     control_read_error = 0;
     control_at = control_count = 0; control_event(210,60,1,1);
     frame_paint_failure = TRUE;
-    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+    CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     frame_paint_failure = FALSE;
     CHECK(wind_get(id,WF_CURRXYWH,&x,&y,&w,&h) == 1 && x == 20 && y == 30 && w == 200 && h == 160);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
@@ -1109,7 +1136,7 @@ static int slider_api_checks(void)
         control_event(300,250,1,0); menu_ticks += 2;
         CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[4] == actions[n]);
         control_event(300,250,0,1);
-        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating());
+        CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !aes_controls_repeating(&aes_global));
     }
     control_at = control_count = 0;
     control_event(106,177,1,1); control_event(1000,177,0,1);
@@ -1193,7 +1220,7 @@ static int control_timer_checks(void)
     CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+3);
     control_only_wakes = 0;
     display_error = EAGAIN;
-    CHECK(aes_window_messages(handle,aes_global) == E_OK && aes_frames_wait_display() && !aes_controls_listening());
+    CHECK(aes_window_messages(handle,&aes_global) == E_OK && aes_frames_wait_display(&aes_global) && !aes_controls_listening(&aes_global));
     release_display_on_wait = TRUE; display_release_ticks = 6; menu_ticks = 0; before = wait_calls;
     CHECK(evnt_timer(20) == 1 && waited_interval == 0 && wait_calls == before+2 && !display_error);
     CHECK(wind_close(id) == 1 && wind_delete(id) == 1);
@@ -1207,7 +1234,7 @@ static int display_api_checks(void)
     CHECK(wind_update(END_UPDATE) == 0);
     CHECK(wind_update(END_MCTRL) == 0 && wind_update(-1) == 0);
     CHECK(wind_update(BEG_MCTRL | NO_BLOCK) == 1 && !mouse_block && mouse_nesting == 1);
-    CHECK(mt_wind_update(BEG_MCTRL, aes_global) == 1 && mouse_block == 1 && mouse_nesting == 2);
+    CHECK(mt_wind_update(BEG_MCTRL, &aes_global) == 1 && mouse_block == 1 && mouse_nesting == 2);
     CHECK(wind_update(END_MCTRL | NO_BLOCK) == 0 && wind_update(END_UPDATE | NO_BLOCK) == 0);
     CHECK(mouse_nesting == 2 && !display_nesting);
     CHECK(wind_update(END_MCTRL) == 1 && mouse_nesting == 1);
@@ -1215,7 +1242,7 @@ static int display_api_checks(void)
     CHECK(wind_update(BEG_MCTRL | NO_BLOCK) == 0 && mouse_nesting == 1);
     CHECK(wind_update(END_MCTRL) == 0 && mouse_nesting == 1);
     mouse_error = 0;
-    CHECK(mt_wind_update(END_MCTRL,aes_global) == 1 && !mouse_nesting);
+    CHECK(mt_wind_update(END_MCTRL,&aes_global) == 1 && !mouse_nesting);
     CHECK(wind_update(BEG_UPDATE | NO_BLOCK) == 1 && wind_update(BEG_UPDATE) == 1);
     CHECK(display_nesting == 2);
     id = wind_create(0, 0, 0, 100, 100);
@@ -1306,25 +1333,123 @@ static int lifecycle_poll_checks(void)
     window = wind_create(0,10,10,100,100);
     CHECK(window > 0 && wind_open(window,10,10,100,100));
     lifecycle_test = TRUE; lifecycle_work = CUIS_COHORT_REQUEST;
-    CHECK(aes_lifecycle_messages(aes_global) == E_OK && pipe_count == 32);
+    CHECK(aes_lifecycle_messages(&aes_global) == E_OK && pipe_count == 32);
     display_error = EAGAIN;
     CHECK(appl_read(APR_NOWAIT,16,message) == 0 && pipe_count == 32 && !display_nesting);
-    CHECK(aes_lifecycle_wait_display() && wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
+    CHECK(aes_lifecycle_wait_display(&aes_global) && wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
     CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
                      NULL,NULL,NULL,NULL,NULL,NULL) == MU_TIMER && pipe_count == 32);
     display_error = 0;
     CHECK(evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,message,0,
                      NULL,NULL,NULL,NULL,NULL,NULL) == (MU_MESAG|MU_TIMER));
-    CHECK(message[0] == AC_CLOSE && !aes_lifecycle_wait_display() && pipe_count == 16);
+    CHECK(message[0] == AC_CLOSE && !aes_lifecycle_wait_display(&aes_global) && pipe_count == 16);
     CHECK(!wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == AC_CLOSE && !pipe_count);
     lifecycle_test = FALSE;
     CHECK(appl_exit()); executable_name = "GemTest.Prg";
     return 0;
 }
+/* Distinct user contexts do not share retained window metadata, even when
+ * the mocked kernel session is shared as on the current CUIS backend. */
+static int window_context_checks(void)
+{
+    AES_APP_CONTEXT left = {0}, right = {0};
+    AESGLOBAL first = {0}, second = {0}, alias = {0};
+    short a, b, kind;
+    GRECT rect;
+    OBJECT tree_a = {NIL,NIL,NIL,G_IBOX,LASTOB,NORMAL,{0},0,0,640,400};
+    OBJECT tree_b = {NIL,NIL,NIL,G_IBOX,LASTOB,NORMAL,{0},0,0,640,400};
+    OBJECT *tree;
+    void *buffer_a, *buffer_b;
+    LONG bytes_a, bytes_b;
+    ULONG allocations = region_allocations, releases = region_releases;
+    left.session = right.session = handle;
+    first.ap_id = second.ap_id = alias.ap_id = 7;
+    first.ap_3resv = alias.ap_3resv = &left;
+    second.ap_3resv = &right;
+    live = TRUE;
+    pipe_count = notice_kind = publish_failure = 0;
+    control_count = control_at = 0;
+    a = mt_wind_create(0,0,0,100,80,&first);
+    b = mt_wind_create(0,10,20,120,90,&second);
+    CHECK(a > 0 && b > 0 && a != b);
+    CHECK(mt_wind_get(a,WF_KIND,&kind,NULL,NULL,NULL,&first) == 1 && !kind);
+    CHECK(mt_wind_get(a,WF_KIND,&kind,NULL,NULL,NULL,&alias) == 1);
+    CHECK(mt_wind_get(a,WF_KIND,&kind,NULL,NULL,NULL,&second) == 0);
+    CHECK(mt_wind_get(b,WF_KIND,&kind,NULL,NULL,NULL,&first) == 0);
+    CHECK(mt_wind_get(b,WF_KIND,&kind,NULL,NULL,NULL,&second) == 1);
+    CHECK(aes_controls_listening(&first) && aes_controls_listening(&second));
+    CHECK(aes_frames_suspend(&first) && aes_frames_suspend(&alias));
+    CHECK(aes_frames_suspended(&alias) && !aes_frames_suspended(&second));
+    aes_frames_resume(&alias);
+    CHECK(aes_frames_suspended(&first));
+    aes_frames_resume(&first);
+    CHECK(!aes_frames_suspended(&alias));
+    CHECK(aes_frames_dialog(TRUE,&first) && aes_frames_dialog(TRUE,&second));
+    CHECK(aes_frames_dialog(FALSE,&alias));
+    CHECK(!aes_frames_suspended(&first) && aes_frames_suspended(&second));
+    CHECK(aes_frames_dialog(FALSE,&second) && !aes_frames_suspended(&second));
+    display_error = EAGAIN;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK);
+    CHECK(aes_frames_wait_display(&alias) && !aes_frames_wait_display(&second));
+    display_error = 0;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK && !aes_frames_wait_display(&first));
+    notice_kind = CUIS_NOTICE_REDRAW; notice_native = native_windows[a-1]; notice_id = a;
+    publish_failure = EAGAIN;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK);
+    CHECK(aes_windows_pending(&alias) && !aes_windows_pending(&second));
+    notice_kind = publish_failure = 0;
+    CHECK(aes_window_messages_poll(handle,&first) == E_OK && !aes_windows_pending(&first));
+    CHECK(mt_wind_open(a,0,0,200,160,&first) && mt_wind_open(b,0,0,200,160,&second));
+    region_count = 2;
+    region_values[0][0] = 1; region_values[0][1] = 2;
+    region_values[0][2] = 30; region_values[0][3] = 40;
+    region_values[1][0] = 10; region_values[1][1] = 20;
+    region_values[1][2] = 20; region_values[1][3] = 30;
+    CHECK(mt_wind_get_grect(a,WF_FIRSTXYWH,&rect,&first) && rect.g_x == 1);
+    CHECK(mt_wind_get_grect(b,WF_FIRSTXYWH,&rect,&second) && rect.g_x == 1);
+    CHECK(mt_wind_get_grect(a,WF_NEXTXYWH,&rect,&alias) && rect.g_x == 10);
+    CHECK(mt_wind_get_grect(b,WF_NEXTXYWH,&rect,&second) && rect.g_x == 10);
+    CHECK(aes_desktop_set(&tree_a,0,&first) && aes_desktop_registered(&alias));
+    CHECK(!aes_desktop_registered(&second) && !aes_frames_registered(&second));
+    CHECK(aes_desktop_set(&tree_b,0,&second));
+    CHECK(aes_desktop_get(&tree,NULL,&alias) && tree == &tree_a);
+    CHECK(aes_desktop_get(&tree,NULL,&second) && tree == &tree_b);
+    buffer_a = aes_screen_buffer(&bytes_a,&first);
+    buffer_b = aes_screen_buffer(&bytes_b,&second);
+    CHECK(buffer_a && buffer_b && buffer_a != buffer_b && bytes_a == bytes_b);
+    CHECK(aes_screen_buffer(&bytes_a,&alias) == buffer_a);
+    background_regions = TRUE;
+    CHECK(aes_desktop_region(TRUE,&rect,&first) && rect.g_x == 1);
+    CHECK(aes_desktop_region(TRUE,&rect,&second) && rect.g_x == 1);
+    CHECK(aes_desktop_region(FALSE,&rect,&alias) && rect.g_x == 10);
+    CHECK(aes_desktop_region(FALSE,&rect,&second) && rect.g_x == 10);
+    CHECK(aes_desktop_region(TRUE,&rect,&first) && rect.g_x == 1);
+    CHECK(aes_desktop_region(TRUE,&rect,&second) && rect.g_x == 1);
+    aes_desktop_reset(&alias);
+    CHECK(!aes_desktop_registered(&first) && aes_desktop_registered(&second));
+    CHECK(aes_screen_buffer(&bytes_b,&second) == buffer_b);
+    CHECK(aes_desktop_region(FALSE,&rect,&second) && rect.g_x == 10);
+    CHECK(aes_desktop_get(&tree,NULL,&second) && tree == &tree_b);
+    CHECK(mt_wind_close(a,&alias) && mt_wind_delete(a,&alias));
+    CHECK(aes_frames_suspend(&first) && aes_frames_suspend(&second));
+    aes_windows_reset(&alias);
+    CHECK(!aes_frames_suspended(&first) && aes_frames_suspended(&second));
+    CHECK(mt_wind_get(b,WF_KIND,&kind,NULL,NULL,NULL,&second));
+    aes_frames_resume(&second);
+    CHECK(!aes_controls_listening(&first) && aes_controls_listening(&second));
+    CHECK(mt_wind_close(b,&second) && mt_wind_delete(b,&second));
+    aes_windows_reset(&second); aes_desktop_reset(&second);
+    CHECK(region_allocations-allocations == region_releases-releases);
+    background_regions = FALSE; background_state = 0;
+    live = FALSE;
+    return 0;
+}
+
 int main(void)
 {
-    short other[AES_GLOBMAX], a = 1, b = 2, c = 3, d = 4;
+    AESGLOBAL other = { 0 };
+    short a = 1, b = 2, c = 3, d = 4;
     short message[8] = { 123, 7, 0, 4, 5, 6, 7, 8 }, result[8];
     ULONG count;
     short held;
@@ -1334,12 +1459,16 @@ int main(void)
     menu_ticks = 0xffffffffUL;
     CHECK(aes_clock_ticks() == 0x7fffffffL && !starts && !live);
     menu_ticks = 0;
-    CHECK(gl_apid == -1 && aes_global[2] == -1);
+    CHECK(gl_apid == -1 && aes_global.ap_id == -1);
     CHECK(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1 && !window_at_calls);
     CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
     CHECK(wind_get(1, WF_KIND, &a, &b, &c, &d) == 0 && a == 1 && !window_calls);
     CHECK(appl_exit() == 0 && appl_yield() == 0 && evnt_timer(0) == 0);
     CHECK(mt_appl_init(NULL) == -1);
+    CHECK(mt_evnt_multi(MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,NULL,0,
+                        NULL,NULL,NULL,NULL,NULL,NULL,&aes_global) == 0);
+    aes_global.ap_private = 0x12345678L;
+    other.ap_private = 0x76543210L;
     pid = 32768; CHECK(appl_init() == -1 && !starts && gl_apid == -1);
     pid = -1; CHECK(appl_init() == -1 && !starts);
     pid = 7; failure = ENSMEM;
@@ -1358,17 +1487,19 @@ int main(void)
     CHECK(menu_register(7,"Full") == -1 && registered_items == 63);
     registered_items = 0;
     CHECK(menu_register(REG_NEWNAME,"GEMTEST ") == 0);
-    CHECK(gl_ap_version == aes_global[0] && gl_ap_version == 0x0400);
+    CHECK(gl_ap_version == aes_global.ap_version && gl_ap_version == 0x0400);
     /* The menu strip is reserved before any application has installed one. */
     CHECK(wind_get(0,WF_WORKXYWH,&a,&b,&c,&d) == 1 && a == 0 && b == 19 && c == 640 && d == 381);
     CHECK(wind_get(0,WF_CURRXYWH,&a,&b,&c,&d) == 1 && a == 0 && b == 0 && c == 640 && d == 400);
-    CHECK(mt_appl_init(other) == 7 && other[2] == 7 && gl_apid == 7);
+    other.ap_3resv = aes_global.ap_3resv; /* Sharing is explicit. */
+    CHECK(mt_appl_init(&other) == 7 && other.ap_id == 7 && gl_apid == 7);
+    CHECK(aes_global.ap_private == 0x12345678L && other.ap_private == 0x76543210L);
     CHECK(appl_init() == 7 && closes == 0); /* Repeated registration is idempotent. */
     window_at_result = 0;
     CHECK(wind_find(-32768,32767) == 0 && window_at_calls == 1);
     CHECK(window_at_x == (UQUAD)(QUAD)-32768 && window_at_y == 32767);
     window_at_result = 32767;
-    CHECK(mt_wind_find(32767,-32768,other) == 32767 && window_at_calls == 2);
+    CHECK(mt_wind_find(32767,-32768,&other) == 32767 && window_at_calls == 2);
     CHECK(window_at_x == 32767 && window_at_y == (UQUAD)(QUAD)-32768);
     window_at_result = 32768;
     CHECK(wind_find(0,0) == -1);
@@ -1376,15 +1507,11 @@ int main(void)
     CHECK(wind_find(0,0) == -1);
     window_at_result = EINVAL;
     CHECK(wind_find(0,0) == -1);
-    count = window_at_calls;
-    other[2]++;
-    CHECK(mt_wind_find(0,0,other) == -1 && window_at_calls == count);
-    other[2]--;
     CHECK(appl_yield() == 1 && yields == 1);
-    yield_result = EACCDN; CHECK(mt_appl_yield(other) == 0);
+    yield_result = EACCDN; CHECK(mt_appl_yield(&other) == 0);
     yield_result = 0;
     CHECK(evnt_timer(0) == 1 && delays == 1 && interval == 0);
-    CHECK(mt_evnt_timer(0xffffffffUL, other) == 1 && interval == 0xffffffffULL);
+    CHECK(mt_evnt_timer(0xffffffffUL, &other) == 1 && interval == 0xffffffffULL);
     count = delays;
     if (sizeof(unsigned long) > 4) CHECK(evnt_timer((unsigned long)(1ULL << 32)) == 0 && delays == count);
     failure = EACCDN; CHECK(evnt_timer(1) == 0); failure = 0;
@@ -1394,7 +1521,7 @@ int main(void)
     CHECK(appl_getinfo(AES_MESSAGE, &a, &b, &c, &d) == 1 && a == 0x28 && !b && !c && !d);
     CHECK(appl_getinfo(AES_PCGEM, &a, &b, &c, &d) == 1 && a == 0 && b == 0 && c == 0 && d == 1);
     CHECK(appl_getinfo(AES_INQUIRE, &a, &b, &c, &d) == 1 && a == 1 && b == 1 && c == 0 && d == 0);
-    CHECK(appl_find(NULL) == 7 && appl_find("gemtest") == 7 && mt_appl_find("GEMTEST ", other) == 7);
+    CHECK(appl_find(NULL) == 7 && appl_find("gemtest") == 7 && mt_appl_find("GEMTEST ", &other) == 7);
     CHECK(appl_find("missing") == -1 && appl_find((const char *)(uintptr_t)0xffff0007UL) == 7);
     CHECK(appl_find((const char *)(uintptr_t)0xfffe0007UL) == 7);
     CHECK(appl_find((const char *)(uintptr_t)0xffff0008UL) == -1);
@@ -1402,36 +1529,37 @@ int main(void)
     CHECK(appl_read(8, 16, result) == 0 && appl_write(8, 16, message) == 0);
     CHECK(appl_write(7, -1, message) == 0 && appl_read(7, -1, result) == 0);
     CHECK(appl_write(7, 0, NULL) == 1 && appl_read(7, 0, NULL) == 1);
-    CHECK(mt_appl_write(7, 16, message, other) == 1 && pipe_block == 1);
-    CHECK(mt_evnt_mesag(result, other) == 1 && pipe_block == 0);
+    CHECK(mt_appl_write(7, 16, message, &other) == 1 && pipe_block == 1);
+    CHECK(mt_evnt_mesag(result, &other) == 1 && pipe_block == 0);
     CHECK(!__builtin_memcmp(result, message, sizeof(message)));
     CHECK(appl_write(7, 16, message) == 1 && appl_read(APR_NOWAIT, 16, result) == 1 && pipe_block == 0);
     failure = EACCDN;
     CHECK(appl_write(7, 16, message) == 0 && evnt_mesag(result) == 0);
     failure = 0;
     CHECK(child_message_checks() == 0 && event_checks() == 0 && input_api_checks() == 0);
-    CHECK(gem_window_checks(other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && arrow_api_checks() == 0 && slider_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
-    CHECK(window_desktop_api_checks(other) == 0);
-    CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, other) == 0);
-    other[2] = 8; CHECK(mt_appl_exit(other) == 0 && live); other[2] = 7;
+    CHECK(gem_window_checks(&other) == 0 && window_failures() == 0 && frame_failures() == 0 && frame_event_checks() == 0 && control_api_checks() == 0 && control_timer_checks() == 0 && move_api_checks() == 0 && arrow_api_checks() == 0 && slider_api_checks() == 0 && size_api_checks() == 0 && display_api_checks() == 0 && window_message_checks() == 0 && metadata_checks() == 0);
+    CHECK(window_desktop_api_checks(&other) == 0);
+    CHECK(mt_appl_getinfo(-1, NULL, NULL, NULL, NULL, &other) == 0);
     held = wind_create(0, 0, 0, 10, 10); CHECK(held > 0);
     resource_resets = graphics_resets = 0;
     close_result = EACCDN;
     CHECK(appl_exit() == 0 && live && gl_apid == 7 && !resource_resets && !graphics_resets);
     CHECK(wind_get(held, WF_KIND, NULL, NULL, NULL, NULL) == 1);
     close_result = 0;
-    CHECK(mt_appl_exit(other) == 1 && !live && closes == 1 && other[2] == -1 && resource_resets == 1 && graphics_resets == 1);
-    CHECK(gl_apid == -1 && aes_global[2] == -1 && gl_ap_version == 0);
-    CHECK(mt_appl_yield(other) == 0 && appl_exit() == 0);
+    CHECK(mt_appl_exit(&other) == 1 && !live && closes == 1 && other.ap_id == -1 && resource_resets == 1 && graphics_resets == 1);
+    CHECK(gl_apid == 7 && aes_global.ap_id == 7 && gl_ap_version == 0x400);
+    CHECK(aes_global.ap_private == 0x12345678L && other.ap_private == 0x76543210L);
+    aes_global.ap_3resv = NULL; /* The old default global is a dangling alias. */
     CHECK(appl_init() == 7 && live);
     CHECK(wind_get(held, WF_KIND, NULL, NULL, NULL, NULL) == 0);
     live = FALSE; /* Authoritative kernel teardown invalidates stale library state. */
     CHECK(appl_yield() == 0 && evnt_timer(0) == 0);
-    CHECK(appl_init() == 7 && appl_exit() == 1 && closes == 2);
+    live = TRUE; /* Restore the same live session after the injected query failure. */
+    CHECK(appl_exit() == 1 && closes == 2);
     pid = 32767; client_id = 32767;
     CHECK(appl_init() == 32767 && gl_apid == 32767 && appl_exit() == 1 && closes == 3);
     label_result = EACCDN;
-    CHECK(mt_appl_init(other) == -1 && !live && gl_apid == -1 && other[2] == -1 && closes == 4);
+    CHECK(mt_appl_init(&other) == -1 && !live && gl_apid == -1 && other.ap_id == -1 && closes == 4);
     {
         char name[9] = { 'u', 'n', 't', 'o', 'u', 'c', 'h', 'e', 'd' };
         short type = -7, found = -7;
@@ -1457,7 +1585,7 @@ int main(void)
         CHECK(appl_find("RENAMED ") == 7 && appl_exit() == 1);
         executable_name = "Clock.ACC";
         CHECK(appl_init() == 7);
-        CHECK(aes_lifecycle_write(SWM_NEWMSG,NM_APTERM,0,NULL,aes_global) == 1);
+        CHECK(aes_lifecycle_write(SWM_NEWMSG,NM_APTERM,0,NULL,&aes_global) == 1);
         CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && type == APP_ACCESSORY && found == 7);
         CHECK(!__builtin_memcmp(name,"CLOCK   ",9));
         CHECK(appl_exit() == 1);
@@ -1469,7 +1597,7 @@ int main(void)
         char name[9];
         short type, found;
         client_id = 42; shared_process_peer = TRUE; pid = 7;
-        CHECK(appl_init() == 42 && aes_global[2] == 42 && appl_find(NULL) == 42);
+        CHECK(appl_init() == 42 && aes_global.ap_id == 42 && appl_find(NULL) == 42);
         CHECK(appl_find("GEMTEST ") == 42);
         CHECK(appl_find((const char *)(uintptr_t)0xffff0007UL) == 41);
         CHECK(appl_find((const char *)(uintptr_t)0xfffe002aUL) == 7);
@@ -1489,5 +1617,6 @@ int main(void)
         CHECK(appl_exit() == 1);
         shared_process_peer = FALSE; client_id = 7;
     }
+    CHECK(window_context_checks() == 0);
     return 0;
 }

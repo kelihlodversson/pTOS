@@ -13,3 +13,9 @@ virt-m68k                the default calling convention is compiled by the other
 virt-m68k-cli            compiles nothing that virt-m68k-cli-elf and virt-m68k-cli-fastcall do not
 virt-m68k-cli-elf        the regression job (virt-m68k) builds it, with the warning check
 virt-m68k-cli-fastcall   the regression job (virt-m68k-fastcall) builds it, with the warning check
+virt-m68k-mmu            the regression job (virt-m68k-mmu, with the PMMU startup check) builds it, with the warning check
+virt-m68k-aspace         the regression job (virt-m68k-aspace) builds it, with the warning check
+virt-arm-aspace          the regression job (virt-arm-aspace) builds it, with the warning check
+rpi2-aspace              the regression job (raspi2b-aspace) builds it, with the warning check
+pc-x86_64-desktop        the regression job (pc-x86_64) builds it, with the warning check
+pc-x86_64-libaes-desktop resolves to the same .config as pc-x86_64-desktop, byte for byte

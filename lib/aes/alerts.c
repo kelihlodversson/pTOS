@@ -1,6 +1,6 @@
 /* Standard GEM alerts using the shared native parser, geometry and icons.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "vdi_service.h"
 #include "application.h"
@@ -8,13 +8,11 @@
 #include "alert_context.h"
 #include "string.h"
 
-ALERT_CONTEXT *aes_alert_context;
-static WORD *error_global;
-static BOOL error_ok;
 
-WORD mt_form_alert(WORD button, const char *text, WORD *global)
+WORD mt_form_alert(WORD button, const char *text, AESGLOBAL *global)
 {
-    ALERT_CONTEXT c = { 0 }, *saved = aes_alert_context;
+    ALERT_CONTEXT c = { 0 };
+    ALERT_CONTEXT *aes_alert_context = &c;
     VDI_SERVICE_WORKSTATION ws;
     WORD input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, i, selection = 0;
     GRECT rect;
@@ -38,8 +36,7 @@ WORD mt_form_alert(WORD button, const char *text, WORD *global)
         c.objects[BUTOFF+i].ob_type = G_BUTTON;
         c.objects[BUTOFF+i].ob_spec.free_string = c.buttons[i];
     }
-    aes_alert_context = &c;
-    aes_alert_tree(button,(char *)text,&rect);
+    aes_alert_tree(aes_alert_context, button,(char *)text,&rect);
     if (rect.g_w <= 0 || rect.g_h <= 0 || rect.g_w > 32752) goto done;
     bytes = (ULONG)((rect.g_w+15)&~15) * rect.g_h * 4;
     if (bytes > VDI_SERVICE_MAX_BITMAP) goto done;
@@ -47,7 +44,7 @@ WORD mt_form_alert(WORD button, const char *text, WORD *global)
     if ((QUAD)memory <= 0) { memory = 0; goto done; }
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;
-    if (!aes_frames_suspend()) goto done;
+    if (!aes_frames_suspend(global)) goto done;
     overlay = TRUE;
     if (aes_graphics_call(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&ws,0,0) != E_OK) goto done;
     opened = TRUE;
@@ -62,13 +59,12 @@ done:
     if (opened && aes_graphics_call(VDI_SERVICE_CLOSE,ws.handle,0,0,0) != E_OK) ok = FALSE;
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (memory && (LONG)aes_memory_call(0x49,memory) != E_OK) ok = FALSE;
-    aes_alert_context = saved;
-    if (overlay) aes_frames_resume();
+    if (overlay) aes_frames_resume(global);
     return ok ? selection : 0;
 }
-WORD form_alert(WORD button, const char *text) { return mt_form_alert(button,text,aes_global); }
 
-WORD aes_error_show(WORD string, WORD *number, WORD button)
+
+WORD aes_error_show(ERROR_CONTEXT *aes_error, WORD string, WORD *number, WORD button)
 {
     char text[64], digits[6];
     const char *source;
@@ -78,8 +74,8 @@ WORD aes_error_show(WORD string, WORD *number, WORD button)
     if (string < AL18ERR || string > ALXXERR) return 0;
     source = rs_fstr[string];
     if (!number) {
-        result = mt_form_alert(button,source,error_global);
-        error_ok = result != 0;
+        result = mt_form_alert(button,source,aes_error->global);
+        aes_error->ok = result != 0;
         return result;
     }
     /* The original generic alert has a single %u, with a WORD argument. */
@@ -92,19 +88,16 @@ WORD aes_error_show(WORD string, WORD *number, WORD button)
         } else *out++ = *source++;
     }
     *out = 0;
-    result = mt_form_alert(button,text,error_global);
-    error_ok = result != 0;
+    result = mt_form_alert(button,text,aes_error->global);
+    aes_error->ok = result != 0;
     return result;
 }
-WORD mt_form_error(WORD error, WORD *global)
+WORD mt_form_error(WORD error, AESGLOBAL *global)
 {
-    WORD *saved = error_global, result;
-    BOOL saved_ok = error_ok, ok;
+    ERROR_CONTEXT c = { 0 }, *aes_error = &c;
+    WORD result;
     if (aes_application_session(global) < 0) return 0;
-    error_global = global; error_ok = TRUE;
-    result = aes_error_core(error);
-    ok = error_ok;
-    error_global = saved; error_ok = saved_ok;
-    return ok ? result : 0;
+    c.global = global; c.ok = TRUE;
+    result = aes_error_core(aes_error, error);
+    return c.ok ? result : 0;
 }
-WORD form_error(WORD error) { return mt_form_error(error,aes_global); }

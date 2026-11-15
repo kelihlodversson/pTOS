@@ -12,7 +12,7 @@ static LONG process(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
-static int input(short *global)
+static int input(AESGLOBAL *global)
 {
     short x, y, buttons, mods, key, clicks;
     short events = mt_evnt_multi(MU_BUTTON|MU_M1|MU_TIMER,1,0,0,
@@ -23,12 +23,15 @@ static int input(short *global)
 }
 int main(int argc, char **argv, char **envp)
 {
-    short id, peer, global[15], message[8] = { 0 }, window, top, owner, below, spare;
+    short id, peer, message[8] = { 0 }, window, top, owner, below, spare;
+    AESGLOBAL global = { 0 };
     LONG child, status;
     char tail[3] = { 1, 'c', 0 };
     static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
-    id = appl_init(); VERIFY(id > 0 && mt_appl_init(global) == id);
+    id = appl_init(); VERIFY(id > 0);
+    global.ap_3resv = aes_global.ap_3resv;
+    VERIFY(mt_appl_init(&global) == id);
     if (argc > 1) {
         short parent = appl_find("GEMMCTL");
         VERIFY(parent > 0 && parent != id);
@@ -40,7 +43,7 @@ int main(int argc, char **argv, char **envp)
         VERIFY(control_message(message) == 1 && message[0] == 1);
         message[0] = 901; message[1] = id;
         VERIFY(appl_write(parent,16,message) == 1);
-        VERIFY(mt_wind_update(BEG_MCTRL,global) == 1 && input(global));
+        VERIFY(mt_wind_update(BEG_MCTRL,&global) == 1 && input(&global));
         message[0] = 902; message[1] = id;
         VERIFY(appl_write(parent,16,message) == 1);
         VERIFY(control_message(message) == 1 && message[0] == 2);
@@ -48,8 +51,8 @@ int main(int argc, char **argv, char **envp)
         _Exit(37); /* Authoritative raw exit drops both levels and the window. */
     }
     VERIFY(wind_update(END_MCTRL) == 0);
-    VERIFY(wind_update(BEG_MCTRL|NO_BLOCK) == 1 && mt_wind_update(BEG_MCTRL,global) == 1);
-    VERIFY(input(global)); /* No window is required to receive modal input. */
+    VERIFY(wind_update(BEG_MCTRL|NO_BLOCK) == 1 && mt_wind_update(BEG_MCTRL,&global) == 1);
+    VERIFY(input(&global)); /* No window is required to receive modal input. */
     child = process(0x4b,100,(uintptr_t)"C:\\GEMMCTL.TOS",(uintptr_t)tail,(uintptr_t)environment);
     VERIFY(child > 0 && control_message(message) == 1 && message[0] == 900);
     peer = message[1];

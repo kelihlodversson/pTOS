@@ -47,17 +47,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: all
       - name: Install the host and x32 test packages
         uses: ./.github/actions/apt-install
         with:
-          packages: gcc-multilib gcc-13 qemu-system-x86 ovmf dosfstools mtools
+          packages: qemu-system-x86 ovmf dosfstools mtools
       - name: Install the test tools for Python
         run: |
           python3 -m venv /tmp/elf-shared-venv
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
+      - name: Test pinned SDK selection and checksum rejection
+        run: python3 tools/test-toolchain-install.py
       - name: Test metadata, corrupt inputs and Kconfig isolation
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
+      - name: Test executable handlers and interpreter arguments
+        run: |
+          sh tools/test-binfmt.sh
+          BINFMT_SANITIZE=1 sh tools/test-binfmt.sh
+          /tmp/elf-shared-venv/bin/python tools/test-binfmt-io.py
+          BINFMT_SANITIZE=1 /tmp/elf-shared-venv/bin/python tools/test-binfmt-io.py
       - name: Test CUIS ownership and caller-local AES object contracts
+        run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
+      - name: Test AES context ownership and reentrancy with ASan and UBSan
+        env:
+          HOSTCC: cc -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -no-pie
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
       - name: Test bounded CUIS observer wait ownership (default off and gated)
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis-observers.py
@@ -159,7 +174,7 @@ jobs:
           assert config.syms["CONF_WITH_PCLONE"].str_value == "y"
           config.write_config()
           PY
-          make CROSS_COMPILE= obj/ldso/libldso.a
+          make obj/ldso/libldso.a
           sh tools/test-clone-handler.sh
           HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" sh tools/test-clone-handler.sh
           ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-clone-handler.sh
@@ -168,8 +183,8 @@ jobs:
       - name: Build and boot-test enabled mapping syscalls
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
-          make CROSS_COMPILE= -j2
-          make CROSS_COMPILE= x32test x32-vdi-import-test
+          make -j2
+          make x32test x32-vdi-import-test
           sh tools/test-mmap-boot.sh
       - name: Boot-test standard GEM shared libraries, VDI, callbacks and CUIS
         run: |
@@ -182,10 +197,11 @@ jobs:
               config.syms[name].set_value(2)
           config.write_config()
           PY
-          make CROSS_COMPILE= -j2
-          make CROSS_COMPILE= x32test x32-vdi-import-test
+          make -j2
+          make x32test x32-vdi-import-test
           readelf -d obj/libaes/CUIS.TOS | grep 'libaes.so'
           readelf -l obj/libaes/CUIS.TOS | grep '/GEMSYS/LIB/X32/LD.SO'
+          python3 tools/check-libaes-elf.py obj/libaes/libaes.so obj/gemlib/libgem.a obj/libaes/GEM.TOS
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Boot-test gated PROCESS observer leases in CUIS waits
@@ -202,7 +218,7 @@ jobs:
           assert config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].str_value == "y"
           config.write_config()
           PY
-          make CROSS_COMPILE= -j2
+          make -j2
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Boot-test gated receipt runtime through real PROCESS and CUIS rings
@@ -216,7 +232,7 @@ jobs:
           assert config.syms["CONF_WITH_CUIS_RECEIPT_TEST"].str_value == "y"
           config.write_config()
           PY
-          make CROSS_COMPILE= -j2
+          make -j2
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Boot-test positive shared-Pexec PROCESS results and independent CUIS observation
@@ -233,7 +249,7 @@ jobs:
               assert config.syms[name].str_value == "y", name
           config.write_config()
           PY
-          make CROSS_COMPILE= -j2 all x32test x32-vdi-import-test
+          make -j2 all x32test x32-vdi-import-test
           grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1$' obj/autoconf.h
           MMAP_BOOT_TIMEOUT=300 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
@@ -252,61 +268,12 @@ jobs:
           assert config.syms["CONF_WITH_MMAP"].str_value == "n"
           config.write_config()
           PYCONFIG
-          make CROSS_COMPILE= -j2 all x32test
+          make -j2 all x32test
           sh tools/test-mmap-boot.sh --disabled
 
-      - name: Exercise shared desktop and console consumers
-        run: |
-          export PATH=/tmp/elf-shared-venv/bin:$PATH
-          for variant in pc-x86_64-desktop-tests pc-x86_64-desktop-tests-builtin-cli; do
-            make "$variant"_defconfig
-            CONFIG_= python - <<'PY'
-          import kconfiglib
-          config = kconfiglib.Kconfig()
-          config.load_config()
-          config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
-          config.syms["CONF_WITH_LIBAES"].set_value(2)
-          config.syms["CONF_WITH_AES"].set_value(0)
-          assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "y"
-          assert config.syms["CONF_WITH_X32_DESKTOP_TEST"].str_value == "y"
-          config.syms["CONF_WITH_SHUTDOWN"].set_value(2)
-          config.write_config()
-          PY
-            make CROSS_COMPILE= -j2
-            make CROSS_COMPILE= x32-desktop-test
-            readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
-            readelf -d emudesk.prg | grep 'libptos.so'
-            readelf -d emudesk.prg | grep 'libaes.so'
-            nm emutos.efi > obj/shared-desktop-kernel.symbols
-            grep -q ' T cuis_service$' obj/shared-desktop-kernel.symbols
-            if grep -Eq ' [Tt] (ui_start|aes_service|aes_tree_validate)$' obj/shared-desktop-kernel.symbols; then
-              echo 'External libaes desktop must not link kernel AES services' >&2
-              exit 1
-            fi
-            if [ "$variant" = pc-x86_64-desktop-tests ]; then
-              readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
-              readelf -d cli/emucon.tos | grep 'libptos.so'
-              python3 tests/x32_desktop/run.py --output obj/shared-desktop-runtime
-              python3 tests/x32_desktop/run.py --mode shutdown --output obj/shared-desktop-shutdown
-            else
-              if readelf -l obj/x32/emucon.elf | grep 'INTERP'; then
-                echo 'Embedded EmuCON must retain its static entry path' >&2
-                exit 1
-              fi
-              python3 tests/x32_desktop/run.py --output obj/shared-desktop-builtin-cli --embedded-console --mode missing
-            fi
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shared-x32-consumers
-          path: |
-            obj/shared-desktop-runtime/
-            obj/shared-desktop-shutdown/
-            obj/shared-desktop-builtin-cli/
-          if-no-files-found: ignore
-          retention-days: 14
-
+      # (the shared desktop and console consumers, pc-x86_64-desktop-tests and
+      # its built-in-cli variant, are built and run by the x86-desktop group:
+      # tools/ci-x86_64.sh)
 
   # A few configurations to a job, one after the other (tools/ci-group.sh):
   # the job's own cost (a runner, the toolchain) is more than a
@@ -398,6 +365,19 @@ jobs:
         if: matrix.group == 'x86-desktop' && !cancelled()
         run: tools/ci-group.sh --names pc-x86_64 tools/ci-regression.sh
 
+      - name: Run native executable-handler boot tests
+        if: matrix.group == 'x86-desktop' && !cancelled()
+        run: tools/ci-binfmt.sh x32
+
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.group == 'x86-desktop'
+        with:
+          name: binfmt-x32
+          path: |
+            obj/binfmt/x32/*.log
+            obj/binfmt/x32/test.json
+          retention-days: 14
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -455,6 +435,21 @@ jobs:
 
       - name: Run the regression suite
         run: tools/ci-group.sh --names "${{ matrix.machines }}" tools/ci-regression.sh
+
+      - name: Run native executable-handler boot tests
+        if: ${{ !cancelled() }}
+        run: |
+          tools/ci-binfmt.sh '${{ matrix.arch }}'
+          if [ '${{ matrix.arch }}' = arm ]; then tools/ci-binfmt.sh arm shared; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: binfmt-${{ matrix.arch }}
+          path: |
+            obj/binfmt/${{ matrix.arch }}*/*.log
+            obj/binfmt/${{ matrix.arch }}*/test.json
+          retention-days: 14
 
   exec-replacement-native:
     name: private ELF staging ${{ matrix.machine }} ${{ matrix.fs }}
@@ -517,38 +512,6 @@ jobs:
           PROCESS_FILES_FS: ${{ matrix.fs }}
           REGRESSION_RAW_DISK: '1'
         run: tools/ci-group.sh --names "${{ matrix.machine }}" tools/ci-regression.sh
-
-
-  pmmu-check:
-    name: PMMU startup check (virt-m68k-mmu)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # the image loads EmuCON (CONF_EXTERNAL_CLI): libcmini builds it
-          submodules: true
-
-      - uses: ./.github/actions/setup-toolchain
-        with:
-          arch: m68k
-
-      - name: Install QEMU
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y qemu-system-misc
-
-      - name: Build virt-m68k-mmu
-        run: |
-          make virt-m68k-mmu_defconfig
-          make
-
-      - name: Boot it with and without a PMMU
-        run: tools/test-pmmu-check.sh virt-m68k.elf
-
-      - name: Report the failure
-        if: failure()
-        run: |
-          echo "::error title=PMMU startup check::the virt-m68k-mmu image did not refuse a CPU without a PMMU, or did not boot on the 68040"
 
   release-archives:
     name: Release archives
@@ -697,11 +660,36 @@ jobs:
             build.log
           retention-days: 14
 
+  homebrew:
+    name: Homebrew SDKs and builds (macOS)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: all
+      - name: Test all installed SDKs together
+        run: |
+          for formula in ptos-m68k ptos-arm ptos-x86_64; do
+            brew test "kelihlodversson/ptos-toolchain/$formula"
+          done
+      - name: Build m68k, ARM and UEFI with the default prefixes
+        run: |
+          for config in virt-m68k-aspace virt-arm-aspace pc-x86_64; do
+            make distclean
+            make "${config}_defconfig"
+            make -j3
+            make -j3 runtests.tos
+          done
+
   # A single job to require in the branch protection rules, so that the list
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, x86_64, regression, shared-pexec, pmmu-check, release-archives, raspi-sdcard]
+    needs: [build, x86_64, regression, shared-pexec, release-archives, raspi-sdcard, homebrew]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -723,18 +711,18 @@ jobs:
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
           echo "positive shared Pexec: ${{ needs.shared-pexec.result }}"
-          echo "PMMU startup check:     ${{ needs.pmmu-check.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
+          echo "Homebrew SDKs/builds:  ${{ needs.homebrew.result }}"
 
           ok=true
           [ '${{ needs.build.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
           [ '${{ needs.shared-pexec.result }}' = success ] || ok=false
-          [ '${{ needs.pmmu-check.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
+          [ '${{ needs.homebrew.result }}' = success ] || ok=false
 
           if ! $ok; then
             echo "::error::at least one required job failed (configuration build, regression suite, release archives or SD card image): see the results above"

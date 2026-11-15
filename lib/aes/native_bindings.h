@@ -1,7 +1,7 @@
 /* Library-private native coordination. Applications use gem.h/GEMlib. */
 #ifndef LIBAES_NATIVE_BINDINGS_H
 #define LIBAES_NATIVE_BINDINGS_H
-#include "gem.h"
+#include "libaes.h"
 #include "cuis.h"
 LONG aes_session_open(void);
 LONG aes_session_query(LONG handle);

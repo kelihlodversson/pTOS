@@ -18,13 +18,13 @@ static void shell_preinit(unsigned argc, char **argv, char **envp)
     const ULONG *aux;
     BASEPAGE *basepage = NULL;
     unsigned i;
-    (void)argv;
     for (i = 0; envp[i]; i++) ;
     aux = (const ULONG *)(envp+i+1);
     for (i = 0; i < 32 && aux[0]; i++, aux += 2)
         if (aux[0] == 0x5000) basepage = (BASEPAGE *)(uintptr_t)aux[1];
     preinit_seen = 1;
     if (!basepage) return;
+    if (argc > 1 && argv[1][0] == 'c' && appl_init() <= 0) return;
     for (i = 0; i < 128; i++) launch_tail[i] = basepage->p_cmdlin[i];
     if (argc > 1) {
         /* The default DTA aliases p_cmdlin: this deliberately overwrites it. */
@@ -58,7 +58,7 @@ static int equal(const char *a, const char *b)
     return *a == *b;
 }
 static void copy(char *dest, const char *src) { while ((*dest++ = *src++) != 0) ; }
-int gem_shell_checks(short *global, int child, int argv_path)
+int gem_shell_checks(AESGLOBAL *global, int child, int argv_path)
 {
     char command[260], again[260], tail[128], saved[128], cwd[128], *value;
     UBYTE dta[64], expected[64];

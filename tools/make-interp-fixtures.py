@@ -20,8 +20,10 @@ for output, library in (("DYNMISS.TOS", b"NOPE1.SO"), ("DYNBAD.TOS", b"BADPR.SO"
     data[interp[1]:interp[1] + interp[4]] = name
     (root / output).write_bytes(data)
 data = bytearray(program)
-note_at = next(at for at, ph in headers if ph[0] == 4)
-data[note_at:note_at + 32] = program[interp_at:interp_at + 32]
+# The pTOS linker need not emit a build-id PT_NOTE. Reuse a non-load
+# metadata slot; replacing GNU_STACK also leaves two PT_INTERP headers.
+metadata_at = next(at for at, ph in headers if ph[0] in (0, 4, 0x6474e551))
+data[metadata_at:metadata_at + 32] = program[interp_at:interp_at + 32]
 (root / "DYNDUPE.TOS").write_bytes(data)
 data = bytearray(program)
 writable = next(ph for at, ph in headers if ph[0] == 1 and ph[6] & 2)

@@ -8,3 +8,5 @@ CONF_EXTERNAL_DESK=y
 CONF_WITH_X32_DESKTOP_TEST=y
 CONF_WITH_ELF_SHARED=y
 CONF_WITH_LIBAES=y
+# the shutdown run of tests/x32_desktop/run.py (tools/ci-x86_64.sh)
+CONF_WITH_SHUTDOWN=y

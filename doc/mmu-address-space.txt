@@ -119,11 +119,13 @@ The user half
 The user half is laid out exactly like x32's (the constants of
 include/procmem.h; #562 gives them 32-bit types):
 
-    0x00000000 - 0x001fffff   kernel low mappings and null guard (below)
-    0x00200000 - 0x003fffff   basepage, environment and TPA blocks (window)
-    0x00400000 - 0x007fffff   program image, and the startup area after it
+    0x00000000 - 0x0000ffff   kernel low mappings and null guard (below)
+    0x00010000 - 0x07ffffff   ELF images and private mappings
+    0x08000000 - 0x0fffffff   reserved system window, including:
+    0x0e000000 - 0x0e1fffff   basepage, environment and TPA blocks (window)
+    0x0f000000 - 0x0ffbffff   optional standard ELF interpreter
     0x0fff0000 - 0x0fff0fff   the ancestors' basepages, read-only
-    0x10000000 - 0x7ffbefff   Malloc() memory
+    0x10000000 - 0x7ffbefff   ELF images, private mappings and Malloc() memory
     0x7ffbf000 - 0x7ffbffff   guard page
     0x7ffc0000 - 0x7fffffff   user stack (256 KiB), growing down from
                               0x80000000
@@ -134,20 +136,21 @@ Psetlimit() of the stack size moves all three: a 1 MiB stack starts at
 0x7ff00000, with the guard page below it.  (x32's 16 MiB default puts them
 at 0x7efff000 and 0x7f000000.)
 
-The same rules hold as on x32, except that nothing is backed when touched:
-the first ARM and m68k backends have no demand paging (#549 leaves it out,
-CONF_WITH_DEMAND_PAGING, #562).  Malloc() memory is mapped when a block is
-handed out, and the stack when the process starts, 256 KiB by default
-(USER_STACK_SIZE) instead of x32's 16 MiB; Psetlimit() maps a bigger one at
-once.  Malloc(-1) reports no more than there is physical memory for.  The
-process window (basepage, environment,
-TPA) holds blocks the BDOS reaches by the same address in every address
+With CONF_WITH_DEMAND_PAGING, the default stack is 16 MiB and memory is
+backed on first touch, as on x32. Without it, Malloc blocks and the 256 KiB
+stack are backed immediately; Malloc(-1) is bounded by physical memory.
+Images may keep their PT_LOAD addresses anywhere in the allocatable ranges,
+including 0x41000000; their gaps and 128 KiB startup area are reserved too.
+The old 0x00400000 image base remains the fallback when rebasing is needed.
+Malloc and Mmap skip images and each other's reservations (doc/mmap.txt).
+The process window (basepage, environment, TPA) holds blocks the BDOS reaches
+by the same address in every address
 space, so its addresses are unique across processes and are never reused
 while a block is live.  Everything else is private: the image, the startup
 area, the Malloc() memory and the stack have the same virtual addresses in
 every process, and different physical pages behind them.
 
-Kernel low mappings.  The lowest 2 MiB is not mapped for the process.
+Kernel low mappings. The lowest 64 KiB is reserved from private allocations.
 
   m68k: the exception vectors (0x000-0x3ff, at VBR 0) and the TOS system
   variables (0x380-0x7ff), and the low ST-RAM sections that end at
@@ -156,20 +159,13 @@ Kernel low mappings.  The lowest 2 MiB is not mapped for the process.
   and the BIOS reach them there while they serve the process's calls.
   This is x32's "kernel low mappings".  A user-mode access faults, as it
   does on a real ST, where the GLUE protects the first 2 KiB.  The rest of
-  the 2 MiB is the null guard.
+  the 64 KiB is the null guard.
 
-  ARM: nothing is mapped there.  The system variables are ordinary kernel
-  variables on ARM (#219, bios/tosvars.c).  The native exception table moves
-  into the kernel image through VBAR, which the ARM1176 of the Pi 1 has as
-  well as every ARMv7 core.  The emulated TOS vector table does not: it
-  occupies 0x8-0x3ff today (bios/arch/arm/vectors.c initialises it, and the
-  startup dispatchers read their handlers there).  Before the low 2 MiB can
-  be left unmapped, that table has to move into the kernel image, and its
-  writers (vectors.c, Setexc()) and readers (the dispatchers) with it.  This
-  is a prerequisite of #566 and #567.  The whole 2 MiB is then the null
-  guard.
+  ARM: nothing is mapped there. The system variables and both the native
+  and emulated vector tables live in the kernel image. The 64 KiB guard
+  remains unavailable to userspace.
 
-What a user program may read in low memory: nothing.  A process stays in
+What a user program may read in the low guard: nothing.  A process stays in
 user mode (below), and reads the system variables it needs through
 Ssystem(), the documented way, which works from user mode (#221, #237).
 
@@ -799,12 +795,12 @@ What is shared by both architectures:
     kernel heap (bios/kheap.c) come from it.  The pool of the memory
     descriptors is in the kernel half now: no address in the lower half is
     the kernel's, and the TPA of a process is a block of procmem's window,
-    0x00200000, 2 MiB (bios/procmem.c), that is mapped into its address space.
+    0x0e000000, 2 MiB (bios/procmem.c), that is mapped into its address space.
   - bios/aspace.c is the address space: it owns the root and the table pages
     the backend asks for, maps private pages (freed with the space) and
     borrowed ones (procmem blocks), and destroys all of it together.  What an
     architecture provides is include/aspace32.h; bios/progimage.c validates
-    and maps the layout of a program (segments in USER_IMAGE_BASE..+4 MiB,
+    and maps the layout of a program (segments in an allocatable user range,
     none sharing a page).
   - Each process has a kernel stack of 4 pages.  Exceptions from user mode,
     GEMDOS, BIOS and XBIOS calls run on it, and gouser() (Pexec()) waits on the

@@ -20,6 +20,7 @@ machine=$1
 
 script_machine=$machine
 traditional_fat=false
+pmmu_check=false
 make_args=
 case $machine in
     virt-arm)
@@ -50,8 +51,11 @@ case $machine in
         script_machine=virt-m68k
         ;;
     virt-m68k-mmu)
-        # the higher-half kernel with the 68040 MMU on (#569)
+        # the higher-half kernel with the 68040 MMU on (#569); the same image
+        # is booted on CPUs without a PMMU as well, which it has to refuse
+        # (#564, tools/test-pmmu-check.sh)
         config=virt-m68k-mmu
+        pmmu_check=true
         ;;
     virt-m68k-aspace)
         # every process in an address space of its own, user mode and page
@@ -68,7 +72,6 @@ case $machine in
         ;;
     pc-x86_64)
         config=pc-x86_64-desktop
-        make_args=CROSS_COMPILE=     # native gcc, as in the x86_64 job
         ;;
     *)
         echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, raspi2b-aspace, pc-x86_64)" >&2
@@ -150,3 +153,10 @@ fi
 make $make_args test-dir
 
 tools/run-regression-tests.sh "$script_machine"
+
+if [ "$pmmu_check" = true ]; then
+    if ! tools/test-pmmu-check.sh virt-m68k.elf; then
+        echo "::error title=PMMU startup check::the virt-m68k-mmu image did not refuse a CPU without a PMMU, or did not boot on the 68040"
+        exit 1
+    fi
+fi

@@ -4,3 +4,6 @@
 [submodule "lib/freetype"]
 	path = lib/freetype
 	url = https://github.com/freetype/freetype
+[submodule "lib/gemlib"]
+	path = lib/gemlib
+	url = https://github.com/kelihlodversson/gemlib

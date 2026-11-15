@@ -22,7 +22,7 @@ int _Mfree(void *x) {
     return 0;
 }
 #else
-#include <osbind.h>
+#include <mint/osbind.h>
 #define _Malloc Malloc
 #define _Mfree Mfree
 #endif

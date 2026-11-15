@@ -22,3 +22,6 @@ obj-$(CONF_WITH_3D_OBJECTS) += gemframe.o
 obj-$(CONF_WITH_COLOUR_ICONS) += gemcicon.o
 
 endif
+
+# Classic builds expand the optional userspace context arguments away.
+obj/gemrender.o obj/gemrender_graphics.o obj/gemgraphutil.o obj/gemicon.o obj/gemedit.o obj/gemgrtrack.o obj/gemformanim.o obj/gemobjwalk.o obj/gemformbutton.o obj/gemwatch.o obj/gemformdo.o obj/gemalert.o obj/gemformerror.o obj/gemfslib.o obj/gemshquery.o obj/gemmenuchange.o obj/gemrsaddr.o obj/rsload_portable.o: include/aescontext.h

@@ -1,24 +1,15 @@
 /* Standard GEM shell startup/environment/file lookup, without shell services.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "shell_context.h"
 #include "resource_context.h"
 #include "application.h"
+#include "app_context.h"
 #include "transport.h"
 #include "gemerror.h"
-#include "ptos.h"
-#include "launch.h"
 #include "lifecycle.h"
 #include "shell_arguments.h"
 #include "string.h"
-
-SHELL_CONTEXT *aes_shell;
-DTA aes_shell_dta;
-char aes_shell_command[AES_SHELL_PATH], aes_shell_tail[128];
-char *aes_shell_environment;
-static BOOL startup_ready;
-static ULONG environment_bytes;
-static char empty_environment[2];
 
 static ULONG bounded_length(const char *text, ULONG limit)
 {
@@ -45,37 +36,22 @@ BOOL aes_shell_path_valid(const char *path, const char *name)
     separator = !length || (path[length-1] != '\\' && path[length-1] != ':');
     return length < AES_SHELL_PATH && n < AES_SHELL_PATH && length+n+separator < AES_SHELL_PATH;
 }
-static BOOL environment_valid(void)
+static BOOL environment_valid(const AES_SHELL_STATE *state)
 {
     ULONG i;
-    if (!aes_shell_environment || environment_bytes < 2 || environment_bytes > AES_SHELL_ENV) return FALSE;
-    for (i = 0; i+1 < environment_bytes; i++)
-        if (!aes_shell_environment[i] && !aes_shell_environment[i+1]) return TRUE;
+    if (state->capture_pending || !state->environment || state->environment_bytes < 2 || state->environment_bytes > AES_SHELL_ENV) return FALSE;
+    for (i = 0; i+1 < state->environment_bytes; i++)
+        if (!state->environment[i] && !state->environment[i+1]) return TRUE;
     return FALSE;
 }
 
-/* The interpreter completed the optional launch record before executable
- * preinitializers. DT_INIT only consumes that saved state. */
-void aes_library_init(void)
-{
-    const DL_LAUNCH *launch = (const DL_LAUNCH *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH);
-    aes_resources_init();
-    startup_ready = FALSE; aes_shell_command[0] = aes_shell_tail[0] = 0;
-    aes_shell_environment = launch && launch->environment ?
-        (char *)(uintptr_t)launch->environment : empty_environment;
-    environment_bytes = launch && launch->environment ? launch->environment_size : sizeof(empty_environment);
-    if (!launch || launch->ready != 1 || !*launch->command ||
-        launch->tail[0] > 127 || !aes_shell_copy(aes_shell_command,launch->command,sizeof(aes_shell_command))) return;
-    memcpy(aes_shell_tail,launch->tail,sizeof(aes_shell_tail));
-    startup_ready = TRUE;
-}
-void aes_shell_set_dta(void *dta)
+void aes_shell_set_dta(SHELL_CONTEXT *aes_shell, void *dta)
 {
     /* Fsetdta is void; its getter verifies installation and restoration. */
     (void)aes_gemdos_call(0x1a,(uintptr_t)dta,0,0);
     if (aes_gemdos_call(0x2f,0,0,0) != (uintptr_t)dta) aes_shell->ok = FALSE;
 }
-WORD aes_shell_first(char *path, WORD attributes)
+WORD aes_shell_first(SHELL_CONTEXT *aes_shell, char *path, WORD attributes)
 {
     LONG result;
     if (!aes_shell->ok || !*path) return EFILNF;
@@ -83,12 +59,17 @@ WORD aes_shell_first(char *path, WORD attributes)
     if (result < 0 && result != EFILNF && result != EPTHNF && result != ENMFIL) aes_shell->ok = FALSE;
     return (WORD)result;
 }
-WORD mt_shel_read(char *command, char *tail, WORD *global)
+WORD mt_shel_read(char *command, char *tail, AESGLOBAL *global)
 {
-    if (!command || !tail || !startup_ready || aes_application_session(global) < 0) return 0;
-    aes_shell_read_core(command,tail); return 1;
+    SHELL_CONTEXT c = { 0 };
+    SHELL_CONTEXT *aes_shell = &c;
+    if (!command || !tail || aes_application_session(global) < 0) return 0;
+    c.state = aes_shell_state(global);
+    if (!c.state->startup_ready) return 0;
+    aes_shell_read_core(aes_shell, command,tail);
+    return 1;
 }
-WORD shel_read(char *command, char *tail) { return mt_shel_read(command,tail,aes_global); }
+
 static WORD application_kind(const char *path)
 {
     ULONG length = strlen(path), i;
@@ -130,7 +111,7 @@ static BOOL shell_absolute(char *result, const char *source)
     for (i = 2; result[i]; i++) if (result[i] == '/') result[i] = '\\';
     return TRUE;
 }
-WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, WORD *global)
+WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, AESGLOBAL *global)
 {
     char path[AES_SHELL_PATH], absolute[AES_SHELL_PATH], directory[AES_SHELL_PATH];
     const char *requested_directory = NULL;
@@ -140,6 +121,7 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     LONG pid = 0, session;
     UWORD extensions = (UWORD)mode & 0xff00;
     BOOL parse;
+    AES_SHELL_STATE *state;
     WORD kind = GEMAPP;
     mode = (UWORD)mode & 255;
     if (extensions & ~(SW_ENVIRON|SW_DEFDIR)) return 0;
@@ -152,6 +134,7 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
         (execution == SHW_CHAIN && graphical == TOSAPP)) return 0;
     session = aes_application_session(global);
     if (session < 0 || !command || !tail || (UBYTE)tail[0] > 127) return 0;
+    state = aes_shell_state(global);
     if (extensions) {
         const SHELW *extended = command;
         if (extensions & SW_ENVIRON) environment = extended->env;
@@ -176,8 +159,8 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
     }
     parse = mode == SWM_LAUNCH && execution == CL_PARSE;
     if (!aes_shell_arguments(path,tail,parse,
-            environment ? environment : parse || (UBYTE)tail[0] == 127 ? aes_shell_environment : NULL,
-            environment ? 32766UL : environment_bytes,&arguments)) return 0;
+            environment ? environment : parse || (UBYTE)tail[0] == 127 ? state->environment : NULL,
+            environment ? 32766UL : state->environment_bytes,&arguments,global)) return 0;
     if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN) {
         pid = aes_child_defer(session,path,arguments.tail,arguments.environment,
                               set_directory ? directory : NULL) == E_OK ? 1 : 0;
@@ -192,32 +175,59 @@ finished:
     if (arguments.environment) (void)aes_resource_discard(arguments.environment);
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
 }
-WORD shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail)
-{ return mt_shel_write(mode,graphical,execution,command,tail,aes_global); }
-WORD mt_shel_envrn(char **result, const char *prefix, WORD *global)
+
+WORD mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global)
 {
     char *found;
+    SHELL_CONTEXT c = { 0 };
+    SHELL_CONTEXT *aes_shell = &c;
     if (!result || bounded_length(prefix,AES_SHELL_ENV) >= AES_SHELL_ENV ||
-        aes_application_session(global) < 0 || !environment_valid()) return 0;
-    aes_shell_env_core(&found,prefix); *result = found; return 1;
+        aes_application_session(global) < 0) return 0;
+    c.state = aes_shell_state(global);
+    if (!environment_valid(c.state)) return 0;
+    aes_shell_env_core(aes_shell, &found,prefix);
+    *result = found; return 1;
 }
-WORD shel_envrn(char **result, const char *prefix) { return mt_shel_envrn(result,prefix,aes_global); }
-WORD mt_shel_find(char *path, WORD *global)
+
+/* Kernel directory-search caches are keyed by DTA address. Reuse one stable
+ * slot per simultaneously active lookup; varying caller stack depths must
+ * not evict the application's own Fsfirst/Fsnext search. */
+static SHELL_SEARCH *acquire_search(AESGLOBAL *global)
 {
-    SHELL_CONTEXT c = { 0 }, *saved = aes_shell;
+    SHELL_SEARCH *search = &aes_app_context(global)->shell.search;
+    for (;;) {
+        if (!search->busy) { search->busy = TRUE; return search; }
+        if (!search->next) {
+            search->next = aes_temporary_alloc(sizeof(*search),global);
+            if (!search->next) return NULL;
+            memset(search->next,0,sizeof(*search));
+        }
+        search = search->next;
+    }
+}
+
+WORD mt_shel_find(char *path, AESGLOBAL *global)
+{
+    SHELL_CONTEXT c = { 0 };
+    SHELL_CONTEXT *aes_shell = &c;
     char staged[AES_SHELL_PATH];
     UQUAD dta;
     WORD result;
+    SHELL_SEARCH *search;
     if (aes_application_session(global) < 0 || !path || !*path ||
-        !aes_shell_copy(staged,path,sizeof(staged)) || !environment_valid()) return 0;
+        !aes_shell_copy(staged,path,sizeof(staged))) return 0;
+    c.state = aes_shell_state(global);
+    if (!environment_valid(c.state)) return 0;
     dta = aes_gemdos_call(0x2f,0,0,0);
     if ((QUAD)dta < 0) return 0;
-    c.original_dta = (void *)(uintptr_t)dta; c.ok = TRUE; aes_shell = &c;
-    result = aes_shell_find_core(staged);
+    search = acquire_search(global);
+    if (!search) return 0;
+    c.dta = &search->dta;
+    c.original_dta = (void *)(uintptr_t)dta; c.ok = TRUE;
+    result = aes_shell_find_core(aes_shell, staged);
     /* Retry the original DTA even if a failed search/restore set ok false. */
-    aes_shell_set_dta(c.original_dta);
-    aes_shell = saved;
+    aes_shell_set_dta(aes_shell, c.original_dta);
+    search->busy = FALSE;
     if (!result || !c.ok) return 0;
     strcpy(path,staged); return 1;
 }
-WORD shel_find(char *path) { return mt_shel_find(path,aes_global); }
