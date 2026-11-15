@@ -28,3 +28,20 @@ for product in *.img *.prg *.st *.s19 *.stc *.rom *.adf *.sym \
         cp "$product" "products/$config/"
     fi
 done
+
+# What the Hatari and pBench jobs need of this configuration, made here in the
+# tree that built it, so that they take it from the artifact instead of
+# building it again (#987): the system and test disk of a Hatari combination
+# of the event (tools/ci-hatari.sh), and pBench and the system it measures
+# (the configurations of the pbench job of .github/workflows/build.yml).
+tools/ci-hatari.sh --prepare "$config"
+case ${GITHUB_EVENT_NAME:-}:$config in
+    push:*) ;;                          # no pBench run on a push
+    *:atari512|*:atari512-fastcall) pbench_image=ptos512k.img ;;
+    *:atari256)                     pbench_image=ptos256us.img ;;
+esac
+if [ -n "${pbench_image:-}" ]; then
+    make pbench.prg
+    cp pbench.prg "products/$config/"
+    cp "$pbench_image" "products/$config/system.img"
+fi

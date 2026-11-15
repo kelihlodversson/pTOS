@@ -1,0 +1,39 @@
+#
+# The pinned Hatari (tools/hatari-pin.sh, #807), built and cached for the
+# Hatari jobs of build.yml when the pin changes.
+#
+# A cache written by a pull request is only seen by that pull request, so a new
+# pin is built on the base branch here, for the pull requests to restore; the
+# nightly run of build.yml keeps it from being evicted (seven days unused).
+# This is all that is left of hatari-tests.yml, whose jobs are in build.yml,
+# with the systems of the build job (#987).
+#
+
+name: Hatari cache
+
+on:
+  push:
+    branches: [master, "epic/**"]
+    paths:
+      - tools/hatari-pin.sh
+      - tools/build-hatari.sh
+      - tools/patches/hatari-68030-pmove-root.patch
+      - .github/actions/setup-hatari/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hatari:
+    name: Hatari (pinned build)
+    # the runner of the Hatari jobs: the key of the cache has its image
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-hatari
+
+      - name: Report the Hatari version
+        run: hatari --version || true     # (it exits with 1)

@@ -3,7 +3,13 @@
 # ci-hatari.sh - build and run the regression tests under Hatari, several at
 #                a time
 #
-# Usage: tools/ci-hatari.sh --group GROUP   build what GROUP needs, then run it
+# Usage: tools/ci-hatari.sh --group GROUP   run GROUP, building what is not
+#                                           in products/ yet
+#        tools/ci-hatari.sh --prepare CONFIG
+#                                           in a tree that has just built CONFIG,
+#                                           put its system and test disk into
+#                                           products/CONFIG/ if a combination of
+#                                           the event uses it
 #        tools/ci-hatari.sh --list GROUP    print the combinations of GROUP
 #        tools/ci-hatari.sh --check         check the groups (see below)
 #        tools/ci-hatari.sh [CONFIG:MODE...]
@@ -11,27 +17,31 @@
 #                                           combination of the event, on what
 #                                           is in products/ already
 #
-# EVENT=pull_request selects the combinations of a pull request, anything else
-# all of them.  A run is tools/run-hatari-tests.py on products/CONFIG/system.img
+# EVENT (or else GITHUB_EVENT_NAME) =pull_request selects the combinations of a
+# pull request, anything else all of them; a push runs none, so --prepare does
+# nothing for one.  A run is tools/run-hatari-tests.py on products/CONFIG/system.img
 # and test-hd.img, in one screen mode, one Hatari each, as many at a time as
 # the machine has CPUs (Hatari's clock is the emulated one: the load does not
 # change the results, only how long they take).  Output goes to logs/ and, on
 # GitHub Actions, to the job's summary, with an annotation for each that failed.
 # Hatari and python3 have to be installed (CI: the pinned Hatari of
-# tools/hatari-pin.sh), and the m68k toolchain for --group.
+# tools/hatari-pin.sh), and the m68k toolchain for a --group that has to build.
 #
-# The combinations are in groups, one CI job each (the matrix of
-# .github/workflows/hatari-tests.yml), so that they run on several runners at
-# once: a run takes from seconds to twenty minutes, and the job was a queue of
-# them on the four CPUs of one runner.  A group of a pull request has at most
-# four, so that they all start at once, and builds as few configurations as it
-# can.  What a pull request runs is chosen from what depends on the mode and on
+# The combinations are in groups, one CI job each (the matrix of the hatari job
+# of .github/workflows/build.yml), so that they run on several runners at once:
+# a run takes from seconds to twenty minutes, and the job was a queue of them on
+# the four CPUs of one runner.  A group of a pull request has at most four, so
+# that they all start at once.  In CI the systems and their test disks come from
+# the "build m68k-atari" job (tools/ci-build.sh runs --prepare, #987), so a
+# group builds nothing; run locally, it builds what it needs.  What a pull request runs is chosen from what depends on the mode and on
 # the kernel (doc/ci.txt).  --check fails when the groups of a pull request are
 # not exactly PR_COMBOS, or the others not exactly ALL_COMBOS, or the groups
 # are not those of the workflow's matrix.
 #
 
 set -e -o pipefail
+
+EVENT=${EVENT:-${GITHUB_EVENT_NAME:-}}
 
 PR_GROUPS="st variants mmu"
 ALL_GROUPS="st fastcall kproc extdesk mmu"
@@ -55,16 +65,23 @@ group_combos() {
   esac
 }
 
-# build CONFIG: products/CONFIG/system.img and test-hd.img
-build() {
+# event_combos: every combination of the event
+event_combos() {
+  case $EVENT in
+    pull_request) echo "$PR_COMBOS" ;;
+    push)         ;;
+    *)            echo "$ALL_COMBOS" ;;
+  esac
+}
+
+# prepare CONFIG, in a tree that has built CONFIG: products/CONFIG/system.img
+# and test-hd.img
+prepare() {
   config=$1
   case $config in
     atari192) image=ptos192us.img ;;   # -Os, LTO and -mfastcall, as the small ROMs
     *)        image=ptos512k.img ;;
   esac
-  make distclean >/dev/null 2>&1
-  make "${config}_defconfig"
-  make
   mkdir -p "products/$config"
   cp "$image" "products/$config/system.img"
   case $config in
@@ -78,6 +95,14 @@ build() {
       cp test-hd.img "products/$config/"
       ;;
   esac
+}
+
+# build CONFIG: build it here, then prepare it
+build() {
+  make distclean >/dev/null 2>&1
+  make "${1}_defconfig"
+  make
+  prepare "$1"
 }
 
 # the sorted, one-per-line form of a list of combinations
@@ -105,15 +130,16 @@ check() {
       status=1
     fi
   done
-  # The matrix of the workflow is these groups: its one matrix has to be
-  # exactly this group: line (a list in a comment, or elsewhere, does not count).
+  # The matrix of the hatari job is these groups: it has to be exactly this
+  # group: line (a list in a comment, or elsewhere, does not count).
   json() { j=$(printf '"%s",' $*); echo "[${j%,}]"; }
   want="group: \${{ fromJSON(github.event_name == 'pull_request' && '$(json $PR_GROUPS)' || '$(json $ALL_GROUPS)') }}"
-  # (the first line under each matrix: that is not a comment)
-  lines=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' .github/workflows/hatari-tests.yml |
+  # (in the hatari: job, the first line under matrix: that is not a comment)
+  lines=$(awk '/^  [a-z0-9_-]+:$/ { job = $1 } job == "hatari:" { print }' .github/workflows/build.yml |
+          sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' |
           awk '/^matrix:$/ { m = 1; next } m && /^(#|$)/ { next } m { print; m = 0 }')
   if [ "$lines" != "$want" ]; then
-    echo "error: the matrix of .github/workflows/hatari-tests.yml is not the groups of this script; its group: line has to be" >&2
+    echo "error: the matrix of the hatari job of .github/workflows/build.yml is not the groups of this script; its group: line has to be" >&2
     echo "  $want" >&2
     echo "and is" >&2
     printf '  %s\n' "${lines:-(none)}" >&2
@@ -129,23 +155,33 @@ case ${1:-} in
     exit
     ;;
   --list)
-    group_combos "${EVENT:-}" "$2" || { echo "no group $2" >&2; exit 2; }
+    group_combos "$EVENT" "$2" || { echo "no group $2" >&2; exit 2; }
+    exit
+    ;;
+  --prepare)
+    if printf '%s\n' $(event_combos) | sed 's/:.*//' | grep -qx -- "$2"; then
+      prepare "$2"
+    fi
     exit
     ;;
   --group)
-    combos=$(group_combos "${EVENT:-}" "$2") || { echo "no group $2" >&2; exit 2; }
+    combos=$(group_combos "$EVENT" "$2") || { echo "no group $2" >&2; exit 2; }
     for config in $(printf '%s\n' $combos | sed 's/:.*//' | sort -u); do
-      echo "::group::build $config"
-      build "$config"
-      echo "::endgroup::"
+      if [ -f "products/$config/system.img" ] && [ -f "products/$config/test-hd.img" ]; then
+        echo "$config: the system and test disk of the build job"
+      elif [ -n "${GITHUB_ACTIONS:-}" ]; then
+        # the job has no toolchain: the build job did not make them
+        echo "::error title=$config::products/$config has no system.img and test-hd.img: did \"build m68k-atari\" fail, or is $config not in it (.github/ci-configs)?"
+        exit 1
+      else
+        echo "::group::build $config"
+        build "$config"
+        echo "::endgroup::"
+      fi
     done
     ;;
   '')
-    if [ "${EVENT:-}" = pull_request ]; then
-      combos=$PR_COMBOS
-    else
-      combos=$ALL_COMBOS
-    fi
+    combos=$(event_combos)
     ;;
   *)
     combos="$*"
