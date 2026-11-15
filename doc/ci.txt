@@ -184,10 +184,17 @@ What is changed
     build.yml, regression suites: 2 jobs, "regression arm" (virt-arm, its
       traditional FAT variant, raspi2b) and "regression m68k" (virt-m68k and
       its fastcall build), tools/ci-regression.sh
-    hatari-tests.yml: 1 job that builds the four systems and runs the tests
-      four at a time, one Hatari each, on the four CPUs of the runner
+    hatari-tests.yml: a job for each group of combinations ("Hatari st",
+      "Hatari variants", "Hatari mmu" on a pull request; five groups for the
+      28 of the night), each building the systems of its group and running
+      them one Hatari each, all at once on the four CPUs of its runner
       (Hatari's clock is the emulated one: the load does not change the
-      results; tools/ci-hatari.sh).  The job runs on an ubuntu-26.04 runner,
+      results; tools/ci-hatari.sh, which has the groups, and checks with
+      --check that they run every combination once).  It was one job
+      (tests four at a time): 4 minutes of builds and 30 of tests on a pull
+      request, the 11 runs taking 111 CPU-minutes, the longest 20.  "Hatari
+      tests" is a roll-up of the groups, so that the check keeps its name.
+      The jobs run on an ubuntu-26.04 runner,
       with the Hatari of tools/hatari-pin.sh, built from source and cached
       (.github/actions/setup-hatari, #807; a bump of the pin is a change of
       that file, after the tests have passed on the new commit): the 2.4.1 of
