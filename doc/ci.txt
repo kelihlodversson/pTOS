@@ -37,6 +37,68 @@ cache is evicted after seven days) and on request.  About ten minutes on a hit,
 twenty or so with the build.
 
 
+The second audit (November 2026)
+--------------------------------
+
+Since the first audit, configurations (47 -> 56), regression machines and
+x32 checks have been added, and some of them repeat what another check of
+the same pull request already does.  What was taken out of a pull request:
+
+- Configuration builds that a regression job repeats.  As with virt-arm-cli
+  and the others of the first audit, the regression job builds the kernel
+  of its machine with the same warning check (tools/ci-regression.sh), so the
+  build job of that configuration was the same build a second time:
+  virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, rpi2-aspace and
+  pc-x86_64-desktop are now in .github/pr-skip-configs.  tools/check-ci-configs.sh
+  used to refuse any x86 name there; it now refuses only those that
+  tools/ci-x86_64.sh boots or tests (pc-x86_64, -vdi, -callbacks, -eager,
+  -desktop-tests*), which nothing else runs.
+- pc-x86_64-libaes-desktop.  Since the kernel AES was retired, it resolves
+  to a .config identical, byte for byte, to pc-x86_64-desktop's: it is
+  built on master and every night only.  (The host tests of tools/test-cuis.py
+  and the documentation still name it, so the file stays.)
+- The "PMMU startup check (virt-m68k-mmu)" job.  It built virt-m68k-mmu a
+  third time to boot it on five CPUs; tools/ci-regression.sh virt-m68k-mmu
+  now runs tools/test-pmmu-check.sh on the image it has just built and run
+  the suite on, in the "regression m68k" job (which installs the same QEMU).
+  One job, and two builds, fewer.
+- The step "Exercise shared desktop and console consumers" of the x32 job.
+  It built pc-x86_64-desktop-tests and pc-x86_64-desktop-tests-builtin-cli
+  again (the defconfigs already have every option it set, apart from
+  CONF_WITH_SHUTDOWN), and ran tests/x32_desktop/run.py in its default mode
+  (six desktop runs) and in "missing" mode, which the x86-desktop group runs
+  on the same two configurations.  What only it did is in tools/ci-x86_64.sh
+  now: the readelf/nm checks of the shared desktop, of EmuCON and of the
+  kernel (no kernel AES services), and the "shutdown" run, for which
+  pc-x86_64-desktop-tests_defconfig now sets CONF_WITH_SHUTDOWN.  Two
+  kernel builds and seven QEMU desktop runs fewer; the artifact
+  shared-x32-consumers is gone (the runs are in the ptos-x86-desktop one).
+- The Hatari combination falcon-aspace040 in f040a.  A Falcon with a 68040
+  is a machine only the emulator has; the 68040 address-space code still runs
+  on the TT (tt040a, which also has the TT-RAM and the write-through pages
+  of #728), and the Falcon with the address spaces in f030a.  It runs every
+  night and on request with the other combinations.
+
+So a pull request builds 42 configurations instead of 48, gets one job less
+(the PMMU check), runs 11 Hatari combinations instead of 12, and 13 x32
+desktop runs instead of 20.  Nothing was dropped from master or from the
+nightly runs, except the duplicate desktop runs, which are the same tests
+on the same configurations.
+
+Looked at and kept: raspi2b-aspace next to virt-arm-aspace (the Pi has
+address-space code of its own, in bios/machine/raspi), virt-m68k-mmu next to
+virt-m68k-aspace and falcon-mmu next to falcon-aspace (the higher-half kernel
+without per-process address spaces is a run-time path of its own, and the one
+with the desktop), tta (the 68030 page tables of TT-RAM), the four
+executable-handler boot tests (tools/ci-binfmt.sh: another kernel option on
+each architecture), and the Amiberry matrix (each combination is an image on
+a CPU no other one runs, and the workflow only runs when the Amiga port
+changes).  The "mapping syscalls" boot of the x32 job (pc-x86_64 with
+CONF_WITH_ELF_SHARED alone) is a subset at run time of the boot after it,
+which adds the VDI, the callbacks and libaes, but it is the only build of the
+shared loader without libaes: left in, see "Not done".
+
+
 How it was audited
 ------------------
 
@@ -79,7 +141,7 @@ How it was audited
 What is changed
 ---------------
 
-- hatari-tests.yml: a pull request runs 12 of the 28 combinations: atari512 in
+- hatari-tests.yml: a pull request runs 11 of the 28 combinations: atari512 in
   low, high, f030 and f040 (it is the one that exercises the screen-mode
   dependent suites, and the data cache of the Falcon; med is the same code as
   low with another plane count, so only low, the 16 colour ST mode, stands
@@ -88,8 +150,9 @@ What is changed
   falcon-mmu in f030 (the Falcon ROM with the kernel in the upper half and the
   68030 MMU on, which only a 68030 runs), falcon-aspace in f030a and tta (an
   address space for every process, #727: the harness is the shell, and a 68030
-  runs it, on a Falcon and on a TT), falcon-aspace040 in f040a and tt040a (the
-  same for the 68040 MMU, #728, on a Falcon and on a TT) and atari192 in low
+  runs it, on a Falcon and on a TT), falcon-aspace040 in tt040a (the same for
+  the 68040 MMU, #728, on a TT; f040a, on a Falcon, nightly only since the
+  second audit) and atari192 in low
   (the 192 KB ROM, built with -Os, LTO and -mfastcall like the other small
   ROMs; a TOS 1.04 ROM, so Hatari runs it as a plain ST with a 68000, where
   text_blit and raster_copy skip themselves for want of a blitter; only the ST
@@ -140,7 +203,8 @@ What is changed
   builds" job runs tools/check-ci-configs.sh, which fails when one is in none.
 
 The roll-up "All builds" asks for the result of the jobs it needs (build,
-x86_64, regression, release archives, SD card image).  The branch protection
+x86_64, regression, release archives, SD card image; the PMMU startup check
+is part of "regression m68k" since the second audit).  The branch protection
 should require "All builds" (and the Hatari tests and pBench if they are to
 block a merge).  If the settings list single jobs by name, they have to follow
 the new names: the jobs of a group are one check, "build m68k-atari" and so
@@ -287,3 +351,17 @@ Not done (needs a decision)
 - The x32 job ("x32 ELF shared-library metadata") is not in the roll-up: a
   pull request can be green in "All builds" with it red.  Whether it should
   block a merge is a decision, not an audit finding.
+- (second audit) The Hatari job builds atari512, -fastcall, -kproc,
+  falcon-mmu, falcon-aspace, falcon-aspace040 and atari192, and pBench
+  atari512, atari256 and atari512-fastcall, all of which "build m68k-atari"
+  builds as well.  With the warning check in those two jobs they could go
+  into .github/pr-skip-configs as the regression machines did, but only
+  if the Hatari tests and pBench are required checks (or are moved into
+  build.yml, under the roll-up): otherwise a pull request that breaks
+  one of those builds could be merged with "All builds" green.
+- (second audit) The "mapping syscalls" boot of the x32 job is covered at run
+  time by the boot after it; dropping it would save a kernel build and a
+  boot, and lose the only build of CONF_WITH_ELF_SHARED without libaes.
+- (second audit) pc-x86_64-libaes-desktop_defconfig could be deleted, with
+  its references in tools/test-cuis.py, doc/cuis.txt,
+  doc/libaes-compatibility.md and desk/Kconfig moved to pc-x86_64-desktop.
