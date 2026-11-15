@@ -17,7 +17,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <osbind.h>
+#include <mint/osbind.h>
 #include <string.h>
 
 #define ARRAY_SIZE(array) ((int)(sizeof(array)/sizeof(array[0])))

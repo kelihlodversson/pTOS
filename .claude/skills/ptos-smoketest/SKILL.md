@@ -56,7 +56,7 @@ the pTOS tree). Relevant outputs:
 | `test-hd` (any config) | qemu-system-arm | `test-hd.img` (SD card) | `-drive file=test-hd.img,format=raw,if=sd` with any `-bios`/`-kernel` |
 | `pc-x86_64_defconfig` | qemu-system-x86_64 | `pc-x86_64.efi` | `-machine pc` + OVMF firmware, booted from a FAT ESP; the defconfig boots EmuCON, while enabling AES boots the GOP-backed desktop |
 
-Atari configs build with the default mintelf toolchain (`m68k-atari-mintelf-`)
+Atari configs build with the default pTOS SDK (`m68k-unknown-ptos-prgelf-`)
 and produce symbols in `ptos512k.sym` (load in the Hatari debugger with
 `symbols <file>`; there is no `--symbols` CLI option). The virt-m68k image is
 also ELF, since QEMU's `-kernel` loader needs an `elf32-m68k`-format kernel.
@@ -350,7 +350,7 @@ qemu-system-m68k -M virt -m 128 -cpu m68020 -kernel virt-m68k.elf -d guest_error
 ### No `raspi3b`/`raspi4b` QEMU target for pTOS's 32-bit ARM builds
 
 pTOS's Raspberry Pi builds (`rpi1_defconfig`, `rpi2_defconfig`, ...) are
-AArch32 (`arm-none-eabi-`, `kernel.img`/`kernel7.img`). QEMU's `raspi3b` and
+AArch32 (`arm-unknown-ptos-elf-`, `kernel.img`/`kernel7.img`). QEMU's `raspi3b` and
 `raspi4b` machines (`qemu-system-aarch64`) are **AArch64-only and cannot boot
 them** — this is a fixed QEMU limitation, not a pTOS gap or a flag to
 discover:
