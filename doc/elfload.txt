@@ -90,13 +90,13 @@ This works with a stock arm-none-eabi toolchain, no patched gcc or ld:
   # fixed base, --emit-relocs.  -mword-relocations keeps gcc from emitting
   # MOVW/MOVT split relocations, so every absolute slot is a plain 32-bit
   # R_ARM_ABS32 word that the loader can fix up directly.
-  arm-none-eabi-gcc -ffreestanding -nostdlib -fno-pic -mword-relocations \
+  arm-unknown-ptos-elf-gcc -ffreestanding -nostdlib -fno-pic -mword-relocations \
       -c prog.c -o prog.o
-  arm-none-eabi-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+  arm-unknown-ptos-elf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
 
   # or, position independent:
-  arm-none-eabi-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
-  arm-none-eabi-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
+  arm-unknown-ptos-elf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
+  arm-unknown-ptos-elf-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
 
 The result is an ordinary ELF that readelf, objdump and gdb understand.
 "readelf -r prog.elf" shows the relocations the loader will apply.
@@ -108,6 +108,8 @@ Building a compatible program (m68k)
 The same two recipes work with m68k ELF toolchains.  Besides a bare-metal
 m68k-elf- toolchain, Vincent Riviere's mintelf toolchain
 (m68k-atari-mintelf-) can produce ELF executables for the loader as well.
+The default pTOS m68k SDK (m68k-unknown-ptos-prgelf-) produces ordinary
+ELF directly; the MiNT recipes below are retained for legacy toolchains.
 The m68k psABI uses RELA relocations, so the retained entries are
 R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
 
@@ -232,7 +234,7 @@ unchanged.
 Producing a packed binary is one extra step after the existing recipes
 above:
 
-    arm-none-eabi-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+    arm-unknown-ptos-elf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
     ptos-elf-pack prog.elf prog-packed.elf
 
 "readelf -l prog-packed.elf" shows the extra program header as an unknown

@@ -5,6 +5,8 @@
 # Written by Vincent Rivière, 2019.
 # License: Public domain
 
+prefix=${CROSS_COMPILE-m68k-unknown-ptos-prgelf-}
+
 # Check if there are some object files
 if [ -z "$(ls obj/*.o 2>/dev/null)" ]
 then
@@ -25,6 +27,6 @@ do
   # Display differences between actual extern symbols and .extern declarations
   echo $srcfile:
   comm -3 -2 \
-    <(m68k-atari-mint-objdump -t $ofile | grep '\*UND\*' | tr -s ' ' | cut -d ' ' -f 6 | sort) \
+    <("${prefix}objdump" -t $ofile | grep '\*UND\*' | tr -s ' ' | cut -d ' ' -f 6 | sort) \
     <(grep '\.extern' $srcfile | tr -s ' ' | cut -d ' ' -f 3 | sort)
 done

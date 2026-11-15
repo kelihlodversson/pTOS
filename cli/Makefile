@@ -39,13 +39,14 @@ LIBCMINI_INC      = $(LIBCMINI_DIR)/include
 # here since this Makefile only ever builds one ARCH per invocation, so
 # there's nothing to compare against -- just two possible locations.
 LIBCMINI_BUILDDIR = $(abspath libcmini-build-$(ARCH))
-LIBCMINI_MAKE     = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR)
+LIBCMINI_MAKE     = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) CROSSPREFIX=$(CROSS_COMPILE)
 LIBCMINI_OBJDIR   = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0     = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB      = $(LIBCMINI_BUILDDIR)/./libcmini.a
 
 ifeq ($(ARCH),arm)
-CC = arm-none-eabi-gcc
+CROSS_COMPILE ?= arm-unknown-ptos-elf-
+CC = $(CROSS_COMPILE)gcc
 LIBCMINI_DEFCONFIG = ptos_arm_defconfig
 # Matches libcmini's own ARM_ABI_CFLAGS (lib/libcmini/Makefile): the
 # baseline FPU every Raspberry Pi target's own (vfp/neon-vfpv4/
@@ -63,7 +64,9 @@ LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 # getwh()/getht() instead, via Ssystem(S_CONSOLE_DIM, ...).
 OBJECTS = cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o cmdgetwh.o version.o
 else ifeq ($(ARCH),m68k)
-CC = m68k-atari-mintelf-gcc
+CROSS_COMPILE ?= m68k-unknown-ptos-prgelf-
+CC = $(CROSS_COMPILE)gcc
+M68K_PRG_FLAGS ?= -mmintelf
 LIBCMINI_DEFCONFIG = mintelf_defconfig
 # Must not add -mshort: libcmini's own mintelf_defconfig build uses the
 # toolchain's default (non -mshort) multilib, so this program has to
@@ -76,7 +79,7 @@ ARCH_CFLAGS = -Wa,--register-prefix-optional
 ifeq ($(M68K_ELF),y)
 LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 else
-LDFLAGS = -s
+LDFLAGS = $(M68K_PRG_FLAGS) -s
 endif
 # CLI_SSYSTEM=1: for a kernel with an address space for every process
 # (CONF_WITH_USER_ASPACE), which a program cannot read the system variables or
