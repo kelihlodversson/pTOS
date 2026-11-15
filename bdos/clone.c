@@ -12,6 +12,9 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "proc_clone.h"
 #include "ksched.h"
+#if CONF_WITH_IMAGE_POLICY_TEST
+#include "kproc_image_policy.h"
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "kthread.h"
 #include "kaspace.h"
@@ -120,9 +123,23 @@ static long clone_request(uint64_t address, uint64_t size)
     enum clone_validate_result valid;
     static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
         CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
+#if CONF_WITH_IMAGE_POLICY_TEST
+    BOOL image_policy_test=FALSE;
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     BOOL private_test = FALSE;
     BOOL scoped_test = FALSE;
+#endif
+#if CONF_WITH_IMAGE_POLICY_TEST
+    if (size==0xc9711100UL || size==0xc9711101UL) {
+        KPROC *source=kproc_retain(run);
+        LONG result=kproc_image_policy_test_query(source,(UWORD)(size&255));
+        kproc_release(source);return result;
+    }
+    if (!address && size>=0xc9711200UL && size<=0xc9711202UL) {
+        kproc_image_policy_test_fail_after((UWORD)(size&255));return E_OK;
+    }
+    if ((size&0xffffffffffff0000ULL)==0xc9710000ULL) { image_policy_test=TRUE;size&=0xffff; }
 #endif
 #if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
     if(!address && size==SHARED_PEXEC_MOVE_QUERY) return shared_move_probe();
@@ -264,6 +281,9 @@ static long clone_request(uint64_t address, uint64_t size)
     if (valid == CLONE_INVALID) return EINVAL;
     if (valid != CLONE_VALID) return EIMBA;
     if (!(args.flags & CLONE_VM)) return EINVFN;
+#if CONF_WITH_IMAGE_POLICY_TEST
+    if (image_policy_test && ((args.flags&CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) return EINVAL;
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     if ((private_test && ((args.flags & CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) ||
         (scoped_test && (args.flags&CLONE_SAME_PROCESS))) return EINVAL;
@@ -290,6 +310,9 @@ static long clone_request(uint64_t address, uint64_t size)
         startup.stack_base = (VADDR)(uintptr_t)args.stack_base;
         startup.stack_size = args.stack_size;
         result =
+#if CONF_WITH_IMAGE_POLICY_TEST
+            image_policy_test ? proc_clone_start_image_policy_test(&policy,&startup) :
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
             private_test ? proc_clone_start_private_test(&policy, &startup) :
             scoped_test ? proc_clone_start_scoped_test(&policy,&startup,

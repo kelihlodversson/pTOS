@@ -43,6 +43,7 @@
 #include "kthread.h"
 #include "proc_clone.h"
 #include "progimage.h"
+#include "kproc_image_policy.h"
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/startup.h"
 #endif
@@ -201,6 +202,10 @@ struct kproc {
 #endif
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
+#if CONF_WITH_IMAGE_POLICY
+    KPROC_IMAGE_PREPARATION *image_preparation; /* borrowed exact construction */
+    BOOL image_policy_only; /* projected metadata never mints image authority */
+#endif
     BOOL legacy;                /* a classic PRG: its stack is in its TPA (KPROC_LEGACY_PRG) */
 #if KPROC_LEGACY_PRG
     ULONG legacy_text_bytes;    /* trusted loader snapshot, never reread from user PD */
@@ -1136,6 +1141,298 @@ void kproc_clone_commit_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **
     p->prepared_allocation_scope=p->prepared_runtime_scope=NULL;
 }
 
+#if CONF_WITH_IMAGE_POLICY
+enum { IMAGE_PREPARED,IMAGE_COMMITTED,IMAGE_CANCELLED };
+#if CONF_WITH_IMAGE_POLICY_TEST
+static UWORD image_policy_fail_stage;
+void kproc_image_policy_test_fail_after(UWORD stage) { image_policy_fail_stage=stage; }
+static BOOL image_policy_injected(UWORD stage)
+{
+    if (image_policy_fail_stage!=stage) return FALSE;
+    image_policy_fail_stage=0;return TRUE;
+}
+#else
+#define image_policy_injected(stage) FALSE
+#endif
+struct kproc_image_preparation {
+    KPROC *target; /* owns identity, never a live-resource or root reference */
+    KTHREAD *thread; /* borrowed while authenticated by target membership */
+    KASPACE *space; /* borrowed from that THREAD and prepared membership */
+    UQUAD number;
+    ULONG tid;
+    UBYTE state;
+    KPROC_IMAGE_POLICY policy;
+};
+
+static BOOL image_layout_policy_valid(const KPROC_IMAGE_LAYOUT *layout)
+{
+    ULONG i,j;
+    VADDR highest=0;
+    BOOL executable=FALSE;
+    if (!layout->nseg || layout->nseg>PROG_MAX_SEGMENTS) return FALSE;
+    for (i=0;i<layout->nseg;i++) {
+        const KPROC_IMAGE_SEGMENT *segment=&layout->seg[i];
+        VADDR lo=segment->vaddr,hi;
+        if (!segment->memsz || (segment->flags&~7UL) || lo>=USER_VA_LIMIT ||
+            segment->memsz>USER_VA_LIMIT-lo) return FALSE;
+        hi=lo+segment->memsz;
+        for (j=0;j<i;j++) {
+            VADDR other=layout->seg[j].vaddr;
+            VADDR end=other+layout->seg[j].memsz;
+            if ((lo&~(VADDR)(USER_PAGE_SIZE-1))<
+                    ((end+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1)) &&
+                (other&~(VADDR)(USER_PAGE_SIZE-1))<
+                    ((hi+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1))) return FALSE;
+        }
+        if ((segment->flags&1) && layout->entry>=lo && layout->entry<hi) executable=TRUE;
+        if (hi>highest) highest=hi;
+    }
+    return executable && layout->end>=highest && layout->end<=USER_VA_LIMIT;
+}
+
+static BOOL image_policy_valid(const KPROC_IMAGE_POLICY *policy)
+{
+    UQUAD bytes=0;
+    ULONG i,j;
+    if (!policy || (!policy->has_image &&
+        !(policy->legacy && policy->legacy_text_recorded && policy->legacy_text_bytes))) return FALSE;
+    if ((policy->has_image!=FALSE && policy->has_image!=TRUE) ||
+        (policy->legacy!=FALSE && policy->legacy!=TRUE) ||
+        (policy->legacy_text_recorded!=FALSE && policy->legacy_text_recorded!=TRUE) ||
+        (policy->standard_entry!=FALSE && policy->standard_entry!=TRUE) ||
+        (!policy->legacy_text_recorded && policy->legacy_text_bytes)) return FALSE;
+    if (!policy->legacy && (policy->legacy_text_recorded || policy->legacy_text_bytes)) return FALSE;
+#if !KPROC_LEGACY_PRG
+    if (policy->legacy || policy->legacy_text_recorded || policy->legacy_text_bytes) return FALSE;
+#endif
+    if (policy->has_image) {
+        if (!image_layout_policy_valid(&policy->program)) return FALSE;
+    } else if (policy->program.nseg || policy->program.entry || policy->program.end) return FALSE;
+    if (!policy->entry || policy->entry>=USER_VA_LIMIT) return FALSE;
+    if (policy->standard_entry) {
+#if CONF_WITH_ELF_SHARED
+        if (!policy->has_image || policy->legacy ||
+            !image_layout_policy_valid(&policy->interpreter) ||
+            policy->entry!=policy->interpreter.entry) return FALSE;
+        for (i=0;i<policy->interpreter.nseg;i++) {
+            const KPROC_IMAGE_SEGMENT *segment=&policy->interpreter.seg[i];
+            VADDR lo=segment->vaddr&~(VADDR)(USER_PAGE_SIZE-1);
+            VADDR hi=(segment->vaddr+segment->memsz+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1);
+            bytes+=segment->memsz;
+            for (j=0;j<policy->program.nseg;j++) {
+                const KPROC_IMAGE_SEGMENT *other=&policy->program.seg[j];
+                VADDR first=other->vaddr&~(VADDR)(USER_PAGE_SIZE-1);
+                VADDR end=(other->vaddr+other->memsz+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1);
+                if (lo<end && first<hi) return FALSE;
+            }
+        }
+        if (bytes!=policy->interpreter_bytes) return FALSE;
+#else
+        return FALSE;
+#endif
+    } else if (policy->interpreter.nseg || policy->interpreter.entry ||
+        policy->interpreter.end || policy->interpreter_bytes ||
+        (policy->has_image && policy->entry!=policy->program.entry)) return FALSE;
+    (void)bytes;(void)i;(void)j;
+    return TRUE;
+}
+
+static void image_layout_capture(const PROG_LAYOUT *source,KPROC_IMAGE_LAYOUT *output)
+{
+    ULONG i;
+    output->nseg=source->nseg;output->entry=source->entry;output->end=source->end;
+    for (i=0;i<source->nseg && i<PROG_MAX_SEGMENTS;i++) {
+        output->seg[i].vaddr=source->seg[i].vaddr;
+        output->seg[i].memsz=source->seg[i].memsz;
+        output->seg[i].flags=source->seg[i].flags;
+    }
+}
+
+LONG kproc_image_policy_capture(const KPROC *source,KPROC_IMAGE_POLICY *output)
+{
+    KPROC_IMAGE_POLICY policy;
+    if (!output) return EINVAL;
+    if (!source || !source->references || !mapping_owner_live(source) ||
+        source->lost || source->clone_identity_only ||
+        !(source->started ? source->active_space && source->aspace==kaspace_backend(source->active_space) :
+            !source->active_space && !source->aspace && source->pending_space &&
+            source->pending_as==kaspace_backend(source->pending_space))) return EACCDN;
+    bzero(&policy,sizeof(policy));
+    policy.has_image=source->has_image;policy.legacy=source->legacy;
+#if KPROC_LEGACY_PRG
+    policy.legacy_text_recorded=source->legacy_text_recorded;
+    policy.legacy_text_bytes=source->legacy_text_bytes;
+#endif
+    if (source->has_image) image_layout_capture(&source->layout,&policy.program);
+    policy.entry=source->has_image?source->layout.entry:source->entry;
+#if CONF_WITH_ELF_SHARED
+    policy.standard_entry=source->standard_entry;
+    if (policy.standard_entry) {
+        ULONG i;
+        if (source->interp_entry>=USER_VA_LIMIT) return EACCDN;
+        image_layout_capture(&source->interpreter_layout,&policy.interpreter);
+        /* The accepted loader stores interpreter entry/accounting separately
+         * and leaves the redundant layout entry/end unset. Project that exact
+         * trusted metadata; do not inspect PTEs or the loader recipe. */
+        policy.interpreter.entry=source->interp_entry;
+        policy.interpreter.end=0;
+        for (i=0;i<policy.interpreter.nseg && i<PROG_MAX_SEGMENTS;i++) {
+            VADDR end=policy.interpreter.seg[i].vaddr+policy.interpreter.seg[i].memsz;
+            if (end>policy.interpreter.end) policy.interpreter.end=end;
+        }
+        policy.entry=source->interp_entry;policy.interpreter_bytes=source->interp_bytes;
+    }
+#endif
+    if (!source->has_image && !policy.legacy_text_recorded) return EINVFN;
+    if (!image_policy_valid(&policy)) return EACCDN;
+    *output=policy;
+    return E_OK;
+}
+
+static BOOL image_preparation_ready(const KPROC_IMAGE_PREPARATION *prepared,BOOL committing)
+{
+    KPROC *target;
+    KASPACE_MEMBER *members;
+    if (!prepared || prepared->state!=IMAGE_PREPARED) return FALSE;
+    target=prepared->target;
+    if (target->number!=prepared->number || target->image_preparation!=prepared ||
+        !mapping_owner_live(target) || !kproc_clone_target_ready(target,prepared->thread) || target->shared_exec ||
+        target->legacy || target->entry || target->image_policy_only ||
+        target->aspace || target->pending_as || target->layout.nseg || target->layout.entry || target->layout.end ||
+        target->stack_top || target->stack_low ||
+#if KPROC_LEGACY_PRG
+        target->legacy_text_recorded || target->legacy_text_bytes ||
+#endif
+#if CONF_WITH_ELF_SHARED
+        target->standard_entry || target->interpreter_layout.nseg || target->initial_rsp ||
+        target->interp_entry || target->interp_bytes ||
+#if KPROC_SHARED_INTERP
+        target->shared_interp_recipe ||
+#endif
+#endif
+        !kthread_clone_run_ready(prepared->thread) ||
+        kthread_tid(prepared->thread)!=prepared->tid ||
+        kthread_process(prepared->thread)!=target || kthread_aspace(prepared->thread)!=prepared->space)
+        return FALSE;
+    /* During rollback the borrowed prepared-member pointer may be in a
+     * destructor callback. Never follow it outside its admitted state. */
+    if (committing) {
+        if (target->mapping_preparation || target->prepared_mapping_members) return FALSE;
+        members=target->mapping_members;
+    } else {
+        if (target->mapping_preparation!=MAPPING_PREPARED || target->mapping_members) return FALSE;
+        members=target->prepared_mapping_members;
+    }
+    return kaspace_member_matches(members,prepared->space,target->number,target);
+}
+
+LONG kproc_image_policy_prepare(KPROC *target,KTHREAD *thread,
+        const KPROC_IMAGE_POLICY *policy,KPROC_IMAGE_PREPARATION **empty)
+{
+    KPROC_IMAGE_PREPARATION *prepared;
+    if (!empty || *empty || !image_policy_valid(policy)) return EINVAL;
+    if (!target || target->image_preparation || !thread || !kproc_clone_target_ready(target,thread)) return EACCDN;
+    prepared=kalloc(sizeof(*prepared));
+    if (!prepared) return ENSMEM;
+    if (image_policy_injected(1)) { kfree(prepared);return ENSMEM; }
+    bzero(prepared,sizeof(*prepared));prepared->target=target;prepared->thread=thread;
+    prepared->space=kthread_aspace(thread);prepared->number=target->number;
+    prepared->tid=kthread_tid(thread);prepared->policy=*policy;
+    target->image_preparation=prepared;
+    if (!image_preparation_ready(prepared,FALSE)) {
+        target->image_preparation=NULL;kfree(prepared);return EACCDN;
+    }
+    if (!kproc_retain_live(target)) {
+        target->image_preparation=NULL;kfree(prepared);return ENSMEM;
+    }
+    if (image_policy_injected(2)) {
+        target->image_preparation=NULL;kproc_release(target);kfree(prepared);return ENSMEM;
+    }
+    *empty=prepared;
+    return E_OK;
+}
+
+LONG kproc_image_policy_validate(const KPROC_IMAGE_PREPARATION *prepared)
+{ return image_preparation_ready(prepared,FALSE)?E_OK:EACCDN; }
+
+void kproc_image_policy_release(KPROC_IMAGE_PREPARATION **handle)
+{
+    KPROC_IMAGE_PREPARATION *prepared;
+    if (!handle || !*handle) return;
+    prepared=*handle;*handle=NULL;
+    if (prepared->state==IMAGE_PREPARED) {
+        if (prepared->target->image_preparation!=prepared) panic("image policy preparation owner changed");
+        prepared->target->image_preparation=NULL;
+    }
+    kproc_release(prepared->target);kfree(prepared);
+}
+
+static void image_policy_cancel(KPROC *target)
+{
+    if (!target->image_preparation) return;
+    target->image_preparation->state=IMAGE_CANCELLED;
+    target->image_preparation=NULL;
+}
+
+static void image_layout_install(PROG_LAYOUT *target,const KPROC_IMAGE_LAYOUT *source)
+{
+    ULONG i;
+    bzero(target,sizeof(*target));
+    target->nseg=source->nseg;target->entry=source->entry;target->end=source->end;
+    for (i=0;i<source->nseg;i++) {
+        target->seg[i].vaddr=source->seg[i].vaddr;
+        target->seg[i].memsz=source->seg[i].memsz;target->seg[i].flags=source->seg[i].flags;
+    }
+}
+
+static void image_policy_commit(KPROC *target)
+{
+    KPROC_IMAGE_PREPARATION *prepared=target->image_preparation;
+    const KPROC_IMAGE_POLICY *policy;
+    if (!prepared) return;
+    if (!image_preparation_ready(prepared,TRUE)) panic("unprepared image policy activation");
+    policy=&prepared->policy;
+    image_layout_install(&target->layout,&policy->program);
+    target->has_image=policy->has_image;target->legacy=policy->legacy;target->entry=policy->entry;
+#if KPROC_LEGACY_PRG
+    target->legacy_text_bytes=policy->legacy_text_bytes;
+    target->legacy_text_recorded=policy->legacy_text_recorded;
+#endif
+#if CONF_WITH_ELF_SHARED
+    image_layout_install(&target->interpreter_layout,&policy->interpreter);
+    target->standard_entry=policy->standard_entry;
+    target->interp_entry=policy->interpreter.entry;target->interp_bytes=policy->interpreter_bytes;
+#endif
+    target->image_policy_only=TRUE;
+    target->image_preparation=NULL;prepared->state=IMAGE_COMMITTED;
+}
+#if CONF_WITH_IMAGE_POLICY_TEST
+LONG kproc_image_policy_test_query(const KPROC *source,UWORD selector)
+{
+    KPROC_IMAGE_POLICY policy;
+    ULONG hash=2166136261UL,i,j;
+    LONG error=kproc_image_policy_capture(source,&policy);
+    if (error) return error;
+    if (selector==1) return source->image_policy_only?1:0;
+    if (selector) return EINVAL;
+    /* Hash fields rather than padding: value layout and native widths differ. */
+#define IMAGE_HASH(value) do { hash=(hash^(ULONG)(value))*16777619UL; } while (0)
+    IMAGE_HASH(policy.has_image);IMAGE_HASH(policy.legacy);IMAGE_HASH(policy.standard_entry);
+    IMAGE_HASH(policy.legacy_text_recorded);IMAGE_HASH(policy.legacy_text_bytes);IMAGE_HASH(policy.entry);
+    IMAGE_HASH(policy.interpreter_bytes);
+    for (j=0;j<2;j++) {
+        const KPROC_IMAGE_LAYOUT *layout=j?&policy.interpreter:&policy.program;
+        IMAGE_HASH(layout->nseg);IMAGE_HASH(layout->entry);IMAGE_HASH(layout->end);
+        for (i=0;i<layout->nseg;i++) {
+            IMAGE_HASH(layout->seg[i].vaddr);IMAGE_HASH(layout->seg[i].memsz);IMAGE_HASH(layout->seg[i].flags);
+        }
+    }
+#undef IMAGE_HASH
+    return (LONG)(hash&0x7fffffffUL);
+}
+#endif
+#endif
+
 #if CONF_WITH_NATIVE_SCHED
 #if CONF_WITH_X86_64_MEMTEST
 static UWORD fail_clone_compat;
@@ -1288,6 +1585,9 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
      * fail-stop on kernel misuse instead of exposing a generic guard bypass. */
     if (!p || !p->threads || !kproc_clone_run_ready(p, p->threads, space) ||
         !startup || !physical || !top) panic("unprepared clone PROCESS activation");
+#if CONF_WITH_IMAGE_POLICY
+    image_policy_commit(p);
+#endif
     /* All references and mappings acquired before sealing. No callbacks. */
     if (p->clone_controller_pd) {
         if (procmem_gen(p->clone_controller_pd) != p->clone_controller_gen)
@@ -1512,6 +1812,9 @@ void kproc_destroy(PD *pd)
             if (kproc->threads)
                 panic("kproc_destroy: attached non-runnable threads");
             kproc->file_cleanup_started=TRUE;
+#if CONF_WITH_IMAGE_POLICY
+            image_policy_cancel(kproc);
+#endif
 #endif
 
 #if CONF_WITH_CUIS
@@ -3417,7 +3720,11 @@ static BOOL standard_image_range(const KPROC *kproc, UQUAD address, UQUAD length
 {
     UQUAD page;
     ULONG which, i;
-    if (!kproc->standard_entry || address > USER_VA_LIMIT || length > USER_VA_LIMIT - address)
+    if (!kproc->standard_entry ||
+#if CONF_WITH_IMAGE_POLICY
+        kproc->image_policy_only ||
+#endif
+        address > USER_VA_LIMIT || length > USER_VA_LIMIT - address)
         return FALSE;
     for (page = address; page < address + length; page += USER_PAGE_SIZE) {
         BOOL found = FALSE;
@@ -4648,7 +4955,11 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
             lazy=block->kind==UH_MALLOC && CONF_WITH_DEMAND_PAGING;
         }
     }
-    if (!birth && owner->has_image) {
+    if (!birth && owner->has_image
+#if CONF_WITH_IMAGE_POLICY
+        && !owner->image_policy_only
+#endif
+        ) {
         unsigned which;
         for (which=0;!birth && which<
 #if CONF_WITH_ELF_SHARED

@@ -1,6 +1,21 @@
 Pfork / Pvfork prerequisite audit (#895)
 ======================================
 
+Current Phase6 design: both MMU Pfork and Pvfork use PRIVATE_VM/COW through
+the existing trusted constructor. Pvfork additionally suspends the calling
+parent THREAD until exact-child final completion or committed same-PROCESS
+Pexec(200). Unlike FreeMiNT Pvfork, child writes to ordinary private memory
+are not visible in the parent's private memory; each has an independent user
+stack. Explicitly shared mappings retain their own semantics. This accepted
+compatibility deviation does not activate either public call.
+
+doc/image-policy.txt describes the separate value-only executable-policy
+prerequisite. It conveys no image, PD, environment, mapping or cleanup ownership
+and cannot replace a live executable. Broader #971 source-image ownership and
+#970 same-PROCESS replacement remain open. The older capability audit below is
+historical; accepted #934 private COW and later Phase5 source supersede its
+missing-backend entries. Do not use that table as current capability status.
+
 Baseline: epic/889-process-scheduling, 7ae4f508cc26df4d0efae19dd3849738f1de114f.
 The original unsupported-capability audit is retained below. The F1 saved-
 return increment is described in doc/fork-return.txt: a test-only shared-VM
