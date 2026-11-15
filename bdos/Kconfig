@@ -46,6 +46,15 @@ config CONF_WITH_PRIVATE_CLONE_TEST
       Enable private Pclone size tags for native COW construction tests.
       Children start at an explicit entry: this is not fork-return or Pfork.
 
+config CONF_WITH_PRIVATE_SNAPSHOT_TEST
+    bool "Native captured private-snapshot ownership tests (test only)"
+    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_SHARED_VM_PEXEC_TEST
+    default n
+    help
+      Verify a surviving shared descendant privately clones an absent captured
+      ancestor stack, after the original stack owner has exited. This uses the
+      existing trusted clone and mapping lifetime machinery, not public fork.
+
 config CONF_WITH_PCLONE
     bool "Experimental Pclone"
     depends on CONF_WITH_KPROC

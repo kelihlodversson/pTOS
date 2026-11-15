@@ -136,6 +136,7 @@ LONG thread_startup_arch_bridge_acquire_cloned(KASPACE *source, KASPACE *space, 
     bridge->space = kaspace_share(space);
     if (!bridge->space) { kfree(bridge); return ENSMEM; }
     bridge->users = 1;
+    bridge->hold = NULL;
     error = kaspace_lease_acquire(space, RETURN_VA, USER_PAGE_SIZE,
                                 ASPACE_PROT_USER | ASPACE_PROT_EXEC, &bridge->hold);
     if (!error && !kaspace_lease_hold_private(bridge->hold)) error = EIMBA;

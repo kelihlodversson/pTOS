@@ -27,6 +27,7 @@
 #include "proc.h"
 #include "mapping_lifetime_test.h"
 #include "fileback.h"
+#include "private_snapshot_test.h"
 #endif
 #endif
 
@@ -195,6 +196,25 @@ static long clone_request(uint64_t address, uint64_t size)
     }
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
+    if (size==PRIVATE_SNAPSHOT_QUERY) {
+#if CONF_WITH_PRIVATE_SNAPSHOT_TEST
+        UWORD rights=0;
+        LONG value=0;
+        KASPACE *space;
+        KPROC *source=kproc_retain(run);
+        if (address>=USER_VA_LIMIT || !(space=kproc_active_space(source))) {
+            kproc_release(source);return EINVAL;
+        }
+        if (aspace_translate(kaspace_backend(space),(VADDR)address,NULL,NULL)) value|=PRIVATE_SNAPSHOT_PRESENT;
+        if (kaspace_retained_lazy_protection(space,(VADDR)address,&rights)) value|=PRIVATE_SNAPSHOT_LAZY;
+        if (rights&ASPACE_PROT_WRITE) value|=PRIVATE_SNAPSHOT_WRITE;
+        if (rights&ASPACE_PROT_USER) value|=PRIVATE_SNAPSHOT_USER;
+        kproc_release(source);
+        return value;
+#else
+        return EINVFN;
+#endif
+    }
     if ((size&0xffffffffffff0000ULL)==MLT_SCOPED_CLONE) {
         if (address>=USER_VA_LIMIT) return EIMBA;
         if (!address && size==MLT_CONTENDED_ALLOC) return (LONG)kproc_test_contended_allocation();

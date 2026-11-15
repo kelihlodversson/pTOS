@@ -721,6 +721,12 @@ if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
     record "native independent VM/COW" FAIL "configured private clone probe did not pass"
 fi
 
+# A configured snapshot must fault its genuinely absent inherited stack.
+if grep -q '^#define CONF_WITH_PRIVATE_SNAPSHOT_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native captured ancestor-stack private snapshot after source exit, both write orders: PASS' "$suite_log"; then
+    record "native captured private snapshot" FAIL "configured captured snapshot did not execute"
+fi
+
 # A configured rollback injection must actually have reached a user exit.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'exit handoff: injected preparation rollback' "$suite_log"; then
