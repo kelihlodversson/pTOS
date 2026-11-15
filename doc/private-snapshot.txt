@@ -33,6 +33,16 @@ holds defer backing retirement through the accepted retirement protocol.
 The consumed record keeps its held cleanup barrier until retirement: ticket
 revocation removes logical authority, while the full fence still prevents
 reuse and permits resident COW writes through an independent surviving R2.
+Each affected resident COW page still requires independent surviving backing
+authority; the cleanup fence cannot authorize writes on other pages. Lazy
+and nonlazy captures retain their immutable ceiling at hardware-page scope.
+A genuine durable private execution hold also retains its resident anonymous
+page within the protected interval. Its authenticated held state permits COW,
+but supplies no new reservation or absent-page materialization authority.
+Pending captured extents also reject fresh preparation leases. A revocable
+alias cannot become durable or sealed after logical owner loss; existing
+durable views remain valid until safe release. The backend retirement commit
+permanently revokes stale preparation aliases before any later address reuse.
 Private cloning rejects such a pending dead-scope snapshot before allocation;
 an exact subrange hold cannot authorize copying other doomed resident pages.
 After retirement, ordinary clone admission can be retried.
@@ -98,7 +108,9 @@ and fortified GCC. This is production ownership evidence, not hardware COW
 or native CPU evidence.
 
 tools/test-private-aspace.sh also exercises production COW writes through a
-surviving narrow R2 after final snapshot-member loss, full pending cleanup
+surviving narrow R2 or durable private hold after final snapshot-member loss,
+outside-page denials without frame/data/reference/TLB changes, RO/inaccessible
+ceiling denial, rejected new or stale preparation aliases, full pending cleanup
 barriers, rejected fresh cloning and retry after exact final retirement.
 
 The same fixture prepares the real cloned return bridge with deliberately

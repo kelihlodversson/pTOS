@@ -186,15 +186,41 @@ static void populated_clone(unsigned count)
     printf("Indexed COW clone %u populated pages: %lu metadata visits (file hint %d), exact reclamation PASS\n",
            count,(unsigned long)visits,file_hint);
 }
+static void denied_retired_cow(ASPACE *as,VADDR address)
+{
+    struct leaf before=as->leaves[address/4096];
+    struct cow_mapping *mapping=cow_find(as,address&~(VADDR)4095);
+    struct cow_frame *frame;
+    UBYTE bytes[4096];
+    ULONG allocs=allocations,released=frees,pages=live_pages;
+    ULONG frames=cow_frame_count,references=cow_reference_count,tlbs=flushes;
+    ULONG frame_refs;
+    assert(mapping && before.present && before.owned);
+    frame=mapping->frame;frame_refs=frame->references;
+    memcpy(bytes,ram[before.physical/4096],sizeof(bytes));
+    assert(aspace_cow_fault(as,address,ASPACE_PROT_WRITE)!=1);
+    assert(as->leaves[address/4096].physical==before.physical &&
+        as->leaves[address/4096].prot==before.prot &&
+        as->leaves[address/4096].present==before.present &&
+        as->leaves[address/4096].owned==before.owned);
+    assert(cow_find(as,address&~(VADDR)4095)==mapping);
+    assert(mapping->frame==frame && frame->references==frame_refs);
+    assert(allocations==allocs && frees==released && live_pages==pages &&
+        cow_frame_count==frames && cow_reference_count==references && flushes==tlbs);
+    assert(!memcmp(bytes,ram[before.physical/4096],sizeof(bytes)));
+}
 static void pending_capture_cow(void)
 {
-    unsigned source_first;
-    for(source_first=0;source_first<2;source_first++) {
+    unsigned view,lazy,source_first;
+    for(view=0;view<4;view++) for(lazy=0;lazy<2;lazy++) for(source_first=0;source_first<2;source_first++) {
         ASPACE *source_backend,*child_backend;
         KASPACE *source,*child=NULL,*retry=NULL;
         KASPACE_MEMBER *member=NULL;
         KASPACE_RESERVATION_INFO description={4096,3*4096,0,ASPACE_PROT_USER|ASPACE_PROT_WRITE,KASPACE_RESERVATION_LAZY},info;
         KASPACE_RESERVATION_HOLD original={0},narrow={0},denied={0};
+        KASPACE_LEASE *bare=NULL;
+        KASPACE_LEASE *preparation=NULL,*fresh=NULL;
+        UQUAD child_birth;
         ULONG before=allocations-frees,prepared,calls,retired=retired_calls;
         VADDR first,end;
         UWORD rights;
@@ -210,6 +236,7 @@ static void pending_capture_cow(void)
         }
         source=kaspace_adopt(source_backend);assert(source);
         description.identity=kaspace_reservation_next();
+        description.flags=lazy?KASPACE_RESERVATION_LAZY:0;
         assert(kaspace_reservation_hold_captured(source,&description,description.address,
             description.bytes,description.rights,401,&owner,&original)==E_OK);
         assert(kaspace_clone(source,&child)==E_OK);
@@ -217,17 +244,48 @@ static void pending_capture_cow(void)
         assert(kaspace_member_new(child,402,&owner,&member)==E_OK);
         kaspace_member_claim_private(member);
         assert(kaspace_reservation_info(child,8192+17,8,&info));
-        assert(kaspace_reservation_hold(child,info.identity,8192+17,8,info.rights,
+        child_birth=info.identity;
+        /* Minimum retained access is READ; immutable logical ceiling remains
+         * RW for view0. Bare resident holds have no reservation ceiling.
+         * View2/3 retain narrower RO/INACCESSIBLE captured ceilings, so they
+         * must not permit a COW WRITE through the wider resident mapping. */
+        if(view==1) {
+            assert(kaspace_lease_acquire(child,8192+17,8,ASPACE_PROT_USER,&bare)==E_OK);
+            assert(kaspace_lease_hold_private(bare));
+        } else if(view>=2) {
+            info.address=8192+17;info.bytes=8;
+            info.rights=view==2?ASPACE_PROT_USER:0;
+            if(view==3) info.flags|=KASPACE_RESERVATION_INACCESSIBLE;
+            assert(kaspace_reservation_hold_captured(child,&info,info.address,info.bytes,
+                info.rights,402,&owner,&narrow)==E_OK);
+        } else assert(kaspace_reservation_hold(child,info.identity,8192+17,8,ASPACE_PROT_USER,
             402,&owner,&narrow)==E_OK);
+        assert(kaspace_lease_acquire(child,4096+17,8,ASPACE_PROT_USER,&preparation)==E_OK);
         assert(kaspace_reservation_release(&original,&released) && released==&owner);
         if(source_first) { kaspace_put(source);source=NULL; }
         kaspace_member_release(&member);
         assert(retired_calls==retired && child_backend->leaves[1].present &&
             child_backend->leaves[2].present && child_backend->leaves[3].present);
+        prepared=allocations;
+        assert(kaspace_lease_acquire(child,4096+17,8,ASPACE_PROT_USER,&fresh)==EACCDN && !fresh);
+        assert(kaspace_lease_acquire(child,12288+17,8,ASPACE_PROT_USER,&fresh)==EACCDN && !fresh);
+        assert(allocations==prepared);
+        assert(!kaspace_lease_valid(preparation));
+        assert(!kaspace_lease_hold_private(preparation));
+        assert(!kaspace_lease_seal(&preparation,1));
+        /* An unheld preparation itself rejects COW. Drop it before the fault
+         * controls so it cannot conceal missing pending-owner admission. */
+        kaspace_lease_release(&preparation);
+        denied_retired_cow(child_backend,4096+17);
+        denied_retired_cow(child_backend,12288+17);
         assert(cow_find(child_backend,8192)); /* actual resident production COW metadata */
-        write_byte(child_backend,8192+17,22);
-        assert(ram[child_backend->leaves[2].physical/4096][17]==22);
+        if(view<2) {
+            write_byte(child_backend,8192+17,22);
+            assert(ram[child_backend->leaves[2].physical/4096][17]==22);
+        } else denied_retired_cow(child_backend,8192+17);
         if(source) assert(ram[source_backend->leaves[2].physical/4096][17]==11);
+        denied_retired_cow(child_backend,4096+17);
+        denied_retired_cow(child_backend,12288+17);
         /* The full consumed fence blocks reuse, while only the independent
          * eight-byte witness retains logical reservation authority. */
         assert(!kaspace_mapping_can_change(child_backend,4096,4096));
@@ -235,15 +293,24 @@ static void pending_capture_cow(void)
         assert(kaspace_next_held(child,4096,16384,&first,&end) && first==4096 && end==16384);
         assert(!kaspace_reservation_info(child,4096,1,&info));
         assert(!kaspace_retained_lazy_protection(child,4096,&rights));
-        assert(kaspace_reservation_info(child,8192+17,8,&info));
-        assert(info.address==8192+17 && info.bytes==8);
-        assert(kaspace_reservation_hold(child,info.identity,4096,1,description.rights,
+        if(view==1) {
+            assert(kaspace_lease_valid(bare));
+            assert(!kaspace_reservation_info(child,8192+17,8,&info));
+            assert(!kaspace_materialization_change(child_backend,8192,4096,description.rights));
+        } else {
+            assert(kaspace_reservation_info(child,8192+17,8,&info));
+            assert(info.address==8192+17 && info.bytes==8);
+        }
+        assert(kaspace_reservation_hold(child,child_birth,4096,1,description.rights,
             402,&owner,&denied)==EACCDN && !denied.ticket);
         prepared=allocations;calls=backend_clones;
         assert(kaspace_clone(child,&retry)==EACCDN && !retry);
         assert(allocations==prepared && backend_clones==calls);
-        released=NULL;
-        assert(kaspace_reservation_release(&narrow,&released) && released==&owner);
+        if(view==1) kaspace_lease_release(&bare);
+        else {
+            released=NULL;
+            assert(kaspace_reservation_release(&narrow,&released) && released==&owner);
+        }
         assert(retired_calls==retired+1 && !child_backend->cow && !child_backend->cow_root);
         assert(!child_backend->leaves[1].present && !child_backend->leaves[2].present &&
             !child_backend->leaves[3].present);
@@ -260,7 +327,62 @@ static void pending_capture_cow(void)
         kaspace_put(child);
         assert(allocations-frees==before);
     }
-    puts("Pending captured retirement: surviving R2 production COW writes, full reuse fence, clone rejection/retry and live-root conservation: PASS");
+    puts("Pending captured retirement: no fresh/stale bare admission, LAZY/nonlazy R2 and bare resident COW bounds, RO/INACCESSIBLE denial, full reuse fence, clone rejection/retry and live-root conservation: PASS");
+}
+static void retired_preparation_reuse(void)
+{
+    ASPACE *source_backend,*child_backend;
+    KASPACE *source,*child=NULL;
+    KASPACE_MEMBER *member=NULL;
+    KASPACE_LEASE *preparation=NULL,*bare=NULL,*fresh=NULL;
+    KASPACE_RESERVATION_INFO description={4096,3*4096,0,ASPACE_PROT_USER|ASPACE_PROT_WRITE,KASPACE_RESERVATION_LAZY};
+    KASPACE_RESERVATION_HOLD original={0};
+    ULONG before=allocations-frees,retired=retired_calls;
+    PADDR physical;
+    void *released=NULL;
+    unsigned i;
+    int owner;
+    source_backend=kalloc(sizeof(*source_backend));assert(source_backend);
+    for(i=1;i<=3;i++) {
+        physical=page_alloc();assert(physical);
+        assert(cow_map(source_backend,i*4096,physical,description.rights,TRUE));
+    }
+    source=kaspace_adopt(source_backend);assert(source);
+    description.identity=kaspace_reservation_next();
+    assert(kaspace_reservation_hold_captured(source,&description,4096,3*4096,
+        description.rights,501,&owner,&original)==E_OK);
+    assert(kaspace_clone(source,&child)==E_OK);
+    child_backend=kaspace_backend(child);
+    assert(kaspace_member_new(child,502,&owner,&member)==E_OK);kaspace_member_claim_private(member);
+    assert(kaspace_lease_acquire(child,4096,4096,ASPACE_PROT_USER,&preparation)==E_OK);
+    assert(kaspace_lease_acquire(child,8192,4096,ASPACE_PROT_USER,&bare)==E_OK);
+    assert(kaspace_lease_hold_private(bare));
+    assert(kaspace_reservation_release(&original,&released) && released==&owner);
+    kaspace_put(source);kaspace_member_release(&member);
+    assert(!kaspace_lease_valid(preparation) && !kaspace_lease_hold_private(preparation));
+    assert(!kaspace_lease_seal(&preparation,1));
+    kaspace_lease_release(&bare);
+    assert(retired_calls==retired+1 && !child_backend->cow && !child_backend->cow_root);
+    assert(!child_backend->leaves[1].present && !child_backend->leaves[2].present &&
+        !child_backend->leaves[3].present);
+    assert(!live_pages && !cow_frames && !cow_frame_count && !cow_reference_count);
+    assert(allocations-frees==before+3); /* observer root, backend, invalid preparation */
+    assert(kaspace_mapping_can_change(child_backend,4096,4096));
+    /* Model same-address resident reuse without another revocation call:
+     * the previous authenticated retirement must already be permanent. */
+    physical=page_alloc();assert(physical);
+    assert(cow_map(child_backend,4096,physical,description.rights,TRUE));
+    assert(!kaspace_lease_valid(preparation) && !kaspace_lease_hold_private(preparation));
+    assert(!kaspace_lease_seal(&preparation,1));
+    assert(kaspace_lease_acquire(child,4096,4096,ASPACE_PROT_USER,&fresh)==E_OK);
+    assert(kaspace_lease_valid(fresh) && kaspace_lease_hold_private(fresh));
+    kaspace_lease_release(&fresh);
+    assert(aspace_release_lazy(child_backend,4096,4096));
+    assert(!live_pages && !cow_frame_count && !cow_reference_count && allocations-frees==before+3);
+    kaspace_lease_release(&preparation);
+    assert(allocations-frees==before+2);
+    kaspace_put(child);assert(allocations-frees==before);
+    puts("Retired preparation cannot upgrade, seal or revive on resident address reuse; fresh admission and exact cleanup: PASS");
 }
 int main(void)
 {
@@ -327,6 +449,7 @@ int main(void)
     kaspace_put(two);
     assert(!cow_frame_count && !cow_reference_count && !live_pages && allocations==frees && flushes);
     pending_capture_cow();
+    retired_preparation_reuse();
     populated_clone(1024);
     populated_clone(16384);
     {

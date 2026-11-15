@@ -125,6 +125,14 @@ static BOOL pending_overlap(KASPACE *space,VADDR address,VADDR bytes)
                 region->address<address+bytes) return TRUE;
     }
 #endif
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        KASPACE_LEASE *lease;
+        for (lease=space->leases;lease;lease=lease->next)
+            if (lease->private_snapshot && !snapshot_live(lease) &&
+                address<lease->last+USER_PAGE_SIZE && lease->first<address+bytes) return TRUE;
+    }
+#endif
     return FALSE;
 }
 
@@ -339,6 +347,11 @@ BOOL kaspace_lease_valid(const KASPACE_LEASE *lease)
 {
     VADDR page;
     if (!lease || lease->revoked || lease->attachment_ticket || !snapshot_live(lease)) return FALSE;
+    /* A revocable alias cannot become fresh ownership or a publication seal
+     * after its mapping owner exits. Already durable execution views retain
+     * their protected resident mappings until their own safe release. */
+    if (!lease->held && pending_overlap(lease->space,lease->first,
+            lease->last-lease->first+USER_PAGE_SIZE)) return FALSE;
     if (lease->reservation_ticket) {
         if (lease->captured) return lease->held;
         return (lease->reservation_rights&lease->access)==lease->access &&
@@ -525,27 +538,37 @@ static BOOL reservation_backing_contains(const KASPACE_LEASE *lease,
 }
 
 static BOOL independent_backing_owner(KASPACE *space, VADDR address,
-                                     VADDR bytes, UWORD rights)
+                                     VADDR bytes, UWORD rights, BOOL resident)
 {
     KASPACE_RESERVATION_INFO info;
     KASPACE_LEASE *lease;
     VADDR first=address&~(VADDR)(USER_PAGE_SIZE-1);
     VADDR last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
     /* Live ordinary metadata owns its backing, including FILE_BACKING for
-     * a file mapping. Captured fallback is checked by exact lazy ticket below;
-     * an immutable captured description alone cannot retain a file backend. */
+     * a file mapping. Captured fallback requires its exact live ticket; an
+     * immutable captured description alone cannot retain a file backend. */
     if (kaspace_reservation_info(space,address,bytes,&info) &&
         !(info.flags&KASPACE_RESERVATION_CAPTURED) && rights==info.rights) return TRUE;
     for (lease=space->leases;lease;lease=lease->next)
         if (reservation_backing_contains(lease,first,last) &&
-            (lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
-            rights==lease->reservation_rights) return TRUE;
+            !(lease->reservation_flags&KASPACE_RESERVATION_INACCESSIBLE) &&
+            ((resident && (rights&lease->reservation_rights)==rights) ||
+             ((lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
+              rights==lease->reservation_rights))) return TRUE;
         else if (lease->reservation_ticket && !lease->captured && lease->held &&
                  !lease->revoked && lease->exact_bytes &&
                  first>=(lease->exact_address&~(VADDR)(USER_PAGE_SIZE-1)) &&
                  last<=((lease->exact_address+lease->exact_bytes-1)&~(VADDR)(USER_PAGE_SIZE-1)) &&
                  rights==lease->reservation_rights &&
                  reservation_range_matches(space,lease->reservation_id,address,bytes,rights)) return TRUE;
+        /* A bare private hold authenticated resident anonymous ownership at
+         * acquisition and keeps its logical mapping stable across COW. It
+         * grants no reservation or absent-page materialization authority. */
+        else if (resident && lease->held && !lease->sealed && !lease->revoked &&
+                 !lease->reservation_ticket && !lease->reservation_id &&
+                 !lease->captured && !lease->attachment_ticket &&
+                 !lease->exact_bytes && !lease->retire_bytes &&
+                 first>=lease->first && last<=lease->last) return TRUE;
     return FALSE;
 }
 
@@ -600,7 +623,7 @@ BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
             !reservation_backing_contains(lease,first,last)) {
             /* This overlap is only a cleanup fence. It supplies no rights,
              * and must not veto a different, independently retained owner. */
-            if (!independent_backing_owner(space,address,bytes,rights)) return FALSE;
+            if (!independent_backing_owner(space,address,bytes,rights,FALSE)) return FALSE;
             continue;
         }
         if (lease->reservation_ticket) {
@@ -646,6 +669,21 @@ BOOL kaspace_cow_change(ASPACE *backend, VADDR address, VADDR bytes)
     for (lease = space->leases; lease; lease = lease->next)
         if (!lease->attachment_ticket && first <= lease->last && lease->first <= last && (lease->sealed || !lease->held))
             return FALSE;
+        else if (lease->private_snapshot && !snapshot_live(lease) &&
+                 first<=lease->last && lease->first<=last) {
+            VADDR page=first>lease->first?first:lease->first;
+            VADDR end=last<lease->last?last:lease->last;
+            /* The consumed fence protects reuse; only a different live view
+             * can authorize splitting a resident page. Nonlazy captures may
+             * retain existing backing, but cannot materialize absent pages. */
+            for (;;) {
+                UWORD rights;
+                if (!aspace_logical_protection(backend,page,&rights) ||
+                    !independent_backing_owner(space,page,USER_PAGE_SIZE,rights,TRUE)) return FALSE;
+                if (page==end) break;
+                page+=USER_PAGE_SIZE;
+            }
+        }
     return TRUE;
 }
 #endif
@@ -1866,16 +1904,13 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result)
 {
 #if CONF_WITH_PRIVATE_CLONE
     KASPACE *copy;
-    const KASPACE_LEASE *lease;
     LONG error = ENSMEM;
     if (!source || !result || *result) return EINVAL;
     if (kaspace_mutation_busy(source)) return EACCDN;
-    if (pending_overlap((KASPACE *)source,0,USER_VA_LIMIT)) return EACCDN;
     /* A surviving subrange hold does not own the rest of a consumed snapshot
      * cleanup fence. Keep COW usable for that hold, but do not copy the whole
      * backend until final retirement removes the unowned resident leaves. */
-    for (lease=source->leases;lease;lease=lease->next)
-        if (lease->private_snapshot && !snapshot_live(lease)) return EACCDN;
+    if (pending_overlap((KASPACE *)source,0,USER_VA_LIMIT)) return EACCDN;
     copy = kalloc(sizeof(*copy));
     if (!copy) return ENSMEM;
     memset(copy,0,sizeof(*copy));
