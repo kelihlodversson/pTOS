@@ -484,6 +484,9 @@ jobs:
         env:
           EXEC_REPLACEMENT_TEST: '1'
           EXEC_HANDOFF_TEST: '1'
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
+          REGRESSION_RAW_DISK: '1'
           SHARED_VM_PEXEC_TEST: '1'
           SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
         run: tools/ci-regression.sh "${{ matrix.machine }}"

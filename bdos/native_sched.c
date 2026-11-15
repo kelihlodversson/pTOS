@@ -661,6 +661,8 @@ LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *args, UWORD failure)
     LONG error = EACCDN;
     void *launcher = NULL;
     PADDR syscall = 0;
+    UQUAD test_identity = 0;
+    BOOL identity_injected = FALSE;
     if (!args || failure > EXEC_HANDOFF_FAILURES) return EINVAL;
     if (execution_cpu.leaf_held || execution_cpu.legacy_irq_held) return EACCDN;
 #if CONF_WITH_USER_CALLBACKS
@@ -717,6 +719,12 @@ LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *args, UWORD failure)
     if (failure == 9) { error = ENSMEM; goto failed; }
     tx->irq_flags = native_sched_irq_save();
     if (!exec_handoff_matches(tx)) { error = EACCDN; goto unmask_failed; }
+    if (failure == 11) {
+        test_identity = next_identity; next_identity = ~(UQUAD)0; identity_injected = TRUE;
+    }
+    /* Another task can reserve the final identity while preparation yields.
+     * Capacity must be rechecked in this final no-yield publication window. */
+    if (next_identity == ~(UQUAD)0) { error = EAGAIN; goto unmask_failed; }
     error = thread_startup_seal(tx->startup);
     if (error) goto unmask_failed;
     tx->state = HANDOFF_SEALED;
@@ -732,6 +740,7 @@ LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *args, UWORD failure)
     native_sched_save(&task->execution.cpu);
     longjmp(execution_cpu.resume, 1);
 unmask_failed:
+    if (identity_injected) next_identity = test_identity;
     native_sched_irq_restore(tx->irq_flags);
 failed:
     exec_handoff_abort(&tx);

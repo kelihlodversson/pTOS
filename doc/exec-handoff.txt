@@ -102,8 +102,9 @@ new C entry via private GEMDOS Pclone transport twelve times. Each success must
 retain PROCESS/PID/TID/root/parent, change execution identity and stack, keep
 the old post-call sentinel unexecuted and preserve descriptor use. The active
 stack rejects Mfree; after the next transfer the retired stack is releasable.
-Ten failure selectors cover acquisition prefixes, real stale execution and
-competing admission rejection, preseal rollback and sealed rollback. Every
+Eleven failure selectors cover acquisition prefixes, real stale execution and
+competing admission rejection, preseal rollback, sealed rollback and execution
+number exhaustion after the preparation yield. Every
 failure returns to the original program and permits retry. With private-clone
 instrumentation, ALL45 counters match after every failure and each steady-state
 successful handoff (two cache/startup warmup transitions are explicit).

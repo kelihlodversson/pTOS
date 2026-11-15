@@ -4,7 +4,7 @@
 #include <stdint.h>
 #define EXEC_HANDOFF_RUN   0xc9700200UL /* CLONE_ARGS, zero flags/outputs/TLS */
 #define EXEC_HANDOFF_QUERY 0xc9700300UL
-#define EXEC_HANDOFF_FAILURES 10
+#define EXEC_HANDOFF_FAILURES 11
 typedef struct {
     uint32_t process[2], execution[2], root[2];
     uint32_t pid, tid, handoffs;

@@ -72,7 +72,8 @@ static void transfer(void)
 #endif
     for (stage = 1; stage <= EXEC_HANDOFF_FAILURES; stage++) {
         long result = probe(&request, EXEC_HANDOFF_RUN + stage);
-        if (result != ((stage == 7 || stage == 8) ? -36L : -39L)) fail("failure prefix");
+        if (result != (stage == 11 ? -326L : (stage == 7 || stage == 8) ? -36L : -39L))
+            fail("failure prefix");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
         if (cycle >= 2) conserve();
 #endif
