@@ -84,6 +84,12 @@ conceals logical or page ownership. Run it normally, with ASan/UBSan/leaks,
 and fortified GCC. This is production ownership evidence, not hardware COW
 or native CPU evidence.
 
+The same fixture prepares the real cloned return bridge with deliberately
+poisoned allocator storage and fails every allocation prefix. Reverting only
+the empty-output initialization reproduces an invalid 0xa5... lease pointer
+under UBSan; the fixed source passes with exact cleanup. This makes the
+standalone one-line prerequisite correction reproducible in this PR.
+
 CONF_WITH_PRIVATE_SNAPSHOT_TEST is default off and requires the existing
 private-clone/shared-Pexec native test gates. Its Pclone transport reports
 residency and authenticated retained lazy rights without materializing the

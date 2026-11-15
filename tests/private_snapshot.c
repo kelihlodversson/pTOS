@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include "emutos.h"
 #include "../bdos/kaspace.c"
+#include "../bdos/thread_return.c"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"private snapshot:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 struct model_page { VADDR address;UWORD rights;BOOL file; };
@@ -12,12 +13,19 @@ struct file_backing { unsigned references; };
 static unsigned allocations,frees,fail_allocation,destroyed,retirements,backend_clones;
 static struct file_backing backing;
 static BOOL fail_file;
+static BOOL poison_allocations;
 static KASPACE_MEMBER *callback_member;
 static VADDR deferred_borrow;
 static unsigned borrow_releases;
 
 void *kalloc(ULONG bytes)
-{ void *p;if (fail_allocation && !--fail_allocation) return NULL;p=calloc(1,bytes);if(p) allocations++;return p; }
+{
+    void *p;
+    if (fail_allocation && !--fail_allocation) return NULL;
+    p=poison_allocations?malloc(bytes):calloc(1,bytes);
+    if(p) { if(poison_allocations) memset(p,0xa5,bytes);allocations++; }
+    return p;
+}
 void kfree(void *p) { if(p) { frees++;free(p); } }
 void panic(const char *format,...) { fprintf(stderr,"panic: %s\n",format);abort(); }
 static struct model_page *page_find(ASPACE *as,VADDR address)
@@ -38,6 +46,20 @@ BOOL aspace_logical_protection(const ASPACE *as,VADDR address,UWORD *rights)
 { return aspace_translate(as,address,NULL,rights); }
 BOOL aspace_private_range_ok(const ASPACE *as,VADDR address,VADDR bytes)
 { (void)bytes;return page_find((ASPACE *)as,address)!=NULL; }
+BOOL aspace_load_private(ASPACE *as,VADDR address,VADDR bytes,UWORD rights,const void *code,ULONG size)
+{
+    struct model_page *page;
+    CHECK(address==RETURN_VA && bytes==USER_PAGE_SIZE && size==sizeof(return_code));
+    CHECK(!memcmp(code,return_code,size) && !page_find(as,address) && as->count<32);
+    if(!kaspace_mapping_change(as,address,bytes)) return FALSE;
+    page=&as->page[as->count++];page->address=address;page->rights=rights;page->file=FALSE;
+    return TRUE;
+}
+BOOL aspace_copy_from_user(const ASPACE *as,void *target,VADDR address,ULONG bytes)
+{
+    if(address!=RETURN_VA || bytes!=sizeof(return_code) || !page_find((ASPACE *)as,address)) return FALSE;
+    memcpy(target,return_code,bytes);return TRUE;
+}
 BOOL aspace_file_cow(const ASPACE *as,VADDR address)
 { struct model_page *page=page_find((ASPACE *)as,address);return page && page->file; }
 BOOL aspace_fault_in(ASPACE *as,VADDR address,UWORD rights)
@@ -70,6 +92,11 @@ static void release_pages(ASPACE *as,VADDR address,VADDR bytes)
             as->page[i]=as->page[--as->count];
         else i++;
     }
+}
+BOOL aspace_unmap_private(ASPACE *as,VADDR address,VADDR bytes)
+{
+    if(!kaspace_mapping_change(as,address,bytes)) return FALSE;
+    release_pages(as,address,bytes);return TRUE;
 }
 BOOL aspace_release_lazy_retired_allowed(const ASPACE *as,VADDR address,VADDR bytes)
 { (void)as;(void)address;(void)bytes;return TRUE; }
@@ -278,10 +305,37 @@ static void exact_backing_and_rights(void)
     kaspace_put(child);release_hold(&hold,&owner);kaspace_put(source);
 }
 
+static void cloned_return_bridge(void)
+{
+    ASPACE backend={0};
+    KASPACE *source=kaspace_adopt(&backend),*child=NULL;
+    THREAD_RETURN_BRIDGE *original=NULL;
+    void *copied=NULL;
+    unsigned before,step;
+    LONG error=ENSMEM;
+    CHECK(thread_return_bridge_acquire(source,&original)==E_OK);
+    CHECK(kaspace_clone(source,&child)==E_OK);
+    before=allocations-frees;poison_allocations=TRUE;
+    for(step=1;step<8;step++) {
+        fail_allocation=step;
+        error=thread_startup_arch_bridge_acquire_cloned(source,child,&copied);
+        fail_allocation=0;
+        if(!error) break;
+        CHECK(error==ENSMEM && !copied && allocations-frees==before);
+    }
+    poison_allocations=FALSE;
+    CHECK(!error && copied && step<8 && thread_startup_arch_bridge_valid(copied));
+    CHECK(thread_return_bridge_matches(copied,kaspace_backend(child)));
+    thread_startup_arch_bridge_release(&copied);kaspace_put(child);
+    CHECK(thread_return_bridge_valid(original));
+    thread_return_bridge_release(&original);kaspace_put(source);
+    CHECK(!bridges);
+}
+
 int main(void)
 {
-    captured_only();file_and_ordinary();reentrant_final_loss();borrowed_fence();exact_backing_and_rights();
+    captured_only();file_and_ordinary();reentrant_final_loss();borrowed_fence();exact_backing_and_rights();cloned_return_bridge();
     CHECK(allocations==frees && !spaces && retirements);
-    puts("Private captured snapshots: exact lazy/rights/fences, source-first/nested lifetime, members, file authority, allocation rollback and live-root final conservation: PASS (host MMU model)");
+    puts("Private captured snapshots: exact lazy/rights/fences, source-first/nested lifetime, members, file authority, poisoned return bridge, allocation rollback and live-root final conservation: PASS (host MMU model)");
     return 0;
 }
