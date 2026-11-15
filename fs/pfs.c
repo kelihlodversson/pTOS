@@ -19,6 +19,10 @@
 #include "string.h"
 #include "kprint.h"
 #include "kproc.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "../bdos/process_files.h"
+#include "biosext.h"
+#endif
 #include "tosvars.h"    /* for drvbits, same convention as
                                  * bdos/proc.c and bdos/umem.c */
 #include "../bdos/bdosstub.h"   /* for run, same convention as fs/fatfs_pfs.c */
@@ -876,6 +880,9 @@ LONG pfs_do_getdir(char *buf, WORD drv)
 static LONG pfs_alloc_handle(PFSCOOKIE *fc)
 {
     WORD i;
+#if CONF_WITH_PROCESS_FILES_TEST
+    LONG descriptor;
+#endif
 
     for (i = 0; i < OPNFILES; i++)
         if (!sft[i].f_own)
@@ -890,7 +897,19 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     sft[i].f_use = 1;
     sft[i].f_ofd = NULL;
     sft[i].f_pfs = *fc;
-
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(run)) {
+        descriptor=process_files_open_begin(run,(WORD)(i+NUMSTD));
+        if (descriptor<0) {
+            /* The caller still owns the driver's cookie on failure. */
+            sft[i].f_pfs.fs=NULL;sft[i].f_own=NULL;sft[i].f_use=0;
+            return descriptor;
+        }
+        if (process_files_open_end(run,(WORD)descriptor,(WORD)(i+NUMSTD))!=E_OK)
+            panic("PFS descriptor publication revoked");
+        return descriptor;
+    }
+#endif
     return i + NUMSTD;
 }
 

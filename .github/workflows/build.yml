@@ -71,6 +71,11 @@ jobs:
         run: /tmp/elf-shared-venv/bin/python tools/test-process-observer.py
       - name: Test exact SFT close ownership and bounded recovery
         run: /tmp/elf-shared-venv/bin/python tools/test-fs-close.py
+      - name: Test coherent PROCESS descriptor snapshots and exact SFT ownership
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-process-files.py
+          HOSTCC='gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong' /tmp/elf-shared-venv/bin/python tools/test-process-files.py
+          HOSTCC='gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer' ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/elf-shared-venv/bin/python tools/test-process-files.py
       - name: Test PROCESS-owned launch rights
         run: /tmp/elf-shared-venv/bin/python tools/test-process-exec-handles.py
       - name: Test unpublished PROCESS dispatch and native-width ownership
@@ -432,6 +437,37 @@ jobs:
 
       - name: Run the regression suite
         run: tools/ci-group.sh --names "${{ matrix.machines }}" tools/ci-regression.sh
+
+  process-files:
+    name: PROCESS descriptors ${{ matrix.machine }} ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf}
+          - {arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm}
+          - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Run real-trap descriptor ownership and complete regression/shutdown checks
+        env:
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
+          REGRESSION_RAW_DISK: '1'
+        run: tools/ci-group.sh --names "${{ matrix.machine }}" tools/ci-regression.sh
 
   pmmu-check:
     name: PMMU startup check (virt-m68k-mmu)

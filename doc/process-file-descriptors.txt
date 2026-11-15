@@ -1,0 +1,133 @@
+PROCESS-local descriptors and snapshot admission -- #969
+=======================================================
+Base: accepted epic 00292ebe60ef3ff31f15d56659c5c85938b57a00.
+This is a separate prerequisite for #895/#972. Public Pfork/Pvfork still return
+EINVFN. Both Phase 6 calls will consume the same PRIVATE_VM/COW construction;
+this descriptor policy is independent of their parent scheduling policy.
+
+Scope and gate
+--------------
+CONF_WITH_PROCESS_FILES_TEST defaults off and requires USER_ASPACE plus retained
+FAT file lifetimes. When selected it migrates EVERY managed KPROC, including
+ordinary Pexec, to one authoritative descriptor table. There is no fork-only
+namespace. Nonmanaged trusted boot callers retain their legacy ABI. Shipped
+profiles and non-MMU layouts are unchanged. Traditional small-ROM unlink and
+the existing non-MMU process model are not enabled through this test gate.
+
+Each local descriptor 0..NUMHANDLES-1 binds to a BIOS device or one exact SFT
+incarnation, with a nonrecycled generation. Local numbers and internal SFT
+numbers need not agree: Fdup can occupy a local number without another SFT.
+PD_UFT remains a routing mirror for standards, never acquisition authority.
+The KPROC embeds its table in its retained identity prefix; retired PD memory
+is not borrowed. Initial stdhdl_init uses the same owner. A retained PE_GO PD
+can import its already-owned explicit reference only after subtracting exact
+canonical bindings, its standard aliases, staged and residual refs from f_use;
+f_own alone cannot create a binding. Invalid aliases fail KPROC creation before
+basepage tables are cleared. A narrow checked current boot handoff supports
+ordinary standard inheritance without granting boot callers fork snapshots.
+
+One live filesystem binding owns one ordinary canonical SFT reference. Parent
+and child can close the same local number independently. They share that SFT's
+OFD or PFS cookie and cursor, never a copied driver cookie. Fforce and Fdup
+acquire the replacement exact reference before closing an old binding. Closing
+unpublishes a captured generation before backend work; callbacks can install a
+successor. A retained close restores only its exact empty generation, otherwise
+its old ref transfers to #933's existing residual cleanup. Consuming finalizer
+errors do not undo consumption. Operation records retain the KPROC across all
+callbacks. Media invalidation revokes every exact binding, including admitted
+snapshots, before SFT reuse. Retirement unlinks the live KPROC before its file
+callbacks and consumes only its independently owned bindings. CWD and drive
+state retain their existing PROCESS owners. Shutdown retires managed tables
+before the existing global residual/legacy sweep.
+
+Coherent snapshot contract
+--------------------------
+The opaque KPROC_FILE_SNAPSHOT is a move-only trusted transaction owner.
+
+  begin(source, &empty) authenticates the current live exact KPROC and execution,
+    rejects active open/close operations, competing snapshot, retirement and ID
+    exhaustion, retains source, records its epoch and a unique admission ticket.
+    While admitted, descriptor mutations fail EACCDN before publication; normal
+    open/create reject before filesystem callbacks. Reads remain available.
+
+  prepare(snapshot, target, STANDARD|ALL) requires an empty distinct live target,
+    retains it, reserves child generations, acquires one #943 checked staged
+    reference for EACH selected binding. Every acquisition prefix is reversible.
+    No allocation, I/O, destructor or callback occurs under a descriptor lock;
+    admission is a cooperative logical publication right, not a blocking lock.
+
+  validate(snapshot) reauthenticates originating execution, source KPROC number,
+    exact ticket/epoch, live target epoch and all staged SFT incarnations.
+
+  seal(snapshot) validates the current creator immediately before the reviewed
+    no-fail boundary. Repeated unchanged authenticated sealing is harmless.
+
+  commit(snapshot, exact_target) consumes the sealed token in the existing
+    active-creator or scheduler-root publication path. It revalidates identities,
+    epochs and exact references without impersonating the suspended creator,
+    reclassifies staged refs as ordinary bindings without changing f_use, and
+    releases source admission BEFORE child dispatch. No allocation/callback.
+
+  end(&owner) consumes the handle. On abort it releases admission before backend
+    cleanup; exact staged refs and identities survive callbacks and successor
+    snapshots. On commit it never touches a successor admission. All reference
+    cleanup uses existing bounded close/invalidation/residual machinery.
+
+The existing trusted proc_clone transaction owns COPY_FILES (internal test-gated
+resource policy, no public Pclone ABI flag). It begins admission before its
+resource factory, asks the factory for an empty descriptor target, prepares all
+bindings, seals at final creator preflight and commits beside existing mapping,
+THREAD and scheduler publication. Abort releases snapshot ownership before other
+resource destructors. Identity-only rejection of a startup draft is readonly.
+The raw resource factory rejects COPY_FILES because it cannot itself promise the
+final publication check. Pexec-style STANDARD inheritance keeps its own policy;
+CWD remains independently selectable. No SFT counters are mutated by proc_clone.
+
+Supported resource policy
+--------------------------
+ALL copies every supported descriptor, standard and nonstandard, including BIOS
+bindings, to the same local number. Open-file cursor/status state is shared at
+the canonical backend. Each PROCESS owns its close rights. CWD/drive inheritance
+continues through existing checked PROCESS directory preparation. Search/DTA
+buffers are not open descriptors and are not copied by this owner; the existing
+factory initializes the child DTA in its own basepage. No new signal, directory
+search continuation, close-on-exec or public fork policy is claimed here.
+
+Synchronization is the existing cooperative single CPU model: no callback/I/O
+or yield at final seal/commit, no IRQ mutation of filesystem descriptors. Future
+preemption/SMP needs one common PROCESS-to-SFT publication exclusion, not another
+registry. Current code does not enable either capability.
+
+Evidence and acceptance
+------------------------
+tools/test-process-files.py executes the production descriptor owner, real SFT,
+FAT/PFS close and invalidation. Controls cover boot ordering/import, invalid-close
+ABI, displaced local/backend numbers, both close orders, OFD/PFS cursor sharing,
+competing mutation/snapshot rejection, allocation/acquisition rollback, media
+revocation, consuming and retained callbacks, source-first retirement and final
+reference conservation. A second harness uses production KPROC destruction and
+a consuming file callback that reenters the same PD and destroys its live-list
+predecessor; identity, registry and file counters must return to baseline.
+ASan/UBSan/leak and fortified variants run the same production controls.
+
+tests/pclone/process_files.h exercises actual user traps through the existing
+NEW_PROCESS constructor with private test transport selecting COPY_FILES. It
+checks nonstandard/standard inheritance, displaced Fdup/open numbers, real stdin
+redirects, shared cursor, both close orders, nine existing clone/factory failure
+prefixes, correct PID/TID and canonical one-time wait. PFS configurations repeat
+the ownership cases on the actual Q: driver. Exact SFT use/staged/residual counts,
+positive descriptor bindings, pending admission/operations and KPROC identity/
+reference totals are checked before, after publication and after final reap.
+It is a descriptor prerequisite test, not public fork execution.
+
+Build adds five positive lanes: x32 FAT, A7 FAT/PFS, 040 FAT/PFS, full regression
+and five shutdown checks each. Existing gate-off compatibility lanes stay intact.
+Positive lanes use the harness's existing raw-disk backend; vvfat aborted inside
+its host directory consistency assertion during an initial local ARM experiment.
+No test deadline, panic scan, sanitizer or guest ownership bound is relaxed.
+
+Draft scope acceptance requires these new native lanes, all existing compatibility
+workflows and an independent exact-source review. Keep the prerequisite isolated;
+acceptance and integration into the epic require separate authorization. This
+increment alone does not resolve all #895 process-resource semantics or activate
+public fork, PROCESS dispatch, Pexec(4/104), preemption or SMP.

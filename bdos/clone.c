@@ -11,6 +11,9 @@
 #include "clone_args.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "proc_clone.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #include "ksched.h"
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "kthread.h"
@@ -118,6 +121,9 @@ static long clone_request(uint64_t address, uint64_t size)
     LONG copy_error = E_OK;
     enum clone_copy_result copied;
     enum clone_validate_result valid;
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+    BOOL files_test=FALSE;
+#endif
     static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
         CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
 #if CONF_WITH_PRIVATE_CLONE_TEST
@@ -257,6 +263,28 @@ static long clone_request(uint64_t address, uint64_t size)
         private_test = TRUE; size &= 0xffff;
     }
 #endif
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+    /* Private transport for the common resource policy, never a new ABI flag. */
+    if ((size&0xffffffffffff0000ULL)==0xc9690000ULL) {
+        if (!address && size>=0xc9690100ULL && size<=0xc9690107ULL) {
+            ULONG count=0,i;
+            switch ((UWORD)(size&255)) {
+            case 0: for (i=0;i<OPNFILES;i++) count+=sft[i].f_use;break;
+            case 1: for (i=0;i<OPNFILES;i++) count+=sft[i].f_staged_refs;break;
+            case 2: for (i=0;i<OPNFILES;i++) count+=sft[i].f_cleanup_refs;break;
+            default: return kproc_files_test_count((UWORD)((size&255)-3));
+            }
+            return (LONG)count;
+        }
+        if (!address && size>=0xc9690200ULL && size<=0xc9690204ULL) {
+            proc_clone_test_fail_after((UWORD)(size&255));return E_OK;
+        }
+        if (!address && size>=0xc9690300ULL && size<=0xc9690305ULL) {
+            proc_clone_factory_test_fail_after((UWORD)(size&255));return E_OK;
+        }
+        files_test=TRUE;size&=0xffff;
+    }
+#endif
     copied = clone_copy_v1(&args, address, size, clone_copy, &copy_error);
     if (copied == CLONE_COPY_BAD_SIZE) return EINVAL;
     if (copied != CLONE_COPY_OK) return copy_error != E_OK ? copy_error : EIMBA;
@@ -264,6 +292,9 @@ static long clone_request(uint64_t address, uint64_t size)
     if (valid == CLONE_INVALID) return EINVAL;
     if (valid != CLONE_VALID) return EIMBA;
     if (!(args.flags & CLONE_VM)) return EINVFN;
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+    if (files_test && (args.flags&CLONE_SAME_PROCESS)) return EINVAL;
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     if ((private_test && ((args.flags & CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) ||
         (scoped_test && (args.flags&CLONE_SAME_PROCESS))) return EINVAL;
@@ -285,6 +316,9 @@ static long clone_request(uint64_t address, uint64_t size)
             PROC_CLONE_SHARE_VM;
         policy.resources = ((args.flags & CLONE_COPY_STANDARD_HANDLES) ? PROC_CLONE_COPY_STANDARD_HANDLES : 0) |
                            ((args.flags & CLONE_COPY_CWD) ? PROC_CLONE_COPY_CWD : 0);
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (files_test) policy.resources|=PROC_CLONE_COPY_FILES;
+#endif
         startup.entry = (VADDR)(uintptr_t)args.entry;
         startup.argument = (VADDR)(uintptr_t)args.argument;
         startup.stack_base = (VADDR)(uintptr_t)args.stack_base;
