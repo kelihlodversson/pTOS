@@ -2694,7 +2694,7 @@ static LONG active_clone_construct(UWORD index)
     UQUAD frame = 0x1122334455667788ULL, after;
     PD *controller = kproc_get_parent(run);
     LONG pins_before = procmem_pins(controller);
-#if CONF_WITH_PRIVATE_CLONE
+#if CONF_WITH_PRIVATE_CLONE_TEST
     ULONG map_pins_before;
 #endif
     UQUAD entry_flags, exit_flags;
@@ -2742,7 +2742,7 @@ static LONG active_clone_construct(UWORD index)
     if (active_clone.scenario == 5) CHECK(kproc_mprot(run,data,PAGE,PROT_READ) == E_OK, "revoke active publication output");
     if (active_clone.scenario == 6) proc_clone_test_cancel_publication();
     if (active_clone.scenario == 7) kproc_test_fail_clone_controller();
-#if CONF_WITH_PRIVATE_CLONE
+#if CONF_WITH_PRIVATE_CLONE_TEST
     map_pins_before=aspace_test_pin_count(as,FALSE);
 #endif
     error = proc_clone_spawn(&tx,&active_clone.ids[index]);
@@ -2755,9 +2755,12 @@ static LONG active_clone_construct(UWORD index)
               "active publication consumes transaction and returns distinct ids without waiting");
         active_clone.successes++;
 #if CONF_WITH_PRIVATE_CLONE
-        CHECK(procmem_pins(controller)==pins_before+2 &&
-              aspace_test_pin_count(as,FALSE)==map_pins_before+3,
-              "published child owns controller allocation/backend refs and two compatibility borrows");
+        CHECK(procmem_pins(controller)==pins_before+2,
+              "published child owns independent controller allocation and backend references");
+#if CONF_WITH_PRIVATE_CLONE_TEST
+        CHECK(aspace_test_pin_count(as,FALSE)==map_pins_before+3,
+              "published child owns exact controller and two compatibility backend borrows");
+#endif
 #else
         CHECK(procmem_pins(controller) == pins_before + 1, "published child owns an independent controller allocation pin");
 #endif
@@ -2776,7 +2779,7 @@ static LONG active_clone_construct(UWORD index)
         CHECK(active_clone.scenario == 6 ? !tx : tx != NULL, "explicit cancellation consumes; preflight failure preserves transaction");
         proc_clone_abort(&tx);
         CHECK(procmem_pins(controller) == pins_before &&
-#if CONF_WITH_PRIVATE_CLONE
+#if CONF_WITH_PRIVATE_CLONE_TEST
               aspace_test_pin_count(as,FALSE)==map_pins_before &&
 #endif
               aspace_copy_from_user(as,&after,stack+2*PAGE-8,sizeof(after)) && after == frame,
