@@ -119,6 +119,8 @@ jobs:
             /tmp/elf-shared-venv/bin/python tools/test-shared-interp.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --shared --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-shared-interp.py --image-policy --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-private-image-admission.py --mode "$mode"
           done
       - name: Test address-space ownership
         run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh

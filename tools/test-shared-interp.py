@@ -13,6 +13,7 @@ os.environ["CONFIG_"] = ""
 parser = argparse.ArgumentParser()
 parser.add_argument("presets", nargs="*", choices=["pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"])
 parser.add_argument("--mode", choices=["normal", "asan", "fortified"], default="normal")
+parser.add_argument("--image-policy", action="store_true", help="include immutable policy/legacy loader-entry checks")
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="ptos-interp-") as directory:
     work = Path(directory)
@@ -24,6 +25,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-interp-") as directory:
         k = kconfiglib.Kconfig(warn_to_stderr=False)
         k.load_config(f"configs/{preset}_defconfig")
         k.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
+        if args.image_policy:
+            k.syms["CONF_WITH_IMAGE_POLICY"].set_value(2)
+            assert k.syms["CONF_WITH_IMAGE_POLICY"].str_value == "y"
         k.syms["CONF_WITH_SHARED_VM_PEXEC_TEST"].set_value(2)
         k.syms["CONF_WITH_ELF_SHARED"].set_value(2)
         k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(0)

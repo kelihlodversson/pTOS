@@ -24,6 +24,12 @@ reading an executable file, probing PTEs, allocating, invoking a callback or
 yielding. The loader's separate interpreter entry/accounting is normalized
 into the value; a source interpreter recipe is not retained.
 
+Classic PRG launch intentionally leaves the generic KPROC entry field zero.
+Its text entry is therefore recorded beside the trusted text length at the
+existing kproc_record_legacy_text() loader boundary. Later policy capture reads
+that immutable value; edits to the public basepage cannot change it. Neither
+the text entry nor its projection conveys backing or permission authority.
+
 The value has no pointers. In particular it excludes source bytes/filesz,
 source PROCESS/PD identities, environment/DTA, initial user SP, stack/THREAD/
 TID/root ownership, cleanup receipts, mapping births, loader recipes and file
@@ -114,6 +120,17 @@ The separately accepted captured-reservation slice in PR #974 remains
 unintegrated. No nheap, pending, lender, give-back, multi-THREAD or source-sharing
 admission restriction is removed here. The verified moved-image negative
 control and missing complete owned-image contract remain recorded on #971.
+
+The committed tools/test-private-image-admission.py control runs actual
+kproc_load_alloc(), kproc_set_moved_image(), move_loaded_image(), MMU transfer
+and protection before checking private-runtime admission. An empty sole source
+is admitted and value-policy capture of the independently owned UH_IMAGE
+succeeds, but its private-snapshot admission still rejects. The normal driver
+requires that known rejection and exact cleanup; --require instead exits1 for
+the still-missing capability. This reproduces the blocker from the committed
+candidate without local evidence files. It is separate from the successful
+immutable-policy tests, not a native/public fork test or permission to remove
+the guard.
 
 It also does not implement Pexec(200), publish an exec-commit event, resolve
 descriptor inheritance or complete either public fork. A fresh pending-image

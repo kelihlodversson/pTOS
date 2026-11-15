@@ -210,6 +210,9 @@ struct kproc {
 #if KPROC_LEGACY_PRG
     ULONG legacy_text_bytes;    /* trusted loader snapshot, never reread from user PD */
     BOOL legacy_text_recorded;
+#if CONF_WITH_IMAGE_POLICY
+    VADDR legacy_text_entry; /* recorded at the same authenticated loader boundary */
+#endif
 #endif
 #if CONF_WITH_ELF_SHARED
 #if KPROC_SHARED_INTERP
@@ -1265,6 +1268,9 @@ LONG kproc_image_policy_capture(const KPROC *source,KPROC_IMAGE_POLICY *output)
 #endif
     if (source->has_image) image_layout_capture(&source->layout,&policy.program);
     policy.entry=source->has_image?source->layout.entry:source->entry;
+#if KPROC_LEGACY_PRG
+    if (policy.legacy_text_recorded && !policy.has_image) policy.entry=source->legacy_text_entry;
+#endif
 #if CONF_WITH_ELF_SHARED
     policy.standard_entry=source->standard_entry;
     if (policy.standard_entry) {
@@ -1301,7 +1307,7 @@ static BOOL image_preparation_ready(const KPROC_IMAGE_PREPARATION *prepared,BOOL
         target->aspace || target->pending_as || target->layout.nseg || target->layout.entry || target->layout.end ||
         target->stack_top || target->stack_low ||
 #if KPROC_LEGACY_PRG
-        target->legacy_text_recorded || target->legacy_text_bytes ||
+        target->legacy_text_recorded || target->legacy_text_bytes || target->legacy_text_entry ||
 #endif
 #if CONF_WITH_ELF_SHARED
         target->standard_entry || target->interpreter_layout.nseg || target->initial_rsp ||
@@ -1397,6 +1403,7 @@ static void image_policy_commit(KPROC *target)
 #if KPROC_LEGACY_PRG
     target->legacy_text_bytes=policy->legacy_text_bytes;
     target->legacy_text_recorded=policy->legacy_text_recorded;
+    target->legacy_text_entry=policy->legacy_text_recorded?policy->entry:0;
 #endif
 #if CONF_WITH_ELF_SHARED
     image_layout_install(&target->interpreter_layout,&policy->interpreter);
@@ -3130,6 +3137,9 @@ BOOL kproc_record_legacy_text(PD *pd, ULONG text_bytes)
         text > (VADDR)(uintptr_t)kproc->user_end ||
         (VADDR)text_bytes > (VADDR)(uintptr_t)kproc->user_end - text) return FALSE;
     kproc->legacy_text_bytes = text_bytes;
+#if CONF_WITH_IMAGE_POLICY
+    kproc->legacy_text_entry=text;
+#endif
     kproc->legacy_text_recorded = TRUE;
     return TRUE;
 }
