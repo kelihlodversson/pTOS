@@ -46,7 +46,12 @@ fences provide no authority; an expanded fence never expands the exact
 logical extent. Hardware page rounding permits backing only the page that
 contains an exact authorized byte extent, as in the existing R2 contract.
 Captured witness order is preserved. Tightened nonlazy permissions are
-revalidated against logical source rights before they are copied.
+validated against logical source rights before copying. The immutable rights
+ceiling is retained, including when one receipt spans mixed RO/RW pages.
+The clone inherits the resident-permission validation state, and each query
+and new hold intersects that ceiling with the queried logical pages. A RO
+page therefore cannot remove WRITE from an adjacent RW page or authorize a
+new write itself. Earlier query results are revalidated before a new hold.
 
 Ordinary live heap/mmap reservations retain their own metadata, scopes and
 exact FILE_BACKING references. Captured witnesses over those pages do not
@@ -75,7 +80,9 @@ Validation contracts
 --------------------
 tools/test-private-snapshot.py compiles production bdos/kaspace.c with counted
 host MMU/file providers. It covers exact narrow extents versus expanded
-cleanup fences; RW/RO/PROT_NONE; tightened nonlazy rights; missing file-owner
+cleanup fences; RW/RO/PROT_NONE; mixed resident RO/RW pages in both orders,
+per-subrange and whole-range queries/holds, stale grant denial, nested copies,
+source-first/child-first retirement and every allocation prefix; missing file-owner
 rejection; exact FILE_BACKING clone/ref rollback; every allocation prefix;
 source-first and nested lifetime; multiple mapping members; reentrant final
 member loss; earlier private/borrow cleanup; and final conservation while an

@@ -1818,12 +1818,16 @@ static LONG clone_captures(const KASPACE *source,KASPACE *copy)
     for (lease=source->leases;lease;lease=lease->next) {
         VADDR page,last,run=0,end;
         BOOL in_run=FALSE;
-        UWORD rights;
+        UWORD rights,current;
         if (!lease->reservation_ticket || !lease->captured || !kaspace_lease_valid(lease)) continue;
         rights=lease->reservation_rights;
+        /* Validate the resident extent, but preserve its immutable ceiling.
+         * A mixed RO/RW receipt has no uniform current WRITE permission;
+         * reservation_info()/reservation_install() revalidate each query
+         * against the cloned logical leaves before granting any access. */
         if (!(lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
             !capture_current_rights((KASPACE *)source,lease->reservation_id,
-                lease->exact_address,lease->exact_bytes,rights,&rights)) return EACCDN;
+                lease->exact_address,lease->exact_bytes,rights,&current)) return EACCDN;
         page=lease->exact_address&~(VADDR)(USER_PAGE_SIZE-1);
         last=(lease->exact_address+lease->exact_bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
         end=lease->exact_address+lease->exact_bytes;
