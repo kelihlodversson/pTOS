@@ -30,7 +30,12 @@ typedef enum { PROC_CLONE_SHARE_VM, PROC_CLONE_PRIVATE_VM,
              } PROC_CLONE_VM_POLICY;
 #define PROC_CLONE_COPY_STANDARD_HANDLES 1U
 #define PROC_CLONE_COPY_CWD              2U
+#if CONF_WITH_PROCESS_FILES_TEST
+#define PROC_CLONE_COPY_FILES            4U /* all local bindings, final-boundary snapshot */
+#define PROC_CLONE_RESOURCE_MASK         7U
+#else
 #define PROC_CLONE_RESOURCE_MASK         3U
+#endif
 
 typedef struct {
     /* Borrowed live identities; caller retains them throughout prepare.
@@ -44,7 +49,8 @@ typedef struct {
     PROC_CLONE_PROCESS_POLICY process_policy;
     PROC_CLONE_VM_POLICY vm_policy;
     /* Must be zero except for NEW_PROCESS. Independently select Pexec-style standard-handle and
-     * CWD inheritance. Explicit/nonstandard SFT handles are not duplicated.
+     * CWD inheritance. The test-only COPY_FILES policy supersedes standard
+     * inheritance with every PROCESS binding and a final publication check.
      * Environment is initially empty; loader/image/startup remain separate. */
     UWORD resources;
     /* LOADED_PROCESS/PREPARED_VM only. source is the loader-created target,
@@ -162,7 +168,7 @@ void proc_clone_release(PROC_CLONE_RESULT *result);
  * retained identity plus disposal obligation. Unknown policies fail EINVAL. */
 LONG proc_create_clone_process(struct kproc *source, UWORD resources, struct kproc **result);
 
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
 /* Inject failure after source, target, VM, THREAD, or owned-observer identity acquisition (1..5). */
 /* Function-entry transaction stages; loader allocation faults use allocator hooks. */
 void proc_clone_test_fail_after(UWORD stage);

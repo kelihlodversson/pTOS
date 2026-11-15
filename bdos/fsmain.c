@@ -17,6 +17,9 @@
 #include "gemerror.h"
 #include "biosbind.h"
 #include "bdosstub.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 
 /*
 **
@@ -457,6 +460,13 @@ long xgetdrv(void)
  */
 static int syshnd(int h)
 {
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(run)) {
+        WORD backend;
+        if (process_files_resolve(run,(WORD)h,&backend,NULL)!=E_OK) return -1;
+        return backend>=NUMSTD?backend-NUMSTD:backend;
+    }
+#endif
     if (h >= NUMSTD)
         return(h-NUMSTD);
 

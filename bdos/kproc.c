@@ -40,10 +40,14 @@
 #if CONF_WITH_USER_ASPACE
 #include "procmem.h"
 #include "kaspace.h"
+#include "exec_replace.h"
 #include "kthread.h"
 #include "proc_clone.h"
 #include "progimage.h"
 #include "kproc_image_policy.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/startup.h"
 #endif
@@ -118,6 +122,9 @@ struct kproc {
     PD *destroying_pd; /* Non-owning address only during active destruction. */
     LONG cleanup_error;
     ULONG cleanup_transferred;
+#if CONF_WITH_PROCESS_FILES_TEST
+    PROCESS_FILES files; /* identity-owned table; empty after resource retirement */
+#endif
     UQUAD completion_order;
     UQUAD reservation_birth[5]; /* TPA, env, initial stack, image, interpreter */
     BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
@@ -171,6 +178,10 @@ struct kproc {
      * same bounded special R1/R2 receipts without loaded-entry/stack policy. */
     struct shared_exec_regions *shared_inherited;
     BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+    UQUAD exec_replacement_ticket; /* reversible replacement, not launch selection */
+    BOOL exec_image_staging; /* loader container bound to a replacement root */
+#endif
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
@@ -461,6 +472,11 @@ BOOL kproc_create(PD *pd)
      * mistaken for state. */
     memcpy(kproc->uft, pd->p_uft, sizeof kproc->uft);
     memcpy(kproc->curdir, pd->p_curdir, sizeof kproc->curdir);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (!process_files_init(&kproc->files,kproc,kproc->uft)) {
+        KPROC_FREE(kproc);return FALSE;
+    }
+#endif
     bzero(pd->p_uft, sizeof pd->p_uft);
     bzero(pd->p_curdir, sizeof pd->p_curdir);
 #if CONF_WITH_USER_ASPACE
@@ -547,7 +563,11 @@ struct process_exec_handle **kproc_exec_handles(KPROC *owner)
 }
 BOOL kproc_exec_commit_begin(KPROC *owner)
 {
-    if (!kproc_live_pd(owner) || owner->exec_committing) return FALSE;
+    if (!kproc_live_pd(owner) || owner->exec_committing
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+        || owner->exec_replacement_ticket
+#endif
+        ) return FALSE;
     owner->exec_committing = TRUE;
     return TRUE;
 }
@@ -832,6 +852,9 @@ BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
 #endif
 #if CONF_WITH_NATIVE_SCHED
         (p->clone_guarded && !identity_only) ||
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+        p->exec_replacement_ticket ||
+#endif
 #endif
         (p->active_space && p->active_space != construction_space) ||
         !kproc_retain_live(p))
@@ -1257,6 +1280,11 @@ LONG kproc_image_policy_capture(const KPROC *source,KPROC_IMAGE_POLICY *output)
     if (!output) return EINVAL;
     if (!source || !source->references || !mapping_owner_live(source) ||
         source->lost || source->clone_identity_only ||
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+        /* A replacement staging container is owned by its exact #973
+         * replacement ticket; it is not a pending launch image. */
+        source->exec_image_staging ||
+#endif
         !(source->started ? source->active_space && source->aspace==kaspace_backend(source->active_space) :
             !source->active_space && !source->aspace && source->pending_space &&
             source->pending_as==kaspace_backend(source->pending_space))) return EACCDN;
@@ -1575,6 +1603,14 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
             kproc_release(identity); return FALSE;
         }
         p->clone_controller_borrowed = TRUE;
+    } else {
+        /* The existing translation may belong to another clone which exits
+         * first. Retain this exact backend borrow independently of its raw
+         * allocation pin, without remapping or granting user access. */
+        if (!aspace_duplicate_borrow(as,(VADDR)(uintptr_t)controller,sizeof(PD))) {
+            kproc_release(identity); return FALSE;
+        }
+        p->clone_controller_borrowed = TRUE;
     }
 #endif
     procmem_pin((VADDR)(uintptr_t)controller, sizeof(PD), +1);
@@ -1662,6 +1698,101 @@ BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
         process->pd && !process->completed && process->threads == thread &&
         !*kthread_next_link(thread) && kthread_process(thread) == process;
 }
+
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+static UQUAD last_exec_replacement_ticket;
+
+/* A constructor may own a root before active_space/pending_space adoption.
+ * Reuse the canonical THREAD/member associations; root refs are not admission. */
+static BOOL exec_space_associated(const KPROC *process,const KASPACE *space)
+{
+    KTHREAD *thread;
+    if (process->active_space==space || process->pending_space==space ||
+        kaspace_member_matches(process->mapping_members,space,process->number,process) ||
+        ((process->mapping_preparation==MAPPING_PREPARING || process->mapping_preparation==MAPPING_PREPARED) &&
+         kaspace_member_matches(process->prepared_mapping_members,space,process->number,process)))
+        return TRUE;
+    for (thread=process->threads;thread;thread=*kthread_next_link(thread))
+        if (kthread_aspace(thread)==space) return TRUE;
+    return FALSE;
+}
+
+static BOOL exec_replacement_source(KPROC *process,KTHREAD *thread,KASPACE *selected,KPROC *image)
+{
+    KPROC *peer;
+    KASPACE *original=kproc_active_space(process);
+    if (!original || !selected || original==selected ||
+        !kproc_thread_is_sole(process,thread) || !kthread_is_executing(thread) ||
+        kthread_aspace(thread)!=original || !process->started || process->pending_space ||
+        process->mapping_preparation || process->exec_committing || process->lost ||
+        process->give_back || process->lender ||
+        kaspace_mutation_busy(original) || kaspace_mutation_busy(selected) ||
+        !aspace_root(kaspace_backend(selected)) ||
+        aspace_root(kaspace_backend(selected))==aspace_root(kaspace_backend(original))) return FALSE;
+#if CONF_WITH_PTERMGRP
+    if (process->group_exiting) return FALSE;
+#endif
+    for (peer=kproc_list;peer;peer=peer->next) {
+        /* Initial replacement policy excludes all source peers. A selected
+         * image root is private staging, not another PROCESS's execution or
+         * construction, even when its caller retains a root reference. */
+        if ((peer!=process && exec_space_associated(peer,original)) ||
+            (exec_space_associated(peer,selected) &&
+                (peer!=image || !kproc_exec_image_pending(image,selected,FALSE)))) return FALSE;
+    }
+    return TRUE;
+}
+
+LONG kproc_exec_replacement_claim(KPROC *process,KTHREAD *thread,KASPACE *selected,UQUAD *ticket)
+{
+    if (!ticket || *ticket) return EINVAL;
+    if (!exec_replacement_source(process,thread,selected,NULL) || process->exec_replacement_ticket)
+        return EACCDN;
+    if (last_exec_replacement_ticket==~(UQUAD)0) return EAGAIN;
+    *ticket=++last_exec_replacement_ticket;
+    process->exec_replacement_ticket=*ticket;
+    return E_OK;
+}
+
+BOOL kproc_exec_replacement_matches(KPROC *process,KTHREAD *thread,KASPACE *source,
+                                  KASPACE *selected,KPROC *image,UQUAD ticket)
+{
+    return process && ticket && process->exec_replacement_ticket==ticket &&
+        process->active_space==source && exec_replacement_source(process,thread,selected,image);
+}
+
+void kproc_exec_replacement_drop(KPROC *process,UQUAD ticket)
+{
+    if (!process || !ticket || process->exec_replacement_ticket!=ticket)
+        panic("exec replacement: preparation ticket ownership lost");
+    process->exec_replacement_ticket=0;
+}
+
+LONG kproc_exec_image_select(KPROC *image,KASPACE *selected)
+{
+    KASPACE *owned;
+    KPROC *peer;
+    if (!image || !selected || !kproc_clone_target_ready(image,NULL) || image->exec_image_staging ||
+        image->mapping_preparation || image->mapping_members || image->prepared_mapping_members)
+        return EACCDN;
+    for (peer=kproc_list;peer;peer=peer->next)
+        if (exec_space_associated(peer,selected)) return EACCDN;
+    owned=kaspace_share(selected);
+    if (!owned) return ENSMEM;
+    image->exec_image_staging=TRUE;
+    image->pending_space=owned;
+    return E_OK;
+}
+
+BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL complete)
+{
+    return image && image->pd && !image->completed && image->disposal_state==PROCESS_LIVE &&
+        !image->started && !image->active_space && !image->threads && !image->lost && !image->load_parent &&
+        !image->mapping_preparation && !image->mapping_members && !image->prepared_mapping_members &&
+        image->exec_image_staging && image->pending_space==selected &&
+        (!complete || (image->has_image && image->pending_as==kaspace_backend(selected)));
+}
+#endif
 
 static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)
 {
@@ -1846,6 +1977,11 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
+#if CONF_WITH_PROCESS_FILES_TEST
+            /* Close callbacks can destroy this or a preceding PROCESS. The
+             * live cursor is detached and lookup ownership still pins self. */
+            process_files_retire(&kproc->files);
+#endif
 #if CONF_WITH_USER_ASPACE
             /* A shared root may outlive this record. Root destruction cannot
              * stand in for disposing this PROCESS's construction pin rights. */
@@ -2064,6 +2200,52 @@ BOOL kproc_file_references_allowed(PD *pd)
     KPROC *p=file_admission_owner(pd);
     return !p || !p->file_cleanup_started;
 }
+#if CONF_WITH_PROCESS_FILES_TEST
+PROCESS_FILES *kproc_files(PD *pd)
+{
+    KPROC *p=file_admission_owner(pd);
+    return p ? &p->files : NULL;
+}
+PROCESS_FILES *kproc_ref_files(KPROC *p) { return p ? &p->files : NULL; }
+LONG kproc_files_test_count(UWORD field)
+{
+    KPROC *p;
+    ULONG count=0;
+    WORD i;
+    for (p=kproc_list;p;p=p->next) {
+        if (field==3) count+=p->references;
+        if (field==4) count++;
+        if (field==0) for(i=0;i<NUMHANDLES;i++) {
+            PROCESS_FILE_BINDING *binding=&p->files.binding[i];
+            if (binding->state && binding->handle>=NUMSTD) count++;
+        }
+        if (field==1 && p->files.snapshot) count++;
+        if (field==2) count+=p->files.operations;
+    }
+    for (p=retired_processes;p;p=p->next) {
+        if (field==3) count+=p->references;
+        if (field==4) count++;
+        if (field==1 && p->files.snapshot) count++;
+        if (field==2) count+=p->files.operations;
+    }
+    return (LONG)count;
+}
+void kproc_files_shutdown(void)
+{
+    KPROC *p;
+    /* No backend callback can publish another managed binding after this
+     * first pass. Retirement itself uses exact operation-owned references. */
+    for (p=kproc_list;p;p=p->next) p->file_cleanup_started=TRUE;
+    for (;;) {
+        for (p=kproc_list;p && p->files.retiring;p=p->next) { }
+        if (!p) break;
+        p=kproc_retain_identity(p);
+        if (!p) panic("shutdown descriptor identity saturation");
+        process_files_retire(&p->files);
+        kproc_release(p);
+    }
+}
+#endif
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
 {
     KPROC *p=kproc_find(pd);
@@ -2074,6 +2256,17 @@ void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
         p->cleanup_transferred++;
     }
 }
+#if CONF_WITH_PROCESS_FILES_TEST
+void kproc_note_file_owner_cleanup(KPROC *p,LONG error,BOOL transferred)
+{
+    if (!p) return;
+    if (!p->cleanup_error && error<0) p->cleanup_error=error;
+    if (transferred) {
+        if (p->cleanup_transferred==~(ULONG)0) panic("file cleanup count exhausted");
+        p->cleanup_transferred++;
+    }
+}
+#endif
 LONG kproc_ref_file_cleanup(const KPROC *p, ULONG *transferred)
 {
     if (!p) return EINVAL;
@@ -2085,8 +2278,12 @@ void kproc_standard_file_invalidate(WORD handle)
     KPROC *p;
     WORD i;
     for (p=kproc_list;p;p=p->next)
+#if CONF_WITH_PROCESS_FILES_TEST
+        process_files_invalidate(&p->files,handle,sft[handle-NUMSTD].f_incarnation);
+#else
         for (i=0;i<NUMSTD;i++)
             if (p->uft[i]==handle) p->uft[i]=get_default_handle(i);
+#endif
     /* The currently loaded boot/kernel PD can lack a KPROC record. All
      * ordinary USER_ASPACE PROCESS tables above are authoritative. */
     if (run && !kproc_find(run))
@@ -2100,11 +2297,21 @@ void kproc_standard_file_refs(ULONG *references)
 
     bzero(references,OPNFILES*sizeof(*references));
     for (kproc = kproc_list; kproc; kproc = kproc->next)
+#if CONF_WITH_PROCESS_FILES_TEST
+        {
+            for (i=0;i<NUMHANDLES;i++) {
+                PROCESS_FILE_BINDING *binding=&kproc->files.binding[i];
+                if (binding->state && binding->handle>=NUMSTD && binding->handle<NUMHANDLES)
+                    references[binding->handle-NUMSTD]++;
+            }
+        }
+#else
         for (i = 0; i < NUMSTD; i++) {
             WORD handle = kproc->uft[i];
             if (handle >= NUMSTD && handle < NUMHANDLES)
                 references[handle-NUMSTD]++;
         }
+#endif
 }
 #endif
 
@@ -2774,12 +2981,23 @@ BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes)
 
     if (!kproc || kproc->aspace || kproc->pending_as || kproc->has_image || kproc->lost)
         return FALSE;
-    as = aspace_create();
-    if (!as)
-        return FALSE;
-    owner = kaspace_adopt(as);
-    if (!owner) { aspace_destroy(as); return FALSE; }
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+    if (kproc->exec_image_staging) {
+        owner=kproc->pending_space;
+        if (!owner) return FALSE;
+        as=kaspace_backend(owner);
+    } else
+#endif
+    {
+        as = aspace_create();
+        if (!as) return FALSE;
+        owner = kaspace_adopt(as);
+        if (!owner) { aspace_destroy(as); return FALSE; }
+    }
     if (!aspace_map_private(as, va, bytes, ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+        if (!kproc->exec_image_staging)
+#endif
         kaspace_put(owner);
         return FALSE;
     }

@@ -11,6 +11,9 @@
 #include "syscall_return.h"
 #include "process_observer.h"
 #include "kproc_image_policy.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #include "ksched_lifetime.h"
@@ -44,9 +47,12 @@ struct proc_clone_transaction {
 #if CONF_WITH_IMAGE_POLICY
     KPROC_IMAGE_PREPARATION *image_policy;
 #endif
+#if CONF_WITH_PROCESS_FILES_TEST
+    KPROC_FILE_SNAPSHOT *files; /* admitted source plus reversible exact owners */
+#endif
 };
 
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
 static UWORD fail_stage;
 static BOOL cancel_publication;
 void proc_clone_test_cancel_publication(void) { cancel_publication = TRUE; }
@@ -68,6 +74,9 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 #endif
 #if CONF_WITH_IMAGE_POLICY
     kproc_image_policy_release(&tx->image_policy);
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST
+    kproc_files_snapshot_end(&tx->files);
 #endif
     thread_startup_abort(&tx->startup);
 #if CONF_WITH_NATIVE_SCHED
@@ -171,6 +180,9 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     tx->owns_process = FALSE;
     tx->loaded_shared=loaded_shared;
     tx->owns_shared_exec=FALSE;
+#if CONF_WITH_PROCESS_FILES_TEST
+    tx->files=NULL;
+#endif
     tx->owns_compat = FALSE;
     tx->source = kproc_retain_live(args->source);
     if (!tx->source) { error = EACCDN; goto failed; }
@@ -178,9 +190,23 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     if (!tx->source_space) goto failed;
     if ((args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(1))) goto failed;
     if (tx->policy == PROC_CLONE_NEW_PROCESS && !loaded_shared) {
-        error = proc_create_clone_process(tx->source, args->resources, &tx->process);
+        UWORD resources=args->resources;
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (resources&PROC_CLONE_COPY_FILES) {
+            error=kproc_files_snapshot_begin(tx->source,&tx->files);
+            if (error) goto failed;
+            resources&=~(PROC_CLONE_COPY_FILES|PROC_CLONE_COPY_STANDARD_HANDLES);
+        }
+#endif
+        error = proc_create_clone_process(tx->source, resources, &tx->process);
         if (error != E_OK) goto failed;
         tx->owns_process = TRUE;
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (tx->files) {
+            error=kproc_files_snapshot_prepare(tx->files,tx->process,PROCESS_FILES_ALL);
+            if (error) goto failed;
+        }
+#endif
         error = ENSMEM;
     } else {
         tx->process = kproc_retain_live(target);
@@ -263,12 +289,19 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     /* Identity-only commit cannot publish a startup image. The controlled
      * root runner is a separate NEW_PROCESS-only transaction boundary. */
     if (tx->startup) return thread_startup_publication_check(tx->startup);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (tx->files && kproc_files_snapshot_seal(tx->files)) return EACCDN;
+#endif
+
     if (tx->policy != PROC_CLONE_SAME_PROCESS && tx->policy != PROC_CLONE_LOADED_PROCESS) {
         if (!kproc_clone_adopt_space(tx->process, tx->thread, tx->space))
             return EACCDN;
         kproc_clone_commit_mapping_owners(tx->process,tx->space,&tx->mapping_members);
         tx->space = NULL; /* moved, not another reference */
     }
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (tx->files) kproc_files_snapshot_commit(tx->files,tx->process);
+#endif
     ready.thread = tx->thread;
     ready.pid = kproc_ref_pid(tx->process);
     ready.tid = kthread_tid(tx->thread);
@@ -423,6 +456,9 @@ static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
     return tx && tx->startup &&
 #if CONF_WITH_IMAGE_POLICY
         (!tx->image_policy || kproc_image_policy_validate(tx->image_policy)==E_OK) &&
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST
+        (!tx->files || kproc_files_snapshot_validate(tx->files)) &&
 #endif
 #if CONF_WITH_PTERMGRP
         !kproc_group_status(tx->source, NULL) && !kproc_group_status(tx->process, NULL) &&
@@ -714,8 +750,11 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
         if (confirmed != controller) { ksched_clone_end(&guard); error = EACCDN; goto failed; }
     }
     error = thread_startup_seal(tx->startup);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (!error && tx->files) error=kproc_files_snapshot_seal(tx->files);
+#endif
     if (error) { ksched_clone_end(&guard); goto failed; }
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
     if (cancel_publication) {
         cancel_publication = FALSE;
         ksched_clone_end(&guard);
@@ -765,8 +804,11 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
           kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
         kproc_active_space(tx->source) != tx->source_space) { error = EACCDN; goto failed; }
     error = thread_startup_seal(startup);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (!error && tx->files) error=kproc_files_snapshot_seal(tx->files);
+#endif
     if (error) goto failed;
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
     if (cancel_publication) {
         cancel_publication = FALSE;
         ksched_task_cancel(&slot);
@@ -799,6 +841,9 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     ULONG tid = kthread_tid(tx->thread);
     THREAD_STARTUP_DRAFT *startup = tx->startup;
     if (!thread_startup_take_stacks(startup, &owners)) panic("clone publication: missing prepared stacks");
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (tx->files) kproc_files_snapshot_commit(tx->files,tx->process);
+#endif
     if (tx->policy == PROC_CLONE_SAME_PROCESS) {
         kproc_clone_commit_sibling(tx->process, tx->thread);
     } else {

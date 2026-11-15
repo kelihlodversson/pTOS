@@ -4,6 +4,7 @@
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
 #include "../../include/shared_pexec_test.h"
+#include "../../include/image_policy_test.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
 #include <stdio.h>
@@ -39,7 +40,7 @@ static void image_policy_entry(void *argument)
 {
     (void)argument;
     image_policy_pid=Pgetpid();image_policy_tid=pclone_trap(0,0xc8920103UL);
-    if (pclone_trap(0,0xc9711100UL)!=image_policy_digest || pclone_trap(0,0xc9711101UL)!=1)
+    if (pclone_trap(0,IMAGE_POLICY_QUERY_DIGEST)!=image_policy_digest || pclone_trap(0,IMAGE_POLICY_QUERY_INSTALLED)!=1)
         image_policy_error=1;
     (void)Pterm(71);
 }
@@ -64,8 +65,8 @@ static void test_image_policy(void)
     long stack=Malloc(32768),tid,result,parent=Pgetpid();
     int cycle,stage,ok=1;
     ptest_begin("immutable executable policy through existing clone activation");
-    image_policy_digest=pclone_trap(0,0xc9711100UL);
-    ptest_assert_msg(stack>0 && image_policy_digest>=0 && pclone_trap(0,0xc9711101UL)==0,
+    image_policy_digest=pclone_trap(0,IMAGE_POLICY_QUERY_DIGEST);
+    ptest_assert_msg(stack>0 && image_policy_digest>=0 && pclone_trap(0,IMAGE_POLICY_QUERY_INSTALLED)==0,
                      "authenticate original executable policy");
     if(stack<=0 || image_policy_digest<0) { ptest_pass();return; }
     memset((void *)stack,0,32768);
@@ -76,13 +77,13 @@ static void test_image_policy(void)
         image_policy_pid=image_policy_tid=image_policy_error=0;
         if(!image_policy_snapshot(&before)) ok=0;
         if(cycle>=2) for(stage=1;stage<=3;stage++) {
-            (void)pclone_trap(0,stage==3?0xc8920600UL:0xc9711200UL+stage);
-            result=pclone_trap(&args,0xc9710000UL|sizeof(args));
+            (void)pclone_trap(0,stage==3?0xc8920600UL:IMAGE_POLICY_FAIL_AFTER+stage);
+            result=pclone_trap(&args,IMAGE_POLICY_CLONE|sizeof(args));
             if(result!=(stage==3?-326L:-39L)) ok=0;
             if(!image_policy_snapshot(&after) || !image_policy_same(&before,&after) ||
                image_policy_pid || image_policy_tid || image_policy_error) ok=0;
         }
-        tid=pclone_trap(&args,0xc9710000UL|sizeof(args));
+        tid=pclone_trap(&args,IMAGE_POLICY_CLONE|sizeof(args));
         if(tid<=0) {ok=0;break;}
         if(!image_policy_snapshot(&during) || during.count[SP_PROCESSES]!=before.count[SP_PROCESSES]+1 ||
             during.count[SP_THREADS]!=before.count[SP_THREADS]+1 || during.count[SP_SPACES]!=before.count[SP_SPACES] ||
@@ -94,7 +95,7 @@ static void test_image_policy(void)
         if(!image_policy_snapshot(&after) || (cycle>=2 && !image_policy_same(&before,&after))) ok=0;
     }
     args.flags|=CLONE_SAME_PROCESS;
-    if(pclone_trap(&args,0xc9710000UL|sizeof(args))!=-25L) ok=0;
+    if(pclone_trap(&args,IMAGE_POLICY_CLONE|sizeof(args))!=-25L) ok=0;
     ptest_assert_msg(ok,"value policy activates once; two preparation faults, cancelled publication and all counters conserve");
     ptest_assert_msg(Mfree((void *)stack)==0,"image policy releases its initial stack hold");
     if(ok) conws("native immutable image policy capture/activation/rollback and exact resource conservation: PASS\r\n");

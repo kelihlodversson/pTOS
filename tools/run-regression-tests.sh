@@ -90,6 +90,12 @@ if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ] &&
     exit 2
 fi
 
+if [ "${PROCESS_FILES_TEST:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested PROCESS descriptor ownership but the effective gate is disabled" >&2
+    exit 2
+fi
+
 # record <name> <PASS|FAIL> [detail]
 record() {
     echo "$1|$2" >>"$results"
@@ -719,6 +725,12 @@ if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
     record "native independent VM/COW" FAIL "configured private clone probe did not pass"
 fi
 
+# A configured snapshot must fault its genuinely absent inherited stack.
+if grep -q '^#define CONF_WITH_PRIVATE_SNAPSHOT_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native captured ancestor-stack private snapshot after source exit, both write orders: PASS' "$suite_log"; then
+    record "native captured private snapshot" FAIL "configured captured snapshot did not execute"
+fi
+
 # A configured rollback injection must actually have reached a user exit.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'exit handoff: injected preparation rollback' "$suite_log"; then
@@ -793,6 +805,11 @@ case "$machine" in
         ;;
 esac
 
+if grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native PROCESS descriptor inheritance/ownership: PASS' "$suite_log"; then
+    record "native PROCESS descriptor inheritance" FAIL "real local-descriptor/rollback/ownership cases did not pass"
+fi
+
 # Native initial-entry marker: independent of the older machine-case matrix.
 case $machine in
 virt-arm|virt-m68k-aspace|virt-m68k-mmu|raspi2b-aspace)
@@ -837,6 +854,12 @@ fi
 if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native shared-VM syscall-return probe (not Pfork): PASS' "$suite_log"; then
     record "native saved syscall return" FAIL "configured shared-VM return probe did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native reversible executable staging ownership (not Pexec200): PASS' "$suite_log"; then
+    record "native executable staging ownership" FAIL "configured replacement preparation did not execute"
 fi
 
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&

@@ -1,0 +1,150 @@
+Private captured reservation snapshot (#971)
+============================================
+
+Scope
+-----
+This focused prerequisite extends the existing test-gated kaspace_clone()
+transaction. Both planned MMU Pfork and COW-based Pvfork need independently
+valid logical memory ownership; Pvfork differs only in parent suspension.
+No public syscall, scheduler, reaper, COW backend or descriptor namespace is
+introduced here. The legacy non-MMU configuration is unchanged.
+
+At epic 00292ebe60ef3ff31f15d56659c5c85938b57a00, kaspace_clone() copied
+ordinary heap/mmap metadata and backend leaves, but dropped captured logical
+reservation receipts. A generic shared descendant can survive its original
+stack-owning PROCESS with an exact captured LAZY R2 receipt. The descendant
+can materialize an absent ancestor-stack page, while its private child could
+not: neither copied ordinary metadata nor the child KPROC owns that stack.
+
+Canonical ownership
+-------------------
+Live captured extents not already represented by copied ordinary metadata
+become canonical records in the existing KASPACE lease list. Each gets a
+fresh immutable child birth and ticket. They copy exact logical bounds,
+rights and flags; they borrow no source KPROC, allocation, cleanup ticket or
+root reference. The actual MMU/COW copy still uses the accepted backend.
+
+The constructor assigns those records to the existing general mapping scope
+with kaspace_member_claim_private() before publication. Normal membership
+inheritance lets a shared descendant outlive that first child. Final member
+loss consumes canonical authority, even when cleanup is deferred or a
+callback drops the final member reentrantly. Existing stopped-stack and R2
+holds defer backing retirement through the accepted retirement protocol.
+The consumed record keeps its held cleanup barrier until retirement: ticket
+revocation removes logical authority, while the full fence still prevents
+reuse and permits resident COW writes through an independent surviving R2.
+Each affected resident COW page still requires independent surviving backing
+authority; the cleanup fence cannot authorize writes on other pages. Lazy
+and nonlazy captures retain their immutable ceiling at hardware-page scope.
+A genuine durable private execution hold also retains its resident anonymous
+page within the protected interval. Its authenticated held state permits COW,
+but supplies no new reservation or absent-page materialization authority.
+Pending captured extents also reject fresh preparation leases. A revocable
+alias cannot become durable or sealed after logical owner loss; existing
+durable views remain valid until safe release. The backend retirement commit
+permanently revokes stale preparation aliases before any later address reuse.
+Private cloning rejects such a pending dead-scope snapshot before allocation;
+an exact subrange hold cannot authorize copying other doomed resident pages.
+After retirement, ordinary clone admission can be retried.
+An earlier cleanup fence keeps its exact mode and dimensions, then the same
+record retires its own private captured extent. No new cleanup registry or
+fallible teardown allocation is needed. An identity/observer root reference
+does not keep a dead scope's pages or logical reservation alive.
+
+An unpublished clone has no member. Ordinary kaspace_put() aborts it, frees
+the records and destroys its backend without a self-owning root cycle.
+Every fallible capture allocation precedes backend source write protection.
+
+Rights and backing
+------------------
+Only a valid live captured reservation ticket is copied. Consumed retirement
+fences provide no authority; an expanded fence never expands the exact
+logical extent. Hardware page rounding permits backing only the page that
+contains an exact authorized byte extent, as in the existing R2 contract.
+Captured witness order is preserved. Tightened nonlazy permissions are
+validated against logical source rights before copying. The immutable rights
+ceiling is retained, including when one receipt spans mixed RO/RW pages.
+The clone inherits the resident-permission validation state, and each query
+and new hold intersects that ceiling with the queried logical pages. A RO
+page therefore cannot remove WRITE from an adjacent RW page or authorize a
+new write itself. Earlier query results are revalidated before a new hold.
+
+Ordinary live heap/mmap reservations retain their own metadata, scopes and
+exact FILE_BACKING references. Captured witnesses over those pages do not
+create an anonymous duplicate. An otherwise unrepresented file-COW leaf
+without its exact backing owner is rejected; readable PTEs cannot manufacture
+FILE_BACKING authority. Existing pending ordinary ownership restrictions
+remain enforced.
+
+Controller lifetime correction
+------------------------------
+The native source-first test exposed an existing controller borrow defect.
+A PRIVATE child borrowed the scheduler controller PD into its new root. A
+SHARE child retained the raw allocation but reused that translation without
+an independent backend pin. When the PRIVATE source exited, it unmapped the
+survivor's controller; the survivor later faulted in xterm() writing the
+trusted parent result. kproc_clone_prepare_controller() now duplicates the
+exact present procmem translation through aspace_duplicate_borrow(). It
+changes no leaf permissions and releases only its own backend reference.
+
+Cloned return-bridge preparation also initializes its empty output hold.
+This one-line correction was independently accepted in Draft #972 at
+2042d866802bfb0cea6e23fb148d0c53eca9d088; it is repeated here as a necessary
+standalone prerequisite fix, not an import of that feature branch.
+
+Validation contracts
+--------------------
+tools/test-private-snapshot.py compiles production bdos/kaspace.c with counted
+host MMU/file providers. It covers exact narrow extents versus expanded
+cleanup fences; RW/RO/PROT_NONE; mixed resident RO/RW pages in both orders,
+per-subrange and whole-range queries/holds, stale grant denial, nested copies,
+source-first/child-first retirement and every allocation prefix; missing file-owner
+rejection; exact FILE_BACKING clone/ref rollback; every allocation prefix;
+source-first and nested lifetime; multiple mapping members; reentrant final
+member loss; earlier private/borrow cleanup; and final conservation while an
+observer root remains live. No counter reset or forced root destruction
+conceals logical or page ownership. Run it normally, with ASan/UBSan/leaks,
+and fortified GCC. This is production ownership evidence, not hardware COW
+or native CPU evidence.
+
+tools/test-private-aspace.sh also exercises production COW writes through a
+surviving narrow R2 or durable private hold after final snapshot-member loss,
+outside-page denials without frame/data/reference/TLB changes, RO/inaccessible
+ceiling denial, rejected new or stale preparation aliases, full pending cleanup
+barriers, rejected fresh cloning and retry after exact final retirement.
+
+The same fixture prepares the real cloned return bridge with deliberately
+poisoned allocator storage and fails every allocation prefix. Reverting only
+the empty-output initialization reproduces an invalid 0xa5... lease pointer
+under UBSan; the fixed source passes with exact cleanup. This makes the
+standalone one-line prerequisite correction reproducible in this PR.
+
+CONF_WITH_PRIVATE_SNAPSHOT_TEST is default off and requires the existing
+private-clone/shared-Pexec native test gates. Its Pclone transport reports
+residency and authenticated retained lazy rights without materializing the
+page. The native fixture creates PRIVATE A, then SHARE B; A exits, leaving
+orphan B as the sole source. B privately clones C and C faults an absent
+ancestor-stack page. Child-first and source-first writes stay independent.
+Twenty-four backend preparation failures precede each valid retry. The
+positive regression runner requires its marker as well as the complete
+suite and all normal shutdown checks; printing a marker before failed
+teardown is insufficient. These remain explicit-entry Pclone tests, not
+same-origin saved-return/public Pfork or Pvfork acceptance.
+
+Remaining #971 work
+-------------------
+This increment does not remove kproc_clone_private_runtime()'s nheap,
+pending-image, lender or give-back admission restrictions. move_loaded_image()
+records a legitimate UH_IMAGE in the PROCESS-local staging ledger; copying
+that record would import source PD/cleanup identities and is not safe.
+
+The next KPROC-owned construction layer must authenticate its own original
+basepage/environment, top stack, executable and interpreter metadata, prepare
+their logical snapshot and sanitized image policy before publication, and
+adopt that policy at the existing no-fail activation boundary. It must define
+the original user basepage/environment/DTA representation independently of
+the fresh kernel PROCESS's compatibility allocations. Pending file metadata
+needs exact backing duplication through its existing owner before any wider
+admission. Current conservative rejection remains correct until those
+contracts are implemented and verified. #971 and #895 remain open, and this
+increment must not be described as complete general fork source eligibility.

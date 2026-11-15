@@ -11,9 +11,16 @@
 #include "clone_args.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "proc_clone.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #include "ksched.h"
 #if CONF_WITH_IMAGE_POLICY_TEST
 #include "kproc_image_policy.h"
+#include "image_policy_test.h"
+#endif
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#include "exec_replace.h"
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "kthread.h"
@@ -24,6 +31,7 @@
 #include "proc.h"
 #include "mapping_lifetime_test.h"
 #include "fileback.h"
+#include "private_snapshot_test.h"
 #endif
 #endif
 
@@ -121,25 +129,32 @@ static long clone_request(uint64_t address, uint64_t size)
     LONG copy_error = E_OK;
     enum clone_copy_result copied;
     enum clone_validate_result valid;
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+    BOOL files_test=FALSE;
+#endif
     static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
         CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
 #if CONF_WITH_IMAGE_POLICY_TEST
     BOOL image_policy_test=FALSE;
+#endif
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+    if (!address && (size&0xffffffffffff0000ULL)==EXEC_REPLACEMENT_PROBE)
+        return kproc_exec_replacement_probe((UWORD)size);
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     BOOL private_test = FALSE;
     BOOL scoped_test = FALSE;
 #endif
 #if CONF_WITH_IMAGE_POLICY_TEST
-    if (size==0xc9711100UL || size==0xc9711101UL) {
+    if (size==IMAGE_POLICY_QUERY_DIGEST || size==IMAGE_POLICY_QUERY_INSTALLED) {
         KPROC *source=kproc_retain(run);
         LONG result=kproc_image_policy_test_query(source,(UWORD)(size&255));
         kproc_release(source);return result;
     }
-    if (!address && size>=0xc9711200UL && size<=0xc9711202UL) {
+    if (!address && size>=IMAGE_POLICY_FAIL_AFTER && size<=IMAGE_POLICY_FAIL_AFTER+2) {
         kproc_image_policy_test_fail_after((UWORD)(size&255));return E_OK;
     }
-    if ((size&0xffffffffffff0000ULL)==0xc9710000ULL) { image_policy_test=TRUE;size&=0xffff; }
+    if ((size&0xffffffffffff0000ULL)==IMAGE_POLICY_CLONE) { image_policy_test=TRUE;size&=0xffff; }
 #endif
 #if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
     if(!address && size==SHARED_PEXEC_MOVE_QUERY) return shared_move_probe();
@@ -199,6 +214,25 @@ static long clone_request(uint64_t address, uint64_t size)
     }
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
+    if (size==PRIVATE_SNAPSHOT_QUERY) {
+#if CONF_WITH_PRIVATE_SNAPSHOT_TEST
+        UWORD rights=0;
+        LONG value=0;
+        KASPACE *space;
+        KPROC *source=kproc_retain(run);
+        if (address>=USER_VA_LIMIT || !(space=kproc_active_space(source))) {
+            kproc_release(source);return EINVAL;
+        }
+        if (aspace_translate(kaspace_backend(space),(VADDR)address,NULL,NULL)) value|=PRIVATE_SNAPSHOT_PRESENT;
+        if (kaspace_retained_lazy_protection(space,(VADDR)address,&rights)) value|=PRIVATE_SNAPSHOT_LAZY;
+        if (rights&ASPACE_PROT_WRITE) value|=PRIVATE_SNAPSHOT_WRITE;
+        if (rights&ASPACE_PROT_USER) value|=PRIVATE_SNAPSHOT_USER;
+        kproc_release(source);
+        return value;
+#else
+        return EINVFN;
+#endif
+    }
     if ((size&0xffffffffffff0000ULL)==MLT_SCOPED_CLONE) {
         if (address>=USER_VA_LIMIT) return EIMBA;
         if (!address && size==MLT_CONTENDED_ALLOC) return (LONG)kproc_test_contended_allocation();
@@ -274,6 +308,28 @@ static long clone_request(uint64_t address, uint64_t size)
         private_test = TRUE; size &= 0xffff;
     }
 #endif
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+    /* Private transport for the common resource policy, never a new ABI flag. */
+    if ((size&0xffffffffffff0000ULL)==0xc9690000ULL) {
+        if (!address && size>=0xc9690100ULL && size<=0xc9690107ULL) {
+            ULONG count=0,i;
+            switch ((UWORD)(size&255)) {
+            case 0: for (i=0;i<OPNFILES;i++) count+=sft[i].f_use;break;
+            case 1: for (i=0;i<OPNFILES;i++) count+=sft[i].f_staged_refs;break;
+            case 2: for (i=0;i<OPNFILES;i++) count+=sft[i].f_cleanup_refs;break;
+            default: return kproc_files_test_count((UWORD)((size&255)-3));
+            }
+            return (LONG)count;
+        }
+        if (!address && size>=0xc9690200ULL && size<=0xc9690204ULL) {
+            proc_clone_test_fail_after((UWORD)(size&255));return E_OK;
+        }
+        if (!address && size>=0xc9690300ULL && size<=0xc9690305ULL) {
+            proc_clone_factory_test_fail_after((UWORD)(size&255));return E_OK;
+        }
+        files_test=TRUE;size&=0xffff;
+    }
+#endif
     copied = clone_copy_v1(&args, address, size, clone_copy, &copy_error);
     if (copied == CLONE_COPY_BAD_SIZE) return EINVAL;
     if (copied != CLONE_COPY_OK) return copy_error != E_OK ? copy_error : EIMBA;
@@ -283,6 +339,9 @@ static long clone_request(uint64_t address, uint64_t size)
     if (!(args.flags & CLONE_VM)) return EINVFN;
 #if CONF_WITH_IMAGE_POLICY_TEST
     if (image_policy_test && ((args.flags&CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) return EINVAL;
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+    if (files_test && (args.flags&CLONE_SAME_PROCESS)) return EINVAL;
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     if ((private_test && ((args.flags & CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) ||
@@ -305,6 +364,9 @@ static long clone_request(uint64_t address, uint64_t size)
             PROC_CLONE_SHARE_VM;
         policy.resources = ((args.flags & CLONE_COPY_STANDARD_HANDLES) ? PROC_CLONE_COPY_STANDARD_HANDLES : 0) |
                            ((args.flags & CLONE_COPY_CWD) ? PROC_CLONE_COPY_CWD : 0);
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (files_test) policy.resources|=PROC_CLONE_COPY_FILES;
+#endif
         startup.entry = (VADDR)(uintptr_t)args.entry;
         startup.argument = (VADDR)(uintptr_t)args.argument;
         startup.stack_base = (VADDR)(uintptr_t)args.stack_base;

@@ -169,16 +169,18 @@ Committed executable replacement design (200)
 --------------------------------------------
 A separate reusable replacement transaction must stage the complete new image,
 independent KASPACE and initial user/kernel execution state while retaining the
-old PROCESS/VM. The PROCESS identity/PID and vfork dependency remain attached to
-that same PROCESS. Replacement cannot be represented by creating an unrelated
+old PROCESS/VM. Both MMU Pfork and Pvfork use PRIVATE_VM/COW under the binding
+Phase6 decision: Pvfork has no shared parent VM to detach. Ordinary child writes
+remain private, unlike FreeMiNT Pvfork. The PROCESS identity/PID and parent
+suspension dependency remain attached to that same PROCESS. Replacement cannot be represented by creating an unrelated
 child whose completion masquerades as exec. All file/directory/environment and
 startup preparation occurs before an irreversible commit.
 
 Commit validates the exact execution owner and target generation, switches the
 PROCESS image/root and new THREAD continuation at an owner-reviewed boundary,
 and forbids returning through the old user image. Old syscall/scheduler stacks
-and shared-space refs remain retained until the old execution has stopped and
-existing root reclamation can release them. KPROC currently forbids attaching a
+and old address-space refs remain retained until the old execution has stopped
+and existing root reclamation can release them. KPROC currently forbids attaching a
 THREAD with another space while active_space differs; replacement needs an
 explicit reviewed staging/commit contract with #892/#713, not bypassing that
 check or copying a kernel continuation. No source/COW frame becomes privately
@@ -187,8 +189,16 @@ writable merely through move_private. No public200 implementation is claimed.
 The child-specific vfork dependency is released only after successful replacement
 commit, or final PROCESS completion from #893. Exec entry, failed preparation,
 THREAD-only exit, unrelated launch and #909 wait consumption release nothing.
-Replacement should expose a committed-detach notification at the policy layer;
-it must not create another observer registry or executable loader.
+Replacement must advance the exact retained KPROC committed-exec generation
+only after the old user continuation is impossible and the new same-PROCESS
+execution is installed. Scheduler readiness notification is a hint; generation
+change or final exact PROCESS completion is the release condition. Preparation
+must never produce this event. No other observer registry or loader is needed.
+
+The separate #970 staging increment is documented in exec-replacement.txt. Its
+default-off receipt authenticates one exact PROCESS/TID/execution/root tuple and
+uses the existing loader for private ELF staging and rollback. It does not
+implement successful mode200, change a THREAD association, or emit an exec event.
 
 Inheritance dependency
 ----------------------

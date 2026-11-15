@@ -1,9 +1,14 @@
 Immutable executable policy prerequisite (#971 / #970 / #895)
 ============================================================
 
-This focused increment starts from accepted epic
-00292ebe60ef3ff31f15d56659c5c85938b57a00. It does not incorporate the separate
-captured-reservation, descriptor or executable-replacement branches.
+This focused increment was written against accepted epic
+00292ebe60ef3ff31f15d56659c5c85938b57a00 and later reconciled with the epic
+after the captured-reservation (#974), PROCESS descriptor (#975) and
+executable-replacement staging (#973) prerequisites were merged. It changes
+none of their ownership rules. Policy capture refuses a #973 replacement
+staging container, which is owned by its exact replacement ticket and is not a
+pending launch image. Descriptor snapshots and policy preparation are
+independent transaction members with separate release paths.
 
 Both planned MMU Pfork and Pvfork use the existing PRIVATE_VM/COW constructor.
 Pvfork additionally suspends its calling parent THREAD until exact-child final
@@ -86,7 +91,9 @@ Validation and gates
 --------------------
 
 CONF_WITH_IMAGE_POLICY and CONF_WITH_IMAGE_POLICY_TEST default off. Normal
-presets select neither. The latter uses a private Pclone size selector and the
+presets select neither. The latter uses private Pclone size selectors
+(include/image_policy_test.h, disjoint from the #974 PRIVATE_SNAPSHOT_QUERY
+value, which shares a regression configuration with it) and the
 existing SHARE_VM constructor only to prove value capture, prepared activation,
 correct PID/TID distinction, child policy, rollback and resource conservation.
 It is not private image ownership, saved fork return or a public API.
@@ -116,8 +123,8 @@ Current scope and remaining ownership
 This policy increment does not resolve #971. In particular it does not make
 UH_IMAGE, moved source images, original basepage/environment/DTA representations
 or absent captured ancestor pages independently owned in another private root.
-The separately accepted captured-reservation slice in PR #974 remains
-unintegrated. No nheap, pending, lender, give-back, multi-THREAD or source-sharing
+The captured-reservation slice from PR #974 is now present in the epic but is
+not used by this metadata policy. No nheap, pending, lender, give-back, multi-THREAD or source-sharing
 admission restriction is removed here. The verified moved-image negative
 control and missing complete owned-image contract remain recorded on #971.
 

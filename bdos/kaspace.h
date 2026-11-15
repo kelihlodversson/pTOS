@@ -231,7 +231,11 @@ struct aspace *kaspace_backend(const KASPACE *space);
 /* Drop one owning reference. The final drop destroys the backend, then
  * releases mapping metadata and its backing references. */
 void kaspace_put(KASPACE *space);
-/* Independent cloning requires an architecture backend; none exists yet. */
+/* Test-gated independent backend. Copies ordinary metadata and live captured
+ * reservation authority into child-owned canonical records with fresh births.
+ * Captured cleanup tickets/fences and borrowed physical aliases are not copied.
+ * The constructor must call kaspace_member_claim_private before publication;
+ * canonical records retire at final mapping-member loss, independently of reap. */
 LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST

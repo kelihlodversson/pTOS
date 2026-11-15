@@ -28,6 +28,25 @@ config CONF_WITH_IMAGE_POLICY_TEST
       Test policy capture and its existing trusted NEW_PROCESS publication
       using the ordinary shared-VM clone. This is not private image ownership,
       public fork or same-PROCESS executable replacement.
+config CONF_WITH_EXEC_REPLACEMENT_TEST
+    bool "Private executable image staging (test only)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    default n
+    help
+      Build real private ELF staging and kernel-only reversible exact-PROCESS/THREAD/root admission
+      prerequisite for Pexec(200). This does not implement executable image
+      replacement, publish committed-exec events or enable public mode200.
+      No shipped preset selects this experimental preparation interface.
+
+config CONF_WITH_PROCESS_FILES_TEST
+    bool "TEST ONLY: PROCESS-local descriptor ownership"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_FAT_FILE_LIFETIMES
+    default n
+    help
+      Migrate every managed PROCESS in this validation kernel to one local
+      descriptor namespace with exact SFT incarnation bindings and reversible
+      snapshot admission. Nonmanaged boot callers retain legacy handles.
+      This is a prerequisite for fork inheritance, not public fork activation.
 
 config CONF_WITH_PRIVATE_CLONE
     bool "Experimental independent MMU address-space clone"
@@ -45,6 +64,15 @@ config CONF_WITH_PRIVATE_CLONE_TEST
     help
       Enable private Pclone size tags for native COW construction tests.
       Children start at an explicit entry: this is not fork-return or Pfork.
+
+config CONF_WITH_PRIVATE_SNAPSHOT_TEST
+    bool "Native captured private-snapshot ownership tests (test only)"
+    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_SHARED_VM_PEXEC_TEST
+    default n
+    help
+      Verify a surviving shared descendant privately clones an absent captured
+      ancestor stack, after the original stack owner has exited. This uses the
+      existing trusted clone and mapping lifetime machinery, not public fork.
 
 config CONF_WITH_PCLONE
     bool "Experimental Pclone"

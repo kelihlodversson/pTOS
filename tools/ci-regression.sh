@@ -103,16 +103,28 @@ if config.syms['ARCH_X86_64'].str_value != 'y':
     config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'
+if os.environ.get('EXEC_REPLACEMENT_TEST') == '1':
+    config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == 'y'
 if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
     config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'
     for required in ('CONF_WITH_IMAGE_POLICY', 'CONF_WITH_IMAGE_POLICY_TEST'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
+    config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].str_value == 'y'
     for required in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_MMAP'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
     backend = os.environ.get('SHARED_VM_PEXEC_FS', 'fat')
+    assert backend in ('fat', 'pfs'), backend
+    config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
+    assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
+if os.environ.get('PROCESS_FILES_TEST') == '1':
+    config.syms['CONF_WITH_PROCESS_FILES_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'y'
+    backend = os.environ.get('PROCESS_FILES_FS', 'fat')
     assert backend in ('fat', 'pfs'), backend
     config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
     assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
