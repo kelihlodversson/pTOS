@@ -27,6 +27,18 @@ static long stack_edge_trap(unsigned long stack)
         : "rcx", "r11", "r8", "memory", "cc");
     return (long)(int)result;
 }
+#elif defined(__arm__)
+static long stack_edge_trap(unsigned long stack)
+{
+    register long result __asm__("r0")=GEMDOS_PCLONE;
+    register long address __asm__("r1")=0;
+    register unsigned long selector __asm__("r2")=0x895fc000UL;
+    register unsigned long pointer __asm__("r3")=stack;
+    __asm__ volatile("mov r8,sp\n\tmov sp,r3\n\tsvc 1\n\tmov sp,r8"
+        : "+r"(result), "+r"(pointer) : "r"(address), "r"(selector)
+        : "r8", "r12", "lr", "memory", "cc");
+    return result;
+}
 #endif
 /* Actual original C continuation and private stack, no fresh user entry.
  * The parent blocks through this exact child's final completion. */
@@ -47,7 +59,7 @@ static void test_cow_vfork_continuation(void)
     long pid,status,parent=Pgetpid(),tid=private_query(3),root=private_query(0);
     long dependencies=pclone_trap(0,0x895ffffcUL),rollback;
     int cycle,stage;
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__arm__)
     ptest_assert_msg(stack_edge_trap(0)==-32L && pclone_trap(0,0x895ffffcUL)==dependencies,
                      "saved-return stack-window subtraction rejects underflow before resources");
     pid=stack_edge_trap(0x7ffffff8UL);

@@ -61,12 +61,12 @@ in a companion preserves the two-MiB window and all existing self-Pexec tests,
 stack requirements, memory bounds and deadlines. The failing native control is
 retained as evidence; no libcmini or allocator limit was changed.
 
-The companion also exposed an x32 saved-return capture defect: the old symmetric
+The companion also exposed an x32/A32 saved-return capture defect: the old symmetric
 512-byte window required256 bytes above live RSP, so shallow valid C frames
 failed preparation with EIMBA. The checked512-byte window now starts at
 (RSP-496)&~15 and ends1..16 bytes above RSP, preserving the128-byte red zone.
 Subtraction underflow rejects before construction. Native controls include an
-actual syscall at RSP=0x7ffffff8 and an underflow attempt, without test padding.
+actual syscall at SP=0x7ffffff8 and an underflow attempt, without test padding.
 The full selected-root resident/range/rights/lease checks remain. This is still
 the restricted saved-return admission, not arbitrary stack/lazy-source coverage.
 

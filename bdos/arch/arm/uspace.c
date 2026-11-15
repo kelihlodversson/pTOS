@@ -101,7 +101,10 @@ void arm_gemdos_dispatch(struct uframe *f)
         memset(&saved, 0, sizeof(saved));
         memcpy(&saved.user, f, sizeof(*f));
         saved.mappings.entry = f->lr;
-        saved.mappings.stack_base = (f->usp - 256) & ~15UL;
+        if (f->usp<496) { f->r[0]=EINVFN; return; }
+        /* A shallow A32 frame does not own 256 bytes above its live SP.
+         * Keep the same checked resident window mostly below the frame. */
+        saved.mappings.stack_base = (f->usp - 496) & ~15UL;
         saved.mappings.stack_size = 512;
         f->r[0] = proc_clone_return_probe(&saved, (UWORD)pw[2]);
         return;
