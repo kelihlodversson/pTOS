@@ -45,6 +45,21 @@ static void run_high(void)
                          "split load changed a relocation-free image's VA");
         ptest_assert_msg(mm_map(0x41000000L, 1, PROT_NONE, 1) == -36L,
                          "a pending image's reservation was replaced");
+#if defined(TEST_WITH_USER_ASPACE)
+        /* An address-space kernel does not launch a split-loaded image with
+         * ring-3 Pexec mode 4/104: it is refused (EINVFN) until shared-VM
+         * Pexec (#894), and that mode then shares the caller's address space,
+         * which this isolated-RAM probe does not model. The split load above
+         * is still checked, and the pending image must still be discardable
+         * and release its reservation. Kernels without per-process address
+         * spaces keep the launch checks below. */
+        {
+            void *pending_env = bp->p_env;
+
+            ptest_assert_msg(Mfree(bp) == 0, "discarding the pending split image failed");
+            Mfree(pending_env);
+        }
+#else
         rc = Pexec(i == 1 ? PE_GO : PE_GO_FREE, "", bp, 0);
         expect_probe(rc, "high ET_EXEC split launch");
         if (i == 1) {
@@ -55,6 +70,7 @@ static void run_high(void)
             Mfree(bp->p_env);
             ptest_assert_msg(Mfree(bp) == 0, "freeing split basepage failed");
         }
+#endif
         rc = mm_map(0x41000000L, 1, PROT_NONE, 1);
         ptest_assert_msg(rc == 0x41000000L, "split image reservation leaked");
         if (rc > 0)
