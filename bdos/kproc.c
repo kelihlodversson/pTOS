@@ -1271,6 +1271,14 @@ BOOL kproc_clone_prepare_controller(KPROC *p, PD *controller)
             kproc_release(identity); return FALSE;
         }
         p->clone_controller_borrowed = TRUE;
+    } else {
+        /* The existing translation may belong to another clone which exits
+         * first. Retain this exact backend borrow independently of its raw
+         * allocation pin, without remapping or granting user access. */
+        if (!aspace_duplicate_borrow(as,(VADDR)(uintptr_t)controller,sizeof(PD))) {
+            kproc_release(identity); return FALSE;
+        }
+        p->clone_controller_borrowed = TRUE;
     }
 #endif
     procmem_pin((VADDR)(uintptr_t)controller, sizeof(PD), +1);

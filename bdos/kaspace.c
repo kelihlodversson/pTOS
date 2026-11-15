@@ -62,11 +62,28 @@ struct kaspace_lease {
     BOOL captured, retire_private, retire_running, retire_committed;
     UQUAD retire_heap_birth;
     VADDR retire_address, retire_bytes;
+#if CONF_WITH_PRIVATE_CLONE
+    /* Canonical copied reservation, not an externally owned source R2 hold.
+     * Its lifetime is the existing PROCESS mapping membership; it owns no
+     * reference to the root which contains it. */
+    BOOL private_snapshot, snapshot_cleanup;
+    KASPACE_SCOPE *snapshot_scope;
+#endif
     KASPACE_LEASE *next;
 };
 
 static void reap_retired(KASPACE *space);
 static BOOL scope_live(const KASPACE_SCOPE *scope);
+static BOOL snapshot_live(const KASPACE_LEASE *lease)
+{
+#if CONF_WITH_PRIVATE_CLONE
+    if (lease->private_snapshot)
+        return !lease->snapshot_scope || scope_live(lease->snapshot_scope);
+#else
+    UNUSED(lease);
+#endif
+    return TRUE;
+}
 static BOOL reservation_lookup(KASPACE *space,VADDR address,VADDR bytes,
                                KASPACE_RESERVATION_INFO *result,BOOL pending);
 static BOOL reservation_range_matches(KASPACE *space,UQUAD birth,VADDR address,VADDR bytes,UWORD rights)
@@ -274,6 +291,15 @@ void kaspace_member_claim_private(KASPACE_MEMBER *member)
         if (space->heap.blocks[i].scope) panic("private clone inherited mapping owner");
         space->heap.blocks[i].scope=general;
     }
+#if CONF_WITH_PRIVATE_CLONE
+    {
+        KASPACE_LEASE *lease;
+        for (lease=space->leases;lease;lease=lease->next) if (lease->private_snapshot) {
+            if (lease->snapshot_scope) panic("private capture inherited mapping owner");
+            lease->snapshot_scope=general;
+        }
+    }
+#endif
 #if CONF_WITH_MMAP
     {
         MMAP_REGION *region;
@@ -312,7 +338,7 @@ static UWORD fail_lease_after;
 BOOL kaspace_lease_valid(const KASPACE_LEASE *lease)
 {
     VADDR page;
-    if (!lease || lease->revoked || lease->attachment_ticket) return FALSE;
+    if (!lease || lease->revoked || lease->attachment_ticket || !snapshot_live(lease)) return FALSE;
     if (lease->reservation_ticket) {
         if (lease->captured) return lease->held;
         return (lease->reservation_rights&lease->access)==lease->access &&
@@ -354,6 +380,9 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     lease->reservation_rights = lease->reservation_flags = 0; lease->captured = FALSE;
     lease->retire_address=lease->retire_bytes=0; lease->retire_private=lease->retire_running=lease->retire_committed=FALSE;
     lease->retire_heap_birth=0;
+#if CONF_WITH_PRIVATE_CLONE
+    lease->private_snapshot=lease->snapshot_cleanup=FALSE;lease->snapshot_scope=NULL;
+#endif
     lease->space = space;
     lease->first = address & ~(VADDR)(USER_PAGE_SIZE - 1);
     lease->last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
@@ -488,7 +517,7 @@ BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
 static BOOL reservation_backing_contains(const KASPACE_LEASE *lease,
                                          VADDR first, VADDR last)
 {
-    return lease->reservation_ticket && lease->captured && lease->held &&
+    return snapshot_live(lease) && lease->reservation_ticket && lease->captured && lease->held &&
            !lease->revoked && lease->exact_bytes &&
            first >= (lease->exact_address & ~(VADDR)(USER_PAGE_SIZE-1)) &&
            last <= ((lease->exact_address+lease->exact_bytes-1) &
@@ -1002,6 +1031,7 @@ BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
         KASPACE_LEASE *lease;
         for (lease=space->leases;lease;lease=lease->next)
             if (lease->reservation_ticket && lease->captured && lease->held && !lease->revoked &&
+                snapshot_live(lease) &&
                 address >= lease->exact_address && address-lease->exact_address < lease->exact_bytes &&
                 bytes <= lease->exact_bytes-(address-lease->exact_address)) {
                 result->address = lease->exact_address;
@@ -1308,6 +1338,23 @@ static void reap_retired(KASPACE *space)
     space->reaping=TRUE;
     space->reap_actor=mapping_actor();
     for (;;) {
+#if CONF_WITH_PRIVATE_CLONE
+        /* A callback may have dropped the last member since the previous
+         * iteration. Consume authority before any further teardown callback.
+         * An existing cleanup job retains its exact mode and fence; after it
+         * commits, this same record retires the canonical private extent. */
+        for (lease=space->leases;lease;lease=lease->next)
+            if (lease->private_snapshot && lease->snapshot_scope &&
+                !scope_live(lease->snapshot_scope)) {
+                lease->reservation_ticket=0;lease->revoked=TRUE;lease->held=FALSE;
+                if (!lease->retire_bytes) {
+                    lease->retire_private=TRUE;lease->snapshot_cleanup=TRUE;
+                    lease->retire_address=lease->exact_address&~(VADDR)(USER_PAGE_SIZE-1);
+                    lease->retire_bytes=((lease->exact_address+lease->exact_bytes-1)&
+                        ~(VADDR)(USER_PAGE_SIZE-1))-lease->retire_address+USER_PAGE_SIZE;
+                }
+            }
+#endif
         for (lease=space->leases;lease;lease=lease->next)
             if (lease->retire_bytes && !lease->reservation_ticket && !lease->retire_running &&
                 retirement_unblocked(space,lease->retire_address,lease->retire_bytes)) break;
@@ -1381,9 +1428,24 @@ static void reap_retired(KASPACE *space)
         if(lease->retire_heap_birth)
             remove_retired_heap(space,lease->retire_address,lease->retire_bytes,
                                 lease->retire_heap_birth);
+#if CONF_WITH_PRIVATE_CLONE
+        if (lease->private_snapshot && !lease->snapshot_cleanup) {
+            /* A prior borrow/private cleanup fence does not replace ownership
+             * of the copied logical reservation. Reuse its consumed record;
+             * no allocation or root retain is needed after member loss. */
+            lease->retire_address=lease->retire_bytes=0;lease->retire_heap_birth=0;
+            lease->retire_running=lease->retire_committed=FALSE;
+            continue;
+        }
+#endif
         for (at=&space->leases;*at && *at!=lease;at=&(*at)->next) { }
         if (!*at) panic("retirement cleanup owner lost during reentry");
-        *at=lease->next; kfree(lease); roots++;
+        *at=lease->next;
+#if CONF_WITH_PRIVATE_CLONE
+        if (!lease->private_snapshot)
+#endif
+            roots++;
+        kfree(lease);
     }
     {
         KASPACE_SCOPE **link,*scope;
@@ -1391,6 +1453,10 @@ static void reap_retired(KASPACE *space)
             ULONG i;
             BOOL used=scope->members!=NULL;
             for (i=0;!used && i<space->heap.count;i++) used=space->heap.blocks[i].scope==scope;
+#if CONF_WITH_PRIVATE_CLONE
+            for (lease=space->leases;!used && lease;lease=lease->next)
+                used=lease->private_snapshot && lease->snapshot_scope==scope;
+#endif
 #if CONF_WITH_MMAP
             {
                 MMAP_REGION *region;
@@ -1690,6 +1756,13 @@ void kaspace_put(KASPACE *space)
             if (*link == space) { *link = space->next; break; }
     }
     aspace_destroy(space->backend);
+#if CONF_WITH_PRIVATE_CLONE
+    while (space->leases) {
+        KASPACE_LEASE *lease=space->leases;
+        if (!lease->private_snapshot) panic("last root released with external reservation owner");
+        space->leases=lease->next;kfree(lease);
+    }
+#endif
     kfree(space->heap.blocks);
 #if CONF_WITH_MMAP
     while (space->mmap.regions) {
@@ -1706,6 +1779,81 @@ void kaspace_put(KASPACE *space)
     }
     kfree(space);
 }
+
+#if CONF_WITH_PRIVATE_CLONE
+/* Install only authenticated logical extents. No source owner, physical alias,
+ * consumed cleanup ticket or expanded retirement fence crosses the clone. */
+static LONG clone_capture_range(KASPACE *copy,const KASPACE_LEASE *source,
+                                VADDR address,VADDR bytes,UWORD rights)
+{
+    KASPACE_LEASE *lease,**at;
+    UQUAD birth;
+    for (lease=copy->leases;lease;lease=lease->next)
+        if (lease->exact_address==address && lease->exact_bytes==bytes &&
+            lease->reservation_rights==rights &&
+            lease->reservation_flags==source->reservation_flags) return E_OK;
+    if (lease_ids==~(UQUAD)0 || reservation_tickets==~(UQUAD)0 ||
+        !(birth=kaspace_reservation_next())) return ENSMEM;
+    lease=kalloc(sizeof(*lease));
+    if (!lease) return ENSMEM;
+    memset(lease,0,sizeof(*lease));
+    lease->identity=++lease_ids;lease->reservation_ticket=++reservation_tickets;
+    lease->space=copy;
+    lease->first=address&~(VADDR)(USER_PAGE_SIZE-1);
+    lease->last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+    lease->exact_address=address;lease->exact_bytes=bytes;
+    lease->reservation_id=birth;lease->reservation_rights=rights;
+    lease->reservation_flags=source->reservation_flags;
+    lease->access=source->access&rights;lease->held=lease->captured=TRUE;
+    lease->private_snapshot=TRUE;
+    /* Preserve source witness precedence for exact-info/lazy queries. */
+    for (at=&copy->leases;*at;at=&(*at)->next) { }
+    *at=lease;
+    return E_OK;
+}
+
+static LONG clone_captures(const KASPACE *source,KASPACE *copy)
+{
+    const KASPACE_LEASE *lease;
+    for (lease=source->leases;lease;lease=lease->next) {
+        VADDR page,last,run=0,end;
+        BOOL in_run=FALSE;
+        UWORD rights;
+        if (!lease->reservation_ticket || !lease->captured || !kaspace_lease_valid(lease)) continue;
+        rights=lease->reservation_rights;
+        if (!(lease->reservation_flags&KASPACE_RESERVATION_LAZY) &&
+            !capture_current_rights((KASPACE *)source,lease->reservation_id,
+                lease->exact_address,lease->exact_bytes,rights,&rights)) return EACCDN;
+        page=lease->exact_address&~(VADDR)(USER_PAGE_SIZE-1);
+        last=(lease->exact_address+lease->exact_bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        end=lease->exact_address+lease->exact_bytes;
+        for (;;) {
+            KASPACE_RESERVATION_INFO ordinary;
+            BOOL represented=reservation_lookup((KASPACE *)source,page,USER_PAGE_SIZE,&ordinary,FALSE);
+            LONG error;
+#if CONF_WITH_MMAP
+            if (!represented && aspace_file_cow(source->backend,page)) return EACCDN;
+#endif
+            /* Heap/mmap already copies its exact logical owner and FILE_BACKING.
+             * A captured witness must not become anonymous backing over it. */
+            if (!represented && !in_run) {
+                run=page<lease->exact_address?lease->exact_address:page;in_run=TRUE;
+            }
+            if (in_run && (represented || page==last)) {
+                VADDR finish=represented?page:end;
+                if (finish>run) {
+                    error=clone_capture_range(copy,lease,run,finish-run,rights);
+                    if (error) return error;
+                }
+                in_run=FALSE;
+            }
+            if (page==last) break;
+            page+=USER_PAGE_SIZE;
+        }
+    }
+    return E_OK;
+}
+#endif
 
 LONG kaspace_clone(const KASPACE *source, KASPACE **result)
 {
@@ -1750,6 +1898,8 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result)
         copy->mmap.bytes = source->mmap.bytes;
     }
 #endif
+    error=clone_captures(source,copy);
+    if (error) goto failed;
     /* All generic allocations precede backend source write-protection. */
     error = aspace_clone(source->backend, &copy->backend);
     if (error) goto failed;
@@ -1758,6 +1908,10 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result)
     *result = copy;
     return E_OK;
 failed:
+    while (copy->leases) {
+        KASPACE_LEASE *lease=copy->leases;
+        copy->leases=lease->next;kfree(lease);
+    }
     kfree(copy->heap.blocks);
 #if CONF_WITH_MMAP
     while (copy->mmap.regions) {

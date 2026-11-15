@@ -104,6 +104,111 @@ static unsigned char private_copyout[32] __attribute__((aligned(4096)));
 static struct { int32_t pid, tid; } private_outputs __attribute__((aligned(4096)));
 static void private_shared_entry(void *argument) { (void)argument; (void)Pterm(75); }
 static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
+#if defined(TEST_WITH_PRIVATE_SNAPSHOT)
+#include "../../include/private_snapshot_test.h"
+static volatile struct {
+    unsigned char *peer_stack,*child_stack;
+    unsigned long address;
+    long creator,parent,root,tid;
+    int32_t peer_pid;
+} captured_probe;
+static long captured_query(unsigned long address)
+{ return pclone_trap((void *)address,PRIVATE_SNAPSHOT_QUERY); }
+static void captured_private_child(void *unused)
+{
+    volatile unsigned char *page=(volatile unsigned char *)captured_probe.address;
+    long expected=PRIVATE_SNAPSHOT_LAZY|PRIVATE_SNAPSHOT_WRITE|PRIVATE_SNAPSHOT_USER;
+    int bad=0;
+    (void)unused;
+    if(Pgetpid()==captured_probe.parent || Pgetppid()!=captured_probe.parent ||
+       private_query(0)==captured_probe.root || private_query(3)==captured_probe.tid ||
+       captured_query(captured_probe.address)!=expected) bad=1;
+    /* This page was demonstrably absent at the fork boundary. The original
+     * stack-owning PROCESS has already retired. No source cleanup ticket is
+     * valid backing authority for this child's first read/write fault. */
+    if(page[0]) bad=2;
+    page[0]=0x71;page[17]=0x72;
+    Pterm(bad?74:73);
+}
+static void captured_surviving_peer(void *unused)
+{
+    long expected=PRIVATE_SNAPSHOT_LAZY|PRIVATE_SNAPSHOT_WRITE|PRIVATE_SNAPSHOT_USER;
+    int bad=0,cycle,stage;
+    (void)unused;
+    if(Pgetppid()==captured_probe.creator) bad=1;
+    for(cycle=0;cycle<2;cycle++) {
+        struct ptos_clone_args args={0};
+        volatile unsigned char *page;
+        long child,status;
+        captured_probe.address=0x7fff1000UL-(unsigned long)cycle*4096UL;
+        page=(volatile unsigned char *)captured_probe.address;
+        captured_probe.parent=Pgetpid();captured_probe.root=private_query(0);captured_probe.tid=private_query(3);
+        if(captured_query(captured_probe.address)!=expected) bad=2;
+        args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
+        args.entry=captured_private_child;args.stack_base=captured_probe.child_stack;args.stack_size=32768;
+        for(stage=1;stage<=24;stage++) {
+            (void)pclone_trap(0,0xc8920200UL+(unsigned long)stage);
+            child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+            (void)pclone_trap(0,0xc8920200UL);
+            if(child!=-39L || captured_query(captured_probe.address)!=expected) bad=7;
+        }
+        child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+        if(child<=0) {bad=3;break;}
+        if(cycle) page[0]=0x31; /* source writes before child dispatch */
+        status=Pwaitpid(child,0,0);
+        if((status>>16)!=child || (status&65535)!=73 || Pwaitpid(child,1,0)>=0) bad=4;
+        if(captured_query(captured_probe.address)!=(expected|(cycle?PRIVATE_SNAPSHOT_PRESENT:0))) bad=5;
+        if(page[0]!=(cycle?0x31:0) || page[17]) bad=6;
+        page[0]=0x32;
+    }
+    conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
+               "native captured ancestor-stack private snapshot after source exit, both write orders: PASS\r\n");
+    Pterm(bad?74:73);
+}
+static void captured_creator(void *unused)
+{
+    struct ptos_clone_args args={0};
+    long tid;
+    (void)unused;
+    if(Psetlimit(0x100,-1)<65536 || captured_query(0x7fff0000UL)&PRIVATE_SNAPSHOT_PRESENT ||
+       captured_query(0x7fff1000UL)&PRIVATE_SNAPSHOT_PRESENT) Pterm(74);
+    captured_probe.creator=Pgetpid();captured_probe.peer_pid=0;
+    args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
+    args.entry=captured_surviving_peer;args.stack_base=captured_probe.peer_stack;args.stack_size=32768;
+    args.child_pid=&captured_probe.peer_pid;
+    tid=pclone_trap(&args,sizeof(args));
+    Pterm(tid>0 && captured_probe.peer_pid>0?73:74);
+}
+static void test_captured_snapshot(void)
+{
+    struct ptos_clone_args args={0};
+    long first=Malloc(32768),second=Malloc(32768),third=Malloc(32768),child,status;
+    unsigned char *stack=first>0?(unsigned char *)first:NULL;
+    captured_probe.peer_stack=second>0?(unsigned char *)second:NULL;
+    captured_probe.child_stack=third>0?(unsigned char *)third:NULL;
+    ptest_assert_msg(stack && captured_probe.peer_stack && captured_probe.child_stack,
+                     "captured ancestor-stack snapshot fixture stacks");
+    if(!stack || !captured_probe.peer_stack || !captured_probe.child_stack) {
+        if(stack) (void)Mfree(stack);
+        if(captured_probe.peer_stack) (void)Mfree(captured_probe.peer_stack);
+        if(captured_probe.child_stack) (void)Mfree(captured_probe.child_stack);
+        return;
+    }
+    memset(stack,0,32768);memset(captured_probe.peer_stack,0,32768);memset(captured_probe.child_stack,0,32768);
+    args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;args.entry=captured_creator;
+    args.stack_base=stack;args.stack_size=32768;
+    child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+    ptest_assert_msg(child>0,"independent captured-stack source publishes");
+    if(child>0) {
+        status=Pwaitpid(child,0,0);
+        ptest_assert_msg((status>>16)==child && (status&65535)==73,
+                         "original stack owner exits before the surviving source clones");
+        (void)Syield();
+    }
+    ptest_assert_msg(!Mfree(stack) && !Mfree(captured_probe.peer_stack) && !Mfree(captured_probe.child_stack),
+                     "original caller can release independent fixture stack copies");
+}
+#endif
 static void private_entry(void *argument)
 {
     volatile unsigned long local=0x5a5aa5a5UL;
@@ -202,6 +307,9 @@ static void test_private_aspace(void)
 #endif
     private_probe.filemap=filemap>0?(unsigned char *)filemap:0;
     if(private_probe.filemap)ptest_assert_msg(private_probe.filemap[11]==0x35,"clean file page before clone");
+#if defined(TEST_WITH_PRIVATE_SNAPSHOT)
+    test_captured_snapshot();
+#endif
     for(stage=1;stage<=24;stage++) {
         ptest_assert_msg(pclone_trap(0,0xc8920200UL+stage)==0,"arm private clone allocation failure");
         child=pclone_trap(&args,0xc8920000UL|sizeof(args));

@@ -1,6 +1,34 @@
 Pfork / Pvfork prerequisite audit (#895)
 ======================================
 
+Current MMU policy (2026-11-15)
+-------------------------------
+Both calls will use the existing PRIVATE_VM/COW proc_clone construction.
+Pfork permits the calling parent THREAD to continue immediately; Pvfork
+suspends that THREAD until its exact child's final PROCESS completion or
+successful same-PROCESS/PID Pexec(200) commit. Neither public syscall is
+enabled by the private-snapshot prerequisite described in
+doc/private-snapshot.txt. Descriptor ownership (#969), complete KPROC image
+snapshot ownership (#971) and executable replacement (#970) remain distinct
+acceptance gates.
+
+This is an intentional difference from FreeMiNT Pvfork: ordinary private and
+anonymous child writes, including stack writes, do not modify the parent's
+private memory. Actual shared mappings retain their supported mapping
+semantics; MAP_SHARED itself remains unsupported in the current MMU API.
+There is no special shared user stack and no SHARE_VM Pvfork constructor.
+Legacy non-MMU fork behavior is outside this scope (#911).
+
+The accepted epic 00292ebe60ef3ff31f15d56659c5c85938b57a00 already contains
+test-gated independent roots and anonymous COW (#934). Draft #972's separate
+2042d866802bfb0cea6e23fb148d0c53eca9d088 proof combines private COW with
+saved return on x32, A32 and restricted 040. Neither proof is public fork
+acceptance. The historical audit below predates those increments and must
+not be read as the current dependency matrix.
+
+Historical audit
+----------------
+
 Baseline: epic/889-process-scheduling, 7ae4f508cc26df4d0efae19dd3849738f1de114f.
 The original unsupported-capability audit is retained below. The F1 saved-
 return increment is described in doc/fork-return.txt: a test-only shared-VM
