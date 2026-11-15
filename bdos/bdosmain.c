@@ -31,6 +31,9 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -704,6 +707,9 @@ long osif(short *pw)
     DMD *dmd;
     DND *dn;
     int typ, h, i, fn;
+#if CONF_WITH_PROCESS_FILES_TEST
+    BOOL redirected;
+#endif
     int isptr;
     int num, max;
     long rc, numl;
@@ -995,7 +1001,21 @@ restrt:
     if (typ && fn && ((fn<12) || ((fn>=16) && (fn<=19)))) /* std funcs */
     {
         h = PD_UFT(run)[typ & 0x7f];
+#if CONF_WITH_PROCESS_FILES_TEST
+        redirected=h>0;
+        if (process_files_managed(run)) {
+            WORD backend;
+            if (process_files_resolve(run,(WORD)(typ&0x7f),&backend,NULL)!=E_OK) return EIHNDL;
+            /* Downstream xread/xwrite resolve local numbers exactly once. */
+            redirected=backend>=NUMSTD;
+            h=redirected?(typ&0x7f):backend;
+        }
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (redirected)
+#else
         if (h > 0)
+#endif
         {   /* handle standard device functions redirected to a file */
             switch(fn)
             {
@@ -1093,6 +1113,19 @@ restrt:
             h = pw[1];
 #endif
 
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (h>=0 && process_files_managed(run)) {
+            WORD backend;
+            LONG error=process_files_resolve(run,(WORD)h,&backend,NULL);
+            if (error) return error;
+            if (backend>=NUMSTD) {
+                isptr=1;numl=(long)sft[backend-NUMSTD].f_ofd;
+#if CONF_WITH_PLUGGABLE_FS
+                if (!numl) numl=(long)sft[backend-NUMSTD].f_pfs.fs;
+#endif
+            } else numl=backend;
+        } else
+#endif
         if (h >= NUMSTD)
         {
             if (h >= NUMHANDLES)

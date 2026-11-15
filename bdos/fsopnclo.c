@@ -50,6 +50,10 @@
 #include "portab.h"
 #include "endian.h"
 #include "fs.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#include "biosext.h"
+#endif
 #include "fatfs.h"
 #include "gemerror.h"
 #include "string.h"
@@ -95,6 +99,12 @@ long xcreat(char *name, UBYTE attr)
     int a = attr & ~FA_SUBDIR;
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(run)) return EACCDN;
+#if CONF_WITH_PROCESS_FILES_TEST
+    {
+        LONG admission=process_files_change_admission(run);
+        if (admission<0) return admission;
+    }
+#endif
 #endif
     ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
@@ -119,6 +129,12 @@ long xopen(char *name, WORD mod)
     int m = mod & VALID_FOPEN_BITS;
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(run)) return EACCDN;
+#if CONF_WITH_PROCESS_FILES_TEST
+    {
+        LONG admission=process_files_change_admission(run);
+        if (admission<0) return admission;
+    }
+#endif
 #endif
     ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
@@ -227,6 +243,20 @@ long opnfil(FCB *f, DND *dn, int mod)
     sft[i].f_own = run;
     sft[i].f_use = 1;
     h = i + NUMSTD;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(run)) {
+        LONG descriptor=process_files_open_begin(run,(WORD)h);
+        if (descriptor<0) {
+            FS_CLOSE_REPORT report;
+            fs_close_bounded((WORD)h,TRUE,&report);
+            return descriptor;
+        }
+        sft[i].f_ofd = makopn(f,dn,mod,shared);
+        if (process_files_open_end(run,(WORD)descriptor,(WORD)h)!=E_OK)
+            panic("descriptor open publication revoked");
+        return descriptor;
+    }
+#endif
 
     sft[i].f_ofd = makopn(f, dn, mod, shared);
     return h;

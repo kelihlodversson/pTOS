@@ -19,6 +19,14 @@ typedef struct { UQUAD incarnation; WORD handle; BOOL owned, closing; } FS_FILE_
 #define FS_FILE_REFERENCE_INIT { 0, 0, FALSE, FALSE }
 LONG fs_reference_acquire(struct kproc *source, WORD descriptor,
                           UQUAD expected_incarnation, FS_FILE_REFERENCE *out);
+#if CONF_WITH_PROCESS_FILES_TEST
+/* Descriptor-owner publication and unpublication, outside backend callbacks.
+ * They reclassify an already-owned exact reference; f_use never changes. */
+LONG fs_reference_acquire_boot(struct _pd *,WORD,UQUAD,FS_FILE_REFERENCE *);
+BOOL fs_reference_publishable(const FS_FILE_REFERENCE *);
+void fs_reference_publish(FS_FILE_REFERENCE *);
+LONG fs_reference_unpublish(WORD backend,UQUAD incarnation,FS_FILE_REFERENCE *);
+#endif
 
 typedef struct {
     LONG error, last_error;
@@ -28,6 +36,9 @@ typedef struct {
     LONG rw;
     FS_CLEANUP_TOKEN token;
 } FS_CLOSE_REPORT;
+#if CONF_WITH_PROCESS_FILES_TEST
+LONG fs_reference_dispose(FS_FILE_REFERENCE *,FS_CLOSE_REPORT *);
+#endif
 typedef struct {
     FS_CLEANUP_TOKEN token;
     ULONG references; /* 0/1 for this transfer, never a reusable batch right */

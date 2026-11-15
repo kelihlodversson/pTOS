@@ -24,6 +24,11 @@
 #include "biosbind.h"
 #include "bdosstub.h"
 #include "string.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#include "gemerror.h"
+#include "biosext.h"
+#endif
 
 /*
  * The following structure is used for the typeahead buffer
@@ -111,8 +116,15 @@ void stdhdl_init(void)
 
     bzero(sft, OPNFILES * sizeof(FTAB));
 
-    for (i = 0; i < NUMSTD; i++)
+    for (i = 0; i < NUMSTD; i++) {
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (process_files_managed(run)) {
+            if (process_files_bind_bios(run,i,default_handle[i])!=E_OK)
+                panic("initial descriptor binding failed");
+        } else
+#endif
         PD_UFT(run)[i] = default_handle[i];
+    }
 
     /* initialise typeahead pointers */
     buffer[0] = NULL;       /* prn */

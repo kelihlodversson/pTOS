@@ -20,6 +20,9 @@
 #include "kproc.h"
 #endif
 #include "bdosstub.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 
 /*
  * xforce - 0x46, force a std handle to a non-std handle
@@ -52,6 +55,17 @@ long ixforce(int std, int h, PD *p)
 
     if ((std < 0) || (std >= NUMSTD))   /* validate standard handle */
         return EIHNDL;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(p)) {
+        LONG result;
+        if (h<0) {
+            return process_files_force_bios(p,(WORD)std,(WORD)h);
+        }
+        if (h<NUMSTD) return EIHNDL;
+        result=process_files_duplicate(run,(WORD)h,p,(WORD)std);
+        return result<0?result:E_OK;
+    }
+#endif
 
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(p)) return EACCDN;
@@ -119,6 +133,9 @@ long xdup(WORD h)
 
     if ((h < 0) || (h >= NUMSTD))
         return EIHNDL;          /* only dup standard */
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(run)) return process_files_duplicate(run,h,run,-1);
+#endif
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(run)) return EACCDN;
 #endif

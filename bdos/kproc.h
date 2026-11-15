@@ -147,6 +147,9 @@ void kproc_standard_file_invalidate(WORD handle);
 BOOL kproc_begin_file_cleanup(PD *pd);
 BOOL kproc_file_references_allowed(PD *pd);
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
+#if CONF_WITH_PROCESS_FILES_TEST
+void kproc_note_file_owner_cleanup(KPROC *,LONG error,BOOL transferred);
+#endif
 LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
 #endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */

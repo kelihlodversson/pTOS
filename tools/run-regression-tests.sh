@@ -90,6 +90,12 @@ if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ] &&
     exit 2
 fi
 
+if [ "${PROCESS_FILES_TEST:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested PROCESS descriptor ownership but the effective gate is disabled" >&2
+    exit 2
+fi
+
 # record <name> <PASS|FAIL> [detail]
 record() {
     echo "$1|$2" >>"$results"
@@ -794,6 +800,11 @@ case "$machine" in
         fi
         ;;
 esac
+
+if grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native PROCESS descriptor inheritance/ownership: PASS' "$suite_log"; then
+    record "native PROCESS descriptor inheritance" FAIL "real local-descriptor/rollback/ownership cases did not pass"
+fi
 
 # Native initial-entry marker: independent of the older machine-case matrix.
 case $machine in

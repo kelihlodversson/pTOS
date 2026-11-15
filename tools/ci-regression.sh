@@ -115,6 +115,13 @@ if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
     assert backend in ('fat', 'pfs'), backend
     config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
     assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
+if os.environ.get('PROCESS_FILES_TEST') == '1':
+    config.syms['CONF_WITH_PROCESS_FILES_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'y'
+    backend = os.environ.get('PROCESS_FILES_FS', 'fat')
+    assert backend in ('fat', 'pfs'), backend
+    config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
+    assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
 config.write_config()
 PY
         ;;
