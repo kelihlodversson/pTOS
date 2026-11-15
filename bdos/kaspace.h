@@ -232,7 +232,7 @@ struct aspace *kaspace_backend(const KASPACE *space);
  * releases mapping metadata and its backing references. */
 void kaspace_put(KASPACE *space);
 /* Independent cloning uses the test-gated architecture backend. Captured
- * reservation receipts are not copied; fork consumers must reject them. */
+ * lazy reservation receipts are not copied; fork consumers must reject them. */
 LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 #if CONF_WITH_PRIVATE_CLONE
 BOOL kaspace_has_captured_lazy(const KASPACE *source);

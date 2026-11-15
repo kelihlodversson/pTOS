@@ -536,9 +536,9 @@ static BOOL return_child_completed(void *context)
         completed.state == PROCESS_COMPLETED && (completed.order_low || completed.order_high);
 }
 
-/* Authenticated architecture dispatchers only. The test child must exit on
- * this stack; the parent cannot execute user code until final completion.
- * This deliberately provides no public fork/vfork semantics or inheritance. */
+/* Authenticated architecture dispatchers only. The shared test child must
+ * exit before the parent can reuse its user stack. A private test parent
+ * returns without waiting. Neither probe provides public fork inheritance. */
 LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
 {
     PROC_CLONE_TRANSACTION *tx = NULL;
