@@ -9,6 +9,16 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_EXEC_REPLACEMENT_TEST
+    bool "Private executable image staging (test only)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    default n
+    help
+      Build real private ELF staging and kernel-only reversible exact-PROCESS/THREAD/root admission
+      prerequisite for Pexec(200). This does not implement executable image
+      replacement, publish committed-exec events or enable public mode200.
+      No shipped preset selects this experimental preparation interface.
+
 config CONF_WITH_PROCESS_FILES_TEST
     bool "TEST ONLY: PROCESS-local descriptor ownership"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_FAT_FILE_LIFETIMES

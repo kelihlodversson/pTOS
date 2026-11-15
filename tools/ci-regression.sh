@@ -103,6 +103,9 @@ if config.syms['ARCH_X86_64'].str_value != 'y':
     config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'
+if os.environ.get('EXEC_REPLACEMENT_TEST') == '1':
+    config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == 'y'
 if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
     config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'

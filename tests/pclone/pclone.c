@@ -1714,6 +1714,50 @@ void pclone_run_unmanaged_tests(void)
 void pclone_run_managed_tests(void);
 void pclone_run_managed_tests(void)
 {
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+    {
+        int stage,cycle;
+        long parent=Pgetpid();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        MAPPING_LIFETIME_SNAPSHOT before,after;
+        memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+#endif
+        ptest_begin("same-PROCESS replacement staging (not Pexec200)");
+        ptest_assert_msg(Pexec(200,"C:\\PIEPROBE.TOS","",0)==-32L,
+                         "public mode200 remains unavailable before real execution commit");
+        ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,"warm executable staging owners");
+        ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,"warm real private ELF staging and disposal");
+        for(stage=0x103;stage<=0x105;stage++)
+            ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-36L,
+                             "warm canonical foreign construction rejection and cleanup");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        ptest_assert_msg(mlt_snapshot(&before)==0,"snapshot before replacement staging");
+#endif
+        for(cycle=0;cycle<8;cycle++) {
+            for(stage=1;stage<=4;stage++)
+                ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-39L,
+                                 "replacement staging rollback after each owner acquisition");
+            ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,
+                             "private staging receipt validates across cooperative yield and abort");
+            ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,
+                             "existing loader stages ELF in selected private root and aborts");
+            ptest_assert_msg(pclone_trap(0,0xc9700101UL)==-33L,
+                             "missing executable leaves old execution runnable");
+            ptest_assert_msg(pclone_trap(0,0xc9700102UL)<0,
+                             "truncated executable rolls back staged image resources");
+            for(stage=0x103;stage<=0x105;stage++)
+                ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-36L,
+                                 "prepared THREAD/member associations reject selected and shared source roots");
+            ptest_assert_msg(Pgetpid()==parent,"replacement staging never substitutes a new PID");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+            ptest_assert_msg(mlt_snapshot(&after)==0,"snapshot after replacement staging rollback");
+            mlt_equal(&before,&after);
+#endif
+        }
+        ptest_pass();
+        if(!ptest_failures())conws("native reversible executable staging ownership (not Pexec200): PASS\r\n");
+    }
+#endif
 #if defined(TEST_WITH_PROCESS_FILES)
     test_process_files();
 #endif
