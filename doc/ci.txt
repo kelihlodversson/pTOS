@@ -124,9 +124,13 @@ the systems from its artifact ptos-m68k-atari:
   pull requests (what the push trigger of hatari-tests.yml was for);
   hatari-tests.yml and pbench.yml are gone.
 
-The Hatari groups wait for the build job (all of its groups: needs: cannot
-name one of a matrix, about four minutes) instead of building their one to
-three systems (one to three minutes), and save the toolchain on four runners.
+The Hatari groups and pBench wait for "build m68k-atari" (about three and a
+half minutes) instead of building their one to three systems (one to three
+minutes), and save the toolchain on four runners.  It is a job of its own
+(build-atari, a matrix of one, so that its name and artifact are what they
+were): needs: cannot name one entry of a matrix, and the first run of #987
+waited for all of "build", whose slowest group had queued for a runner, and
+had the Hatari result after 25 minutes instead of 14.
 
 Two configurations resolved to a .config identical to another's, so CI built
 each twice for nothing: pc-x86_64-libaes-desktop (pc-x86_64-desktop is the

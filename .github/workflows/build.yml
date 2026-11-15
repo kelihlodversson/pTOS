@@ -130,7 +130,6 @@ jobs:
       matrix:
         # The configurations of a group are in .github/ci-configs
         include:
-          - {group: m68k-atari, arch: m68k}
           - {group: m68k-amiga, arch: m68k}
           - {group: m68k-other, arch: m68k}
           - {group: arm-rpi, arch: arm}
@@ -145,10 +144,42 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
 
+      - name: Build the configurations
+        run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ptos-${{ matrix.group }}
+          path: products/
+          retention-days: 14
+
+  # The Atari configurations, in a job of their own: the Hatari and pBench
+  # jobs take their systems, test disks and pBench from its artifact (#987),
+  # and wait for this job only (needs: cannot name one entry of a matrix, and
+  # waiting for all of "build" kept them waiting for its slowest group).
+  build-atari:
+    name: build ${{ matrix.group }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The configurations of a group are in .github/ci-configs
+        include:
+          - {group: m68k-atari, arch: m68k}
+    steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+
       # mkfs.fat and mtools make the Hatari test disks (tools/mkhdisk.sh),
-      # which tools/ci-build.sh makes for the hatari job below
+      # which tools/ci-build.sh makes for the Hatari jobs below
       - name: Install the disk image tools
-        if: matrix.group == 'm68k-atari'
         uses: ./.github/actions/apt-install
         with:
           packages: --no-install-recommends dosfstools mtools
@@ -437,7 +468,7 @@ jobs:
   # nightly and manual runs all of them; a push none.
   hatari:
     name: Hatari ${{ matrix.group }}
-    needs: [build]
+    needs: [build-atari]
     if: ${{ !cancelled() && github.event_name != 'push' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 90
@@ -520,7 +551,7 @@ jobs:
   # runs only.
   pbench:
     name: pBench
-    needs: [build]
+    needs: [build-atari]
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 60
@@ -626,7 +657,7 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, x86_64, regression, release-archives, raspi-sdcard, homebrew]
+    needs: [build, build-atari, x86_64, regression, release-archives, raspi-sdcard, homebrew]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -652,6 +683,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           echo "m68k and arm builds:   ${{ needs.build.result }}"
+          echo "Atari builds:          ${{ needs.build-atari.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
@@ -660,6 +692,7 @@ jobs:
 
           ok=true
           [ '${{ needs.build.result }}' = success ] || ok=false
+          [ '${{ needs.build-atari.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
