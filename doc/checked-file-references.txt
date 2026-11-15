@@ -104,3 +104,16 @@ The x32 embedded native test opens real FAT, acquires two staged refs, destroys
 its actual source KPROC/PD, checks exact surviving counts, injects bounded I/O
 failure and recovers the exact ticket to the original memory baseline. This is
 kernel-native lifecycle evidence, not user-visible fork inheritance evidence.
+
+Stage B candidate (#969)
+-------------------------
+The default-off CONF_WITH_PROCESS_FILES_TEST candidate supplies one namespace
+for every managed KPROC and coherent reversible descriptor snapshot admission.
+See doc/process-file-descriptors.txt for its provider/consumer contract, gates,
+resource policy and acceptance evidence. Under that gate fs_reference_acquire
+resolves the canonical local binding and exact incarnation; the legacy fallback
+is retained only for gate-off/current trusted boot handoff. The SFT owner adds
+no-fail publish, exact ordinary-to-staged unpublish and existing residual disposal
+operations. proc_clone uses these through the descriptor snapshot provider and
+never changes filesystem reference counters itself. Stage A history above remains
+attributable to its accepted commit; this candidate still enables no public fork.

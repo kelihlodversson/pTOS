@@ -26,6 +26,10 @@
 #include "emutos.h"
 #include "string.h"
 #include "fs.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#include "bdosstub.h"
+#endif
 #include "bdosstub.h"
 
 long kdos_fopen(long name, long mode)
@@ -49,6 +53,9 @@ long kdos_fclose(long h)
 {
 #if CONF_WITH_USER_ASPACE
     FS_CLOSE_REPORT report;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (h>=0 && process_files_managed(run)) return process_files_close(run,(WORD)h,FALSE,&report);
+#endif
     return fs_close_bounded((WORD)h,FALSE,&report);
 #else
     long rc = 0, r;
