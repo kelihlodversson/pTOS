@@ -35,10 +35,14 @@ done
 # of the event (tools/ci-hatari.sh), and pBench and the system it measures
 # (the configurations of the pbench job of .github/workflows/build.yml).
 tools/ci-hatari.sh --prepare "$config"
+# pBench runs for a pull request and on request (and locally), as its job does
 case ${GITHUB_EVENT_NAME:-}:$config in
-    push:*) ;;                          # no pBench run on a push
-    *:atari512|*:atari512-fastcall) pbench_image=ptos512k.img ;;
-    *:atari256)                     pbench_image=ptos256us.img ;;
+    pull_request:*|workflow_dispatch:*|:*)
+        case $config in
+            atari512|atari512-fastcall) pbench_image=ptos512k.img ;;
+            atari256)                   pbench_image=ptos256us.img ;;
+        esac
+        ;;
 esac
 if [ -n "${pbench_image:-}" ]; then
     make pbench.prg

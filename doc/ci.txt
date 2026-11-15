@@ -113,8 +113,8 @@ the systems from its artifact ptos-m68k-atari:
   combination of the event uses (tools/ci-hatari.sh --prepare: test-hd.img,
   or test-hd-shell.img for the falcon-aspace images) and pbench.prg for
   atari512, atari256 and atari512-fastcall, each with its system as
-  products/CONFIG/system.img.  Nothing of it is made for a push, which runs
-  neither.
+  products/CONFIG/system.img; each only for an event whose jobs use it (no
+  test disk for a push, no pbench.prg for a push or the nightly run).
 - The Hatari groups and pBench set up no toolchain and build nothing; a
   group that is run locally still builds what is not in products/.
 - The triggers are what they were: the Hatari jobs do not run for a push,
