@@ -2694,6 +2694,9 @@ static LONG active_clone_construct(UWORD index)
     UQUAD frame = 0x1122334455667788ULL, after;
     PD *controller = kproc_get_parent(run);
     LONG pins_before = procmem_pins(controller);
+#if CONF_WITH_PRIVATE_CLONE
+    ULONG map_pins_before;
+#endif
     UQUAD entry_flags, exit_flags;
     __asm__ volatile ("pushfq; popq %0" : "=r"(entry_flags));
     CHECK((entry_flags & 0x200) && !ksched_test_clone_masked(), "active construction starts outside IRQ exclusion");
@@ -2739,6 +2742,9 @@ static LONG active_clone_construct(UWORD index)
     if (active_clone.scenario == 5) CHECK(kproc_mprot(run,data,PAGE,PROT_READ) == E_OK, "revoke active publication output");
     if (active_clone.scenario == 6) proc_clone_test_cancel_publication();
     if (active_clone.scenario == 7) kproc_test_fail_clone_controller();
+#if CONF_WITH_PRIVATE_CLONE
+    map_pins_before=aspace_test_pin_count(as,FALSE);
+#endif
     error = proc_clone_spawn(&tx,&active_clone.ids[index]);
     __asm__ volatile ("pushfq; popq %0" : "=r"(exit_flags));
     CHECK((entry_flags & 0x200) == (exit_flags & 0x200) && !ksched_test_clone_masked(),
@@ -2748,7 +2754,13 @@ static LONG active_clone_construct(UWORD index)
         CHECK(!tx && active_clone.ids[index].pid && active_clone.ids[index].tid,
               "active publication consumes transaction and returns distinct ids without waiting");
         active_clone.successes++;
+#if CONF_WITH_PRIVATE_CLONE
+        CHECK(procmem_pins(controller)==pins_before+2 &&
+              aspace_test_pin_count(as,FALSE)==map_pins_before+3,
+              "published child owns controller allocation/backend refs and two compatibility borrows");
+#else
         CHECK(procmem_pins(controller) == pins_before + 1, "published child owns an independent controller allocation pin");
+#endif
         CHECK(proc_clone_observer_state(active_clone.observers[index]) == PROC_CLONE_OBSERVER_PUBLISHED,
               "published child cannot run before creator yields");
         CHECK(!proc_clone_observer_result(active_clone.observers[index], &(PROC_CLONE_COMPLETION){0,0,0}),
@@ -2763,7 +2775,11 @@ static LONG active_clone_construct(UWORD index)
               "active output rollback before first publication store");
         CHECK(active_clone.scenario == 6 ? !tx : tx != NULL, "explicit cancellation consumes; preflight failure preserves transaction");
         proc_clone_abort(&tx);
-        CHECK(procmem_pins(controller) == pins_before && aspace_copy_from_user(as,&after,stack+2*PAGE-8,sizeof(after)) && after == frame,
+        CHECK(procmem_pins(controller) == pins_before &&
+#if CONF_WITH_PRIVATE_CLONE
+              aspace_test_pin_count(as,FALSE)==map_pins_before &&
+#endif
+              aspace_copy_from_user(as,&after,stack+2*PAGE-8,sizeof(after)) && after == frame,
               "failed/cancelled publication releases its controller ownership and preserves return slot");
         if (active_clone.observers[index]) CHECK(proc_clone_observer_state(active_clone.observers[index]) == PROC_CLONE_OBSERVER_CANCELLED,
               "cancelled observer has no fabricated process completion");
