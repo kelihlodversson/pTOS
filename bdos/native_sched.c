@@ -21,6 +21,11 @@
 #include "kprint.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+#include "exec_handoff_test.h"
+#include "kaspace.h"
+#endif
 #if CONF_WITH_X86_64_MEMTEST
 #include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
@@ -34,6 +39,9 @@ extern PD *run;
 
 typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
+#if CONF_WITH_EXEC_HANDOFF_TEST
+    , TASK_REPLACING
+#endif
 } TASK_STATE;
 struct ksched_nested;
 typedef struct kernel_task {
@@ -66,6 +74,10 @@ typedef struct kernel_task {
     WORD pid, signal;
     BOOL asynchronous, take_ownership, exited;
     THREAD_STARTUP_DRAFT *startup;
+#if CONF_WITH_EXEC_HANDOFF_TEST
+    KSCHED_EXEC_HANDOFF *replacement; /* private owning preparation */
+    ULONG test_handoffs; /* transport evidence only, never a committed-exec epoch */
+#endif
     KTHREAD_CONTEXT execution;
     TASK_STATE state;
     BOOL (*ready)(void *);
@@ -144,6 +156,9 @@ typedef struct {
     KSCHED_ADMISSION waiter; /* scoped consumer; independent producers own cells */
     PROC_CLONE_TRANSACTION *pending_clone;
     void *pending_slot;
+#if CONF_WITH_EXEC_HANDOFF_TEST
+    KSCHED_EXEC_HANDOFF *pending_exec;
+#endif
     ULONG stack[ROOT_STACK_BYTES/sizeof(ULONG)] __attribute__((aligned(16)));
 } NATIVE_SCHED_CPU;
 static NATIVE_SCHED_CPU boot_cpu;
@@ -521,6 +536,269 @@ void ksched_wake_sequence(KSCHED_WAIT_SEQUENCE *source)
     native_sched_irq_restore(flags);
 }
 static UQUAD next_identity;
+#if CONF_WITH_EXEC_HANDOFF_TEST
+typedef enum { HANDOFF_PREPARING, HANDOFF_PREPARED, HANDOFF_SEALED,
+               HANDOFF_TRANSFERRED, HANDOFF_QUIESCENT, HANDOFF_INSTALLED } HANDOFF_STATE;
+struct ksched_exec_handoff {
+    KERNEL_TASK *task;
+    KPROC *process;
+    KTHREAD *thread;
+    PD *pd;
+    KASPACE *space;
+    ASPACE_ROOT root;
+    UQUAD number, execution, next_execution;
+    ULONG tid;
+    WORD pid;
+    void *launcher;
+    PADDR old_syscall;
+    THREAD_STARTUP_DRAFT *startup, *retired_startup;
+    KASPACE_LEASE *hold, *retired_hold;
+    KTHREAD_STACK retired_stack;
+    KSCHED_CLEANUP_SCOPE cleanup;
+    HANDOFF_STATE state;
+    uintptr_t irq_flags;
+};
+
+static BOOL exec_handoff_matches(const KSCHED_EXEC_HANDOFF *tx)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    void *launcher = NULL;
+    PADDR syscall = 0;
+    return tx && task && tx->task == task && task->replacement == tx &&
+        !scheduler.stopping && task->state == TASK_RUNNING &&
+        task == execution_cpu.inflight && task->execution.on_cpu &&
+        task->execution.owner_cpu == execution_cpu.number &&
+        !task->nested && !task->nested_prepared && !task->completion_owner && !task->dependents &&
+        !task->ready && !task->argument && !task->observation.source &&
+        !task->synchronous_waiter && !task->synchronous_wait_process &&
+        !task->process_completed && !task->result_published && !task->exited &&
+        !task->execution.syscall_stack.physical &&
+        tx->process == task->process && tx->pd == run && task->program == run &&
+        kproc_live_pd(tx->process) == run && kproc_ref_number(tx->process) == tx->number &&
+        kproc_ref_pid(tx->process) == tx->pid && task->pid == tx->pid &&
+        task->thread == tx->thread && kthread_tid(tx->thread) == tx->tid &&
+        kthread_exec_handoff_ready(tx->thread, &task->execution) &&
+        tx->execution == task->execution.identity &&
+        tx->space == kthread_aspace(tx->thread) &&
+        tx->root == kproc_user_root(run) &&
+        kproc_exec_handoff_allowed(tx->process, tx->thread) &&
+        !ksched_cancellation_pending() && tx->cleanup.active &&
+        task->cleanup_depth == 1 && tx->cleanup.depth == 1 &&
+        task->cleanup_ticket == tx->cleanup.ticket &&
+        proc_exec_stack_snapshot(&launcher, &syscall) &&
+        launcher == tx->launcher && syscall == tx->old_syscall;
+}
+
+static void exec_handoff_abort(KSCHED_EXEC_HANDOFF **handle)
+{
+    KSCHED_EXEC_HANDOFF *tx = *handle;
+    if (!tx) return;
+    if (tx->state >= HANDOFF_TRANSFERRED || !execution_cpu.current ||
+        execution_cpu.current != tx->task || tx->task->replacement != tx ||
+        ksched_context_id() != tx->execution) panic("exec handoff: foreign abort");
+    *handle = NULL;
+    thread_startup_abort(&tx->startup);
+    kaspace_lease_release(&tx->hold);
+    kaspace_put(tx->space);
+    kproc_release(tx->process);
+    tx->task->replacement = NULL;
+    ksched_cleanup_end(&tx->cleanup);
+    kfree(tx);
+}
+
+/* Only this exact CPU-root transaction can replace an executing THREAD's
+ * durable stack hold. The THREAD stays attached and executing throughout. */
+BOOL ksched_exec_handoff_quiescent(const KSCHED_EXEC_HANDOFF *tx,
+                                  const KTHREAD *thread, const void *execution)
+{
+    return tx && execution_cpu.pending_exec == tx && tx->state == HANDOFF_QUIESCENT &&
+        !execution_cpu.current && !execution_cpu.inflight && !tx->task->execution.on_cpu &&
+        tx->task->replacement == tx && tx->task->state == TASK_REPLACING &&
+        tx->thread == thread && tx->task->thread == thread &&
+        execution == &tx->task->execution && tx->task->process == tx->process &&
+        tx->task->execution.identity == tx->execution &&
+        kproc_ref_number(tx->process) == tx->number &&
+        kproc_live_pd(tx->process) == tx->pd && kproc_ref_pid(tx->process) == tx->pid &&
+        kthread_tid(thread) == tx->tid && kthread_aspace(thread) == tx->space &&
+        kproc_active_space(tx->process) == tx->space;
+}
+BOOL ksched_exec_handoff_retiring(const THREAD_STARTUP_DRAFT *startup)
+{
+    KSCHED_EXEC_HANDOFF *tx = execution_cpu.pending_exec;
+    return tx && tx->state == HANDOFF_INSTALLED && startup == tx->retired_startup &&
+        !execution_cpu.current && !execution_cpu.inflight && !tx->task->execution.on_cpu &&
+        tx->task->replacement == tx && tx->task->state == TASK_REPLACING;
+}
+BOOL ksched_exec_handoff_launch(PD *pd)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    return task && task->program == pd && task->test_handoffs && task->startup &&
+        task->state == TASK_RUNNING && task->execution.on_cpu &&
+        !task->replacement && !task->completion_owner && kthread_is_executing(task->thread);
+}
+
+LONG ksched_exec_handoff_query(VADDR output)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    EXEC_HANDOFF_TEST_STATE result;
+    UQUAD number, root;
+    if (!ksched_spawn_allowed() || task->nested || task->program != run) return EACCDN;
+    if (output >= USER_VA_LIMIT) return EIMBA;
+    number = kproc_ref_number(task->process); root = kproc_user_root(run);
+    result.process[0] = (ULONG)number; result.process[1] = (ULONG)(number >> 32);
+    result.execution[0] = (ULONG)task->execution.identity;
+    result.execution[1] = (ULONG)(task->execution.identity >> 32);
+    result.root[0] = (ULONG)root; result.root[1] = (ULONG)(root >> 32);
+    result.pid = task->pid; result.tid = kthread_tid(task->thread);
+    result.handoffs = task->test_handoffs;
+    return kproc_copy_to_user_resident(output, &result, sizeof(result)) ? E_OK : EIMBA;
+}
+
+LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *args, UWORD failure)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_EXEC_HANDOFF *tx = NULL;
+    LONG error = EACCDN;
+    void *launcher = NULL;
+    PADDR syscall = 0;
+    if (!args || failure > EXEC_HANDOFF_FAILURES) return EINVAL;
+    if (execution_cpu.leaf_held || execution_cpu.legacy_irq_held) return EACCDN;
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame) return EACCDN;
+#endif
+#if CONF_WITH_PTERMGRP
+    if (task && task->cancel_delivering) return EACCDN;
+#endif
+    if (!ksched_spawn_allowed() || task->nested || task->nested_prepared ||
+        task->replacement || task->cleanup_depth || task->completion_owner || task->dependents ||
+        execution_cpu.pending_exec || !kproc_exec_handoff_allowed(task->process, task->thread) ||
+        !proc_exec_stack_snapshot(&launcher, &syscall)) return EACCDN;
+    if (next_identity == ~(UQUAD)0 || task->test_handoffs == ~(ULONG)0) return EAGAIN;
+    if (failure == 1) return ENSMEM;
+    tx = kalloc(sizeof(*tx));
+    if (!tx) return ENSMEM;
+    memset(tx, 0, sizeof(*tx));
+    tx->task = task; tx->thread = task->thread; tx->pd = run;
+    tx->process = kproc_retain_live(task->process);
+    tx->space = kaspace_share(kthread_aspace(task->thread));
+    tx->number = kproc_ref_number(task->process); tx->pid = task->pid;
+    tx->tid = kthread_tid(task->thread); tx->execution = task->execution.identity;
+    tx->root = kproc_user_root(run); tx->launcher = launcher; tx->old_syscall = syscall;
+    task->replacement = tx;
+    ksched_cleanup_begin(&tx->cleanup);
+    if (!tx->process || !tx->space || failure == 2) { error = ENSMEM; goto failed; }
+    if (!exec_handoff_matches(tx)) goto failed;
+    if (failure == 3) { error = ENSMEM; goto failed; }
+    error = thread_startup_prepare_handoff(tx->space, args, &tx->startup);
+    if (error) goto failed;
+    if (failure == 4) { error = ENSMEM; goto failed; }
+    error = thread_startup_retain_stack(tx->startup, &tx->hold);
+    if (error) goto failed;
+    if (failure == 5) { error = ENSMEM; goto failed; }
+    error = thread_startup_run_preflight(tx->startup);
+    if (error) goto failed;
+    tx->state = HANDOFF_PREPARED;
+    if (failure == 6) { error = ENSMEM; goto failed; }
+    /* A stale identity must fail the real matcher, not a modeled producer. */
+    if (failure == 7) {
+        tx->execution++;
+        if (exec_handoff_matches(tx)) panic("exec handoff: stale execution admitted");
+        tx->execution--; error = EACCDN; goto failed;
+    }
+    if (failure == 8) {
+        if (ksched_exec_handoff_test(args, 0) != EACCDN)
+            panic("exec handoff: competing preparation admitted");
+        error = EACCDN; goto failed;
+    }
+    /* Preparation protects cancellation but not mapping revocation. Check
+     * ownership again after a genuine cooperative continuation handoff. */
+    ksched_yield();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto failed; }
+    if (failure == 9) { error = ENSMEM; goto failed; }
+    tx->irq_flags = native_sched_irq_save();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto unmask_failed; }
+    error = thread_startup_seal(tx->startup);
+    if (error) goto unmask_failed;
+    tx->state = HANDOFF_SEALED;
+    if (failure == 10) { error = ENSMEM; goto unmask_failed; }
+    tx->next_execution = ++next_identity;
+    /* No-fail boundary: transfer the launcher's retirement right, close only
+     * our exact cleanup scope, and abandon both old C continuations. */
+    proc_exec_stack_take(tx->launcher, tx->old_syscall);
+    ksched_cleanup_end(&tx->cleanup);
+    tx->state = HANDOFF_TRANSFERRED;
+    execution_cpu.pending_exec = tx;
+    task->state = TASK_REPLACING;
+    native_sched_save(&task->execution.cpu);
+    longjmp(execution_cpu.resume, 1);
+unmask_failed:
+    native_sched_irq_restore(tx->irq_flags);
+failed:
+    exec_handoff_abort(&tx);
+    return error;
+}
+
+/* Called only AFTER cpu_acknowledge_handoff(), on the permanent root stack.
+ * No callbacks, allocations, user copies or image policy are used to install
+ * the fresh context. All destruction follows installation outside the leaf. */
+static void exec_handoff_on_root(void)
+{
+    uintptr_t marker;
+    KSCHED_EXEC_HANDOFF *tx = execution_cpu.pending_exec;
+    THREAD_STARTUP_STACK_OWNERS stacks = { {0,0}, {0,0} };
+    KERNEL_TASK *task;
+    if (!tx) return;
+    check_root_stack();
+    task = tx->task;
+    if (tx->state != HANDOFF_TRANSFERRED || execution_cpu.current || execution_cpu.inflight ||
+        task->execution.on_cpu || task->replacement != tx || task->state != TASK_REPLACING ||
+        task->cleanup_depth || task->cleanup_ticket || execution_cpu.loaded_launcher)
+        panic("exec handoff: missing root acknowledgment");
+    tx->state = HANDOFF_QUIESCENT;
+    if (!thread_startup_take_stacks(tx->startup, &stacks) ||
+        stacks.syscall.physical == tx->old_syscall ||
+        stacks.scheduler.physical == tx->old_syscall ||
+        stacks.syscall.physical == task->execution.stack.physical ||
+        stacks.scheduler.physical == task->execution.stack.physical ||
+        stacks.syscall.physical == stacks.scheduler.physical)
+        panic("exec handoff: fresh stack ownership changed");
+    kthread_exec_handoff_stack(tx->thread, tx, &tx->hold, &tx->retired_hold);
+    tx->retired_startup = task->startup;
+    tx->retired_stack = kthread_stack_detach(&task->execution.stack);
+    /* Never copy a jmp_buf, C continuation or old CPU return image. */
+    memset(&task->execution, 0, sizeof(task->execution));
+    task->execution.identity = tx->next_execution;
+    task->execution.stack.physical = stacks.scheduler.physical;
+    task->execution.stack.top = stacks.scheduler.top;
+    task->execution.syscall_stack.physical = stacks.syscall.physical;
+    task->execution.syscall_stack.top = stacks.syscall.top;
+    task->startup = tx->startup; tx->startup = NULL;
+    thread_startup_commit_stores(task->startup, tx->pid, tx->tid);
+    thread_startup_publish(task->startup);
+    task->ready = NULL; task->argument = NULL;
+    memset(&task->observation, 0, sizeof(task->observation));
+    tx->state = HANDOFF_INSTALLED;
+    native_sched_irq_restore(tx->irq_flags);
+    ksched_waiter_retire(tx->process, tx->tid, tx->execution);
+    if (kstack_contains(tx->old_syscall, (uintptr_t)&marker) ||
+        kstack_contains(tx->retired_stack.physical, (uintptr_t)&marker))
+        panic("exec handoff: retiring an active kernel stack");
+    kstack_free(tx->old_syscall); tx->old_syscall = 0;
+    kthread_stack_release(&tx->retired_stack);
+    thread_startup_reclaim(&tx->retired_startup);
+    kaspace_lease_release(&tx->retired_hold);
+    kaspace_put(tx->space); tx->space = NULL;
+    kproc_release(tx->process); tx->process = NULL;
+    task->test_handoffs++;
+    task->replacement = NULL;
+    execution_cpu.pending_exec = NULL;
+    kfree(tx);
+    native_sched_irq_disable();
+    task->state = TASK_NEW;
+    /* Deliberately no KPROC exec epoch or readiness publication: this token
+     * owns same-image transport only, not a sealed executable image bundle. */
+}
+#endif
 static KSCHED_WAIT_RESULT wait_observed(BOOL (*ready)(void *), void *argument,
                                         const KSCHED_WAIT_OBSERVATION *observation);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
@@ -677,7 +955,12 @@ BOOL ksched_take_syscall_stack(PD *pd, THREAD_STARTUP_STACK *owner)
 {
     KERNEL_TASK *task = execution_cpu.current;
     KTHREAD_STACK stack;
-    if (!owner || owner->physical || owner->top || !ksched_sibling_launch(pd)) return FALSE;
+    if (!owner || owner->physical || owner->top ||
+        (!ksched_sibling_launch(pd)
+#if CONF_WITH_EXEC_HANDOFF_TEST
+         && !ksched_exec_handoff_launch(pd)
+#endif
+        )) return FALSE;
     stack = kthread_stack_detach(&task->execution.syscall_stack);
     owner->physical = stack.physical;
     owner->top = stack.top;
@@ -2252,6 +2535,9 @@ static void scheduler_root_entry(void)
         wake_observed=execution_cpu.wake.sequence;
         check_root_stack();
         cpu_acknowledge_handoff();
+#if CONF_WITH_EXEC_HANDOFF_TEST
+        exec_handoff_on_root();
+#endif
         if (scheduler.stopping) panic("scheduler: dispatch during shutdown");
         runqueue_unlocked(); /* predicates and notifications are outside leaf exclusion */
         check_root_stack();

@@ -53,6 +53,28 @@ with tempfile.TemporaryDirectory(prefix='ptos-exec-replacement-') as directory:
                 expected = 'native executable staging ownership|FAIL' if required else ''
                 assert result.stdout == expected, (staging, clone, present, result.stdout)
     print('Native staging marker: 8 actual runner/Kconfig cases, missing enabled evidence rejected: PASS')
+    start = script.index("if grep -q '^#define CONF_WITH_EXEC_HANDOFF_TEST 1'")
+    block = script[start:script.index('\nfi', start) + 3]
+    config.syms['CONF_WITH_PCLONE'].set_value(2)
+    for enabled in (0, 2):
+        config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
+        config.syms['CONF_WITH_EXEC_HANDOFF_TEST'].set_value(enabled)
+        assert config.syms['CONF_WITH_EXEC_HANDOFF_TEST'].str_value == ('y' if enabled else 'n')
+        config.write_config(str(work/'handoff.config'))
+        subprocess.run([sys.executable, 'tools/genconfig.py', '--kconfig', 'Kconfig',
+                        '--config', str(work/'handoff.config'),
+                        '--header', str(work/'obj/autoconf.h'),
+                        '--makefile', str(work/'marker.conf')], check=True)
+        for present in (False, True):
+            log.write_text('native same-PROCESS/TID NORETURN fresh-stack transport (not Pexec200): PASS\n'
+                           if present else 'unrelated fixture: PASS\n')
+            shell = 'top=$1; suite_log=$2\nrecord() { printf "%s|%s" "$1" "$2"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(work), str(log)],
+                                    check=True, text=True, capture_output=True)
+            assert result.stdout == ('native executable handoff transport|FAIL'
+                                     if enabled and not present else '')
+    print('Native handoff marker: 4 actual runner/Kconfig cases; no modeled exec event: PASS')
+    config.syms['CONF_WITH_EXEC_HANDOFF_TEST'].set_value(0)
     config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
     config.syms['CONF_WITH_PCLONE'].set_value(0)
     config.write_config(str(work/'config'))

@@ -1,6 +1,13 @@
 Pexec creation and executable-transition policy audit (#894 / #895)
 =================================================================
 
+#970 transport checkpoint: doc/exec-handoff.txt describes a gated, native
+same-PROCESS/TID fresh-stack NORETURN handoff through the existing scheduler
+root. It keeps the same image/root; mode200 and committed-exec remain missing.
+The accepted #977 metadata preparation is preserved and supplies no movable
+image ownership. Both fork calls use PRIVATE_VM/COW; no shared-parent detach
+or unfinished fork resource-snapshot prerequisite is added by this transport.
+
 Accepted baseline: epic496ceba0eb260e3de2cef52f074699df6bf6f177.
 Its tree is identical to independently accepted #968 source69ccd179. Existing
 8ece5bde Phase5 history is reconciled by normal merge96e408df6, with #966/#968

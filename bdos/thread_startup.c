@@ -101,6 +101,18 @@ LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *ar
 {
     return startup_prepare(space, args, out, TRUE, NULL, NULL, 0);
 }
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+LONG thread_startup_prepare_handoff(KASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                    THREAD_STARTUP_DRAFT **out)
+{
+    LONG error = thread_startup_prepare_public(space, args, out);
+    /* The existing task retains its canonical completion admission. There is
+     * no new lifecycle observer to register for this same-image experiment. */
+    if (!error) (*out)->state = THREAD_STARTUP_OBSERVED;
+    return error;
+}
+#endif
 #if CONF_WITH_SHARED_VM_PEXEC_TEST
 LONG thread_startup_prepare_elf(KASPACE *space,const THREAD_STARTUP_ARGS *args,
                                VADDR initial_sp,THREAD_STARTUP_DRAFT **out)
@@ -369,7 +381,12 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **handle)
 {
     FS_ERROR_STATE saved_error;
     if (!handle || !*handle) return;
-    if ((*handle)->state != THREAD_STARTUP_RUNNABLE || !ksched_startup_reclaimable(*handle))
+    if ((*handle)->state != THREAD_STARTUP_RUNNABLE ||
+        (!ksched_startup_reclaimable(*handle)
+#if CONF_WITH_EXEC_HANDOFF_TEST
+         && !ksched_exec_handoff_retiring(*handle)
+#endif
+        ))
         panic("startup reclaim outside stopped scheduler root");
     saved_error = *fs_error_current();
     if (setjmp(errbuf)) {

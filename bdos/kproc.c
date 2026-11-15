@@ -41,6 +41,9 @@
 #include "procmem.h"
 #include "kaspace.h"
 #include "exec_replace.h"
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+#endif
 #include "kthread.h"
 #include "proc_clone.h"
 #include "progimage.h"
@@ -1792,6 +1795,29 @@ BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL co
         image->exec_image_staging && image->pending_space==selected &&
         (!complete || (image->has_image && image->pending_as==kaspace_backend(selected)));
 }
+#if CONF_WITH_EXEC_HANDOFF_TEST
+BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread)
+{
+    KPROC *peer;
+    if (!process || !process->pd || process->disposal_state != PROCESS_LIVE ||
+        process->completed || process->completion_pending || !process->started ||
+        !process->active_space || process->pending_space || process->kstack_phys ||
+        !kproc_thread_is_sole(process, thread) || !kthread_is_executing(thread) ||
+        kthread_aspace(thread) != process->active_space || process->lost ||
+        process->give_back || process->lender || process->mapping_preparation ||
+        process->exec_committing || process->exec_replacement_ticket || process->clone_guarded ||
+        kaspace_mutation_busy(process->active_space)) return FALSE;
+#if CONF_WITH_IMAGE_POLICY
+    if (process->image_preparation) return FALSE;
+#endif
+#if CONF_WITH_PTERMGRP
+    if (process->group_exiting) return FALSE;
+#endif
+    for (peer = kproc_list; peer; peer = peer->next)
+        if (peer != process && exec_space_associated(peer, process->active_space)) return FALSE;
+    return TRUE;
+}
+#endif
 #endif
 
 static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)

@@ -856,6 +856,11 @@ if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
     record "native saved syscall return" FAIL "configured shared-VM return probe did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_EXEC_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native same-PROCESS/TID NORETURN fresh-stack transport (not Pexec200): PASS' "$suite_log"; then
+    record "native executable handoff transport" FAIL "configured same-image transport did not execute"
+fi
+
 if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native reversible executable staging ownership (not Pexec200): PASS' "$suite_log"; then

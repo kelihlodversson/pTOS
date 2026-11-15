@@ -78,6 +78,10 @@
 #include "ksched.h"
 #include "thread_startup.h"
 #include "thread_startup_x32.h"
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+#include "procmem.h"
+#endif
 static UQUAD clone_read_base(ULONG msr)
 {
     ULONG lo, hi;
@@ -225,6 +229,29 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 #endif
 extern UQUAD x86_64_get_irq_stack(void);
 extern void x86_64_set_irq_stack(UQUAD rsp);
+
+#if CONF_WITH_EXEC_HANDOFF_TEST
+BOOL proc_exec_stack_snapshot(void **owner, PADDR *physical)
+{
+    X86_64_PROCESS_LAUNCH *launch = get_current_launch();
+    UQUAD stack = x86_64_get_kernel_stack();
+    if (!launch || launch->pd != run || launch->previous || !launch->stack_phys ||
+        launch->exit_process || launch->fallback_observer || launch->entry_type != ENTRY_PROGRAM ||
+        x86_64_read_cr3() != kproc_user_root(run) || x86_64_get_irq_stack() != stack + 8 ||
+        !kstack_contains(launch->stack_phys, (uintptr_t)&launch) ||
+        !kstack_contains(launch->stack_phys, (uintptr_t)(stack - 1))) return FALSE;
+    *owner = launch; *physical = launch->stack_phys;
+    return TRUE;
+}
+void proc_exec_stack_take(void *owner, PADDR physical)
+{
+    void *actual = NULL;
+    PADDR stack = 0;
+    if (!proc_exec_stack_snapshot(&actual, &stack) || actual != owner || stack != physical)
+        panic("exec handoff: launcher syscall ownership changed");
+    ((X86_64_PROCESS_LAUNCH *)owner)->stack_phys = 0;
+}
+#endif
 
 void x86_64_process_save(X86_64_PROCESS_CONTEXT *context)
 {
