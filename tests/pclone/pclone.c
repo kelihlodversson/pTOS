@@ -200,6 +200,12 @@ static void test_cow_vfork_continuation(void)
         if(pid==0) {
             long child=pclone_trap(0,0x895fc000UL);
             if(child==0) {
+                /* Let the existing native admission wait/resume probe run
+                 * while its parent-BLOCKED precondition holds. Cancellation
+                 * deliberately ends that precondition in the next step. */
+                if(pclone_trap(0,0x895ffffdUL)!=1)Pterm(74);
+                (void)Syield();
+                if(pclone_trap(0,0x895ffffdUL)!=1)Pterm(74);
                 if(pclone_trap(0,0x895ffffbUL)!=0)Pterm(74);
                 (void)Syield();(void)Syield();
                 if(Pgetppid()!=0 || pclone_trap(0,0x895ffffaUL)!=0)Pterm(74);
