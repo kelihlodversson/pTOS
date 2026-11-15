@@ -3505,7 +3505,7 @@ search/DTA, current-directory, allocation or native-service side effects.
 External desktop without kernel AES (#878)
 ------------------------------------------
 
-pc-x86_64-libaes-desktop_defconfig builds the resident shared desktop with
+pc-x86_64-desktop_defconfig builds the resident shared desktop with
 CONF_WITH_AES=n, CONF_WITH_X32_AES=n, CONF_WITH_LIBAES=y and the native VDI
 service. Shared GEM rendering/resource and desktop options are available
 without linking the kernel AES; its stack and loadable-cursor configuration

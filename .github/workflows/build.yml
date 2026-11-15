@@ -324,7 +324,7 @@ jobs:
 
       # The kernel images the arm-rpi job above already built for rpi1-4 --
       # rebuilding them here too would just double the wait.  The artifact
-      # also holds rpi2-kproc, rpi2-sparse and rpi2-test, which are VDI and
+      # also holds rpi2-kproc, rpi2-sparse and rpi2-aspace, which are VDI and
       # test variants and not part of the SD card: they are not copied.
       - name: Collect the rpi1-4 kernel images
         uses: actions/download-artifact@v4
