@@ -51,16 +51,45 @@ esac
 case $config in
     pc-x86_64-desktop-tests*)
         make -j2 x32-desktop-test
+
+        # The shared desktop links against the loader and the libraries, and
+        # the kernel has no AES of its own (the external libaes desktop).
+        readelf -l emudesk.prg | grep '/GEMSYS/LIB/X32/LD.SO'
+        readelf -d emudesk.prg | grep 'libptos.so'
+        readelf -d emudesk.prg | grep 'libaes.so'
+        nm emutos.efi > obj/desktop-kernel.symbols
+        grep -q ' T cuis_service$' obj/desktop-kernel.symbols
+        if grep -Eq ' [Tt] (ui_start|aes_service|aes_tree_validate)$' obj/desktop-kernel.symbols; then
+            echo 'External libaes desktop must not link kernel AES services' >&2
+            exit 1
+        fi
+
         console_args=()
         if grep -q '^# CONF_EXTERNAL_CLI is not set$' .config; then
             console_args+=(--embedded-console)
+            # the built-in EmuCON keeps its static entry path
+            if readelf -l obj/x32/emucon.elf | grep 'INTERP'; then
+                echo 'Embedded EmuCON must retain its static entry path' >&2
+                exit 1
+            fi
+        else
+            readelf -l cli/emucon.tos | grep '/GEMSYS/LIB/X32/LD.SO'
+            readelf -d cli/emucon.tos | grep 'libptos.so'
         fi
         rc=0
-        rm -rf obj/x32-desktop-runtime
+        rm -rf obj/x32-desktop-runtime obj/x32-desktop-shutdown
         python3 tests/x32_desktop/run.py --output obj/x32-desktop-runtime "${console_args[@]}" || rc=$?
-        # what it left, for the artifact, whether it passed or not
+        # the shutdown request of the desktop (CONF_WITH_SHUTDOWN)
+        if grep -q '^CONF_WITH_SHUTDOWN=y$' .config; then
+            python3 tests/x32_desktop/run.py --mode shutdown --output obj/x32-desktop-shutdown \
+                "${console_args[@]}" || rc=$?
+        fi
+        # what they left, for the artifact, whether they passed or not
         if [ -d obj/x32-desktop-runtime ]; then
             cp -r obj/x32-desktop-runtime "products/$config/desktop-runtime"
+        fi
+        if [ -d obj/x32-desktop-shutdown ]; then
+            cp -r obj/x32-desktop-shutdown "products/$config/desktop-shutdown"
         fi
         exit $rc
         ;;
