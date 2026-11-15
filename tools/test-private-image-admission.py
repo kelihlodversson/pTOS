@@ -13,9 +13,13 @@ root=Path(__file__).resolve().parents[1]
 os.chdir(root)
 os.environ['CONFIG_']=''
 parser=argparse.ArgumentParser()
-parser.add_argument('--require',action='store_true',help='require moved-image admission; currently exits1')
+parser.add_argument('--require',action='store_true',help='require moved-image admission; currently exits 1')
 parser.add_argument('--mode',choices=['normal','asan','fortified'],default='normal')
 args=parser.parse_args()
+# Reserved fixture status for the known admission rejection. It must differ
+# from 1, the default failure status of ASan and of UBSan with halt_on_error,
+# and from abort's 134, so that sanitizer failures are never mistaken for it.
+KNOWN_REJECTION=77
 control=r'''
 int main(void)
 {
@@ -52,7 +56,7 @@ int main(void)
     kfree(source.heap);kfree(loader.heap);kaspace_put(source.active_space);kaspace_put(loader.active_space);
     CHECK(physical_live==ram && metadata_live==metadata && !physical_live && !metadata_live);
     puts("production moved-image control cleanup: exact baseline PASS");
-    return moved_ok?0:1; /* --require general private-image eligibility */
+    return moved_ok?0:KNOWN_REJECTION; /* --require general private-image eligibility */
 }
 '''
 with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
@@ -69,13 +73,15 @@ with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
     source=source.replace('#include "procmem_borrow.c"','#include "'+str(root/'tests/procmem_borrow.c')+'"')
     source=source.replace('#include "../bdos/kproc.c"','#include "'+str(root/'bdos/kproc.c')+'"')
     source=source.replace('\nint main(void)\n','\nint shared_interp_original_main(void)\n')
-    fixture=work/'control.c';fixture.write_text(source+control)
+    fixture=work/'control.c';fixture.write_text(source+control.replace('KNOWN_REJECTION',str(KNOWN_REJECTION)))
     flags=['-std=gnu90','-O2','-g','-Wall','-Wextra','-Werror','-fno-builtin','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),'-Iinclude/machine/pc-x86_64','-Iinclude/arch/x86_64','-Ibios/machine/pc-x86_64','-Ibios/arch/x86_64','-iquote','bdos','-iquote','bios','-iquote','fs','-iquote','aes','-idirafter','include']
     if args.mode=='asan': flags+=['-fsanitize=address,undefined','-fno-omit-frame-pointer']
     elif args.mode=='fortified': flags+=['-D_FORTIFY_SOURCE=3','-fstack-protector-strong']
     subprocess.run(shlex.split(os.environ.get('HOSTCC','cc'))+flags+[str(fixture),'bdos/kaspace.c','bios/machine/pc-x86_64/x32image.c','lib/ldso/startup.c','-Wl,--gc-sections','-o',str(work/'control')],check=True)
     result=subprocess.run([str(work/'control')])
     print('required moved-image admission exit='+str(result.returncode))
-    if args.require: sys.exit(result.returncode)
-    assert result.returncode==1, 'known ownership admission changed; review its proof'
+    if result.returncode not in (0,KNOWN_REJECTION):
+        sys.exit('moved-image control failed with status %d (sanitizer or CHECK failure), not an admission result' % result.returncode)
+    if args.require: sys.exit(0 if result.returncode==0 else 1)
+    assert result.returncode==KNOWN_REJECTION, 'known ownership admission changed; review its proof'
     print('Known #971 moved-image ownership gap reproduced with exact cleanup; not fork acceptance.')
