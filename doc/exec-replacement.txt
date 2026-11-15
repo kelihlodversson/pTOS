@@ -163,6 +163,15 @@ Why available constructors are insufficient:
   Freeing the active syscall stack or copying its C continuation is invalid.
 
 Smallest safe follow-up:
+  Replacement peer admission includes canonical prepared THREAD and mapping
+  memberships, even before active_space/pending_space adoption. Its borrowed
+  prepared-member alias is inspected only while mapping preparation is
+  PREPARING/PREPARED: ABORTING may already have freed it before file-backing
+  cleanup reenters admission. A production-owner callback regression verifies
+  unrelated-root prepare/validate/abort and exact reference conservation;
+  the preceding reader fails that control under ASan. No membership registry
+  or cleanup-order change is required.
+
   Extend the current KPROC loader image owner with an opaque movable bundle
   prepared from this receipt's selected root and staged layout. Add existing
   scheduler/launcher replacement prepare + seal + NORETURN commit, preserving

@@ -1378,7 +1378,8 @@ static BOOL exec_space_associated(const KPROC *process,const KASPACE *space)
     KTHREAD *thread;
     if (process->active_space==space || process->pending_space==space ||
         kaspace_member_matches(process->mapping_members,space,process->number,process) ||
-        kaspace_member_matches(process->prepared_mapping_members,space,process->number,process))
+        ((process->mapping_preparation==MAPPING_PREPARING || process->mapping_preparation==MAPPING_PREPARED) &&
+         kaspace_member_matches(process->prepared_mapping_members,space,process->number,process)))
         return TRUE;
     for (thread=process->threads;thread;thread=*kthread_next_link(thread))
         if (kthread_aspace(thread)==space) return TRUE;

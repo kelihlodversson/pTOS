@@ -34,6 +34,55 @@ void proc_dispose_process(KPROC *p) { (void)p;CHECK(0); }
 BOOL ksched_wait_ready(BOOL (*ready)(void *),void *context) { return ready(context); }
 ASPACE_ROOT aspace_root(const ASPACE *as) { return (ASPACE_ROOT)(uintptr_t)as; }
 
+static KPROC *reentry_source;
+static KTHREAD *reentry_thread;
+static KASPACE *reentry_selected;
+static unsigned reentries;
+static void admit_during_mapping_retirement(void)
+{
+    KPROC_EXEC_REPLACEMENT *receipt=NULL;
+    fileback_put_callback=NULL;
+    reentries++;
+    CHECK(kproc_exec_replacement_prepare(reentry_source,reentry_thread,reentry_selected,&receipt)==E_OK);
+    CHECK(receipt && kproc_exec_replacement_validate(receipt)==E_OK);
+    kproc_exec_replacement_abort(&receipt);
+}
+static void test_abort_reentry(KPROC *source,KTHREAD *thread,KASPACE *selected)
+{
+    ASPACE backend={0};
+    KASPACE *third=kaspace_adopt(&backend);
+    PD origin_pd={0},foreign_pd={0};
+    KPROC origin={0},foreign={0};
+    KASPACE_MEMBER *members=NULL;
+    LONG mapping;
+    unsigned live=allocations-frees;
+    ULONG refs=source->references,root_refs=selected->refs;
+    origin.pd=&origin_pd;origin.references=1;origin.number=11;origin.pid=33;
+    origin.active_space=third;origin.aspace=&backend;
+    foreign.pd=&foreign_pd;foreign.references=1;foreign.number=10;foreign.pid=32;
+    source->next=&foreign;foreign.next=&origin;
+    CHECK(kaspace_member_new(third,origin.number,&origin,&origin.mapping_members)==E_OK);
+    origin.allocation_scope=kaspace_member_scope(origin.mapping_members);
+    mapping=kproc_mmap(&origin_pd,0,USER_PAGE_SIZE,PROT_READ,MAP_PRIVATE,0,0);
+    CHECK(mapping>0 && file.references==1);
+    CHECK(kproc_clone_prepare_mapping_owners(&foreign,&origin,third,FALSE,&members)==E_OK);
+    kaspace_member_release(&origin.mapping_members);origin.allocation_scope=NULL;
+    reentry_source=source;reentry_thread=thread;reentry_selected=selected;
+    fileback_put_callback=admit_during_mapping_retirement;
+    /* Member release frees its record before final file backing callbacks.
+     * The borrowed prepared-member alias is invalid throughout ABORTING. */
+    kproc_abort_mapping_owners(&foreign,third,&members);
+    CHECK(reentries==1 && !fileback_put_callback && !members &&
+          !foreign.prepared_mapping_members && !foreign.mapping_preparation);
+    CHECK(!cleanup_depth && !source->exec_replacement_ticket && !file.references &&
+          source->references==refs && selected->refs==root_refs && allocations-frees==live);
+    source->next=NULL;origin.active_space=NULL;
+    kaspace_put(third);
+    CHECK(backend.destroyed==1);
+    reentry_source=NULL;reentry_thread=NULL;reentry_selected=NULL;
+    puts("Replacement admission during actual mapping/fileback abort reentry: PASS");
+}
+
 int main(void)
 {
     ASPACE old_backend={0},new_backend={0};
@@ -49,6 +98,8 @@ int main(void)
     caller.process=&source;caller.space=old;caller.tid=23;caller.executing=TRUE;
     source.threads=&caller;current_thread=&caller;kproc_list=&source;
     roots=old->refs;identities=source.references;baseline=allocations-frees;
+    test_abort_reentry(&source,&caller,selected);
+    CHECK(allocations-frees==baseline && old->refs==roots && selected->refs==1);
     {
         KPROC *identity=NULL;KASPACE *space=NULL;KTHREAD *next=NULL;
         /* Smallest production owner control for #970: a fresh THREAD cannot

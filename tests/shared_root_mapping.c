@@ -121,6 +121,7 @@ ULONG fileback_size(const FILE_BACKING *f) { CHECK(f==&file);return 65536; }
 void fileback_hold(FILE_BACKING *f) { if(f) { CHECK(f==&file && f->references);f->references++; } }
 BOOL fileback_try_hold(FILE_BACKING *f)
 { if(!f || !f->references || (fail_file_hold && !--fail_file_hold)) return FALSE;f->references++;return TRUE; }
+static void (*fileback_put_callback)(void);
 void fileback_put(FILE_BACKING *f)
 {
     if(f) {
@@ -129,6 +130,7 @@ void fileback_put(FILE_BACKING *f)
             KASPACE_RESERVATION_HOLD *hold=release_on_file_put;
             release_on_file_put=NULL;CHECK(kproc_reservation_release(hold));
         }
+        if(fileback_put_callback)fileback_put_callback();
     }
 }
 
