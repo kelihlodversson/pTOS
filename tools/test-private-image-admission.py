@@ -15,8 +15,12 @@ os.environ['CONFIG_']=''
 parser=argparse.ArgumentParser()
 parser.add_argument('--require',action='store_true',help='require moved-image admission (retained for CI compatibility)')
 parser.add_argument('--mode',choices=['normal','asan','fortified'],default='normal')
+parser.add_argument('--preset',choices=['pc-x86_64','virt-arm-aspace','virt-m68k-aspace'],default='pc-x86_64')
 args=parser.parse_args()
 control=r'''
+#if defined(__m68k__)
+LONG mcpu=40; /* hosted supported 68040 backend */
+#endif
 static void check_order(BOOL source_first)
 {
     KPROC loader={0},source={0};PD loader_pd={0},source_pd={0};
@@ -136,7 +140,8 @@ int main(void)
 with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
     work=Path(tmp)
     k=kconfiglib.Kconfig(warn_to_stderr=False)
-    k.load_config('configs/pc-x86_64_defconfig')
+    k.load_config('configs/'+args.preset+'_defconfig')
+    arch,machine={'pc-x86_64':('x86_64','pc-x86_64'),'virt-arm-aspace':('arm','virt-arm'),'virt-m68k-aspace':('m68k','virt-m68k')}[args.preset]
     for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_SHARED_VM_PEXEC_TEST','CONF_WITH_ELF_SHARED','CONF_WITH_MMAP','CONF_WITH_PRIVATE_CLONE','CONF_WITH_IMAGE_POLICY'):
         k.syms[name].set_value(2)
         assert k.syms[name].str_value=='y',name
@@ -148,10 +153,17 @@ with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
     source=source.replace('#include "../bdos/kproc.c"','#include "'+str(root/'bdos/kproc.c')+'"')
     source=source.replace('\nint main(void)\n','\nint shared_interp_original_main(void)\n')
     fixture=work/'control.c';fixture.write_text(source+control)
-    flags=['-std=gnu90','-O2','-g','-Wall','-Wextra','-Werror','-fno-builtin','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),'-Iinclude/machine/pc-x86_64','-Iinclude/arch/x86_64','-Ibios/machine/pc-x86_64','-Ibios/arch/x86_64','-iquote','bdos','-iquote','bios','-iquote','fs','-iquote','aes','-idirafter','include']
+    flags=['-std=gnu90','-O2','-g','-Wall','-Wextra','-Werror','-fno-builtin','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),'-Iinclude/machine/'+machine,'-Iinclude/arch/'+arch,'-Ibios/machine/'+machine,'-Ibios/arch/'+arch,'-iquote','bdos','-iquote','bios','-iquote','fs','-iquote','aes','-idirafter','include']
+    if arch!='x86_64': flags+=['-DBORROW_GENERIC']
+    if arch=='m68k': flags+=['-D__m68k__']
     if args.mode=='asan': flags+=['-fsanitize=address,undefined','-fno-omit-frame-pointer']
     elif args.mode=='fortified': flags+=['-D_FORTIFY_SOURCE=3','-fstack-protector-strong']
-    subprocess.run(shlex.split(os.environ.get('HOSTCC','cc'))+flags+[str(fixture),'bdos/kaspace.c','bios/machine/pc-x86_64/x32image.c','lib/ldso/startup.c','-Wl,--gc-sections','-o',str(work/'control')],check=True)
+    # Host architecture differs from the modeled 32-bit target. Enable only
+    # the production layout implementation's target-selection guard.
+    generic_layout=work/'progimage.c'
+    generic_layout.write_text((root/'bios/progimage.c').read_text().replace(
+        '#if CONF_WITH_USER_ASPACE && !defined(__x86_64__)', '#if CONF_WITH_USER_ASPACE'))
+    subprocess.run(shlex.split(os.environ.get('HOSTCC','cc'))+flags+[str(fixture),'bdos/kaspace.c']+(['bios/machine/pc-x86_64/x32image.c'] if arch=='x86_64' else [str(generic_layout)])+['lib/ldso/startup.c','-Wl,--gc-sections','-o',str(work/'control')],check=True)
     result=subprocess.run([str(work/'control')])
     print('required moved-image admission exit='+str(result.returncode))
     if result.returncode:

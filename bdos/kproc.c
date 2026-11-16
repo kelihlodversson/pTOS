@@ -3863,10 +3863,9 @@ static void next_reservation(const KPROC *kproc, VADDR at, VADDR limit, BOOL map
     if (image_reservation(kproc, &lo, &hi))
         reservation_candidate(lo, hi, at, limit, first, end);
 #if CONF_WITH_PRIVATE_CLONE
-    if (kproc->private_image && kproc->private_image->committed) {
-        const struct private_image_snapshot *snapshot=kproc->private_image;
-        reservation_candidate(snapshot->basepage,snapshot->basepage+snapshot->basepage_bytes,at,limit,first,end);
-        reservation_candidate(snapshot->environment,snapshot->environment+snapshot->environment_bytes,at,limit,first,end);
+    if (kproc->logical_context) {
+        reservation_candidate(kproc->logical_basepage,kproc->logical_basepage+kproc->logical_bp_bytes,at,limit,first,end);
+        reservation_candidate(kproc->logical_environment,kproc->logical_environment+kproc->logical_env_bytes,at,limit,first,end);
     }
 #endif
     for (i = 0; i < kproc->nheap; i++)
@@ -3927,9 +3926,8 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
     VADDR image_first = 0, image_end = 0;
     ULONG index = 0, ordinary = 0;
 #if CONF_WITH_PRIVATE_CLONE
-    const struct private_image_snapshot *snapshot=kproc->private_image;
-    BOOL basepage_pending=snapshot && snapshot->committed && snapshot->basepage_bytes;
-    BOOL environment_pending=snapshot && snapshot->committed && snapshot->environment_bytes;
+    BOOL basepage_pending=kproc->logical_context && kproc->logical_bp_bytes;
+    BOOL environment_pending=kproc->logical_context && kproc->logical_env_bytes;
 #endif
     BOOL system_pending = TRUE;
     BOOL image_pending = image_reservation(kproc, &image_first, &image_end);
@@ -3958,11 +3956,11 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
             source = GAP_IMAGE;
         }
 #if CONF_WITH_PRIVATE_CLONE
-        if (basepage_pending && snapshot->basepage<first) {
-            first=snapshot->basepage;end=first+snapshot->basepage_bytes;source=GAP_BASEPAGE;
+        if (basepage_pending && kproc->logical_basepage<first) {
+            first=kproc->logical_basepage;end=first+kproc->logical_bp_bytes;source=GAP_BASEPAGE;
         }
-        if (environment_pending && snapshot->environment<first) {
-            first=snapshot->environment;end=first+snapshot->environment_bytes;source=GAP_ENVIRONMENT;
+        if (environment_pending && kproc->logical_environment<first) {
+            first=kproc->logical_environment;end=first+kproc->logical_env_bytes;source=GAP_ENVIRONMENT;
         }
 #endif
         if (index < kproc->nheap && kproc->heap[index].va < first) {
