@@ -417,6 +417,9 @@ relaunch:
          * exactly like a freshly launched one. */
         launch.relaunch = FALSE;
         *fs_error_current() = launch.error;
+        /* The commit reads the staging container's basepage, which only
+         * the kernel root maps once the bundle dropped its loader borrows. */
+        aspace_hw_switch(aspace_kernel_root());
         ksched_exec_relaunch_commit(p, &kstack_phys, &kstack_top);
         launch.stack_phys = kstack_phys;
         launch.stack_top = kstack_top;

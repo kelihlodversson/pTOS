@@ -601,6 +601,10 @@ relaunch:
                               :: "r"(launcher_ds), "r"(launcher_es), "r"(launcher_fs), "r"(launcher_gs) : "memory");
             clone_restore_base(0xc0000100UL, launcher_fsbase);
             clone_restore_base(0xc0000101UL, launcher_gsbase);
+            /* The commit reads the staging container's basepage, which
+             * only the kernel root maps once the bundle dropped its
+             * loader borrows. */
+            x86_64_write_cr3(x86_64_kernel_pml4_phys());
             ksched_exec_relaunch_commit(p, &fresh_phys, &fresh_top);
             kstack_phys = (UQUAD)fresh_phys; kstack_top = (UQUAD)fresh_top;
             launch.stack_phys = kstack_phys;
