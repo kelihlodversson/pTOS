@@ -160,8 +160,7 @@ config CONF_EXTERNAL_DESK
 	  m68k toolchains (ColdFire builds and links, but has not been run).
 	  x86-64 uses an x32 executable and the native VDI library. With
 	  CONF_WITH_LIBAES it uses shared libaes and runs without kernel AES.
-	  pc-x86_64-desktop_defconfig and pc-x86_64-libaes-desktop_defconfig
-	  select this configuration. ARM/m68k
+	  pc-x86_64-desktop_defconfig selects this configuration. ARM/m68k
 	  MMU kernels still need validated GEM entry points (see above).
 
 	  On by default for the images that are loaded into RAM from a disk

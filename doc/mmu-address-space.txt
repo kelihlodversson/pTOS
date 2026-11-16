@@ -445,8 +445,8 @@ from virt-m68k below:
     offered with this option: the pool layout of the window has no place
     for it.
   - Hatari's 68030 (WinUAE core, --mmu on) runs it: the regression suite
-    passes there (tools/run-hatari-tests.py f030, the hatari-tests.yml job
-    falcon-mmu).  So the loading of CRP and TC with the code running through
+    passes there (tools/run-hatari-tests.py f030, the Hatari job of
+    build.yml for falcon-mmu).  So the loading of CRP and TC with the code running through
     the low alias of the ROM, early termination at the root and the second
     level, long-format descriptors with the used and modified bits preset in a
     ROM, and the logical caches (cleared before the MMU is on) work in the

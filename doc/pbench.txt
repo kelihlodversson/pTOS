@@ -236,8 +236,9 @@ v_gtext() slower makes pBench's "VDI Text" slower.
 Performance baselines for CI
 ----------------------------
 
-The workflow .github/workflows/pbench.yml runs pBench under Hatari on every
-pull request to master or to an epic branch, in the three ST screen modes with
+The pbench job of .github/workflows/build.yml runs pBench under Hatari on
+every pull request to master or to an epic branch (with the systems and
+pbench.prg the "build m68k-atari" job made), in the three ST screen modes with
 and without the blitter, and, for atari512, on an emulated Falcon with a 68030
 and with a 68040, and compares the times with pTOS's own baselines in
 tools/pBench/ci-baselines (KEY-MODE-blitter.txt and KEY-MODE-noblitter.txt,

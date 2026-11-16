@@ -10,9 +10,10 @@
 # scripts).
 #
 # A cache written by a pull request is only seen by that pull request, so the
-# hatari-tests.yml workflow also runs on pushes to master and the epics that
-# change the pin, and nightly (a cache that is not used for seven days is
-# evicted): the pull requests restore the one the base branch has.
+# hatari-cache.yml workflow runs on pushes to master and the epics that change
+# the pin, and the Hatari jobs of build.yml run nightly (a cache that is not
+# used for seven days is evicted): the pull requests restore the one the base
+# branch has.
 #
 
 name: Set up the pinned Hatari
