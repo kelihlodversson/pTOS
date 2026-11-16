@@ -855,14 +855,15 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 
 #if CONF_WITH_EXEC_REPLACE && KPROC_LEGACY_PRG
-    /* A staged legacy TPA still needs a separate image-bundle contract. Do
-     * not start its move/loan ownership path as if it were a private ELF. */
+    /* A classic PRG runs from its TPA, so it cannot replace a program that
+     * keeps its basepage: Pexec(200) reports the program format. Do not start
+     * its move/loan ownership path as if it were a private ELF. */
     if (replacement && kpgm_is_prg()) {
 #if CONF_WITH_BINFMT
         binfmt_release(&interpreter);
 #endif
         xclose(fh);
-        return EINVFN;
+        return EPLFMT;
     }
 #endif
     /* allocate the environment first, depending on memory policy */
