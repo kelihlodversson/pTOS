@@ -40,6 +40,8 @@ BOOL kaspace_mutation_reentrant(const KASPACE *space);
  * mmap subranges are split before publication; heap claims cover one complete
  * allocation. Tokens authenticate birth and canonical PROCESS identity. */
 typedef struct { UQUAD ticket; } KASPACE_ATTACHMENT;
+/* Private-source admission checks canonical associations, not root refcounts. */
+BOOL kaspace_private_source_owned(const KASPACE *,UQUAD,const void *);
 BOOL kaspace_mapping_owned(KASPACE *,UQUAD,void *,UQUAD,VADDR,VADDR);
 LONG kaspace_attachment_acquire(KASPACE *,UQUAD,VADDR,VADDR,UQUAD,void *,
                                 UQUAD,void *,KASPACE_ATTACHMENT *);

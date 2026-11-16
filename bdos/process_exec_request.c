@@ -83,7 +83,11 @@ static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
     result=copy_argument(request.tail,PDCLSIZE,FALSE,&tail);
     if (result != E_OK) goto done;
     env_address=request.environment ? request.environment :
+#if CONF_WITH_PRIVATE_CLONE
+        (ULONG)kproc_private_environment(run);
+#else
         (ULONG)(uintptr_t)USERPTR_TO_PTR(run->p_env);
+#endif
     result=copy_argument(env_address,EXEC_ENV_MAX,TRUE,&environment);
     if (result != E_OK) goto done;
     if (request.directory) {

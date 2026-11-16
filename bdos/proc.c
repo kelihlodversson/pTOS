@@ -831,7 +831,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     elf_set_load_into_caller(flag == PE_LOAD && !replacement);
 #endif
 #if CONF_WITH_BINFMT
-    rc = binfmt_load_header(path, tail, env ? env : (char *)USERPTR_TO_PTR(run->p_env), &hdr, &fh, &interpreter,
+    rc = binfmt_load_header(path, tail, env ? env : (char *)
+#if CONF_WITH_PRIVATE_CLONE
+        (uintptr_t)kproc_private_environment(run)
+#else
+        USERPTR_TO_PTR(run->p_env)
+#endif
+                           , &hdr, &fh, &interpreter,
 #if CONF_WITH_CUIS
                            directory != NULL
 #else
@@ -1309,7 +1315,11 @@ static char *alloc_env(ULONG flags, char *env)
 
     /* determine the env size */
     if (env == NULL)
+#if CONF_WITH_PRIVATE_CLONE
+        env = (char *)(uintptr_t)kproc_private_environment(run);
+#else
         env = (char *)USERPTR_TO_PTR(run->p_env);
+#endif
     size = (envsize(env) + 1) & ~1;  /* must be even */
 
     /* allocate it */

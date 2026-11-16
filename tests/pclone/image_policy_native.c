@@ -7,6 +7,7 @@
 #include "../../include/image_policy_test.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
+#include <mint/basepage.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -102,11 +103,96 @@ static void test_image_policy(void)
     ptest_pass();
 }
 
+/* Runs both in ordinary loaded images and in the PE_LOAD -> mode 106 moved
+ * image below. Child status crosses the private VM boundary; globals do not. */
+static volatile long private_image_value=0x13579;
+static unsigned char private_dta[512];
+static void *private_original_dta;
+static char *private_original_environment;
+static void private_image_entry(void *argument)
+{
+    long expected=(long)argument;
+    int bad=private_image_value!=0x13579 || Pgetpid()==expected;
+    if((void *)Fgetdta()!=private_original_dta) bad=1;
+    Fsetdta(private_dta);
+    if((void *)Fgetdta()!=private_dta || (void *)_base->p_dta!=private_dta) bad=1;
+    _base->p_env=(char *)0xffff0000UL;
+    if(Pexec(0,"C:\\GLOBALCH.TOS","\1w",0)!=-40L) bad=1;
+    _base->p_env=private_original_environment;
+    private_image_value=0x24680;
+    (void)Pterm(bad?79:72);
+}
+static void test_private_image(void)
+{
+    struct ptos_clone_args args={0};
+    long stack=Malloc(32768),tid,status;
+    int cycle,ok=1;
+    ptest_begin("private image ownership and COW execution");
+    private_original_dta=(void *)Fgetdta();private_original_environment=_base->p_env;
+    if(stack<=0) {ptest_assert_msg(0,"allocate private image stack");ptest_pass();return;}
+    args.flags=CLONE_VM;args.entry=private_image_entry;args.argument=(void *)Pgetpid();
+    args.stack_base=(void *)stack;args.stack_size=32768;
+    for(cycle=0;cycle<4;cycle++) {
+        memset((void *)stack,0,32768);private_image_value=0x13579;
+        tid=pclone_trap(&args,0xc8920000UL|sizeof(args));
+        if(tid<=0) {ok=0;break;}
+        status=Pwaitpid(-1,0,0);
+        if((status&65535)!=72 || private_image_value!=0x13579 ||
+            (void *)Fgetdta()!=private_original_dta || (void *)_base->p_dta!=private_original_dta || _base->p_env!=private_original_environment) ok=0;
+    }
+    ptest_assert_msg(ok,"independent image child executes with isolated COW writes");
+    ptest_assert_msg(Mfree((void *)stack)==0,"release private image stack");
+    if(ok) conws("native private image execution/COW: PASS\r\n");
+    ptest_pass();
+}
+
+static void test_unmanaged(void)
+{
+    struct ptos_clone_args args={0};
+    int32_t pid=0x12345678,tid=0x23456789;
+    long stack=Malloc(8192),parent=Pgetpid();
+    ptest_begin("Pclone nested unmanaged context");
+    ptest_assert_msg(stack>0,"allocate valid unmanaged request stack");
+    if(stack>0) {
+        args.entry=private_image_entry;args.stack_base=(void *)stack;args.stack_size=8192;
+        args.child_pid=&pid;args.child_tid=&tid;args.flags=CLONE_VM;
+        ptest_assert_msg(pclone_trap(&args,32)==-32L,"unmanaged NEW_PROCESS fails EINVFN");
+        args.flags|=CLONE_SAME_PROCESS;
+        ptest_assert_msg(pclone_trap(&args,32)==-32L,"unmanaged SAME_PROCESS fails EINVFN");
+        ptest_assert_msg(pid==0x12345678 && tid==0x23456789 && Pgetpid()==parent &&
+            Pwaitpid(-1,1,0)==-33L,"unsupported context preserves outputs/identity and publishes nothing");
+        ptest_assert_msg(Mfree((void *)stack)==0,"unmanaged failure retains no stack hold");
+    }
+    ptest_pass();
+}
+/* Reuse the exact staged-source checks without loading another full suite
+ * into m68k's 2 MiB classic process window. */
+#define RUNNABLE_STACK_SIZE 32768
+static volatile unsigned phase1_entered;
+static volatile unsigned long phase1_argument;
+static volatile long phase1_pid;
+static unsigned phase1_resources;
+static int phase1_resource_error;
+static void phase1_entry(void *argument)
+{
+    phase1_entered++;phase1_argument=(unsigned long)argument;phase1_pid=Pgetpid();
+#if defined(__arm__)
+    __asm__ volatile ("mov r0,#91" ::: "r0");
+#elif defined(__mc68000__)
+    __asm__ volatile ("moveq #91,%%d0" ::: "d0");
+#else
+    __asm__ volatile ("movl $91,%%eax" ::: "eax");
+#endif
+}
+#include "staged_policy.h"
+
 int main(void)
 {
     int failures;
     ptest_log_append();
-    test_image_policy();
+    if((unsigned char)_base->p_cmdlin[0]==15 && !memcmp(_base->p_cmdlin+1,"--abi-unmanaged",15)) test_unmanaged();
+    else if((unsigned char)_base->p_cmdlin[0]==12 && !memcmp(_base->p_cmdlin+1,"--abi-staged",12)) phase1_run_staged();
+    else {test_image_policy();test_private_image();}
     failures=ptest_failures();
     ptest_log_flush();
     Pterm(failures);
