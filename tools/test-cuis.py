@@ -193,6 +193,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     # This fixture models the ordinary native loader and deferred teardown;
     # executable interpreter dispatch has its own parser/boot fixtures.
     native.syms["CONF_WITH_BINFMT"].set_value(0)
+    # Like binfmt, Pexec(200) is outside this launcher-rollback fixture.
+    native.syms["CONF_WITH_EXEC_REPLACE"].set_value(0)
     native.write_config(str(rollback / "config"))
     subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
                     "--config", str(rollback / "config"), "--header",
