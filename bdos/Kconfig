@@ -45,9 +45,11 @@ config CONF_WITH_PEXEC200
     depends on CONF_WITH_EXEC_REPLACE
     default y
     help
-      Enable GEMDOS Pexec(200, path, tail, env): load an ELF program and
-      replace the calling program with it, keeping the PROCESS, PID,
-      basepage, open files, current directories, parent and children.
+      Enable GEMDOS Pexec(200, path, tail, env), as in FreeMiNT: load an
+      ELF or classic PRG program into a new basepage and replace the calling
+      program with it, keeping the PROCESS, PID, open files, current
+      directories, parent and children, and freeing the old program's
+      basepage, environment and memory.
       Success does not return; failure returns an error to the unchanged
       original program. An asynchronously started PROCESS is replaced
       through the scheduler-root handoff, a synchronously nested child

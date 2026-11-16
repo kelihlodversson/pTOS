@@ -241,7 +241,6 @@ LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt);
  * owned, so they don't leak.
  */
 void pfs_proc_exit(PD *r);
-void pfs_proc_searches_release(PD *r);
 
 /* Transactional inheritance: acquire all slots before publishing child CWD.
  * No driver callbacks or allocations. Failure leaves the child unchanged. */

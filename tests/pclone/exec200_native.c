@@ -1,15 +1,15 @@
 /* Pexec(200) acceptance subject (#970). Started by the Pclone runner as an
  * anchor PROCESS with Pexec(100), and again as a synchronously nested child
- * with Pexec(0) and the tail "N", which takes the launcher relaunch path. Every injected or genuine preparation
- * failure must leave this program running unchanged, with every counter
- * conserved; the final call replaces it with EXEC200B.TOS in the same
- * PROCESS and never returns. */
-#include "exec200_probe.h"
+ * with Pexec(0) and the tail "N", which takes the launcher relaunch path.
+ * Every injected or genuine preparation failure must leave this program
+ * running unchanged, with every counter conserved; the genuine call replaces
+ * it with the ELF image EXEC200B.TOS in the same PROCESS and never returns.
+ * That image finally replaces itself with this program again (tail "F"):
+ * on m68k, where this is a classic PRG, that is an ELF-to-PRG replacement.
+ * The final program completes the PROCESS with status 70. */
+#include "exec200_check.h"
 #include "../../include/mapping_lifetime_test.h"
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
-#include <stdio.h>
-#include <string.h>
 
 static EXEC_REPLACE_TEST_STATE original;
 static long descriptor;
@@ -52,23 +52,41 @@ static void unchanged(const char *what)
     }
 #endif
 }
-static void injected(unsigned kind, unsigned stage, long expected)
+static void injected_target(const char *path, unsigned kind, unsigned stage, long expected)
 {
     long result;
     char message[48];
     exec200_probe(0, EXEC_REPLACE_ARM + (kind << 8) + stage);
-    result = exec200_call("EXEC200B.TOS", "\0", environment);
+    result = exec200_call(path, "\0", environment);
     exec200_probe(0, EXEC_REPLACE_ARM);
-    sprintf(message, "injected failure %u.%u", kind, stage);
+    sprintf(message, "injected failure %u.%u %s", kind, stage, path);
     if (result != expected) fail(message, result);
     unchanged(message);
 }
+static void injected(unsigned kind, unsigned stage, long expected)
+{
+    injected_target("EXEC200B.TOS", kind, stage, expected);
+}
+/* The last program of the chain, after an ELF image replaced itself with
+ * this one again. */
+static void final_program(void)
+{
+    EXEC200_TAIL t;
+    exec200_verify("final", &t);
+    if (t.generation != 3) exec200_fail("final", "generation", (long)t.generation);
+    if (Fsnext() == 0) exec200_fail("final", "search survived the exec", 0);
+    if (Fclose((short)t.descriptor)) exec200_fail("final", "descriptor close", t.descriptor);
+    Cconws(t.nested ? "native nested Pexec(200) launcher relaunch: PASS\r\n"
+                    : "native Pexec(200) same-PROCESS executable/root replacement: PASS\r\n");
+    Pterm(70);
+}
 int main(void)
 {
-    char tail[128];
+    EXEC200_TAIL t;
     unsigned stage;
     long result;
     int nested = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'N';
+    if ((unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'F') final_program();
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("initial query", 0);
     if (original.generation[0] || original.generation[1]) fail("initial generation", 1);
     if (original.pid != (unsigned long)Pgetpid()) fail("initial PID", Pgetpid());
@@ -77,6 +95,9 @@ int main(void)
     /* Warm every allocation cache a successful preparation touches, then
      * take the baseline every later failure is compared against. */
     injected(2, 10, -39L);
+#if defined(__mc68000__)
+    injected_target("EXEC200.TOS", 2, 10, -39L);
+#endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     snapshot(&before);
     baseline = 1;
@@ -85,22 +106,22 @@ int main(void)
     unchanged("missing file");
     if ((result = exec200_call("LOADFAIL.TOS", "\0", environment)) >= 0) fail("load failure", result);
     unchanged("load failure");
-#if defined(__mc68000__)
-    /* This subject itself is a classic PRG on m68k: never a replacement. */
-    if ((result = exec200_call("EXEC200.TOS", "\0", environment)) != -66L) fail("PRG target", result);
-    unchanged("PRG target");
-#endif
     for (stage = 1; stage <= 4; stage++) injected(3, stage, -39L);
     for (stage = 1; stage <= 8; stage++) injected(1, stage, -39L);
+#if defined(__mc68000__)
+    /* The same bundle stages with a classic PRG target. */
+    for (stage = 1; stage <= 8; stage++) injected_target("EXEC200.TOS", 1, stage, -39L);
+#endif
     for (stage = 1; stage <= 10; stage++)
         injected(2, stage, stage == 6 || stage == 7 ? -36L : stage == 9 ? -326L : -39L);
-    /* The genuine commit: same PROCESS, different executable and root. */
-    sprintf(tail + 1, "1 %ld %lu %lu %lu %lu %ld %d %ld", descriptor,
-            (unsigned long)original.pid, (unsigned long)original.tid,
-            (unsigned long)original.root[0], (unsigned long)original.root[1], (long)Pgetppid(), nested,
-            Fseek(0L, (short)descriptor, 1));
-    tail[0] = (char)strlen(tail + 1);
-    result = exec200_call("EXEC200B.TOS", tail, environment);
+    /* The genuine commit: same PROCESS, different executable, basepage and
+     * root. The tail starts the chain at generation 1. */
+    memset(&t, 0, sizeof(t));
+    t.generation = 0; t.descriptor = descriptor;
+    t.pid = original.pid; t.tid = original.tid;
+    t.root0 = original.root[0]; t.root1 = original.root[1];
+    t.parent = Pgetppid(); t.nested = nested;
+    result = exec200_next("EXEC200B.TOS", 0, &t, environment);
     fail("successful Pexec(200) returned to the old program", result);
     return 84;
 }

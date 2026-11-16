@@ -609,6 +609,9 @@ relaunch:
              * loader borrows. */
             x86_64_write_cr3(x86_64_kernel_pml4_phys());
             ksched_exec_relaunch_commit(p, &fresh_phys, &fresh_top);
+            /* The PROCESS now runs on the new program's basepage. */
+            p = run;
+            launch.pd = p;
             kstack_phys = (UQUAD)fresh_phys; kstack_top = (UQUAD)fresh_top;
             launch.stack_phys = kstack_phys;
             x86_64_set_kernel_stack(kstack_top);

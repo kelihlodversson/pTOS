@@ -24,9 +24,6 @@
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #include "exec_replace.h"
-#if CONF_WITH_PLUGGABLE_FS
-#include "pfs.h"
-#endif
 #include "exec_handoff_test.h"
 #include "kaspace.h"
 #endif
@@ -888,6 +885,30 @@ failed:
     return error;
 }
 
+/* Pexec(200) gives the PROCESS the new program's basepage: every scheduler
+ * reference to the old one moves with it. No allocation or callback. */
+static void exec_rekey_scheduler(PD *old, PD *new)
+{
+    KERNEL_TASK *task;
+    struct ksched_nested *frame;
+    if (run == old) run = new;
+    if (execution_cpu.pending_exec && execution_cpu.pending_exec->pd == old)
+        execution_cpu.pending_exec->pd = new;
+    for (task = scheduler.tasks; task; task = task->next_task) {
+        if (task->program == old) task->program = new;
+        if (task->parent == old) task->parent = new;
+        if (task->execution.cpu.pd == old) task->execution.cpu.pd = new;
+        for (frame = task->nested; frame; frame = frame->outer) {
+            if (frame->program == old) frame->program = new;
+            if (frame->enclosing == old) frame->enclosing = new;
+        }
+        if (task->nested_prepared) {
+            if (task->nested_prepared->program == old) task->nested_prepared->program = new;
+            if (task->nested_prepared->enclosing == old) task->nested_prepared->enclosing = new;
+        }
+    }
+}
+
 /* Called only AFTER cpu_acknowledge_handoff(), on the permanent root stack.
  * No callbacks, allocations, user copies or image policy are used to install
  * the fresh context. All destruction follows installation outside the leaf. */
@@ -920,7 +941,11 @@ static void exec_handoff_on_root(void)
         kthread_exec_rebind(tx->thread, tx, &space);
         tx->old_thread_space = space;
         tx->rebound = TRUE;
-        kproc_exec_image_commit(tx->bundle);
+        {
+            PD *old = tx->pd;
+            kproc_exec_image_commit(tx->bundle);
+            exec_rekey_scheduler(old, kproc_live_pd(tx->process));
+        }
         tx->committed = TRUE;
         kproc_exec_replacement_commit(tx->receipt);
     }
@@ -975,16 +1000,18 @@ static void exec_handoff_on_root(void)
     task->state = TASK_NEW;
 }
 
-/* Shared off-stack retirement of a committed Pexec(200): the replaced
- * program's directory searches, the old root and memberships, the container
- * (which owns the old environment) and the remaining old-root references.
- * Only then, with nothing but the committed root mapping it, is a classic PRG
- * TPA trimmed. A procmem block still pinned by a dying root is reclaimed on
- * its last unpin, so the order of the two retirements is not load-bearing.
+/* Shared off-stack retirement of a committed Pexec(200): the old root and
+ * memberships, then the container, which now holds the old program's
+ * basepage: its disposal frees the old basepage, TPA, environment and every
+ * other block that basepage owns, releases the old program's directory
+ * searches and GUI clients, and closes nothing the PROCESS kept (its files
+ * moved to the new basepage at commit). A procmem block still pinned by a
+ * dying root is reclaimed on its last unpin, so the order of the two
+ * retirements is not load-bearing.
  * Cleanup callbacks may yield but must not unwind: an escaping disk error
  * would land in an abandoned syscall frame, so it is fatal, as in
  * proc_finalize_exit(). */
-static void exec_retire_common(PD *pd, KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bundle,
+static void exec_retire_common(KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bundle,
                                KASPACE **old_thread_space, KASPACE **old_space)
 {
     KSCHED_CLEANUP_SCOPE scope;
@@ -995,14 +1022,10 @@ static void exec_retire_common(PD *pd, KPROC_EXEC_REPLACEMENT **receipt, KPROC_E
     }
     memset(&scope, 0, sizeof(scope));
     ksched_cleanup_begin(&scope);
-#if CONF_WITH_PLUGGABLE_FS
-    pfs_proc_searches_release(pd);
-#endif
     kproc_exec_image_retire(bundle);
     kproc_exec_replacement_retire(receipt);
     kaspace_put(*old_thread_space); *old_thread_space = NULL;
     kaspace_put(*old_space); *old_space = NULL;
-    kproc_exec_trim_tpa(pd);
     ksched_cleanup_end(&scope);
     *fs_error_current() = saved_error;
 }
@@ -1018,7 +1041,7 @@ static void exec_replace_retire(KERNEL_TASK *task)
         panic("exec replace: foreign retirement");
     task->exec_retired = NULL;
     run = tx->pd;
-    exec_retire_common(tx->pd, &tx->receipt, &tx->bundle, &tx->old_thread_space, &tx->space);
+    exec_retire_common(&tx->receipt, &tx->bundle, &tx->old_thread_space, &tx->space);
     kaspace_put(tx->target);
     kproc_release(tx->process);
     kfree(tx);
@@ -1813,6 +1836,7 @@ void ksched_exec_relaunch_commit(PD *pd, PADDR *kstack_phys, uintptr_t *kstack_t
     kthread_exec_rebind_nested(frame->thread, &space);
     nx->old_thread_space = space;
     kproc_exec_image_commit(nx->bundle);
+    exec_rekey_scheduler(pd, kproc_live_pd(frame->process));
     kproc_exec_replacement_commit(nx->receipt);
     nx->committed = TRUE;
     kproc_exec_generation_advance(frame->process);
@@ -1833,7 +1857,7 @@ void ksched_exec_relaunch_retire(void)
     execution_cpu.nested_exec = NULL;
     native_sched_irq_restore(nx->irq_flags);
     kstack_free(nx->old_kstack);
-    exec_retire_common(run, &nx->receipt, &nx->bundle, &nx->old_thread_space, &nx->target);
+    exec_retire_common(&nx->receipt, &nx->bundle, &nx->old_thread_space, &nx->target);
     kfree(nx);
 }
 #endif

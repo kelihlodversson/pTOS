@@ -854,18 +854,6 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return rc;
     }
 
-#if CONF_WITH_EXEC_REPLACE && KPROC_LEGACY_PRG
-    /* A classic PRG runs from its TPA, so it cannot replace a program that
-     * keeps its basepage: Pexec(200) reports the program format. Do not start
-     * its move/loan ownership path as if it were a private ELF. */
-    if (replacement && kpgm_is_prg()) {
-#if CONF_WITH_BINFMT
-        binfmt_release(&interpreter);
-#endif
-        xclose(fh);
-        return EPLFMT;
-    }
-#endif
     /* allocate the environment first, depending on memory policy */
     env_ptr = alloc_env(hdr.h01_flags, env);
     if (env_ptr == NULL) {

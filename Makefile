@@ -2047,9 +2047,9 @@ TOCLEAN += EXECHAND.TOS
 ifeq ($(CONF_WITH_EXEC_REPLACEMENT_TEST),y)
 ifeq ($(CONF_WITH_PCLONE),y)
 TEST_EXEC200_FILES = EXEC200.TOS EXEC200B.TOS
-obj/exec200_native.o: tests/pclone/exec200_native.c tests/pclone/exec200_probe.h $(AUTOCONF_H) | obj
+obj/exec200_native.o: tests/pclone/exec200_native.c tests/pclone/exec200_probe.h tests/pclone/exec200_check.h $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
-obj/exec200_image.o: tests/pclone/exec200_image.c tests/pclone/exec200_probe.h $(AUTOCONF_H) | obj
+obj/exec200_image.o: tests/pclone/exec200_image.c tests/pclone/exec200_probe.h tests/pclone/exec200_check.h $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 EXEC200.TOS: $(TEST_STARTUP) obj/exec200_native.o $(LIBCMINI_LIB)

@@ -131,10 +131,6 @@ static LONG shared_interp_stack(KPROC *target,struct shared_exec_regions *set,VA
     memset(&info,0,sizeof(info));info.phdr=recipe->program.phdr+bias;
     info.phnum=recipe->program.phnum;info.entry=target->layout.entry;
     info.base=ibias;info.pagesz=USER_PAGE_SIZE;info.basepage=(ULONG)(uintptr_t)target->pd;
-#if CONF_WITH_EXEC_REPLACE
-    if (target->exec_basepage) info.basepage=(ULONG)(uintptr_t)target->exec_basepage;
-#endif
-
     info.bootdrive=bootdev;info.load_bias=bias;
 #if CONF_WITH_LIBAES
     info.capture_launch=1;info.environment=(ULONG)(uintptr_t)target->env_start;

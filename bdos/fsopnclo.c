@@ -814,3 +814,14 @@ BOOL contains_illegal_characters(const char *test)
 
     return FALSE;
 }
+
+#if CONF_WITH_EXEC_REPLACE
+/* Pexec(200): the PROCESS keeps its open files across the move to the new
+ * program's basepage (doc/exec-replacement.txt). No allocation or callback. */
+void fs_exec_rekey_owner(PD *old, PD *new)
+{
+    WORD i;
+    for (i = 0; i < OPNFILES; i++)
+        if (sft[i].f_own == old) sft[i].f_own = new;
+}
+#endif

@@ -136,7 +136,7 @@ LONG kproc_exec_replacement_load_begin(KPROC_EXEC_REPLACEMENT *replacement,KPROC
         !image || image==replacement->process) return EACCDN;
     owned=kproc_retain_live(image);
     if (!owned) return ENSMEM;
-    error=kproc_exec_image_select(owned,replacement->selected,kproc_live_pd(replacement->process));
+    error=kproc_exec_image_select(owned,replacement->selected);
     if (error) { kproc_release(owned);return error; }
     replacement->image=owned;
     return E_OK;

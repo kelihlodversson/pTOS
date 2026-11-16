@@ -609,6 +609,9 @@ long xmkdir(char *s);
 long xrmdir(char *p);
 long xchmod(char *p, WORD wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
+#if CONF_WITH_EXEC_REPLACE
+void fs_exec_rekey_owner(PD *old, PD *new);
+#endif
 long xfsfirst_at(char *name, WORD att, DTAINFO *dta);
 long xfsnext_at(DTAINFO *dta);
 void mark_bcbs_invalid(int drv);    /* bdosmain.c: after a disk error */

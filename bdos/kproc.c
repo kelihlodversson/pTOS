@@ -186,7 +186,6 @@ struct kproc {
 #if CONF_WITH_EXEC_REPLACE
     UQUAD exec_replacement_ticket; /* reversible replacement, not launch selection */
     BOOL exec_image_staging; /* loader container bound to a replacement root */
-    PD *exec_basepage; /* replacement source PD: the basepage the image will have */
 #endif
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
@@ -1793,11 +1792,11 @@ void kproc_exec_replacement_drop(KPROC *process,UQUAD ticket)
     process->exec_replacement_ticket=0;
 }
 
-LONG kproc_exec_image_select(KPROC *image,KASPACE *selected,PD *basepage)
+LONG kproc_exec_image_select(KPROC *image,KASPACE *selected)
 {
     KASPACE *owned;
     KPROC *peer;
-    if (!image || !selected || !basepage || basepage==image->pd ||
+    if (!image || !selected ||
         !kproc_clone_target_ready(image,NULL) || image->exec_image_staging ||
         image->mapping_preparation || image->mapping_members || image->prepared_mapping_members)
         return EACCDN;
@@ -1806,9 +1805,20 @@ LONG kproc_exec_image_select(KPROC *image,KASPACE *selected,PD *basepage)
     owned=kaspace_share(selected);
     if (!owned) return ENSMEM;
     image->exec_image_staging=TRUE;
-    image->exec_basepage=basepage;
     image->pending_space=owned;
     return E_OK;
+}
+
+/* A staged ELF image lives in the selected root; a classic PRG in the
+ * container's own TPA, with its text extent recorded by the loader. */
+static BOOL exec_image_loaded(const KPROC *image,const KASPACE *selected)
+{
+    if (image->has_image) return image->pending_as==kaspace_backend(selected);
+#if KPROC_LEGACY_PRG
+    return image->legacy && image->legacy_text_recorded && image->legacy_text_bytes;
+#else
+    return FALSE;
+#endif
 }
 
 BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL complete)
@@ -1817,11 +1827,12 @@ BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL co
         !image->started && !image->active_space && !image->threads && !image->lost && !image->load_parent &&
         !image->mapping_preparation && !image->mapping_members && !image->prepared_mapping_members &&
         image->exec_image_staging && image->pending_space==selected &&
-        (!complete || (image->has_image && image->pending_as==kaspace_backend(selected)));
+        (!complete || exec_image_loaded(image,selected));
 }
 
 /* Pexec(200) image bundle (doc/exec-replacement.txt). Owns everything the
- * source PROCESS will adopt at commit; nothing in the source changes here. */
+ * source PROCESS will adopt at commit, including the staging container's
+ * basepage, TPA and environment; nothing in the source changes here. */
 struct kproc_exec_image {
     KPROC *source, *image;          /* retained identities */
     KASPACE *space;                 /* retained selected root */
@@ -1922,8 +1933,7 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     LONG error = ENSMEM;
     if (!out || *out) return EINVAL;
     if (!selected || !kproc_exec_image_pending(image, selected, TRUE) ||
-        image->exec_basepage != source->pd || image->legacy || !exec_image_source_ok(source, image) ||
-        kproc_active_space(source) == selected)
+        !exec_image_source_ok(source, image) || kproc_active_space(source) == selected)
         return EACCDN;
     as = kaspace_backend(selected);
     b = kalloc(sizeof(*b));
@@ -1934,9 +1944,9 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     b->space = kaspace_share(selected);
     if (!b->source || !b->image || !b->space || exec_image_injected(1)) goto failed;
     /* The loader is done with the container's blocks: drop the source's
-     * supervisor-only borrows of them, whose pins would otherwise block the
-     * environment ownership transfer and outlive the commit. Disposing the
-     * container on failure would drop them the same way. */
+     * supervisor-only borrows of them, which would otherwise outlive the
+     * commit as stale records of the source. Disposing the container on
+     * failure would drop them the same way. */
     kproc_unborrow(image->env_start);
     kproc_unborrow(image->user_start);
     /* 2: the source's membership in the new root, and its scopes. */
@@ -1949,16 +1959,24 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
         goto failed;
 #endif
     if (exec_image_injected(3)) goto failed;
-    /* 4: the new environment, and the source's TPA, whose first bytes are the
-     * basepage the program keeps. An image never executes from its TPA. */
+    /* 4: the new basepage/TPA and environment: the container's, which the
+     * source adopts at commit. An ELF image runs from private pages and its
+     * TPA is data; a classic PRG runs from its TPA, with only its recorded
+     * text extent executable, exactly as for an ordinary launch. */
     if (!aspace_map_procmem(as, (VADDR)(uintptr_t)image->env_start,
                             (VADDR)(image->env_end - image->env_start),
                             ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
-        !aspace_map_procmem(as, (VADDR)(uintptr_t)source->user_start,
-                            (VADDR)(source->user_end - source->user_start),
-                            ASPACE_PROT_WRITE | ASPACE_PROT_USER) ||
-        exec_image_injected(4))
+        !aspace_map_procmem(as, (VADDR)(uintptr_t)image->user_start,
+                            (VADDR)(image->user_end - image->user_start),
+                            ASPACE_PROT_WRITE | ASPACE_PROT_USER))
         goto failed;
+#if KPROC_LEGACY_PRG
+    if (image->legacy &&
+        !aspace_mark_procmem_text(as, (VADDR)(uintptr_t)image->user_start + sizeof(PD),
+                                  image->legacy_text_bytes))
+        goto failed;
+#endif
+    if (exec_image_injected(4)) goto failed;
     /* 5: the PD exit status is written through, as for the original launch. */
     parent = source->parent;
 #if CONF_WITH_NATIVE_SCHED
@@ -1985,11 +2003,20 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     if (!x32_vdi_image_load(as)) goto failed;
 #endif
     if (exec_image_injected(6)) goto failed;
-    /* 7: the private stack, under the source's own Psetlimit() stack size if
-     * it still fits above the new image; a dynamic image has its ELF stack. */
-    /* The limit is this PROCESS's own: keep it, or fail before the commit
-     * when it no longer fits above the new image. */
+    /* 7: the stack. The PROCESS's own Psetlimit() size is kept, or the exec
+     * fails here when it no longer fits above the new image. A classic PRG
+     * keeps its stack in its TPA and starts at p_tbase; a dynamic ELF image
+     * has its ELF stack; a static one a private stack. */
     b->stack_size = source->stack_size;
+#if KPROC_LEGACY_PRG
+    if (image->legacy) {
+        PD *ipd = image->pd;
+        b->entry = (VADDR)(uintptr_t)USERPTR_TO_PTR(ipd->p_tbase);
+        b->stack_top = (VADDR)(uintptr_t)image->user_end & ~(VADDR)3;
+        b->stack_low = 0;
+    } else
+#endif
+    {
     if (source->stack_size && USER_STACK_TOP - source->stack_size - USER_PAGE_SIZE <
         ((image->layout.end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK)
         goto failed;
@@ -2015,13 +2042,18 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
         b->entry = image->layout.entry;
         b->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     }
+    }
     if (!b->entry || exec_image_injected(7)) goto failed;
     /* 8: fresh scheduler/syscall stacks and leases on the new entry and the
      * resident stack; the old ones stay in use until retirement. */
     {
         THREAD_STARTUP_ARGS args;
         args.entry = b->entry; args.argument = 0;
-        args.stack_base = b->stack_low; args.stack_size = (ULONG)(USER_STACK_TOP - b->stack_low);
+        if (b->stack_low) {
+            args.stack_base = b->stack_low; args.stack_size = (ULONG)(USER_STACK_TOP - b->stack_low);
+        } else {    /* a classic PRG: the top of its TPA */
+            args.stack_base = (b->stack_top - 256) & ~(VADDR)15; args.stack_size = 256;
+        }
         error = thread_startup_prepare_program(selected, &args, &b->startup);
         if (error) goto failed;
         error = ENSMEM;
@@ -2041,36 +2073,61 @@ BOOL kproc_exec_image_sealable(const KPROC_EXEC_IMAGE *b)
     const KPROC *s, *i;
     if (!b || b->committed || !b->source || !b->image || !b->space || !b->members) return FALSE;
     s = b->source; i = b->image;
-    return kproc_exec_image_pending(i, b->space, TRUE) && i->exec_basepage == s->pd &&
-        !i->legacy && exec_image_source_ok(s, NULL) && s->active_space != b->space &&
+    return kproc_exec_image_pending(i, b->space, TRUE) &&
+        exec_image_source_ok(s, NULL) && s->active_space != b->space &&
         s->disposal_state == PROCESS_LIVE && !s->completed && !s->completion_pending &&
-        procmem_gen(s->user_start) == s->tpa_gen &&
         kproc_exec_generation_capacity(s) &&
         kaspace_member_matches(b->members, b->space, s->number, s) &&
-        procmem_gen(s->env_start) == s->env_gen && procmem_owner(s->env_start) == s->pd &&
-        procmem_gen(i->env_start) == i->env_gen && procmem_owner(i->env_start) == i->pd &&
-        procmem_set_owner_ok(i->env_start, s->pd) && procmem_set_owner_ok(s->env_start, i->pd);
+        procmem_gen(s->user_start) == s->tpa_gen && procmem_gen(s->env_start) == s->env_gen &&
+        procmem_gen(i->user_start) == i->tpa_gen && procmem_gen(i->env_start) == i->env_gen &&
+        procmem_owner(i->user_start) == i->pd && procmem_owner(i->env_start) == i->pd;
 }
 
-/* No-fail, no-allocation, no-callback commit at the quiescent scheduler root
- * (#988). The source PROCESS keeps its identity, PD/TPA, files, directories,
- * parent, children, limits and THREAD; it adopts the bundle's root, image,
- * environment and stack. The container takes the old environment and the
- * old root goes to the bundle, both retired later off this stack. */
+/* References to a PROCESS's basepage held by other records move with it. */
+static void exec_image_rekey(PD *old, PD *new)
+{
+    KPROC *k;
+    for (k = kproc_list; k; k = k->next) {
+        if (k->parent == old) k->parent = new;
+        if (k->creator == old) k->creator = new;
+#if CONF_WITH_NATIVE_SCHED
+        if (k->async_parent == old) k->async_parent = new;
+        if (k->clone_controller_pd == old) k->clone_controller_pd = new;
+#endif
+        if (k->load_parent == old) k->load_parent = new;
+        if (k->lender == old) k->lender = new;
+    }
+}
+
+/* No-fail, no-allocation, no-callback commit, at the quiescent scheduler root
+ * (anchor) or in the launcher frame (nested child). As in FreeMiNT, the new
+ * program gets its own basepage: the source PROCESS (identity, PID, THREAD,
+ * descriptors, directories, parent, children, limits, accounting) adopts the
+ * staging container's basepage, TPA, environment, root, image and stack, and
+ * the container takes the old basepage, TPA and environment. Every block
+ * stays owned by the basepage it is in, so the container's later disposal
+ * frees the old program's memory, and the old root goes to the bundle; both
+ * are retired off this stack. The scheduler moves its own basepage
+ * references (ksched), and the open-file owners move here. */
 void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
 {
     KPROC *s, *i;
-    PD *pd, *ipd;
-    UBYTE *env_start, *env_end;
-    UQUAD env_gen;
+    PD *old, *new;
+    UBYTE *start, *end;
+    UQUAD gen;
+    DTAINFO *dta;
     UWORD k;
     if (!kproc_exec_image_sealable(b)) panic("exec image: commit preconditions changed");
-    s = b->source; i = b->image; pd = s->pd; ipd = i->pd;
-    if (!procmem_set_owner(i->env_start, pd) || !procmem_set_owner(s->env_start, ipd))
-        panic("exec image: environment ownership changed after preflight");
-    env_start = s->env_start; env_end = s->env_end; env_gen = s->env_gen;
+    s = b->source; i = b->image; old = s->pd; new = i->pd;
+    /* The basepage identity: PD, TPA and environment change places. */
+    s->pd = new; i->pd = old;
+    start = s->user_start; end = s->user_end; gen = s->tpa_gen;
+    s->user_start = i->user_start; s->user_end = i->user_end; s->tpa_gen = i->tpa_gen;
+    i->user_start = start; i->user_end = end; i->tpa_gen = gen;
+    start = s->env_start; end = s->env_end; gen = s->env_gen;
     s->env_start = i->env_start; s->env_end = i->env_end; s->env_gen = i->env_gen;
-    i->env_start = env_start; i->env_end = env_end; i->env_gen = env_gen;
+    i->env_start = start; i->env_end = end; i->env_gen = gen;
+    dta = s->dta; s->dta = (DTAINFO *)new->p_cmdlin; i->dta = dta;
     /* Root and memberships: owning references move, none is taken. */
     b->old_space = s->active_space; b->old_members = s->mapping_members;
     s->active_space = b->space; b->space = NULL;
@@ -2080,7 +2137,7 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     b->allocation_scope = b->runtime_scope = NULL;
     b->image_space = i->pending_space;
     i->pending_space = NULL; i->pending_as = NULL;
-    i->exec_image_staging = FALSE; i->exec_basepage = NULL;
+    i->exec_image_staging = FALSE;
     /* Image, interpreter and stack. */
     s->layout = i->layout; s->has_image = i->has_image;
     i->has_image = FALSE; memset(&i->layout, 0, sizeof(i->layout));
@@ -2100,30 +2157,32 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     }
 #endif
 #endif
-    s->legacy = FALSE;
+    s->legacy = i->legacy; i->legacy = FALSE;
 #if KPROC_LEGACY_PRG
-    s->legacy_text_bytes = 0; s->legacy_text_recorded = FALSE;
+    s->legacy_text_bytes = i->legacy_text_bytes; s->legacy_text_recorded = i->legacy_text_recorded;
+    i->legacy_text_bytes = 0; i->legacy_text_recorded = FALSE;
 #if CONF_WITH_IMAGE_POLICY
-    s->legacy_text_entry = 0;
+    s->legacy_text_entry = i->legacy_text_entry; i->legacy_text_entry = 0;
 #endif
 #endif
     s->load_va = 0; s->load_pages = 0;
-    s->entry = b->entry; s->stack_top = b->stack_top;
+    s->entry = s->legacy ? 0 : b->entry;   /* a classic PRG starts at its p_tbase */
+    s->stack_top = b->stack_top;
     s->stack_low = b->stack_low; s->stack_size = b->stack_size;
     s->ancestors = b->ancestors;
     /* Views of the old root never authenticate mappings of the new one. */
     for (k = 0; k < 5; k++) s->reservation_birth[k] = 0;
     memset(s->dtas, 0, sizeof(s->dtas)); s->dta_clock = 0;
     memcpy(s->executable_name, i->executable_name, sizeof(s->executable_name));
-    /* The basepage the program keeps describes the new program. */
-    pd->p_tbase = ipd->p_tbase; pd->p_tlen = ipd->p_tlen;
-    pd->p_dbase = ipd->p_dbase; pd->p_dlen = ipd->p_dlen;
-    pd->p_bbase = ipd->p_bbase; pd->p_blen = ipd->p_blen;
-    pd->p_flags = ipd->p_flags;
-    pd->p_env = PTR_TO_USERPTR((char *)s->env_start);
-    memcpy(pd->p_cmdlin, ipd->p_cmdlin, sizeof(pd->p_cmdlin));
-    pd->p_xdta = PTR_TO_USERPTR((DTA *)pd->p_cmdlin);
-    s->dta = (DTAINFO *)pd->p_cmdlin;
+    /* The new basepage: the old one's parent link (the ancestors page, at the
+     * same address in the new root) and default drive; the kernel keeps the
+     * authoritative file and directory tables in the PROCESS record. */
+    new->p_parent = old->p_parent;
+    new->p_curdrv = old->p_curdrv;
+    new->p_lddrv = old->p_lddrv;
+    new->p_xdta = PTR_TO_USERPTR((DTA *)new->p_cmdlin);
+    exec_image_rekey(old, new);
+    fs_exec_rekey_owner(old, new);
     b->committed = TRUE;
 }
 
@@ -2139,19 +2198,6 @@ KPROC *kproc_test_retain_pid(WORD pid)
     return NULL;
 }
 #endif
-/* After retirement, once no root but the committed one maps the source TPA:
- * a classic PRG's TPA (its old text, data and free memory) goes back to the
- * window, down to the basepage the new program keeps. Best effort: a lease or
- * pin that still covers the tail keeps it, exactly as for Mshrink(). */
-void kproc_exec_trim_tpa(PD *pd)
-{
-#if KPROC_LEGACY_PRG
-    (void)kproc_shrink_tpa(pd, pd, (long)sizeof(PD));
-#else
-    UNUSED(pd);
-#endif
-}
-
 THREAD_STARTUP_DRAFT *kproc_exec_image_take_startup(KPROC_EXEC_IMAGE *b)
 {
     THREAD_STARTUP_DRAFT *startup;
@@ -3572,10 +3618,6 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     info.base = ibias;
     info.pagesz = USER_PAGE_SIZE;
     info.basepage = (ULONG)(uintptr_t)pd;
-#if CONF_WITH_EXEC_REPLACE
-    /* A replacement image keeps its source's basepage (doc/exec-replacement.txt). */
-    if (kproc->exec_basepage) info.basepage = (ULONG)(uintptr_t)kproc->exec_basepage;
-#endif
     info.bootdrive = bootdev;
     info.load_bias = bias;
     info.capture_launch = 0;

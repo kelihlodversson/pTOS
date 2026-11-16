@@ -45,9 +45,9 @@ LONG kproc_exec_replacement_claim(struct kproc *, struct kthread *, struct kaspa
 BOOL kproc_exec_replacement_matches(struct kproc *, struct kthread *, struct kaspace *,
                                   struct kaspace *, struct kproc *image,UQUAD ticket);
 void kproc_exec_replacement_drop(struct kproc *, UQUAD ticket);
-/* Bind the container to the selected root; basepage is the source PD the
- * staged image records as its basepage (initial stack, auxv). */
-LONG kproc_exec_image_select(struct kproc *,struct kaspace *,struct _pd *basepage);
+/* Bind the staging container to the selected root. Its own basepage, TPA
+ * and environment are the new program's (initial stack, auxv). */
+LONG kproc_exec_image_select(struct kproc *,struct kaspace *);
 BOOL kproc_exec_image_pending(const struct kproc *,const struct kaspace *,BOOL complete);
 /* Owning image bundle for the source PROCESS, prepared in the selected root
  * from the completed staging container exactly like an ordinary launch:
@@ -67,8 +67,6 @@ BOOL kproc_exec_image_sealable(const KPROC_EXEC_IMAGE *);
 void kproc_exec_image_commit(KPROC_EXEC_IMAGE *);
 /* Off-root, on the relaunched execution: releases the old root/memberships. */
 void kproc_exec_image_retire(KPROC_EXEC_IMAGE **);
-/* After every reference to the old root is gone: trim a classic PRG TPA. */
-void kproc_exec_trim_tpa(struct _pd *);
 /* Receipt side of the commit. transfer: at the no-fail boundary, ends the
  * receipt's cleanup scope. commit: at the quiescent root, drops the ticket.
  * retire: off-root, disposes the container that now owns the old

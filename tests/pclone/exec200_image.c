@@ -1,67 +1,30 @@
-/* The replacement image of the Pexec(200) acceptance test (#970). Runs in
- * the subject's PROCESS: same PID, TID, parent and descriptors, a different
- * executable and root, and the committed-exec generation the tail names.
- * Generation 1 replaces itself once more, after the runner has observed the
+/* The ELF replacement image of the Pexec(200) acceptance test (#970). It runs
+ * in the subject's PROCESS (exec200_check.h lists what it verifies).
+ * Generation 1 replaces itself once more: after the runner has observed the
  * commit when the subject is an anchor (a nested subject's runner is blocked
- * in its Pexec(0)); generation 2 completes the PROCESS with status 70. */
-#include "exec200_probe.h"
+ * in its Pexec(0)), and leaving a directory search open. Generation 2 checks
+ * that search did not survive and replaces itself with EXEC200.TOS, a
+ * classic PRG on m68k, which completes the PROCESS. */
+#include "exec200_check.h"
 #include <mint/mintbind.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <mint/basepage.h>
 
-static void fail(const char *reason, long value)
-{
-    printf("Pexec200 image FAIL: %s (%ld)\r\n", reason, value);
-    Pterm(85);
-}
 int main(void)
 {
-    EXEC_REPLACE_TEST_STATE state;
-    unsigned long generation, pid, tid, root0, root1;
-    long descriptor, parent, result, position;
-    int nested;
-    const char *value = getenv("EXEC");
-    char tail[128], line[128];
-    unsigned length;
-    /* The tail the commit copied into this PROCESS's basepage (libcmini's
-     * minimal startup does not split it into argv). */
-    /* The commit reset the DTA to the default in the basepage. */
-    if ((void *)Fgetdta() != (void *)_base->p_cmdlin) fail("default DTA", (long)Fgetdta());
-    length = (unsigned char)_base->p_cmdlin[0];
-    if (!length || length > 125) fail("command tail length", (long)length);
-    memcpy(line, _base->p_cmdlin + 1, length); line[length] = 0;
-    if (sscanf(line, "%lu %ld %lu %lu %lu %lu %ld %d %ld", &generation, &descriptor, &pid, &tid,
-               &root0, &root1, &parent, &nested, &position) != 9) fail("command tail", (long)length);
-    /* The replaced program's directory search must not survive: it was
-     * left open on this same default DTA and PD. */
-    if (generation == 2 && Fsnext() == 0) fail("search survived the exec", 0);
-    if (exec200_probe(&state, EXEC_REPLACE_QUERY)) fail("query", 0);
-    if (state.pid != pid || Pgetpid() != (long)pid) fail("same PID", Pgetpid());
-    if (state.tid != tid) fail("same TID", (long)state.tid);
-    if (Pgetppid() != parent) fail("same parent", Pgetppid());
-    if (state.generation[0] != generation || state.generation[1]) fail("generation", (long)state.generation[0]);
-    if (state.root[0] == root0 && state.root[1] == root1) fail("root replaced", (long)root0);
-    if (!value || strcmp(value, "970") || !getenv("SECOND")) fail("new environment", 0);
-    if (Fseek(0L, (short)descriptor, 1) != position) fail("descriptor position", position);
-    if (Fwrite((short)descriptor, 1, "b") != 1) fail("descriptor survives exec", descriptor);
-    if (generation == 1) {
-        /* The runner observes the commit first: the PROCESS must not have
-         * completed or become reapable through it. */
-        while (!nested && Fsfirst("GO970.TMP", 0)) (void)Syield();
+    EXEC200_TAIL t;
+    long result;
+    exec200_verify("image", &t);
+    if (t.generation == 1) {
+        while (!t.nested && Fsfirst("GO970.TMP", 0)) (void)Syield();
         /* Leave a multi-match search open on the default DTA. */
-        if (Fsfirst("*.TOS", 0)) fail("open search", 0);
-        sprintf(tail + 1, "2 %ld %lu %lu %lu %lu %ld %d %ld", descriptor, pid, tid,
-                (unsigned long)state.root[0], (unsigned long)state.root[1], parent, nested,
-                Fseek(0L, (short)descriptor, 1));
-        tail[0] = (char)strlen(tail + 1);
-        result = Pexec(200, "EXEC200B.TOS", tail, 0); /* inherits this environment */
-        fail("second Pexec(200) returned", result);
+        if (Fsfirst("*.TOS", 0)) exec200_fail("image", "open search", 0);
+        result = exec200_next("EXEC200B.TOS", 0, &t, 0);   /* inherits this environment */
+        exec200_fail("image", "second Pexec(200) returned", result);
     }
-    if (Fclose((short)descriptor)) fail("descriptor close", descriptor);
-    Cconws(nested ? "native nested Pexec(200) launcher relaunch: PASS\r\n"
-                  : "native Pexec(200) same-PROCESS executable/root replacement: PASS\r\n");
-    Pterm(70);
+    if (t.generation != 2) exec200_fail("image", "unexpected generation", (long)t.generation);
+    /* The replaced program's directory search must not survive: it was
+     * left open on this same default DTA, address and PROCESS. */
+    if (Fsnext() == 0) exec200_fail("image", "search survived the exec", 0);
+    result = exec200_next("EXEC200.TOS", 'F', &t, 0);
+    exec200_fail("image", "Pexec(200) of the subject returned", result);
     return 86;
 }

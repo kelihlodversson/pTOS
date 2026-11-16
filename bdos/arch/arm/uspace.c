@@ -393,6 +393,9 @@ relaunch:
          * the kernel root maps once the bundle dropped its loader borrows. */
         aspace_hw_switch(aspace_kernel_root());
         ksched_exec_relaunch_commit(p, &kstack_phys, &kstack_top);
+        /* The PROCESS now runs on the new program's basepage. */
+        p = run;
+        launch.pd = p;
         launch.stack_phys = kstack_phys;
         launch.stack_top = kstack_top;
         root = kproc_user_root(p);

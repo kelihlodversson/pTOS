@@ -1251,16 +1251,6 @@ LONG pfs_do_snext_at(DTAINFO *dta)
     }
 }
 
-/* Pexec(200): the replaced program's directory searches. They are keyed by
- * DTA address and PD, both of which the new program keeps (its default DTA
- * is again the basepage command line), so they must not survive. */
-void pfs_proc_searches_release(PD *r)
-{
-    WORD i;
-    for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if (pfs_searches[i].proc == r) pfs_search_free(&pfs_searches[i]);
-}
-
 void pfs_proc_exit(PD *r)
 {
     WORD i;

@@ -214,57 +214,56 @@ Pexec(200) commit design (#970, PR #999)
 Status: implemented and on by default (CONF_WITH_PEXEC200, which needs
 CONF_WITH_USER_ASPACE, CONF_WITH_NATIVE_SCHED and CONF_WITH_ELF_LOADER). The
 regression kernel runs EXEC200.TOS on the native matrix, both as an anchor
-(Pexec 100) and synchronously nested (Pexec 0). This section fills the "remaining concrete
-owner contract" of exec-handoff.txt.
+(Pexec 100) and synchronously nested (Pexec 0). This section fills the
+"remaining concrete owner contract" of exec-handoff.txt.
 
-Interface
----------
-Pexec(200, path, tail, env) loads an ELF program and replaces the calling
-program with it in the same PROCESS. Success does not return. Failure returns
-an error to the original program, which is unchanged. env NULL keeps the
-caller's own environment, as for every other mode.
+Interface and FreeMiNT compatibility
+------------------------------------
+Pexec(200, path, tail, env) loads a program, ELF or classic PRG, and replaces
+the calling program with it in the same PROCESS. Success does not return.
+Failure returns an error to the original program, which is unchanged. env
+NULL keeps the caller's own environment, as for every other mode.
+
+The model is FreeMiNT's overlay mode (sys/k_exec.c, sys_pexec mode 200 and
+exec_region): the program is loaded into a NEW basepage and TPA, the same
+process continues with that basepage, and the old program's basepage, TPA,
+environment and memory are freed. The new basepage's p_parent is the old
+one's. As in FreeMiNT, the PID, parent, open files and current directories
+are kept; the DTA becomes the new basepage's command line, and the user
+registers start clear. Not carried over from FreeMiNT, because pTOS has no
+equivalent yet: FD_CLOEXEC, signal dispositions, MiNT domain and process
+name tables.
 
 Scope
 -----
-ELF targets only, with CONF_WITH_USER_ASPACE and the native scheduler. The ELF
-loader puts the image in private pages of a new root, and the TPA is the
-basepage only. A classic PRG target runs from its TPA, so replacing it would
-need a new basepage: it is rejected with EPLFMT by staging. A PRG source is
-fine, because its TPA stays its basepage. These are rejected with EACCDN by
-admission and never partially replaced:
+ELF and classic PRG targets, with CONF_WITH_USER_ASPACE and the native
+scheduler. An ELF image runs from private pages of a new root and its TPA is
+data; a classic PRG runs from its TPA with its stack at the TPA's top and only
+its recorded text extent executable, exactly as for an ordinary launch.
+These are rejected with EACCDN by admission and never partially replaced:
   - multi-THREAD PROCESSes;
   - shared-VM (4/104) children and Pclone compatibility state;
-  - legacy PE_GO give-back;
+  - legacy PE_GO give-back and heap-ledger image blocks;
   - a launcher with a child it is still loading;
   - a PROCESS with registered user callbacks, which name code of the old image.
 
 Identity
 --------
-Preserved exactly:
-  - KPROC record and number, PID, the PD pointer and its TPA allocation;
-  - parent identity and p_parent (the ancestors page is copied into the new
-    root at the same address);
-  - KTHREAD and TID;
-  - descriptors, CWD/curdir/uft, priority, Psetlimit limits;
-  - start time and child usage;
-  - completion/observer state and the public wait/reap rights.
+Preserved: the KPROC record and number, PID, KTHREAD and TID, parent identity,
+children, open files and their positions, current directories (uft/curdir),
+priority, Psetlimit limits, start time and child usage, completion/observer
+state and the public wait/reap rights.
 
-The PD stays the program's basepage. At commit its program-visible fields are
-rewritten from the staging container's PD:
-  - the command tail and p_env (the new environment block);
-  - p_tbase/p_tlen/p_dbase/p_dlen/p_bbase/p_blen and p_flags;
-  - p_xdta, reset to the default DTA in the command line.
-p_parent and p_lowtpa/p_hitpa are kept. The executable name becomes the new
-basename.
-
-Replaced:
-  - the address space (KASPACE root) and with it all Malloc/mmap memory of the
-    old image;
-  - image layout, interpreter state, entry and initial stack;
-  - the environment allocation;
+Replaced, and the old one freed:
+  - the basepage and TPA (the new one is the staging container's; its
+    p_parent and default drive come from the old one, its DTA is its command
+    line);
+  - the environment;
+  - the address space (KASPACE root), and with it the old image, interpreter,
+    stack and all Malloc/mmap memory;
   - mapping memberships and allocation/runtime scopes;
   - reservation births, so views of the old root never authenticate the new;
-  - DTA search state.
+  - DTA and directory search state, and the old program's GUI clients.
 
 Transaction
 -----------
@@ -274,36 +273,43 @@ the commit is reversible and owned by a handle that aborts it:
   1. Receipt. kproc_exec_replacement_prepare admits exactly this PROCESS,
      sole THREAD and execution, takes the replacement ticket and opens the
      cleanup scope that defers cancellation.
-  2. Staging. proc_exec_replacement_stage loads the ELF into an unstarted
-     container KPROC bound to the new root. The container records the source
-     PD as its basepage, because that is the basepage the program will have
-     (initial stack, auxv). Its environment is the new program's.
+  2. Staging. proc_exec_replacement_stage runs the ordinary loader (PE_LOAD)
+     into an unstarted container KPROC bound to the new root: a fresh
+     basepage, TPA and environment, with an ELF image in the new root's
+     private pages or a PRG relocated into the TPA. The container's basepage
+     is the new program's (initial stack, auxv).
   3. Bundle. kproc_exec_image_prepare builds what an ordinary launch builds,
      with eight injectable steps:
        - the source's mapping membership (and runtime scope) in the new root;
-       - the new environment and the source TPA, mapped user-RW;
+       - the container's environment and TPA, mapped user-RW, with a PRG's
+         text extent executable;
        - the exit parent and controller basepages;
        - the ancestors page, user callback and X32 VDI pages;
-       - the private stack (Psetlimit size if it still fits; with demand
-         paging only the top page is backed now);
+       - the stack: a PRG's in its TPA; an ELF image's private stack
+         (Psetlimit size if it still fits; with demand paging only the top
+         page is backed now) or ELF stack;
        - a program-entry startup draft.
      The draft owns fresh scheduler and syscall stacks and leases on the new
      entry and the resident stack.
   4. Commit. ksched_exec_replace (bdos/native_sched.c) runs the #988 phases
      with ten injectable stages. These include a stale execution, a competing
      commit and identity exhaustion. kproc_exec_image_sealable rechecks
-     every commit precondition, including the environment ownership transfer
-     and generation capacity, in the masked publication window. At
-     TRANSFERRED the old syscall continuation is abandoned, and the handoff's
-     scope and then the receipt's scope end. The old return is impossible
-     from here: no failure path exists.
+     every commit precondition, including allocation generations and
+     ownership and the generation capacity, in the masked publication
+     window. At TRANSFERRED the old syscall continuation is abandoned, and
+     the handoff's scope and then the receipt's scope end. The old return is
+     impossible from here: no failure path exists.
 
 At the quiescent root, under the handoff token, with no allocation, callback
 or user access:
   - kthread_exec_rebind moves the THREAD to the new root;
-  - kproc_exec_image_commit swaps the KPROC image fields and the two
-    environment owners (the container now owns the old one), and rewrites
-    the PD;
+  - kproc_exec_image_commit swaps the basepage identity between the PROCESS
+    and the container (PD, TPA, environment, DTA) and moves the image, root
+    and stack into the PROCESS. Every block stays owned by the basepage it
+    is in, so nothing changes owner. References to the old basepage move to
+    the new one: other PROCESSes' parent/creator/controller links and the
+    open-file owners (fs_exec_rekey_owner), then the scheduler's own (run,
+    task program/parent, nested frames, saved contexts);
   - the receipt's ticket is dropped;
   - the new stack hold and the program-entry draft are installed.
 
@@ -320,6 +326,8 @@ by construction:
   - ARM: r0 = basepage, r1 = entry type;
   - x32: RDI = basepage, RSI = ENTRY_PROGRAM, RSP + 8 divisible by 16;
   - dynamic ELF: the standard ELF entry through the interpreter.
+  - classic PRG (m68k): p_tbase, with the stack at the top of its TPA, as
+    for any PRG launch.
 
 Retirement
 ----------
@@ -327,8 +335,10 @@ The root releases the old scheduler and syscall stacks, the old startup draft
 and the old stack hold, as #988 does. The task's first action on its fresh
 scheduler stack (task_entry, before user entry) retires the rest under its
 own cleanup scope:
-  - the receipt disposes the staging container, which takes its own TPA and
-    the old environment;
+  - the receipt disposes the staging container, which now holds the old
+    basepage: that frees the old TPA, environment and every other block the
+    old basepage owns, releases its directory searches and GUI clients, and
+    closes nothing the PROCESS kept;
   - the bundle releases the old memberships and attachment and the last
     reference to the old root.
 Nothing runs on a stack or root being retired.
