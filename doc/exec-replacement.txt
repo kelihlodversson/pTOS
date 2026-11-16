@@ -211,102 +211,154 @@ Acceptance to close issue970:
 Pexec(200) commit design (#970, PR #999)
 =======================================
 
-Status: design, implementation in progress. Public mode200 stays EINVFN until
-the native matrix, CI and owner reviews pass. This section supersedes nothing
-above; it fills the "remaining concrete owner contract" of exec-handoff.txt.
+Status: implemented behind CONF_WITH_PEXEC200 (default n). The regression
+kernel (CONF_WITH_EXEC_REPLACEMENT_TEST) enables it and runs EXEC200.TOS on
+the native matrix. Shipped configurations enable it only after the native
+matrix, CI and owner reviews pass. This section fills the "remaining concrete
+owner contract" of exec-handoff.txt.
+
+Interface
+---------
+Pexec(200, path, tail, env) loads an ELF program and replaces the calling
+program with it in the same PROCESS. Success does not return. Failure returns
+an error to the original program, which is unchanged. env NULL keeps the
+caller's own environment, as for every other mode.
 
 Scope
 -----
-ELF executables with CONF_WITH_USER_ASPACE and the native scheduler. With per-
-PROCESS address spaces the ELF loader puts the image in private pages of the
-PROCESS's own root, and the TPA is the basepage only (elfld.c). A classic PRG
-runs from its TPA, so replacing it would need a larger TPA, hence a new
-basepage address and a new kernel identity: Pexec(200) of a PRG is rejected
-(EPLFMT) before any allocation, as staging already does. Non-MMU kernels keep
-EINVFN. Legacy PE_GO give-back, shared-VM (4/104) children and multi-THREAD
-PROCESSes are rejected by admission, never partially replaced.
+ELF targets only, with CONF_WITH_USER_ASPACE and the native scheduler. The ELF
+loader puts the image in private pages of a new root, and the TPA is the
+basepage only. A classic PRG target runs from its TPA, so replacing it would
+need a new basepage: it is rejected with EPLFMT by staging. A PRG source is
+fine, because its TPA stays its basepage. These are rejected with EACCDN by
+admission and never partially replaced:
+  - a synchronous nested child (see "Anchor executions" below);
+  - multi-THREAD PROCESSes;
+  - shared-VM (4/104) children and Pclone compatibility state;
+  - legacy PE_GO give-back;
+  - a launcher with a child it is still loading;
+  - a PROCESS with registered user callbacks, which name code of the old image.
 
 Identity
 --------
-Preserved exactly: KPROC record and number, PID, PD pointer and its TPA
-procmem allocation (the kernel identity used by run, SFT f_own and the PID
-table), parent identity and p_parent, KTHREAD and TID, PROCESS descriptors,
-CWD/curdir/uft, priority, Psetlimit limits, start time and child usage,
-completion/observer state and the public wait/reap rights.
+Preserved exactly:
+  - KPROC record and number, PID, the PD pointer and its TPA allocation;
+  - parent identity and p_parent (the ancestors page is copied into the new
+    root at the same address);
+  - KTHREAD and TID;
+  - descriptors, CWD/curdir/uft, priority, Psetlimit limits;
+  - start time and child usage;
+  - completion/observer state and the public wait/reap rights.
 
 The PD stays the program's basepage. At commit its program-visible fields are
-rewritten from the staged image: command tail, p_env (new environment block),
-p_tbase/p_tlen/p_dbase/p_dlen/p_bbase/p_blen and p_flags. p_parent, p_lowtpa/
-p_hitpa (the retained TPA) and kernel-owned compatibility fields are kept. The
-executable name becomes the new basename.
+rewritten from the staging container's PD:
+  - the command tail and p_env (the new environment block);
+  - p_tbase/p_tlen/p_dbase/p_dlen/p_bbase/p_blen and p_flags;
+  - p_xdta, reset to the default DTA in the command line.
+p_parent and p_lowtpa/p_hitpa are kept. The executable name becomes the new
+basename.
 
-Replaced: address space (KASPACE root), image layout, interpreter state, entry
-and initial stack, environment allocation, mapping memberships and allocation/
-runtime scopes, private stack, DTA search state (VAs of the old image).
+Replaced:
+  - the address space (KASPACE root) and with it all Malloc/mmap memory of the
+    old image;
+  - image layout, interpreter state, entry and initial stack;
+  - the environment allocation;
+  - mapping memberships and allocation/runtime scopes;
+  - reservation births, so views of the old root never authenticate the new;
+  - DTA search state.
 
-Staging (existing receipt, extended)
-------------------------------------
-kproc_exec_replacement_prepare/proc_exec_replacement_stage are reused. The
-loader receives the receipt's SOURCE PD as the basepage address it records in
-the initial stack/auxv (kproc.c and kproc_shared_interp.h now take it from the
-receipt), because that is the basepage the program will have. The staging
-container's own PD/TPA are discarded at commit or abort; its environment block
-is the new program's and moves to the source by procmem ownership transfer.
+Transaction
+-----------
+proc_exec_replace() (bdos/exec_replace.c) runs these steps. Every step before
+the commit is reversible and owned by a handle that aborts it:
 
-Image bundle
-------------
-kproc_exec_image_seal(receipt) extracts an opaque, owning KPROC_EXEC_IMAGE:
-selected root, layout, interpreter layout/entry, initial SP, stack low/size,
-environment allocation (start, end, generation), shared-interp recipe and
-reservation births. It then prepares the new root for the source exactly as
-kproc_prepare_user_thread prepares a launch, sharing its code: a mapping
-membership for the source number, the source TPA and new environment mapped
-user-RW, the parent ancestors page and controller mapping, user callbacks and
-X32 VDI image pages, the private stack, and a fresh kernel (syscall) stack.
-Every step is fallible and reversible; abort releases the bundle and leaves
-the source untouched. Sealing has no further failure return.
+  1. Receipt. kproc_exec_replacement_prepare admits exactly this PROCESS,
+     sole THREAD and execution, takes the replacement ticket and opens the
+     cleanup scope that defers cancellation.
+  2. Staging. proc_exec_replacement_stage loads the ELF into an unstarted
+     container KPROC bound to the new root. The container records the source
+     PD as its basepage, because that is the basepage the program will have
+     (initial stack, auxv). Its environment is the new program's.
+  3. Bundle. kproc_exec_image_prepare builds what an ordinary launch builds,
+     with eight injectable steps:
+       - the source's mapping membership (and runtime scope) in the new root;
+       - the new environment and the source TPA, mapped user-RW;
+       - the exit parent and controller basepages;
+       - the ancestors page, user callback and X32 VDI pages;
+       - the private stack (Psetlimit size if it still fits; with demand
+         paging only the top page is backed now);
+       - a program-entry startup draft.
+     The draft owns fresh scheduler and syscall stacks and leases on the new
+     entry and the resident stack.
+  4. Commit. ksched_exec_replace (bdos/native_sched.c) runs the #988 phases
+     with ten injectable stages. These include a stale execution, a competing
+     commit and identity exhaustion. kproc_exec_image_sealable rechecks
+     every commit precondition, including the environment ownership transfer
+     and generation capacity, in the masked publication window. At
+     TRANSFERRED the old syscall continuation is abandoned, and the handoff's
+     scope and then the receipt's scope end. The old return is impossible
+     from here: no failure path exists.
 
-Commit
-------
-The #988 handoff gains an image-bundle mode. PREPARING admits the sealed
-bundle with the receipt (same PROCESS/TID/execution/ticket). SEALED reserves
-the execution number as before. TRANSFERRED/QUIESCENT are unchanged: the old
-syscall continuation is abandoned through the launcher-owned stack, and the
-task waits on the permanent CPU root. At INSTALLED, under the quiescent token:
+At the quiescent root, under the handoff token, with no allocation, callback
+or user access:
+  - kthread_exec_rebind moves the THREAD to the new root;
+  - kproc_exec_image_commit swaps the KPROC image fields and the two
+    environment owners (the container now owns the old one), and rewrites
+    the PD;
+  - the receipt's ticket is dropped;
+  - the new stack hold and the program-entry draft are installed.
 
-  1. swap KPROC image fields with the bundle (new into the PROCESS, old into
-     the bundle), including active_space/aspace and mapping memberships;
-  2. rebind the KTHREAD's KASPACE to the new root through a new token-checked
-     kthread_exec_rebind (the ordinary attach checks stay as they are);
-  3. rewrite the basepage fields and transfer environment ownership;
-  4. re-enter the ordinary launcher (proc_start_scheduled), which starts the
-     new image exactly like a freshly launched program: kproc_user_entry,
-     kproc_user_stack, basepage on the stack, the standard ELF entry for
-     dynamic programs, and the bundle's kernel stack as the syscall stack.
-
-No allocation, callback, user access or failure return follows TRANSFERRED.
+Program entry
+-------------
+The relaunched task enters through proc_start_scheduled and the ordinary
+launcher. A program-entry draft (thread_startup_prepare_program) provides
+only its fresh stacks. The launcher then takes the ordinary path from the
+committed KPROC record, so the entry contract of doc/process-entry.txt holds
+by construction:
+  - m68k: [0, basepage] on the stack with A0 clear (fastcall kernels pass a
+    C-entry argument in A0, the accessory convention, so a C entry cannot be
+    used);
+  - ARM: r0 = basepage, r1 = entry type;
+  - x32: RDI = basepage, RSI = ENTRY_PROGRAM, RSP + 8 divisible by 16;
+  - dynamic ELF: the standard ELF entry through the interpreter.
 
 Retirement
 ----------
-After the IRQ mask is restored and with the current SP verified outside both
-old kernel stacks (as #988 does), the old bundle is released: old root
-(kaspace_put, which also drops its ASPACE-owned heap and mmap lists), old
-mapping memberships, old environment allocation, old startup/stacks/hold, the
-staging container. All by existing owners; the task stays non-runnable until
-this finishes.
+The root releases the old scheduler and syscall stacks, the old startup draft
+and the old stack hold, as #988 does. The task's first action on its fresh
+scheduler stack (task_entry, before user entry) retires the rest under its
+own cleanup scope:
+  - the receipt disposes the staging container, which takes its own TPA and
+    the old environment;
+  - the bundle releases the old memberships and attachment and the last
+    reference to the old root.
+Nothing runs on a stack or root being retired.
 
 Committed-exec event
 --------------------
-KPROC gains UQUAD exec_generation and kproc_ref_exec_generation(), the exact
-interface #972's fork_parent dependency reads. Retirement increments it once,
-after the new image is installed and the old return is impossible, then calls
-the scheduler's readiness notification. Staging, abort, failure, the same-
-image transport, THREAD exit and PROCESS completion never change it; it never
-wraps (exhaustion is checked at SEALED and fails the exec cleanly).
+KPROC has UQUAD exec_generation and kproc_ref_exec_generation(), the
+interface #972's fork_parent dependency reads. The root increments it exactly
+once per commit, after the new image is installed, and then publishes one
+generic readiness wake. Waiters re-evaluate their own predicates, so a waiter
+for anything else goes back to sleep. Staging, abort, failure, the same-image
+transport, THREAD exit and PROCESS completion never change it. It never wraps:
+capacity is checked in the masked window, and an exhausted counter fails the
+exec cleanly.
+
+Anchor executions
+-----------------
+The #988 transport replaces a task's own continuation. A child started with
+synchronous Pexec(0) from a managed task runs nested on its parent's carrier
+task (#713) and has no continuation of its own. Pexec(200) from such a child
+returns EACCDN for now; it needs a relaunch through the nested launcher frame.
+Asynchronously started PROCESSes (Pexec 100/104/106 and the scheduler's own
+launches) are anchors.
 
 Gating
 ------
-CONF_WITH_EXEC_REPLACE (new, default n, depends on the native scheduler, user
-address spaces and ELF) builds the implementation. Public mode200 dispatch is
-enabled only with it. Shipped configurations select it only after the native
-matrix, CI and owner reviews pass.
+CONF_WITH_EXEC_REPLACE builds the core. CONF_WITH_PEXEC200 (default n) enables
+public mode 200. CONF_WITH_EXEC_REPLACEMENT_TEST selects both and adds the
+private probes of include/exec_handoff_test.h:
+  - EXEC_REPLACE_ARM: arm one injected failure;
+  - EXEC_REPLACE_QUERY: PROCESS/root/generation/PID/TID;
+  - EXEC_REPLACE_WAIT: a generation waiter for the runner.

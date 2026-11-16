@@ -39,16 +39,30 @@ config CONF_WITH_EXEC_REPLACE
       retirement off-stack and the committed-exec generation. Public mode200
       stays EINVFN until that path is verified (see doc/exec-replacement.txt).
 
+config CONF_WITH_PEXEC200
+    bool "Public Pexec(200): replace the program in the same process"
+    depends on CONF_WITH_EXEC_REPLACE
+    default n
+    help
+      Enable GEMDOS Pexec(200, path, tail, env): load an ELF program and
+      replace the calling program with it, keeping the PROCESS, PID,
+      basepage, open files, current directories, parent and children.
+      Success does not return; failure returns an error to the unchanged
+      original program. Only an anchor execution can be replaced; a
+      synchronously nested child gets EACCDN (doc/exec-replacement.txt).
+
 config CONF_WITH_EXEC_REPLACEMENT_TEST
     bool "Private executable image staging (test only)"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
     select CONF_WITH_EXEC_REPLACE
+    select CONF_WITH_PEXEC200
     default n
     help
-      Build real private ELF staging and kernel-only reversible exact-PROCESS/THREAD/root admission
-      prerequisite for Pexec(200). This does not implement executable image
-      replacement, publish committed-exec events or enable public mode200.
-      No shipped preset selects this experimental preparation interface.
+      Build the Pexec(200) regression probes: private ELF staging and
+      reversible admission, injected failures at every receipt, image-bundle
+      and commit stage, an identity/root/generation query and a committed-exec
+      generation waiter, plus the EXEC200 native test programs. Enables
+      public Pexec(200) in the test kernel. No shipped preset selects it.
 
 config CONF_WITH_EXEC_HANDOFF_TEST
     bool "Same-image NORETURN execution transport (test only)"

@@ -11,6 +11,9 @@
 #include "ksched.h"
 #include "exec_replace.h"
 #include "string.h"
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#include "../include/exec_handoff_test.h"
+#endif
 extern PD *run;
 
 struct kproc_exec_replacement {
@@ -193,7 +196,91 @@ void kproc_exec_replacement_retire(KPROC_EXEC_REPLACEMENT **handle)
     kfree(replacement);
 }
 
+#if CONF_WITH_PEXEC200
+LONG proc_exec_replace(char *path, char *tail, char *env)
+{
+    KPROC *source = kproc_retain(run);
+    KTHREAD *thread = ksched_exit_thread(run);
+    KPROC_EXEC_REPLACEMENT *receipt = NULL;
+    KPROC_EXEC_IMAGE *bundle = NULL;
+    KASPACE *selected = NULL;
+    ASPACE *backend;
+    LONG error = EACCDN;
+    if (!source || !thread || !path || !tail) goto done;
+    backend = aspace_create();
+    if (!backend) { error = ENSMEM; goto done; }
+    selected = kaspace_adopt(backend);
+    if (!selected) { aspace_destroy(backend); error = ENSMEM; goto done; }
+    error = kproc_exec_replacement_prepare(source, thread, selected, &receipt);
+    if (error) goto done;
+    error = proc_exec_replacement_stage(receipt, path, tail, env);
+    if (!error)
+        error = kproc_exec_image_prepare(source, kproc_exec_replacement_image(receipt), selected, &bundle);
+    if (!error) {
+        /* The receipt and bundle hold their own references from here on;
+         * success does not return to release ours. */
+        kaspace_put(selected); selected = NULL;
+        kproc_release(source); source = NULL;
+        error = ksched_exec_replace(&receipt, &bundle);
+    }
+    kproc_exec_image_abort(&bundle);
+    kproc_exec_replacement_abort(&receipt);
+done:
+    kaspace_put(selected);
+    kproc_release(source);
+    return error;
+}
+#endif
+
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
+static struct { UQUAD baseline; ULONG ready; } exec_wait;
+static BOOL exec_wait_ready(void *argument)
+{
+    KPROC *child = argument;
+    BOOL ready = kproc_ref_exec_generation(child) != exec_wait.baseline || kproc_ref_terminal(child);
+    if (ready) exec_wait.ready++;
+    return ready;
+}
+LONG kproc_exec_replace_test(VADDR address, ULONG tag)
+{
+    if (tag >= EXEC_REPLACE_ARM && tag < EXEC_REPLACE_ARM + 0x400) {
+        UWORD kind = (UWORD)((tag >> 8) & 3), stage = (UWORD)(tag & 0xff);
+        kproc_exec_replacement_test_fail_after(kind == 3 ? stage : 0);
+        kproc_exec_image_test_fail_after(kind == 1 ? stage : 0);
+        ksched_exec_replace_test_fail_after(kind == 2 ? stage : 0);
+        return E_OK;
+    }
+    if (tag == EXEC_REPLACE_QUERY) {
+        EXEC_REPLACE_TEST_STATE state;
+        KPROC *self = kproc_retain(run);
+        KTHREAD *thread = ksched_exit_thread(run);
+        UQUAD number, root, generation;
+        BOOL copied;
+        if (!self || !thread || address >= USER_VA_LIMIT) { kproc_release(self); return EACCDN; }
+        number = kproc_ref_number(self); root = kproc_user_root(run);
+        generation = kproc_ref_exec_generation(self);
+        state.process[0] = (ULONG)number; state.process[1] = (ULONG)(number >> 32);
+        state.root[0] = (ULONG)root; state.root[1] = (ULONG)(root >> 32);
+        state.generation[0] = (ULONG)generation; state.generation[1] = (ULONG)(generation >> 32);
+        state.pid = (ULONG)(LONG)kproc_ref_pid(self); state.tid = kthread_tid(thread);
+        kproc_release(self);
+        copied = kproc_copy_to_user_resident(address, &state, sizeof(state));
+        return copied ? E_OK : EIMBA;
+    }
+    if (tag >= EXEC_REPLACE_WAIT && tag <= EXEC_REPLACE_WAIT + 0xff) {
+        KPROC *child = kproc_test_retain_pid((WORD)address);
+        UQUAD generation;
+        BOOL terminal;
+        if (!child || kproc_ref_pid(child) == kproc_pid(run)) { kproc_release(child); return EINVAL; }
+        exec_wait.baseline = tag & 0xff; exec_wait.ready = 0;
+        if (!ksched_wait_ready(exec_wait_ready, child)) { kproc_release(child); return EACCDN; }
+        generation = kproc_ref_exec_generation(child); terminal = kproc_ref_terminal(child);
+        kproc_release(child);
+        return (LONG)((generation & 0xff) | (terminal ? 0x100UL : 0) | ((exec_wait.ready & 0xff) << 16));
+    }
+    return EINVFN;
+}
+
 LONG kproc_exec_replacement_probe(UWORD fail_after)
 {
     KPROC *source=kproc_retain(run),*foreign=NULL;

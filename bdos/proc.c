@@ -559,6 +559,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
+#if CONF_WITH_PEXEC200
+    if (flag == PE_EXEC_REPLACE) return proc_exec_replace(path, tail, env);
+#endif
     return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
@@ -595,7 +598,7 @@ LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *replacement,
                                 char *path, char *tail, char *env)
 {
     LONG result;
-    if (kproc_exec_replacement_validate(replacement) || !path || !tail || !env)
+    if (kproc_exec_replacement_validate(replacement) || !path || !tail)
         return EACCDN;
     result = DISK_CALL(exec_common(PE_LOAD,path,tail,env,0,0,FALSE,
                                   NULL,NULL,NULL,replacement));

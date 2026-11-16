@@ -80,6 +80,11 @@ struct kaspace *kproc_exec_replacement_selected(const KPROC_EXEC_REPLACEMENT *);
  * bundle and draft on success, which never returns; every error precedes the
  * no-fail boundary and leaves the three handles with the caller. */
 LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **, KPROC_EXEC_IMAGE **);
+#if CONF_WITH_PEXEC200
+/* Pexec(200). Returns only on failure, with the caller unchanged. env NULL
+ * keeps the caller's own environment, as for every other Pexec mode. */
+LONG proc_exec_replace(char *path, char *tail, char *env);
+#endif
 /* Committed-exec generation producer, for the scheduler-root commit only.
  * Check capacity while failure is still allowed; advance has no failure return. */
 BOOL kproc_exec_generation_capacity(const struct kproc *);
@@ -95,5 +100,8 @@ void kproc_exec_image_test_fail_after(UWORD stage);
 /* Test gate only: fail ksched_exec_replace() at the given stage (1..10). */
 void ksched_exec_replace_test_fail_after(UWORD stage);
 #define EXEC_REPLACE_FAILURES 10
+/* Private Pclone test tags of include/exec_handoff_test.h (EXEC_REPLACE_*). */
+LONG kproc_exec_replace_test(VADDR address, ULONG tag);
+struct kproc *kproc_test_retain_pid(WORD pid);
 #endif
 #endif

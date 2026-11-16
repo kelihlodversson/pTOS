@@ -867,6 +867,12 @@ if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
     record "native executable staging ownership" FAIL "configured replacement preparation did not execute"
 fi
 
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) same-PROCESS executable/root replacement: PASS' "$suite_log"; then
+    record "native Pexec(200)" FAIL "configured public Pexec(200) did not replace the subject"
+fi
+
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"

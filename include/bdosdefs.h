@@ -24,6 +24,7 @@
 /* Values of 'mode' for Pexec() */
 #define PE_ASYNC_LOADGO 100
 #define PE_ASYNC_GO_FREE 106
+#define PE_EXEC_REPLACE 200 /* replace the caller in its own PROCESS (pTOS) */
 #define PE_LOADGO     0
 #define PE_LOAD       3
 #define PE_GO         4

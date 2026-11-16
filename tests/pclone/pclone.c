@@ -9,6 +9,9 @@
 #include <string.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+#include "exec200_probe.h"
+#endif
 
 #if defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)
 static long pclone_trap(const void *args, unsigned long size)
@@ -2005,6 +2008,27 @@ void test_pclone(void)
             ptest_assert_msg((status >> 16) == child && !(status & 65535),
                              "same-PROCESS transport later completes once");
             ptest_assert_msg(Pwaitpid(child,1,0) < 0,"transport companion reaped once");
+        }
+#endif
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+        ptest_log_flush();
+        child = Pexec(100,"EXEC200.TOS","",0);
+        ptest_assert_msg(child > 0,"Pexec(200) subject starts as a managed PROCESS");
+        if (child > 0) {
+            long event = exec200_probe((const void *)(long)child, EXEC_REPLACE_WAIT + 0);
+            long go;
+            /* One committed generation, observed while the PROCESS is live. */
+            ptest_assert_msg((event & 0x1ff) == 1,"committed-exec generation 1 observed, not completion");
+            ptest_assert_msg(Pwaitpid(child,1,0) == 0,"exec neither completes nor publishes the PROCESS for reaping");
+            go = Fcreate("GO970.TMP",0);
+            ptest_assert_msg(go >= 0,"release the replaced image");
+            if (go >= 0) Fclose((short)go);
+            status = Pwaitpid(child,0,0);
+            ptest_assert_msg((status >> 16) == child && (status & 65535) == 70,
+                             "replaced PROCESS later completes once, from its final image");
+            ptest_assert_msg(Pwaitpid(child,1,0) < 0,"replaced PROCESS reaped once");
+            ptest_assert_msg(Fdelete("GO970.TMP") == 0 && Fdelete("EXEC200.TMP") == 0,
+                             "Pexec(200) test files");
         }
 #endif
     }

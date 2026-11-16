@@ -2113,6 +2113,15 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
 /* After the commit, on the relaunched execution's own fresh stack: the old
  * root, with every old mapping, and the old memberships. The container is
  * disposed by its owner, the replacement receipt. */
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+KPROC *kproc_test_retain_pid(WORD pid)
+{
+    KPROC *k;
+    for (k = kproc_list; k; k = k->next)
+        if (k->pid == pid && k->pd) return kproc_retain(k->pd);
+    return NULL;
+}
+#endif
 THREAD_STARTUP_DRAFT *kproc_exec_image_take_startup(KPROC_EXEC_IMAGE *b)
 {
     THREAD_STARTUP_DRAFT *startup;

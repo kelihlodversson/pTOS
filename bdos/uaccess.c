@@ -320,6 +320,9 @@ static long pexec_ok(const long *pw)
 #if CONF_WITH_NATIVE_SCHED
         || mode == PE_ASYNC_LOADGO
 #endif
+#if CONF_WITH_PEXEC200
+        || mode == PE_EXEC_REPLACE      /* path, tail and environment as mode 0 */
+#endif
     ) {
         rc = str_ok(pw[2], UA_PATH_MAX);
         if (rc)
