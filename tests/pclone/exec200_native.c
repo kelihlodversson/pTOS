@@ -14,6 +14,7 @@ static long descriptor;
 static char environment[] = "EXEC=970\0SECOND=yes\0";
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static MAPPING_LIFETIME_SNAPSHOT before, after;
+static int baseline; /* set once the warmed-up counters are recorded */
 static void snapshot(MAPPING_LIFETIME_SNAPSHOT *out)
 {
     memset(out, 0, sizeof(*out));
@@ -36,6 +37,7 @@ static void unchanged(const char *what)
     if (Pgetpid() != (long)original.pid) fail("PID after failure", Pgetpid());
     if (Fwrite((short)descriptor, 1, "a") != 1) fail("descriptor after failure", descriptor);
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    if (!baseline) return;
     snapshot(&after);
     for (i = 0; i < MLT_FIELDS; i++) if (before.value[i] != after.value[i]) {
         /* Retired startup state can take or return one slab page. */
@@ -74,6 +76,7 @@ int main(void)
     injected(2, 10, -39L);
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     snapshot(&before);
+    baseline = 1;
 #endif
     if ((result = exec200_call("NO970.TOS", "\0", environment)) != -33L) fail("missing file", result);
     unchanged("missing file");
