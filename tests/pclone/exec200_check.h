@@ -7,6 +7,7 @@
 #ifndef EXEC200_CHECK_H
 #define EXEC200_CHECK_H
 #include "exec200_probe.h"
+#include <mint/mintbind.h>
 #include <mint/basepage.h>
 #include <stdio.h>
 #include <stdlib.h>
