@@ -14,3 +14,7 @@ CONF_WITH_ELF_SHARED=y
 
 # Without -mfastcall the ROM no longer fits (see amiga_defconfig).
 CONF_WITH_MFASTCALL=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

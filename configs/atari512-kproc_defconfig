@@ -6,3 +6,7 @@ CONF_WITH_KPROC=y
 CONF_WITH_USER_COPY=y
 # Single-country, matching upstream's own 512/256/192 targets.
 BUILD_UNIQUE_COUNTRY=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

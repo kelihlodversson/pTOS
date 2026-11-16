@@ -1,2 +1,6 @@
 # S-record image for the dBUG monitor of an M548x board
 MACHINE_M548X=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-mcpu=5475 -mlra"

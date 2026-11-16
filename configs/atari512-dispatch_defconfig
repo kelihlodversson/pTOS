@@ -3,3 +3,7 @@
 TARGET_1024=y
 # BUILD_UNIQUE_COUNTRY is not set
 CONF_WITH_VDI_BACKEND_TRUECOLOR=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

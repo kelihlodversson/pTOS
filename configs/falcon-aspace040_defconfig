@@ -13,3 +13,7 @@ CONF_EXTERNAL_CLI=y
 CONF_WITH_PROCESS_ASPACES=y
 CONF_WITH_MMAP=y
 CONF_WITH_ELF_SHARED=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

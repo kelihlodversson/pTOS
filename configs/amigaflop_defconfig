@@ -1,3 +1,7 @@
 # Amiga bootable floppy image
 MACHINE_AMIGA=y
 TARGET_AMIGA_FLOPPY=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"
