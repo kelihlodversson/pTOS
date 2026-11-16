@@ -7,6 +7,7 @@
 struct kproc;
 struct kthread;
 struct kaspace;
+struct _pd;
 typedef struct kproc_exec_replacement KPROC_EXEC_REPLACEMENT;
 
 #if CONF_WITH_EXEC_REPLACE
@@ -42,8 +43,14 @@ LONG kproc_exec_replacement_claim(struct kproc *, struct kthread *, struct kaspa
 BOOL kproc_exec_replacement_matches(struct kproc *, struct kthread *, struct kaspace *,
                                   struct kaspace *, struct kproc *image,UQUAD ticket);
 void kproc_exec_replacement_drop(struct kproc *, UQUAD ticket);
-LONG kproc_exec_image_select(struct kproc *,struct kaspace *);
+/* Bind the container to the selected root; basepage is the source PD the
+ * staged image records as its basepage (initial stack, auxv). */
+LONG kproc_exec_image_select(struct kproc *,struct kaspace *,struct _pd *basepage);
 BOOL kproc_exec_image_pending(const struct kproc *,const struct kaspace *,BOOL complete);
+/* Committed-exec generation producer, for the scheduler-root commit only.
+ * Check capacity while failure is still allowed; advance has no failure return. */
+BOOL kproc_exec_generation_capacity(const struct kproc *);
+void kproc_exec_generation_advance(struct kproc *);
 #endif
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
 /* Test gate only: fail after source/old-root/new-root/final-validation prefix. */

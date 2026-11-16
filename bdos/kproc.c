@@ -130,6 +130,7 @@ struct kproc {
     PROCESS_FILES files; /* identity-owned table; empty after resource retirement */
 #endif
     UQUAD completion_order;
+    UQUAD exec_generation; /* canonical committed executable replacement only */
     UQUAD reservation_birth[5]; /* TPA, env, initial stack, image, interpreter */
     BOOL retired, observer_ready; /* Published terminal flags; not SMP locks. */
     WORD exit_signal; /* Pending only for final execution; immutable at completion. */
@@ -185,6 +186,7 @@ struct kproc {
 #if CONF_WITH_EXEC_REPLACE
     UQUAD exec_replacement_ticket; /* reversible replacement, not launch selection */
     BOOL exec_image_staging; /* loader container bound to a replacement root */
+    PD *exec_basepage; /* replacement source PD: the basepage the image will have */
 #endif
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     BOOL clone_guarded;
@@ -668,6 +670,25 @@ BOOL kproc_ref_terminal(const KPROC *process)
 {
     return process && completion_flag(&process->observer_ready);
 }
+UQUAD kproc_ref_exec_generation(const KPROC *process)
+{
+    /* Owner exclusion serializes this on the cooperative CPU. The only
+     * producer is the authenticated Pexec(200) commit on the scheduler root. */
+    return process?*(const volatile UQUAD *)&process->exec_generation:0;
+}
+#if CONF_WITH_EXEC_REPLACE
+BOOL kproc_exec_generation_capacity(const KPROC *process)
+{
+    return process && process->exec_generation != ~(UQUAD)0;
+}
+void kproc_exec_generation_advance(KPROC *process)
+{
+    /* Capacity was checked while failure was still allowed; never wraps. */
+    if (!kproc_exec_generation_capacity(process))
+        panic("exec generation exhausted after commit");
+    *(volatile UQUAD *)&process->exec_generation = process->exec_generation + 1;
+}
+#endif
 void kproc_publish_observers(KPROC *process)
 {
     /* Completion data may precede teardown. Only the finalizer/scheduler which
@@ -1772,11 +1793,12 @@ void kproc_exec_replacement_drop(KPROC *process,UQUAD ticket)
     process->exec_replacement_ticket=0;
 }
 
-LONG kproc_exec_image_select(KPROC *image,KASPACE *selected)
+LONG kproc_exec_image_select(KPROC *image,KASPACE *selected,PD *basepage)
 {
     KASPACE *owned;
     KPROC *peer;
-    if (!image || !selected || !kproc_clone_target_ready(image,NULL) || image->exec_image_staging ||
+    if (!image || !selected || !basepage || basepage==image->pd ||
+        !kproc_clone_target_ready(image,NULL) || image->exec_image_staging ||
         image->mapping_preparation || image->mapping_members || image->prepared_mapping_members)
         return EACCDN;
     for (peer=kproc_list;peer;peer=peer->next)
@@ -1784,6 +1806,7 @@ LONG kproc_exec_image_select(KPROC *image,KASPACE *selected)
     owned=kaspace_share(selected);
     if (!owned) return ENSMEM;
     image->exec_image_staging=TRUE;
+    image->exec_basepage=basepage;
     image->pending_space=owned;
     return E_OK;
 }
@@ -3191,6 +3214,10 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     info.base = ibias;
     info.pagesz = USER_PAGE_SIZE;
     info.basepage = (ULONG)(uintptr_t)pd;
+#if CONF_WITH_EXEC_REPLACE
+    /* A replacement image keeps its source's basepage (doc/exec-replacement.txt). */
+    if (kproc->exec_basepage) info.basepage = (ULONG)(uintptr_t)kproc->exec_basepage;
+#endif
     info.bootdrive = bootdev;
     info.load_bias = bias;
     info.capture_launch = 0;
