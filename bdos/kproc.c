@@ -2010,8 +2010,9 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     b->stack_size = source->stack_size;
 #if KPROC_LEGACY_PRG
     if (image->legacy) {
-        PD *ipd = image->pd;
-        b->entry = (VADDR)(uintptr_t)USERPTR_TO_PTR(ipd->p_tbase);
+        /* the text start the kernel recorded, not the basepage, which
+         * is no longer mapped in the space this runs in */
+        b->entry = (VADDR)(uintptr_t)image->user_start + sizeof(PD);
         b->stack_top = (VADDR)(uintptr_t)image->user_end & ~(VADDR)3;
         b->stack_low = 0;
     } else
