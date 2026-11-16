@@ -417,6 +417,8 @@ tap commit and bottle declarations. Automatic updates are disabled for the
 remaining job. Compiler and package versions
 are recorded in the job logs. SDK 1.0.0 fixes the m68k address-dependency
 miscompilation; the global auto-inc-dec workaround is removed.
+SDK 1.0.1, the pinned release, also fixes reload sharing one register between
+an asm's long and short inputs of the same constant (pTOS-toolchain #18).
 The kernel and userspace use pTOS compiler prefixes on both platforms;
 CI does not silently fall back to a distro or native target compiler.
 The native host compiler remains responsible for build tools and host tests.
