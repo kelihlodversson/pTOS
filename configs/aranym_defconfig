@@ -3,3 +3,7 @@ MACHINE_ARANYM=y
 IMAGE_NAME="ptos-aranym.img"
 # The multi-language image supports every country at run time.
 # BUILD_UNIQUE_COUNTRY is not set
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68040 -mlra"

@@ -7,3 +7,7 @@ CONF_AMIGA_HIGHER_HALF=y
 
 # Without -mfastcall the 256 KB ROM no longer fits (see amiga_defconfig).
 CONF_WITH_MFASTCALL=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

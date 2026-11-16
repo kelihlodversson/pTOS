@@ -5,3 +5,7 @@ MACHINE_AMIGA=y
 # with -mshort), so this image needs the smaller code the register calling
 # convention gives.
 CONF_WITH_MFASTCALL=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

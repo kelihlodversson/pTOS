@@ -9,7 +9,7 @@
 MACHINE_VIRT_M68K=y
 
 # See virt-m68k_defconfig for why these are what they are.
-CPUFLAGS="-m68020"
+CPUFLAGS="-m68020 -mlra"
 CONF_WITH_IDE=n
 CONF_WITH_AES=n
 CONF_WITH_PLUGGABLE_FS=y

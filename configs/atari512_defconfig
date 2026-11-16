@@ -4,3 +4,7 @@ TARGET_512=y
 # $(COUNTRY) in their Makefile) -- the multi-language image no longer
 # fits in 512K alongside upstream's current feature set.
 BUILD_UNIQUE_COUNTRY=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

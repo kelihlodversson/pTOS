@@ -5,3 +5,7 @@ TARGET_256=y
 # setup-toolchain action installs automatically for any config that sets
 # this.
 CONF_WITH_MFASTCALL=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

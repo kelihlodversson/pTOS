@@ -26,7 +26,7 @@ MACHINE_VIRT_M68K=y
 # fixes this (there is no per-target CPUFLAGS default for this board yet,
 # unlike the Raspberry Pi targets, so spell it out explicitly here,
 # following the MACHINE_ARANYM precedent in Kconfig.machine).
-CPUFLAGS="-m68020"
+CPUFLAGS="-m68020 -mlra"
 
 # QEMU's 'virt' board has no IDE interface; without this, bios/ide.c fails
 # to build because struct IDE is never defined for this machine. Matched

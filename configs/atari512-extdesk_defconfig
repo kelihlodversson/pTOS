@@ -7,3 +7,7 @@ TARGET_512=y
 # fits in 512K)
 BUILD_UNIQUE_COUNTRY=y
 CONF_EXTERNAL_DESK=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"

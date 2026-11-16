@@ -6,3 +6,7 @@
 TARGET_512=y
 BUILD_UNIQUE_COUNTRY=y
 CONF_ATARI_HIGHER_HALF=y
+
+# LRA register allocator test (#996): this configuration's default CPU
+# flags plus -mlra.
+CPUFLAGS="-m68000 -mlra"
