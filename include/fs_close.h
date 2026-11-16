@@ -35,6 +35,12 @@ typedef struct {
     int drive;
     LONG rw;
     FS_CLEANUP_TOKEN token;
+    /* The first hard disk error of a bounded close sequence: later attempts
+     * may fail on another drive, but the original failure is what a caller
+     * with a DISK_ERROR record must rethrow after its cleanup. */
+    BOOL first_disk_error;
+    int first_drive;
+    LONG first_rw;
 } FS_CLOSE_REPORT;
 #if CONF_WITH_PROCESS_FILES_TEST
 LONG fs_reference_dispose(FS_FILE_REFERENCE *,FS_CLOSE_REPORT *);

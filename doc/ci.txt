@@ -17,8 +17,8 @@ waiting for a runner: the repository has only so many at a time, and a run of
 build.yml, for jobs of a minute each) in the queue.  The whole set of builds
 still runs on master (push), every night (schedule) and with "Run workflow"
 (workflow_dispatch); all 28 Hatari combinations run every night and on request
-(hatari-tests.yml has no push trigger); pBench (pbench.yml) runs on pull
-requests and on request only, as it did before.
+(not for a push); pBench runs on pull requests and on request only, as it did
+before.  (The Hatari tests and pBench are jobs of build.yml since #987.)
 
 
 amiberry.yml (#737) builds the pinned Amiberry (tools/amiberry-pin.sh) for the
@@ -35,6 +35,112 @@ master and the epics that touch the pin (a cache of a pull request is seen by th
 pull request only, so these keep the one the others restore), every week (an unused
 cache is evicted after seven days) and on request.  About ten minutes on a hit,
 twenty or so with the build.
+
+
+The second audit (November 2026)
+--------------------------------
+
+Since the first audit, configurations (47 -> 56), regression machines and
+x32 checks have been added, and some of them repeat what another check of
+the same pull request already does.  What was taken out of a pull request:
+
+- Configuration builds that a regression job repeats.  As with virt-arm-cli
+  and the others of the first audit, the regression job builds the kernel
+  of its machine with the same warning check (tools/ci-regression.sh), so the
+  build job of that configuration was the same build a second time:
+  virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, rpi2-aspace and
+  pc-x86_64-desktop are now in .github/pr-skip-configs.  tools/check-ci-configs.sh
+  used to refuse any x86 name there; it now refuses only those that
+  tools/ci-x86_64.sh boots or tests (pc-x86_64, -vdi, -callbacks, -eager,
+  -desktop-tests*), which nothing else runs.
+- pc-x86_64-libaes-desktop.  Since the kernel AES was retired, it resolves
+  to a .config identical, byte for byte, to pc-x86_64-desktop's: it is
+  built on master and every night only.  (It has been removed since, with
+  rpi2-test, #989.)
+- The "PMMU startup check (virt-m68k-mmu)" job.  It built virt-m68k-mmu a
+  third time to boot it on five CPUs; tools/ci-regression.sh virt-m68k-mmu
+  now runs tools/test-pmmu-check.sh on the image it has just built and run
+  the suite on, in the "regression m68k" job (which installs the same QEMU).
+  One job, and two builds, fewer.
+- The step "Exercise shared desktop and console consumers" of the x32 job.
+  It built pc-x86_64-desktop-tests and pc-x86_64-desktop-tests-builtin-cli
+  again (the defconfigs already have every option it set, apart from
+  CONF_WITH_SHUTDOWN), and ran tests/x32_desktop/run.py in its default mode
+  (six desktop runs) and in "missing" mode, which the x86-desktop group runs
+  on the same two configurations.  What only it did is in tools/ci-x86_64.sh
+  now: the readelf/nm checks of the shared desktop, of EmuCON and of the
+  kernel (no kernel AES services), and the "shutdown" run, for which
+  pc-x86_64-desktop-tests_defconfig now sets CONF_WITH_SHUTDOWN.  Two
+  kernel builds and seven QEMU desktop runs fewer; the artifact
+  shared-x32-consumers is gone (the runs are in the ptos-x86-desktop one).
+- The Hatari combination falcon-aspace040 in f040a.  A Falcon with a 68040
+  is a machine only the emulator has; the 68040 address-space code still runs
+  on the TT (tt040a, which also has the TT-RAM and the write-through pages
+  of #728), and the Falcon with the address spaces in f030a.  It runs every
+  night and on request with the other combinations.
+
+So a pull request builds 42 configurations instead of 48, gets one job less
+(the PMMU check), runs 11 Hatari combinations instead of 12, and 13 x32
+desktop runs instead of 20.  Nothing was dropped from master or from the
+nightly runs, except the duplicate desktop runs, which are the same tests
+on the same configurations.
+
+Looked at and kept: raspi2b-aspace next to virt-arm-aspace (the Pi has
+address-space code of its own, in bios/machine/raspi), virt-m68k-mmu next to
+virt-m68k-aspace and falcon-mmu next to falcon-aspace (the higher-half kernel
+without per-process address spaces is a run-time path of its own, and the one
+with the desktop), tta (the 68030 page tables of TT-RAM), the four
+executable-handler boot tests (tools/ci-binfmt.sh: another kernel option on
+each architecture), and the Amiberry matrix (each combination is an image on
+a CPU no other one runs, and the workflow only runs when the Amiga port
+changes).  The "mapping syscalls" boot of the x32 job (pc-x86_64 with
+CONF_WITH_ELF_SHARED alone) is a subset at run time of the boot after it,
+which adds the VDI, the callbacks and libaes, but it is the only build of the
+shared loader without libaes: left in, see "Not done".
+
+
+Shared images, and no duplicate configurations (#987, #989)
+-------------------------------------------------------------
+
+The Hatari and pBench jobs built their own systems, which "build m68k-atari"
+had built already: ten builds a pull request (atari512 and atari512-fastcall
+three times).  They are jobs of build.yml now (the artifact of one workflow
+is not available to another), after the build job (needs: build), and take
+the systems from its artifact ptos-m68k-atari:
+
+- tools/ci-build.sh, in the tree that has just built the configuration,
+  makes what they need of it: the test disk of a configuration that a Hatari
+  combination of the event uses (tools/ci-hatari.sh --prepare: test-hd.img,
+  or test-hd-shell.img for the falcon-aspace images) and pbench.prg for
+  atari512, atari256 and atari512-fastcall, each with its system as
+  products/CONFIG/system.img; each only for an event whose jobs use it (no
+  test disk for a push, no pbench.prg for a push or the nightly run).
+- The Hatari groups and pBench set up no toolchain and build nothing; a
+  group that is run locally still builds what is not in products/.
+- The triggers are what they were: the Hatari jobs do not run for a push,
+  pBench only for a pull request and on request.  "Hatari tests" and "pBench"
+  keep their names, and stay out of "All builds".  hatari-cache.yml, on a
+  push that changes the Hatari pin, builds and caches the new Hatari for the
+  pull requests (what the push trigger of hatari-tests.yml was for);
+  hatari-tests.yml and pbench.yml are gone.
+
+The Hatari groups and pBench wait for "build m68k-atari" (about three and a
+half minutes) instead of building their one to three systems (one to three
+minutes), and save the toolchain on four runners.  It is a job of its own
+(build-atari, a matrix of one, so that its name and artifact are what they
+were): needs: cannot name one entry of a matrix, and the first run of #987
+waited for all of "build", whose slowest group had queued for a runner, and
+had the Hatari result after 25 minutes instead of 14.
+
+Two configurations resolved to a .config identical to another's, so CI built
+each twice for nothing: pc-x86_64-libaes-desktop (pc-x86_64-desktop is the
+libaes desktop since the kernel AES was retired) and rpi2-test (the console
+on the UART that it added is the default on the Pi: CONF_SERIAL_CONSOLE is on
+without Atari video).  Both are removed; the raspi2b regression run builds
+rpi2.  tools/check-duplicate-configs.py, run by tools/check-ci-configs.sh in
+"All builds", resolves every defconfig and fails when two give the same
+.config.  Configurations that compile the same code into another image
+(amiga and amiga-kickdisk) are not duplicates.
 
 
 How it was audited
@@ -79,7 +185,8 @@ How it was audited
 What is changed
 ---------------
 
-- hatari-tests.yml: a pull request runs 12 of the 28 combinations: atari512 in
+- The Hatari tests (hatari-tests.yml, build.yml since #987): a pull request
+  runs 11 of the 28 combinations: atari512 in
   low, high, f030 and f040 (it is the one that exercises the screen-mode
   dependent suites, and the data cache of the Falcon; med is the same code as
   low with another plane count, so only low, the 16 colour ST mode, stands
@@ -88,8 +195,9 @@ What is changed
   falcon-mmu in f030 (the Falcon ROM with the kernel in the upper half and the
   68030 MMU on, which only a 68030 runs), falcon-aspace in f030a and tta (an
   address space for every process, #727: the harness is the shell, and a 68030
-  runs it, on a Falcon and on a TT), falcon-aspace040 in f040a and tt040a (the
-  same for the 68040 MMU, #728, on a Falcon and on a TT) and atari192 in low
+  runs it, on a Falcon and on a TT), falcon-aspace040 in tt040a (the same for
+  the 68040 MMU, #728, on a TT; f040a, on a Falcon, nightly only since the
+  second audit) and atari192 in low
   (the 192 KB ROM, built with -Os, LTO and -mfastcall like the other small
   ROMs; a TOS 1.04 ROM, so Hatari runs it as a plain ST with a 68000, where
   text_blit and raster_copy skip themselves for want of a blitter; only the ST
@@ -102,7 +210,7 @@ What is changed
   whose kernel the regression jobs build (virt-arm-cli, virt-m68k-cli-elf,
   virt-m68k-cli-fastcall, rpi2-test) are checked for warnings there now, as
   their build jobs did.
-- build.yml and hatari-tests.yml also run on a schedule (nightly) with all of
+- build.yml (and hatari-tests.yml, until #987) also run on a schedule (nightly) with all of
   the above.
 - Jobs that took a runner and a toolchain for a minute of work are combined,
   one check of them after the other in a job (tools/ci-group.sh), each
@@ -118,21 +226,32 @@ What is changed
       (tools/ci-x86_64.sh and tools/ci-x86_64-boot.sh: the build, the VDI
       contract, the boot under QEMU/OVMF or the desktop tests), the last one
       also running the regression suite of pc-x86_64
+    build.yml, Homebrew SDKs and builds: 1 Apple Silicon macOS 26 job,
+      installing and testing all three pTOS SDK formulae together, then
+      building m68k/ARM address-space and PC UEFI configurations with
+      their default cross compiler prefixes
     build.yml, regression suites: 2 jobs, "regression arm" (virt-arm, its
       traditional FAT variant, raspi2b) and "regression m68k" (virt-m68k and
       its fastcall build), tools/ci-regression.sh
-    hatari-tests.yml: 1 job that builds the four systems and runs the tests
-      four at a time, one Hatari each, on the four CPUs of the runner
+    build.yml, Hatari tests: a job for each group of combinations ("Hatari
+      st", "Hatari variants", "Hatari mmu" on a pull request; five groups for
+      the 28 of the night), each running the systems of its group, from the
+      artifact of "build m68k-atari" (#987), one Hatari each, all at once on the four CPUs of its runner
       (Hatari's clock is the emulated one: the load does not change the
-      results; tools/ci-hatari.sh).  The job runs on an ubuntu-26.04 runner,
+      results; tools/ci-hatari.sh, which has the groups, and checks with
+      --check that they run every combination once).  It was one job
+      (tests four at a time): 4 minutes of builds and 30 of tests on a pull
+      request, the 11 runs taking 111 CPU-minutes, the longest 20.  "Hatari
+      tests" is a roll-up of the groups, so that the check keeps its name.
+      The jobs run on an ubuntu-26.04 runner,
       with the Hatari of tools/hatari-pin.sh, built from source and cached
       (.github/actions/setup-hatari, #807; a bump of the pin is a change of
       that file, after the tests have passed on the new commit): the 2.4.1 of
       the 24.04 package hangs the 68030 address-space runs (#727, #737), and
       the 2.6.1 of the 26.04 one lacks the 68030 MMU fixes of 2026 (#805).
       pBench still installs the package, and its baselines are made with it
-    pbench.yml: 1 job that builds the three systems and measures them one
-      after the other; each has its own report, its own comment on the pull
+    build.yml, pBench: 1 job that measures the three systems of the
+      artifact of "build m68k-atari" one after the other (#987); each has its own report, its own comment on the pull
       request, and a slowdown of any of them fails the job
 - The matrices are not worked out from configs/ by a job of their own (the
   "Enumerate configurations" job, a few seconds that tested nothing):
@@ -140,7 +259,8 @@ What is changed
   builds" job runs tools/check-ci-configs.sh, which fails when one is in none.
 
 The roll-up "All builds" asks for the result of the jobs it needs (build,
-x86_64, regression, release archives, SD card image).  The branch protection
+x86_64, regression, release archives, SD card image; the PMMU startup check
+is part of "regression m68k" since the second audit).  The branch protection
 should require "All builds" (and the Hatari tests and pBench if they are to
 block a merge).  If the settings list single jobs by name, they have to follow
 the new names: the jobs of a group are one check, "build m68k-atari" and so
@@ -195,8 +315,6 @@ only that configuration compiles (the same source, the same preprocessing).
   arm
     rpi1                       24        keep
     rpi2                        0        keep (the SD card image needs it)
-    rpi2-test                   0        same code as rpi2, built by regression
-                                         (raspi2b); master only
     rpi2-kproc                 96        keep
     rpi2-sparse                13        keep
     rpi3                        1        one source differs from rpi2; keep (cheap,
@@ -222,13 +340,11 @@ Tests in an emulator:
     Test atari192              low: keep (the LTO -Os build of the small ROMs);
                                med, high nightly only
     Test atari512-extdesk      nightly only
-    Build atari512, -fastcall, -extdesk, atari192 (hatari-tests.yml)
-                               build the test disk, which no other job does;
-                               keep (see "Not done")
+    (the test disks are made by "build m68k-atari" since #987)
 
-Measurements (pbench.yml):
+Measurements (the pbench job of build.yml):
 
-    Build atari256, atari512, atari512-fastcall, Measure atari256, atari512,
+    Measure atari256, atari512,
     atari512-fastcall          keep; the Falcon text tests of the three are
                                a few percent off their baseline, which are the
                                baselines' business, not the audit's
@@ -274,16 +390,35 @@ did.
 Not done (needs a decision)
 ---------------------------
 
-- atari512, atari256 and atari512-fastcall are built three times by a pull
-  request (build.yml, hatari-tests.yml, pbench.yml; the tests need the test
-  disk and pBench's program, which the others do not).  They could take the
-  kernel image from the build job, but the artifact of one workflow is not
-  available to another one; moving the three workflows into build.yml (with
-  needs:) would remove them, and put the roll-up in charge of the Hatari and
-  pBench results too.
 - "Release archives" (7 minutes) builds the images one after the other (the
   256 KB and 192 KB ones for all countries); one job per archive would run
   them in parallel.
 - The x32 job ("x32 ELF shared-library metadata") is not in the roll-up: a
   pull request can be green in "All builds" with it red.  Whether it should
   block a merge is a decision, not an audit finding.
+- Whether "Hatari tests" and "pBench" should be in "All builds", now that
+  they are jobs of build.yml (#987), is a decision, as for the x32 job.
+- (second audit) The "mapping syscalls" boot of the x32 job is covered at run
+  time by the boot after it; dropping it would save a kernel build and a
+  boot, and lose the only build of CONF_WITH_ELF_SHARED without libaes.
+
+Toolchain installation
+----------------------
+
+The shared setup-toolchain action calls tools/install-ptos-toolchain.sh.
+Linux jobs download SDK .deb files from GitHub Releases and install them
+with APT. tools/ptos-toolchain.sha256 pins the release version and every
+package checksum; --release never depends on an older version remaining
+on apt.ptos.dev. Update the version and hashes together when upgrading CI.
+Local developers can use the same --release option or the current packages
+from the signed apt.ptos.dev source. macOS installs the SDK formulae from
+kelihlodversson/ptos-toolchain with Homebrew, pinned to the manifest's matching
+tap commit and bottle declarations. Automatic updates are disabled for the
+remaining job. Compiler and package versions
+are recorded in the job logs. SDK 1.0.0 fixes the m68k address-dependency
+miscompilation; the global auto-inc-dec workaround is removed.
+SDK 1.0.1, the pinned release, also fixes reload sharing one register between
+an asm's long and short inputs of the same constant (pTOS-toolchain #18).
+The kernel and userspace use pTOS compiler prefixes on both platforms;
+CI does not silently fall back to a distro or native target compiler.
+The native host compiler remains responsible for build tools and host tests.

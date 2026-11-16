@@ -36,10 +36,14 @@
 typedef char window_is_below_4gib[
     (X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES <= USER_VA_LIMIT) ? 1 : -1];
 
-/* The documented program image region starts past the process window and
- * the stack ends at the 1 GiB mark, both well inside the 32-bit ABI limit. */
-typedef char image_follows_window[
-    (USER_IMAGE_BASE >= X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES) ? 1 : -1];
+/* The default program image region does not overlap the process window and
+ * the stack stays inside the 32-bit ABI limit. */
+typedef char image_outside_window[
+    (USER_IMAGE_BASE + USER_IMAGE_SIZE <= X86_64_LOW_TPA_VIRT_BASE ||
+     USER_IMAGE_BASE >= X86_64_LOW_TPA_VIRT_BASE + X86_64_LOW_TPA_BYTES) ? 1 : -1];
+typedef char window_matches_common_layout[
+    (X86_64_LOW_TPA_VIRT_BASE == USER_PROCMEM_BASE &&
+     X86_64_LOW_TPA_BYTES == USER_PROCMEM_SIZE) ? 1 : -1];
 typedef char stack_below_limit[
     (USER_STACK_TOP <= USER_VA_LIMIT &&
      USER_STACK_SIZE <= USER_STACK_TOP &&   /* before subtracting: no wrap */

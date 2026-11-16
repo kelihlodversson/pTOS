@@ -6,8 +6,8 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-receipt-layout.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 case ${1:-} in
     x32) set -- "${X32CC:-cc}" -mx32 ;;
-    arm) set -- "${ARMCC:-arm-none-eabi-gcc}" -marm ;;
-    m68k) set -- "${M68KCC:-m68k-atari-mintelf-gcc}" -m68040 ;;
+    arm) set -- "${ARMCC:-arm-unknown-ptos-elf-gcc}" -marm ;;
+    m68k) set -- "${M68KCC:-m68k-unknown-ptos-prgelf-gcc}" -m68040 ;;
     *) echo 'Usage: check-publication-receipt-layout.sh x32|arm|m68k' >&2; exit 1 ;;
 esac
 "$@" -ffreestanding -std=gnu90 -Wall -Wextra -Werror -Iinclude -x c \

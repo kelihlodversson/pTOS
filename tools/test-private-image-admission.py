@@ -39,7 +39,7 @@ int main(void)
     /* Production PE_LOAD staging, ownership transfer and segment protection.
      * The source's eventual UH_IMAGE is independently owned, not a loan. */
     source.aspace=NULL;selected_root=aspace_root(loader.aspace);
-    image=kproc_load_alloc(loader.pd,source.pd,2*TEST_PAGE);CHECK(image);
+    image=kproc_load_alloc(loader.pd,source.pd,2*TEST_PAGE,0);CHECK(image);
     layout.nseg=2;layout.entry=image+16;layout.end=image+2*TEST_PAGE;
     layout.seg[0].vaddr=image;layout.seg[0].memsz=TEST_PAGE;layout.seg[0].flags=5;
     layout.seg[1].vaddr=image+TEST_PAGE;layout.seg[1].memsz=TEST_PAGE;layout.seg[1].flags=6;

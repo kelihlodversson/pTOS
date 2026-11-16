@@ -1,35 +1,30 @@
 /* Standard GEM menu item APIs over caller-owned object trees.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "application.h"
 #include "menu_bindings.h"
 #include "string.h"
 
-WORD *aes_menu_global;
 
 static WORD change(OBJECT *tree, WORD item, UWORD bit, WORD set,
-                   WORD draw, WORD check_disabled, WORD *global)
+                   WORD draw, WORD check_disabled, AESGLOBAL *global)
 {
-    WORD *saved = aes_menu_global, result;
+    AESGLOBAL *aes_menu_global = global;
+    WORD result;
     if (!tree || item < 0 || aes_application_session(global) < 0) return 0;
-    aes_menu_global = global;
-    result = aes_menu_change_core(tree,item,bit,set,draw,check_disabled);
-    aes_menu_global = saved;
+    result = aes_menu_change_core(aes_menu_global, tree,item,bit,set,draw,check_disabled);
     return result;
 }
-WORD mt_menu_icheck(OBJECT *tree, WORD item, WORD check, WORD *global)
+WORD mt_menu_icheck(OBJECT *tree, WORD item, WORD check, AESGLOBAL *global)
 { return change(tree,item,CHECKED,check,FALSE,FALSE,global); }
-WORD menu_icheck(OBJECT *tree, WORD item, WORD check)
-{ return mt_menu_icheck(tree,item,check,aes_global); }
-WORD mt_menu_ienable(OBJECT *tree, WORD item, WORD enable, WORD *global)
+
+WORD mt_menu_ienable(OBJECT *tree, WORD item, WORD enable, AESGLOBAL *global)
 { return change(tree,item & 0x7fff,DISABLED,!enable,((UWORD)item & 0x8000) != 0,FALSE,global); }
-WORD menu_ienable(OBJECT *tree, WORD item, WORD enable)
-{ return mt_menu_ienable(tree,item,enable,aes_global); }
-WORD mt_menu_tnormal(OBJECT *tree, WORD item, WORD normal, WORD *global)
+
+WORD mt_menu_tnormal(OBJECT *tree, WORD item, WORD normal, AESGLOBAL *global)
 { return change(tree,item,SELECTED,!normal,TRUE,TRUE,global); }
-WORD menu_tnormal(OBJECT *tree, WORD item, WORD normal)
-{ return mt_menu_tnormal(tree,item,normal,aes_global); }
-WORD mt_menu_text(OBJECT *tree, WORD item, const char *text, WORD *global)
+
+WORD mt_menu_text(OBJECT *tree, WORD item, const char *text, AESGLOBAL *global)
 {
     OBSPEC *spec;
     if (!tree || item < 0 || !text || aes_application_session(global) < 0) return 0;
@@ -41,5 +36,3 @@ WORD mt_menu_text(OBJECT *tree, WORD item, const char *text, WORD *global)
     strcpy(spec->free_string,text);
     return 1;
 }
-WORD menu_text(OBJECT *tree, WORD item, const char *text)
-{ return mt_menu_text(tree,item,text,aes_global); }

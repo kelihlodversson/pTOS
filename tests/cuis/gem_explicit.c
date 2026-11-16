@@ -22,7 +22,7 @@ static int equal(const char *a, const char *b)
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
 }
-int gem_explicit_checks(short *global)
+int gem_explicit_checks(AESGLOBAL *global)
 {
     short pid, message[8], mode, kind, result;
     char tail[128] = { 3,0,0,0,0 }, original[128], current[128], command[260], read_tail[128];

@@ -177,8 +177,9 @@ OBJECTS = $(CORE_OBJ) $(OPTIONAL_OBJ)
 # configuration; CROSS_COMPILE is only an override for a toolchain
 # installed under a different name, and is left unset unless the user
 # filled it in.  A command line CROSS_COMPILE= still wins over both.
-CROSS_COMPILE-$(ARCH_ARM) = arm-none-eabi-
-CROSS_COMPILE-$(ARCH_X86_64) = x86_64-elf-
+CROSS_COMPILE-$(ARCH_ARM) = arm-unknown-ptos-elf-
+CROSS_COMPILE-$(ARCH_X86_64) = x86_64-unknown-ptos-elfx32-
+CROSS_COMPILE-$(BUILD_TOOLCHAIN_PTOS) = m68k-unknown-ptos-prgelf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINT) = m68k-atari-mint-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_MINTELF) = m68k-atari-mintelf-
 CROSS_COMPILE-$(BUILD_TOOLCHAIN_ELF) = m68k-elf-
@@ -258,8 +259,13 @@ ifdef ARCH_X86_64
 # on x86-64, where its default sub/add-based outgoing-argument-area
 # handling around calls is not guaranteed to interact correctly with a
 # function using a calling convention other than the compiler's default.
+# -fno-asynchronous-unwind-tables/-fno-unwind-tables: nothing in the kernel
+# unwinds, and the .eh_frame they would add (over 120 KiB with every test
+# option enabled) counts against the 4 MiB boot window that startup.c maps
+# (IMAGE_SPAN_BYTES), like every other loaded section.
 MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
-                -fshort-wchar -fno-ident -maccumulate-outgoing-args
+                -fshort-wchar -fno-ident -maccumulate-outgoing-args \
+                -fno-asynchronous-unwind-tables -fno-unwind-tables
 # --param=min-pagesize=0: the TOS vectors and system variables really live
 # at low constant addresses (bios/vectors.h, tosvars.h), which GCC 12 and
 # later otherwise treat as the unmapped null page (-Warray-bounds).
@@ -321,15 +327,12 @@ endif
 endif
 endif
 
-# CONF_WITH_MFASTCALL selects -mfastcall above, but neither of the toolchains
-# offered in the "m68k toolchain" choice (Kconfig.machine) support it -- only
-# a patched GCC does (Thorsten Otto's fork, see the option's help text).  Fail
-# now with an actionable message instead of letting every compile fail later
-# with a generic "unrecognized command-line option '-mfastcall'".
+# The pTOS SDK supports fastcall. Check overrides and legacy toolchains too,
+# so an incompatible compiler fails before any objects are built.
 ifdef CONFIGURED
 ifdef CONF_WITH_MFASTCALL
 ifeq (,$(shell echo 'void f(void){}' | $(CC) $(CPUFLAGS) -x c -mfastcall -c -o /dev/null - >/dev/null 2>&1 && echo y))
-$(error $(CC) does not support -mfastcall. Install a patched toolchain (e.g. Thorsten Otto's m68k-atari-mint-gcc fork, https://tho-otto.m68k.eu/crossmint.php) and point CROSS_COMPILE at it, or disable CONF_WITH_MFASTCALL in "make menuconfig")
+$(error $(CC) does not support -mfastcall. Install ptos-sdk-m68k from https://apt.ptos.dev or the ptos-m68k Homebrew formula; see .claude/skills/toolchain-install/SKILL.md)
 endif
 endif
 endif
@@ -454,14 +457,17 @@ ifdef ARCH_ARM
 # The ARM linker script cannot produce a raw binary directly.
 EMUTOS_IMG = emutos.elf
 LDFLAGS += -Wl,-build-id=none
-# This kernel image deliberately shares one load segment for code and data;
-# the Raspberry Pi image is extracted as a flat binary. Newer linkers warn
-# about its RWX segment. Keep older toolchains, which lack this option, usable.
-LDFLAGS += $(shell $(CROSS_COMPILE)ld --help 2>/dev/null | \
-                  grep -q -- '--no-warn-rwx-segments' && echo -Wl,--no-warn-rwx-segments)
 else
 EMUTOS_IMG = emutos.img
 endif
+endif
+
+ifneq (,$(or $(ARCH_ARM),$(MACHINE_VIRT_M68K)))
+# Boot images deliberately share a load segment for code and data. The Pi
+# uses a flat binary; virt-m68k's kernel sets its own MMU permissions. This
+# affects boot images only, never userspace libraries or executable links.
+LDFLAGS += $(shell $(CROSS_COMPILE)ld --help 2>/dev/null | \
+                  grep -- '--no-warn-rwx-segments' >/dev/null && echo -Wl,--no-warn-rwx-segments)
 endif
 
 ifdef BUILD_TOOLCHAIN_IS_ELF
@@ -725,11 +731,13 @@ ifdef ARCH_X86_64
 #
 # The PE backend does not look up symbols in an archive's ELF index, so the
 # FreeType library is linked as a whole (it only holds what is used anyway).
+# Set PE relocation/NX compatibility explicitly; binutils defaults vary.
 X86_64_LD = $(CROSS_COMPILE)ld
 X86_64_LIBGCC_DIR = $(shell dirname $(shell $(CC) $(MULTILIBFLAGS) -print-libgcc-file-name))
 
 $(EMUTOS_IMG): $(OBJECTS) $(FREETYPE_LIB)
 	$(X86_64_LD) -m i386pep -pie --subsystem 10 -e efi_main \
+	  --dynamicbase --high-entropy-va --nxcompat \
 	  -L$(X86_64_LIBGCC_DIR) \
 	  -Map=emutos.map -o $@ $(CORE_OBJ) $(LIBS) $(OPTIONAL_OBJ) \
 	  $(if $(FREETYPE_LIB),--whole-archive $(FREETYPE_LIB) --no-whole-archive) $(LIBS)
@@ -857,7 +865,9 @@ X32_CC = $(X32_CROSS_COMPILE)gcc
 # harmless where the default already matches, and is what lets the
 # Homebrew "x86_64-elf-" toolchain build this program; see
 # doc/install.txt.
-X32_CFLAGS = -mx32 -ffreestanding -Wa,--noexecstack -fno-asynchronous-unwind-tables \
+# Match the kernel's SSE baseline even when the host compiler defaults to v3.
+# The interrupt/syscall paths preserve FXSAVE state, not AVX/XSAVE state.
+X32_CFLAGS = -mx32 -march=x86-64 -ffreestanding -Wa,--noexecstack -fno-asynchronous-unwind-tables \
              -fno-unwind-tables -fcf-protection=none -fno-pie
 X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-m,elf32_x86_64 -Wl,-z,max-page-size=0x1000 \
@@ -867,19 +877,17 @@ X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
 x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
 
-# The same program linked for another address, which Pexec() has to move
-# into the image window and relocate (the relocations -q keeps are what it
-# uses).
+# The same program linked into the reserved system range: Pexec() has to
+# move it to the default image base and use the relocations kept by -q.
 x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -o $@ $^
 
 # ... and linked for another address without keeping the relocations (no -q):
 # Pexec() must refuse it, not run it with every absolute address wrong.
 x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x08000000 -o $@ $^
 
-# ... and one with a 6 MiB bss, bigger than the image window: only a PE_LOAD
-# from ring 3 (which loads it straight into the caller's heap) can take it.
+# ... and one with a 6 MiB bss, bigger than the old image window.
 x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
 	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
 
@@ -1093,7 +1101,7 @@ obj/boot.o obj/bootsect.o: obj/ramtos.h
 
 ifdef TARGET_PRG
 $(IMAGE): obj/minicrt.o obj/boot.o obj/bootram.o obj/ramtos.o
-	$(LD) $+ $(LIBS) -o $@ -s
+	$(LD) $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) $+ $(LIBS) -o $@ -s
 endif
 
 ifdef TARGET_FLOPPY
@@ -1122,11 +1130,11 @@ date.prg dumpkbd.prg:
 	$(error $@ cannot be built with CONF_WITH_MFASTCALL set: util/arch/m68k/minicrt.S's startup has not been audited for -mfastcall's register-argument convention. Disable CONF_WITH_MFASTCALL in "make menuconfig" first)
 else
 date.prg: obj/minicrt.o obj/doprintf.o obj/date.o
-	$(LD) $+ $(LIBS) -o $@ -s
+	$(LD) $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) $+ $(LIBS) -o $@ -s
 
 dumpkbd.prg: obj/minicrt.o obj/memmove.o obj/dumpkbd.o obj/doprintf.o \
 	     obj/string.o
-	$(LD) $+ $(LIBS) -o $@ -s
+	$(LD) $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) $+ $(LIBS) -o $@ -s
 endif
 
 #
@@ -1456,9 +1464,16 @@ endif
 # We don't generate this automatically, because it might be processed by
 # the wrong compiler when a non-m68k machine is configured.
 #
-include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c include/lineavars.h
-	@echo "warning: $@ is out of date" >&2
-	@echo "run \"$(CC) $(CFILE_FLAGS) -S $< -o - | grep '^#define' > $@\" to regenerate it" >&2
+include/arch/m68k/lineaasm.h: vdi/gen_asm_defines.c include/lineavars.h | obj
+ifdef ARCH_M68K
+	@$(CC) $(CFILE_FLAGS) -fno-lto -S $< -o obj/lineaasm.s
+	@grep '^#define' obj/lineaasm.s > obj/lineaasm.h
+	@cmp -s obj/lineaasm.h $@ || { echo "error: regenerate $@ with the selected m68k compiler" >&2; diff -u $@ obj/lineaasm.h; exit 1; }
+	@touch $@
+else
+	@echo "error: validate $@ under an m68k configuration" >&2
+	@exit 1
+endif
 
 #
 # Generic dsm handling
@@ -1647,19 +1662,20 @@ TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 LIBCMINI_DIR  = lib/libcmini
 LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
-LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR)
+LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) \
+    CROSSPREFIX=$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
 ifdef ARCH_X86_64
 # libcmini's x86-64 port is the x32 userland: built with the same compiler and
 # flags as the other x32 programs (X32_CROSS_COMPILE/X32_CFLAGS), not the
 # x86_64-linux-gnux32- prefix its own Makefile assumes.  -ffreestanding is
 # left out: libcmini's abort() must stay noreturn for -Werror.
-LIBCMINI_MAKE += CROSSPREFIX=$(X32_CROSS_COMPILE) \
-    ARCH_CFLAGS="-fno-pie -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector"
+LIBCMINI_MAKE += ARCH_CFLAGS="-fno-pie -fcf-protection=none -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector"
 endif
 LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
 LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
+LIBCMINI_BUILD_ID = $(LIBCMINI_DEFCONFIG):$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
 
 # Build libcmini from the submodule.  The defconfig is arch-specific; for
 # m68k we use mintelf_defconfig, which produces ELF-compatible objects
@@ -1716,7 +1732,7 @@ $(LIBCMINI_DIR)/Makefile:
 
 $(LIBCMINI_STAMP): FORCE | obj $(LIBCMINI_DIR)/Makefile
 	@mkdir -p $(dir $@)
-	@want="$(LIBCMINI_DEFCONFIG):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
+	@want="$(LIBCMINI_BUILD_ID):$$(cat $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG))"; \
 	have=$$(cat $@ 2>/dev/null || true); \
 	if [ "$$want" != "$$have" ]; then \
 	    echo "  LIBCMINI-CONFIG $(LIBCMINI_DEFCONFIG)"; \
@@ -1754,7 +1770,7 @@ else
 # stamp) and its own dependencies; the file's time only changes when it builds.
 $(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
 	@echo '  EMUCON'
-	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
+	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) M68K_PRG_FLAGS="$(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf)" CROSS_COMPILE=$(CROSS_COMPILE) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
 endif
 endif
 
@@ -1783,7 +1799,7 @@ TEST_SUITES := $(sort $(foreach d,$(patsubst tests/%/,%,$(wildcard tests/*/)),\
 # can't recognize that executable's format at all, so the suite would
 # just fail on an unsupported configuration instead of testing anything.
 ifndef CONF_WITH_ELF_LOADER
-TEST_SUITES := $(filter-out pie_load load_fail,$(TEST_SUITES))
+TEST_SUITES := $(filter-out pie_load load_fail broad_va,$(TEST_SUITES))
 endif
 
 # ptos_reloc_load launches two separate executables (reloc_probe.c, built
@@ -1811,7 +1827,10 @@ endif
 # to show where the processes share one address space, and x32 has its own
 # ring-3 probe at boot.
 ifndef CONF_WITH_USER_ASPACE
-TEST_SUITES := $(filter-out isolation,$(TEST_SUITES))
+TEST_SUITES := $(filter-out isolation broad_va,$(TEST_SUITES))
+endif
+ifndef CONF_WITH_MMAP
+TEST_SUITES := $(filter-out broad_va,$(TEST_SUITES))
 endif
 ifdef ARCH_X86_64
 TEST_SUITES := $(filter-out isolation,$(TEST_SUITES))
@@ -1954,7 +1973,7 @@ obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
 
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
-# Each test suite object depends on its source and the generated run_tests.c
+# Each test suite object depends on its source and the generated run_tests.c.
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
@@ -1996,7 +2015,7 @@ TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start -Wl,-z,noexecstack
 else ifdef ARCH_X86_64
 TEST_LDFLAGS = $(X32_LDFLAGS) -Wl,-e_start
 else
-TEST_LDFLAGS = -Wl,-e_start
+TEST_LDFLAGS = $(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf) -Wl,-e_start
 endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
@@ -2067,6 +2086,24 @@ ISOPROBE.TOS: $(TEST_STARTUP) obj/isoprobe.o $(LIBCMINI_LIB)
 TEST_ISO_FILES = ISOPROBE.TOS
 else
 TEST_ISO_FILES =
+endif
+
+# Relocation-free ET_EXEC at the high address used by native emulators.
+# A link without -q proves both direct and split loads preserve its VA.
+ifneq ($(filter broad_va,$(TEST_SUITES)),)
+obj/high_probe.o: tests/broad_va/high_probe.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+ifdef ARCH_M68K
+HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld -m m68kelf -Ttext-segment=0x41000000 -e _start \
+	  $(TEST_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+else
+HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(if $(ARCH_X86_64),$(X32_LDFLAGS_NOQ)) -Wl,-Ttext-segment=0x41000000,-e_start \
+	  $(TEST_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TEST_BROAD_VA_FILES = HIIMAGE.TOS
 endif
 
 # pBench, the graphics benchmark in tools/pBench (see doc/pbench.txt): a GEM
@@ -2178,8 +2215,9 @@ TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
 else ifdef ARCH_X86_64
 # x32: a fixed base ET_EXEC linked with -q (RELA, R_X86_64_32), and the ET_DYN
-# shape (R_X86_64_RELATIVE)
-TEST_PTOS_RELOC_LDFLAGS  = $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -Wl,-e_start
+# shape (R_X86_64_RELATIVE). The fixed address is reserved system space,
+# forcing a real rebase even when valid high PT_LOAD addresses are kept.
+TEST_PTOS_RELOC_LDFLAGS  = $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = $(TEST_PIE_LDFLAGS)
 else
 # --oformat=elf32-m68k is required here for the same reason
@@ -2210,7 +2248,7 @@ relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
-	$(CROSS_COMPILE)ld --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
+	$(CROSS_COMPILE)ld $(if $(BUILD_TOOLCHAIN_PTOS),-m m68kmintelf) --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
 	  $(TEST_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 endif
@@ -2317,7 +2355,7 @@ endif
 endif
 endif
 
-TEST_HD_FILES = $(TEST_EXEC_HANDOFF_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES)
+TEST_HD_FILES = $(TEST_EXEC_HANDOFF_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2333,7 +2371,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_EXEC_HANDOFF_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_EXEC_HANDOFF_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2399,7 +2437,7 @@ endif
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
-           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
+           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
            test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img

@@ -1,6 +1,7 @@
 /* Shared original AES drawing code.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesdefs.h"
@@ -22,7 +23,7 @@
  *  Routine to set the clip rectangle.  If the w,h of the clip is 0,
  *  then no clip should be set.  Otherwise, set the appropriate clip.
  */
-void gsx_sclip(const GRECT *pt)
+void gsx_sclip(AES_RENDER_PARAM const GRECT *pt)
 {
     gl_clip = *pt;
 
@@ -32,17 +33,17 @@ void gsx_sclip(const GRECT *pt)
         ptsin[1] = gl_clip.g_y;
         ptsin[2] = gl_clip.g_x + gl_clip.g_w - 1;
         ptsin[3] = gl_clip.g_y + gl_clip.g_h - 1;
-        vs_clip( TRUE, ptsin);
+        vs_clip(AES_RENDER_ARG  TRUE, ptsin);
     }
     else
-        vs_clip( FALSE, ptsin);
+        vs_clip(AES_RENDER_ARG  FALSE, ptsin);
 }
 
 
 /*
  *  Routine to get the current clip setting
  */
-void gsx_gclip(GRECT *pt)
+void gsx_gclip(AES_RENDER_PARAM GRECT *pt)
 {
     *pt = gl_clip;
 }
@@ -52,7 +53,7 @@ void gsx_gclip(GRECT *pt)
  *  Routine to return TRUE iff the specified rectangle intersects the
  *  current clip rectangle ... or clipping is off (?)
  */
-WORD gsx_chkclip(GRECT *pt)
+WORD gsx_chkclip(AES_RENDER_PARAM GRECT *pt)
 {
     /* if clipping is on */
     if (gl_clip.g_w && gl_clip.g_h)
@@ -73,10 +74,10 @@ WORD gsx_chkclip(GRECT *pt)
 /*
  *  Routine to draw a clipped polyline, hiding the mouse as you do it
  */
-void gsx_cline(OB_RENDER_LINE_COORD x1, OB_RENDER_LINE_COORD y1, OB_RENDER_LINE_COORD x2, OB_RENDER_LINE_COORD y2)
+void gsx_cline(AES_RENDER_PARAM OB_RENDER_LINE_COORD x1, OB_RENDER_LINE_COORD y1, OB_RENDER_LINE_COORD x2, OB_RENDER_LINE_COORD y2)
 {
     gsx_moff();
-    OB_RENDER_LINE(x1,y1,x2,y2);
+    OB_RENDER_LINE(AES_RENDER_ARG x1,y1,x2,y2);
     gsx_mon();
 }
 
@@ -84,7 +85,7 @@ void gsx_cline(OB_RENDER_LINE_COORD x1, OB_RENDER_LINE_COORD y1, OB_RENDER_LINE_
 /*
  *  Routine to set the text, writing mode, and color attributes
  */
-void gsx_attr(UWORD text, UWORD mode, UWORD color)
+void gsx_attr(AES_RENDER_PARAM UWORD text, UWORD mode, UWORD color)
 {
     WORD    tmp;
 
@@ -96,7 +97,7 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
     {
         contrl.code = SET_WRITING_MODE;
         intin[0] = gl_mode = mode;
-        gsx2();
+        gsx2(AES_RENDER_ARG0);
     }
 
     contrl.code = 0;
@@ -120,7 +121,7 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
     if (contrl.code)
     {
         intin[0] = color;
-        gsx2();
+        gsx2(AES_RENDER_ARG0);
     }
     intin[0] = tmp;
 }
@@ -130,13 +131,13 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
  *  Routine to draw a box using the current attributes
  */
 #ifndef OB_RENDER_BOX
-static void gsx_box(LONG x, LONG y, LONG w, LONG h)
+static void gsx_box(AES_RENDER_PARAM LONG x, LONG y, LONG w, LONG h)
 {
     GRECT rect;
     /* Native AES retains its WORD VDI points and public calling convention. */
     r_set(&rect,x,y,w,h);
-    gsx_bxpts(&rect);
-    v_pline(5, ptsin);
+    gsx_bxpts(AES_RENDER_ARG &rect);
+    v_pline(AES_RENDER_ARG 5, ptsin);
 }
 #define OB_RENDER_BOX gsx_box
 #endif
@@ -144,9 +145,9 @@ static void gsx_box(LONG x, LONG y, LONG w, LONG h)
 /*
  *  Routine to do a filled bit blit (a rectangle)
  */
-void bb_fill(WORD mode, WORD fis, WORD patt, OB_RENDER_COORD hx, OB_RENDER_COORD hy, OB_RENDER_COORD hw, OB_RENDER_COORD hh)
+void bb_fill(AES_RENDER_PARAM WORD mode, WORD fis, WORD patt, OB_RENDER_COORD hx, OB_RENDER_COORD hy, OB_RENDER_COORD hw, OB_RENDER_COORD hh)
 {
-    gsx_attr(TRUE, mode, gl_tcolor);
+    gsx_attr(AES_RENDER_ARG TRUE, mode, gl_tcolor);
     if (fis != gl_fis)
     {
         vsf_interior(fis);
@@ -163,7 +164,7 @@ void bb_fill(WORD mode, WORD fis, WORD patt, OB_RENDER_COORD hx, OB_RENDER_COORD
 }
 
 
-static UWORD ch_width(WORD fn)
+static UWORD ch_width(AES_RENDER_PARAM WORD fn)
 {
     if (fn == IBM)
         return gl_wchar;
@@ -175,7 +176,7 @@ static UWORD ch_width(WORD fn)
 }
 
 
-static UWORD ch_height(WORD fn)
+static UWORD ch_height(AES_RENDER_PARAM WORD fn)
 {
     if (fn == IBM)
         return gl_hchar;
@@ -187,12 +188,12 @@ static UWORD ch_height(WORD fn)
 }
 
 
-static void gsx_tcalc(WORD font, char *ptext, WORD *ptextw, WORD *ptexth, WORD *pnumchs)
+static void gsx_tcalc(AES_RENDER_PARAM WORD font, char *ptext, WORD *ptextw, WORD *ptexth, WORD *pnumchs)
 {
     WORD    wc, hc;
 
-    wc = ch_width(font);
-    hc = ch_height(font);
+    wc = ch_width(AES_RENDER_ARG font);
+    hc = ch_height(AES_RENDER_ARG font);
 
     /* figure out the width of the text string in pixels */
     *pnumchs = expand_string(intin, ptext);
@@ -207,13 +208,13 @@ static void gsx_tcalc(WORD font, char *ptext, WORD *ptextw, WORD *ptexth, WORD *
 }
 
 
-void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
+void gsx_tblt(AES_RENDER_PARAM WORD tb_f, WORD x, WORD y, WORD tb_nc)
 {
     if (tb_f == IBM)
     {
         if (tb_f != gl_font)
         {
-            vst_height(gl_ws.ws_chmaxh, &gl_wptschar, &gl_hptschar, &gl_wchar, &gl_hchar);
+            vst_height(AES_RENDER_ARG gl_ws.ws_chmaxh, &gl_wptschar, &gl_hptschar, &gl_wchar, &gl_hchar);
             gl_font = tb_f;
         }
         y += gl_hptschar;
@@ -223,7 +224,7 @@ void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
     {
         if (tb_f != gl_font)
         {
-            vst_height(gl_ws.ws_chminh, &gl_wsptschar, &gl_hsptschar, &gl_wschar, &gl_hschar);
+            vst_height(AES_RENDER_ARG gl_ws.ws_chminh, &gl_wsptschar, &gl_hsptschar, &gl_wschar, &gl_hschar);
             gl_font = tb_f;
         }
         y += gl_hsptschar;
@@ -235,14 +236,14 @@ void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
     ptsin[0] = x;
     ptsin[1] = y;
     contrl.nintin = tb_nc;
-    gsx2();
+    gsx2(AES_RENDER_ARG0);
 }
 
 
 /*
  *  Routine to draw a colored, patterned, rectangle
  */
-void gr_rect(UWORD icolor, UWORD ipattern, GRECT *pt)
+void gr_rect(AES_RENDER_PARAM UWORD icolor, UWORD ipattern, GRECT *pt)
 {
     WORD    fis;
 
@@ -253,7 +254,7 @@ void gr_rect(UWORD icolor, UWORD ipattern, GRECT *pt)
         fis = FIS_SOLID;
 
     vsf_color(icolor);
-    bb_fill(MD_REPLACE, fis, ipattern, pt->g_x, pt->g_y, pt->g_w, pt->g_h);
+    bb_fill(AES_RENDER_ARG MD_REPLACE, fis, ipattern, pt->g_x, pt->g_y, pt->g_w, pt->g_h);
 }
 
 
@@ -262,12 +263,12 @@ void gr_rect(UWORD icolor, UWORD ipattern, GRECT *pt)
  *  account for its justification.  The number of characters in
  *  the string is also returned.
  */
-WORD gr_just(WORD just, WORD font, char *ptext, WORD w, WORD h, GRECT *pt)
+WORD gr_just(AES_RENDER_PARAM WORD just, WORD font, char *ptext, WORD w, WORD h, GRECT *pt)
 {
     WORD    numchs;
 
     /* figure out the width of the text string in pixels */
-    gsx_tcalc(font, ptext, &pt->g_w, &pt->g_h, &numchs);
+    gsx_tcalc(AES_RENDER_ARG font, ptext, &pt->g_w, &pt->g_h, &numchs);
 
     h -= pt->g_h;
     if (h > 0)              /* check height */
@@ -290,16 +291,16 @@ WORD gr_just(WORD just, WORD font, char *ptext, WORD w, WORD h, GRECT *pt)
 /*
  *  Routine to draw a string of graphic text
  */
-void gr_gtext(WORD just, WORD font, char *ptext, GRECT *pt)
+void gr_gtext(AES_RENDER_PARAM WORD just, WORD font, char *ptext, GRECT *pt)
 {
     WORD    numchs;
     GRECT   t;
 
     /* figure out where & how to put out the text */
     rc_copy(pt, &t);
-    numchs = gr_just(just, font, ptext, t.g_w, t.g_h, &t);
+    numchs = gr_just(AES_RENDER_ARG just, font, ptext, t.g_w, t.g_h, &t);
     if (numchs > 0)
-        gsx_tblt(font, t.g_x, t.g_y, numchs);
+        gsx_tblt(AES_RENDER_ARG font, t.g_x, t.g_y, numchs);
 }
 
 
@@ -325,7 +326,7 @@ void gr_crack(UWORD color, WORD *pbc, WORD *ptc, WORD *pip, WORD *pic, WORD *pmd
     *pic = color & 0x000f;
 }
 
-void gr_box(OB_RENDER_COORD x, OB_RENDER_COORD y, OB_RENDER_COORD w, OB_RENDER_COORD h, WORD th)
+void gr_box(AES_RENDER_PARAM OB_RENDER_COORD x, OB_RENDER_COORD y, OB_RENDER_COORD w, OB_RENDER_COORD h, WORD th)
 {
     if (th != 0)
     {
@@ -335,7 +336,7 @@ void gr_box(OB_RENDER_COORD x, OB_RENDER_COORD y, OB_RENDER_COORD w, OB_RENDER_C
         do
         {
             th += (th > 0) ? -1 : 1;
-            OB_RENDER_BOX((LONG)x+th,(LONG)y+th,(LONG)w-2*th,(LONG)h-2*th);
+            OB_RENDER_BOX(AES_RENDER_ARG (LONG)x+th,(LONG)y+th,(LONG)w-2*th,(LONG)h-2*th);
         } while (th != 0);
         gsx_mon();
     }

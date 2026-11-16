@@ -23,7 +23,7 @@ static int32_t native_ui(uint32_t function, uint64_t a, uint64_t b, uint64_t c, 
         : "rcx","r11","memory","cc");
     return (int32_t)ax;
 }
-static short receive(short *message, unsigned long timeout, short *global)
+static short receive(short *message, unsigned long timeout, AESGLOBAL *global)
 {
     return mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
                          message,timeout,NULL,NULL,NULL,NULL,NULL,NULL,global);
@@ -52,10 +52,10 @@ int gem_exit_order_child(int argc, char **argv)
     VERIFY(appl_exit());
     return 0x3456;
 }
-static int ordered_exit_checks(short *global)
+static int ordered_exit_checks(AESGLOBAL *global)
 {
     char tail[16] = { 0,'o',' ' }, reverse[5], fast_tail[3] = { 1,'e',0 };
-    unsigned number = (unsigned short)global[2], used = 3, digits = 0;
+    unsigned number = (unsigned short)global->ap_id, used = 3, digits = 0;
     short first, second, peer, message[8], go[8] = { ORDER_GO,0,0,0,0,0,0,0 };
     do { reverse[digits++] = '0'+number%10; number /= 10; } while (number);
     while (digits) tail[used++] = reverse[--digits];
@@ -70,7 +70,7 @@ static int ordered_exit_checks(short *global)
     /* Hold the first child alive until the second has completed. No timer
      * or scheduler ordering assumption decides which PROCESS exits first. */
     VERIFY(process(0x13a,second,0,0,0) == (int32_t)(((uint32_t)second << 16) | 0x78));
-    go[1] = global[2];
+    go[1] = global->ap_id;
     VERIFY(mt_appl_write(peer,sizeof(go),go,global));
     VERIFY(process(0x13a,first,0,0,0) == (int32_t)(((uint32_t)first << 16) | 0x56));
     /* Both public completions are consumed before either notification read. */
@@ -84,7 +84,7 @@ static int ordered_exit_checks(short *global)
     }
     return 0;
 }
-static int synchronous_exit_checks(short *global)
+static int synchronous_exit_checks(AESGLOBAL *global)
 {
     char tail[3] = { 1,'n',0 };
     int32_t session, token, image, result;
@@ -160,7 +160,7 @@ static int synchronous_exit_checks(short *global)
     return 0;
 }
 
-int gem_exit_checks(short *global)
+int gem_exit_checks(AESGLOBAL *global)
 {
     char tail[3] = { 1,'n',0 };
     short message[8], pid, earlier, a, b, c, d;

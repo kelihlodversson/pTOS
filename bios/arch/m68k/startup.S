@@ -117,7 +117,7 @@ amiga_main:
 
 C_SYM(os_header):
 os_entry:
-    bra.s   C_SYM(main)       // branch to main
+    bra.s   main_entry       // resolve the byte displacement within this section
 os_version:
     .dc.w   TOS_VERSION // TOS version
 reseth:
@@ -166,6 +166,7 @@ os_dummy:
     .ascii  "ETOS"      // main should start at offset 0x30, shouldn't it?
 
 C_SYM(main):
+main_entry:
         bra.w   _realmain   // MUST be 4 bytes long
 
 /*

@@ -433,7 +433,7 @@ int main(void)
         target.active_space=NULL;target.aspace=NULL;target.started=FALSE;
     }
     set.stack_bytes=DL_START_CAPACITY+64UL*1024UL;
-    ordinary=heap_alloc(&source,set.stack_bytes,UH_MALLOC,NULL,TRUE);CHECK(ordinary);
+    ordinary=heap_alloc(&source,set.stack_bytes,UH_MALLOC,NULL,TRUE,0);CHECK(ordinary);
     fail_metadata=allocation_call+1;CHECK(shared_interp_stack(&target,&set,ordinary)==ENSMEM);reset_failure();
     CHECK(shared_interp_stack(&target,&set,ordinary)==E_OK);
     {
@@ -472,7 +472,7 @@ int main(void)
     memset(&set,0,sizeof(set));set.space=source.active_space;set.parent=&source;
     CHECK(shared_interp_prepare(&source,&target,&set)==E_OK);
     CHECK(target.layout.entry==USER_IMAGE_BASE+16);
-    ordinary=heap_alloc(&source,TEST_PAGE,UH_MALLOC,NULL,TRUE);
+    ordinary=heap_alloc(&source,TEST_PAGE,UH_MALLOC,NULL,TRUE,0);
     CHECK(ordinary>=USER_HEAP_BASE);
     {
         KASPACE_HEAP *heap=kaspace_heap(source.active_space);

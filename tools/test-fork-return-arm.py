@@ -34,8 +34,8 @@ for preset, admitted in [('rpi1', False), ('rpi2-aspace', True),
     assert (config.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y') == admitted
     print(preset + ': saved-return admission ' + ('accepted' if admitted else 'rejected'))
 
-cc = shlex.split(os.environ.get('ARMCC', 'arm-none-eabi-gcc'))
-objdump = shlex.split(os.environ.get('ARMOBJDUMP', 'arm-none-eabi-objdump'))
+cc = shlex.split(os.environ.get('ARMCC', 'arm-unknown-ptos-elf-gcc'))
+objdump = shlex.split(os.environ.get('ARMOBJDUMP', 'arm-unknown-ptos-elf-objdump'))
 with tempfile.TemporaryDirectory(prefix='ptos-svc-alignment-') as temporary:
     work = Path(temporary)
     for machine in ('virt-arm', 'raspi'):

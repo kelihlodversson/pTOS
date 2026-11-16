@@ -110,7 +110,7 @@ CI runs the suite on nine machines (the `regression` job in
 `.github/workflows/build.yml`: virt-arm, virt-m68k, virt-m68k with
 `-mfastcall`, virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, raspi2b-aspace, pc-x86_64 and raspi2b) with `tools/run-regression-tests.sh
 <virt-arm|virt-m68k|virt-m68k-mmu|virt-m68k-aspace|raspi2b-aspace|pc-x86_64|raspi2b>`, which also works locally once the matching
-configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it), `virt-m68k-mmu` (the same with the higher-half kernel, on a 68040), `virt-m68k-aspace` (and `virt-arm-aspace`, `rpi2-aspace`: every process in an address space of its own; the suites that look at isolation are gated on `TEST_WITH_USER_ASPACE`), `pc-x86_64-desktop` or `rpi2-test` (the Pi 2 with the console on the UART as well: its desktop starts the suite from `emudesk.inf`, so there are no shutdown checks)) is built and
+configuration (`virt-arm-cli`, `virt-m68k-cli-elf` (the m68k ELF loader is an option, and three suites need it), `virt-m68k-mmu` (the same with the higher-half kernel, on a 68040), `virt-m68k-aspace` (and `virt-arm-aspace`, `rpi2-aspace`: every process in an address space of its own; the suites that look at isolation are gated on `TEST_WITH_USER_ASPACE`), `pc-x86_64-desktop` or `rpi2` (the Pi 2, whose console is on the UART as well: its desktop starts the suite from `emudesk.inf`, so there are no shutdown checks)) is built and
 `make test-dir` has run. The virt machines are the `-cli` configurations so
 that they boot to EmuCON, where the script types `runtests.tos` into the
 serial console; the script ends QEMU when the harness has printed its
@@ -158,7 +158,15 @@ being treated as suites themselves. `tests/pie_load/`, for instance,
 also has `pie_probe.c`: a standalone payload `pie_load.c` launches via
 `Pexec()` to test the PIE ELF loader, built and linked separately from
 `runtests.tos` (see the Makefile's `pieprobe.tos` rule) rather than
-compiled in as a `test_<name>()` entry point.  `tests/mmu_state/` asks the
+compiled in as a `test_<name>()` entry point.
+
+`tests/broad_va/` launches `HIIMAGE.TOS`, a relocation-free ELF executable
+at `0x41000000`, through direct and split Pexec loads. It maps and touches
+private guest RAM from 64 KiB to 16 MiB, verifies isolation from its parent,
+checks high mappings, image/metadata/heap/stack collisions and cleanup.
+It is enabled with per-process address spaces, the ELF loader and Mmap.
+
+`tests/mmu_state/` asks the
 kernel what the MMU is, with `Ssystem(S_MMUPROBE)` (include/mmuprobe.h,
 bios/arch/m68k/mmuprobe.c, only in a build with the tests on an m68k image that
 runs in the upper half): translation is on with 4 KiB pages, the roots are set, a page of the program
@@ -334,9 +342,10 @@ cases, for one) and still passes with the 68030: Hatari shows the missing
 flush and invalidate of the 68040's data cache, but not that of the 68030's
 (so the 68030 code is only checked for not crashing here).
 
-The workflow `.github/workflows/hatari-tests.yml` does this on every pull
-request to `master` or an epic branch (`tools/run-hatari-tests.py` runs one
-machine): the ROM image of `atari512` and of `atari512-fastcall` (the same
+The Hatari jobs of `.github/workflows/build.yml` do this on every pull
+request to `master` or an epic branch, on the systems and test disks the
+`build m68k-atari` job made (`tools/ci-hatari.sh` runs the combinations in
+groups, `tools/run-hatari-tests.py` runs one machine): the ROM image of `atari512` and of `atari512-fastcall` (the same
 built with `-mfastcall`, so that the code is run under that calling convention
 too) on an emulated STE in ST-LOW, ST-MEDIUM and ST-HIGH, and on a Falcon with
 a 68030 and with a 68040, both with the MMU emulated (`--mmu on`: the page

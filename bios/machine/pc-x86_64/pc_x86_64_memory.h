@@ -26,9 +26,9 @@ void pc_x86_64_memory_init(void);
  * X86_64_LOW_TPA_VIRT_BASE, mapped in the kernel's own page tables and
  * managed by procmem.c.  See include/procmem.h for the allocator that
  * hands it out and procmem.c for how it is backed.  Both constants stay
- * here because memory.c places the framebuffer after the process image window.
+ * here for the machine's low-memory mapping setup.
  */
-#define X86_64_LOW_TPA_VIRT_BASE 0x200000ULL
+#define X86_64_LOW_TPA_VIRT_BASE 0x0e000000ULL
 #define X86_64_LOW_TPA_BYTES (2 * 1024 * 1024)
 
 /*
@@ -59,7 +59,7 @@ void x86_64_low_tpa_init(void);
  * Maps count 2 MiB pages of the CALLER-GIVEN physical range
  * [aligned_phys, aligned_phys + page_count*2MiB) -- already 2 MiB-aligned,
  * unlike x86_64_low_tpa_init()'s own allocation
- * -- at a fixed low virtual base right after the user image window (see
+ * -- at a fixed virtual base in the reserved system window (see
  * memory.c's own #332 comment). Used for the EFI GOP framebuffer
  * (bios/machine/pc-x86_64/gop.c), whose physical location this file has
  * no say over. Returns that virtual base, or 0 if page_count describes

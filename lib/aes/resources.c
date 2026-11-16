@@ -1,34 +1,30 @@
 /* Standard GEM resources in application memory, using the shared RSC loader.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
 #include "gemerror.h"
 #include "transport.h"
 #include "application.h"
+#include "app_context.h"
 #include "resource_context.h"
 #include "rsload.h"
 #include "gemrcfix.h"
 #include "gemlayout.h"
 #include "string.h"
-#include "ptos.h"
 #include "launch.h"
 
 extern char *getenv(const char *name);
 #define RESOURCE_PATH DL_LAUNCH_PATH
-RESOURCE_CONTEXT *aes_resource;
-static RESOURCE_CONTEXT *resources;
-static RESOURCE_CONTEXT *retired_resources;
 /* Reserve cleanup linkage before allocation can need a failed-free retry.
  * The union keeps returned storage aligned for pointers and 64-bit fields. */
 typedef union resource_allocation {
-    union resource_allocation *next;
+    struct {
+        union resource_allocation *next;
+        AES_RESOURCE_STATE *owner;
+    } cleanup;
     UQUAD alignment;
 } RESOURCE_ALLOCATION;
-static RESOURCE_ALLOCATION *discarded_allocations;
-static LONG pending_close = -1;
-static char application_directory[RESOURCE_PATH];
-const char *aes_resource_directory(void) { return application_directory; }
 
-void *aes_temporary_alloc(LONG bytes)
+static void *allocate(LONG bytes, AES_RESOURCE_STATE *owner)
 {
     UQUAD address;
     RESOURCE_ALLOCATION *allocation;
@@ -36,11 +32,16 @@ void *aes_temporary_alloc(LONG bytes)
     address = aes_memory_call(0x48,(ULONG)bytes+sizeof(*allocation));
     if ((QUAD)address <= 0) return NULL;
     allocation = (RESOURCE_ALLOCATION *)(uintptr_t)address;
+    allocation->cleanup.owner = owner;
     return allocation+1;
 }
-void *aes_resource_alloc(LONG bytes)
+void *aes_temporary_alloc(LONG bytes, AESGLOBAL *global)
 {
-    return bytes > 65535 ? NULL : aes_temporary_alloc(bytes);
+    return allocate(bytes,&aes_app_context(global)->resources);
+}
+void *aes_resource_alloc(LONG bytes, AES_RESOURCE_STATE *owner)
+{
+    return bytes > 65535 ? NULL : allocate(bytes,owner);
 }
 WORD aes_resource_release(void *memory)
 {
@@ -51,8 +52,9 @@ WORD aes_resource_discard(void *memory)
     WORD result = aes_resource_release(memory);
     if (result != E_OK) {
         RESOURCE_ALLOCATION *allocation = (RESOURCE_ALLOCATION *)memory-1;
-        allocation->next = discarded_allocations;
-        discarded_allocations = allocation;
+        AES_RESOURCE_STATE *owner = allocation->cleanup.owner;
+        allocation->cleanup.next = owner->discarded_allocations;
+        owner->discarded_allocations = allocation;
     }
     return result;
 }
@@ -60,25 +62,25 @@ WORD aes_resource_discard(void *memory)
  * until both the image and the record itself have actually been released. */
 static BOOL release_resource(RESOURCE_CONTEXT *resource)
 {
-    if (resource->native.ap_rscmem && !resource->caller_owned) {
-        if (aes_resource_release(resource->native.ap_rscmem) != E_OK) return FALSE;
-        resource->native.ap_rscmem = NULL;
+    if (resource->image && !resource->caller_owned) {
+        if (aes_resource_release(resource->image) != E_OK) return FALSE;
+        resource->image = NULL;
     }
     return aes_resource_release(resource) == E_OK;
 }
 static void retire_resource(RESOURCE_CONTEXT *resource)
 {
-    resource->next = retired_resources;
-    retired_resources = resource;
+    resource->next = resource->owner->retired_resources;
+    resource->owner->retired_resources = resource;
 }
-static void retry_resource_releases(void)
+static void retry_resource_releases(AES_RESOURCE_STATE *owner)
 {
-    RESOURCE_CONTEXT **link = &retired_resources, *resource, *next;
-    RESOURCE_ALLOCATION **allocation = &discarded_allocations, *block, *following;
+    RESOURCE_CONTEXT **link = &owner->retired_resources, *resource, *next;
+    RESOURCE_ALLOCATION **allocation = &owner->discarded_allocations, *block, *following;
     while ((block = *allocation) != NULL) {
-        following = block->next;
+        following = block->cleanup.next;
         if (aes_resource_release(block+1) == E_OK) *allocation = following;
-        else allocation = &block->next;
+        else allocation = &block->cleanup.next;
     }
     while ((resource = *link) != NULL) {
         next = resource->next;
@@ -100,23 +102,28 @@ LONG aes_resource_seek(WORD handle, WORD mode, LONG offset)
     return (LONG)aes_gemdos_call(0x42,(QUAD)offset,(UWORD)handle,(UWORD)mode);
 }
 /* A failed Fclose may leave its handle live, or may already have released
- * it. Retry without opening anything in between, and accept EIHNDL as closed.
- * Keep a persistently failing handle for the next load/session cleanup rather
- * than accumulating more open files on repeated failed loads. */
-static BOOL retry_resource_close(void)
+ * it. Retry immediately and accept EIHNDL as closed. The owning context must
+ * resolve a persistently failing close before opening another resource file;
+ * another context neither inherits nor retries this pending close. */
+static BOOL retry_resource_close(AES_RESOURCE_STATE *owner)
 {
     LONG result;
-    if (pending_close < 0) return TRUE;
-    result = (LONG)aes_gemdos_call(0x3e,(UWORD)pending_close,0,0);
-    if (result != E_OK && result != EIHNDL) return FALSE;
-    pending_close = -1;
+    if (!owner->close_pending) return TRUE;
+    result = (LONG)aes_gemdos_call(0x3e,(UWORD)owner->pending_close,0,0);
+    if (result != E_OK && result != EIHNDL) {
+        /* A close can release the descriptor and still report a flush error.
+         * Probe before returning control to a caller that could reopen it.
+         * Only EIHNDL proves release; other seek errors retain ownership. */
+        if (aes_resource_seek((WORD)owner->pending_close,1,0) != EIHNDL) return FALSE;
+    }
+    owner->close_pending = FALSE;
     return TRUE;
 }
-static BOOL close_resource_file(void)
+static BOOL close_resource_file(AES_RESOURCE_STATE *owner)
 {
-    LONG result = (LONG)aes_gemdos_call(0x3e,(UWORD)pending_close,0,0);
-    if (result == E_OK || result == EIHNDL) pending_close = -1;
-    else retry_resource_close();
+    LONG result = (LONG)aes_gemdos_call(0x3e,(UWORD)owner->pending_close,0,0);
+    if (result == E_OK || result == EIHNDL) owner->close_pending = FALSE;
+    else retry_resource_close(owner);
     /* Recovery must not turn an unsuccessful load into a successful one. */
     return result == E_OK;
 }
@@ -127,52 +134,6 @@ CICONBLK **aes_resource_cicons(RSHDR *header)
     if (!(header->rsh_vrsn & NEW_FORMAT_RSC)) return NULL;
     extension = (LONG *)((char *)header+header->rsh_rssize);
     return extension[1] > 0 ? (CICONBLK **)((char *)header+extension[1]) : NULL;
-}
-
-/* Capture the launch directory before application code can change cwd.
- * AT_EXECFN contains the actual supplied filename, independent of ARGV[0]. */
-void aes_resources_init(void)
-{
-    const char *name = (const char *)(uintptr_t)__ptos_getauxval(31), *p, *base;
-    char cwd[RESOURCE_PATH], directory[RESOURCE_PATH];
-    LONG drive;
-    size_t prefix, length, i, at = 0;
-    const DL_LAUNCH *launch = (const DL_LAUNCH *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH);
-    application_directory[0] = 0;
-    if (launch) {
-        if (launch->ready != 1) return;
-        name = launch->command;
-        for (i = 0, prefix = 0; i < RESOURCE_PATH && name[i]; i++)
-            if (name[i] == '\\' || name[i] == '/') prefix = i+1;
-        if (i == RESOURCE_PATH || !prefix) return;
-        memcpy(application_directory,name,prefix); application_directory[prefix] = 0;
-        return;
-    }
-    if (!name) return;
-    length = strlen(name);
-    if (length >= RESOURCE_PATH) return;
-    base = name;
-    for (p = name; *p; p++) if (*p == '\\' || *p == '/' || *p == ':') base = p+1;
-    prefix = base-name;
-    drive = (LONG)aes_gemdos_call(0x19,0,0,0);
-    if (length >= 2 && name[1] == ':') {
-        drive = (name[0] >= 'a' && name[0] <= 'z' ? name[0]-'a' : name[0]-'A');
-        name += 2; prefix = prefix >= 2 ? prefix-2 : 0;
-    }
-    if (drive < 0 || drive > 25) return;
-    directory[at++] = 'A'+drive; directory[at++] = ':';
-    if (*name != '\\' && *name != '/') {
-        if ((LONG)aes_gemdos_call(0x47,(uintptr_t)cwd,drive+1,0) != E_OK) return;
-        length = strlen(cwd);
-        if (length+at+prefix+2 >= RESOURCE_PATH) return;
-        if (!length || (cwd[0] != '\\' && cwd[0] != '/')) directory[at++] = '\\';
-        for (i = 0; i < length; i++) directory[at++] = cwd[i] == '/' ? '\\' : cwd[i];
-        if (directory[at-1] != '\\') directory[at++] = '\\';
-    }
-    if (at+prefix >= RESOURCE_PATH) return;
-    for (i = 0; i < prefix; i++) directory[at++] = name[i] == '/' ? '\\' : name[i];
-    directory[at] = 0;
-    memcpy(application_directory,directory,at+1);
 }
 
 static LONG open_joined(const char *directory, size_t length, const char *name)
@@ -186,9 +147,10 @@ static LONG open_joined(const char *directory, size_t length, const char *name)
     memcpy(path+length,name,n+1);
     return (LONG)aes_gemdos_call(0x3d,(uintptr_t)path,0,0);
 }
-static LONG open_resource(const char *name)
+static LONG open_resource(const char *name, AESGLOBAL *global)
 {
     const char *p, *base = name, *path;
+    const char *application_directory = aes_shell_state(global)->directory;
     LONG handle;
     size_t n = 0;
     while (n < RESOURCE_PATH && name[n]) n++;
@@ -213,28 +175,19 @@ static LONG open_resource(const char *name)
     return EFILNF;
 }
 
-/* Resource global pointers are the standard two-WORD, 32-bit GEM fields. */
-static ULONG global_pointer(const WORD *global, WORD offset)
+/* The caller selects resources through its public typed fields. */
+static void publish(AESGLOBAL *global, RESOURCE_CONTEXT *resource)
 {
-    ULONG value;
-    memcpy(&value,global+offset,sizeof(value));
-    return value;
+    global->ap_ptree = resource ? resource->trees : NULL;
+    global->ap_rscmem = resource ? resource->image : NULL;
+    global->ap_rsclen = resource ? resource->length : 0;
 }
-static void publish(WORD *global, RESOURCE_CONTEXT *resource)
-{
-    ULONG value = resource ? (ULONG)(uintptr_t)resource->native.ap_ptree : 0;
-    memcpy(global+5,&value,sizeof(value));
-    value = resource ? (ULONG)(uintptr_t)resource->native.ap_rscmem : 0;
-    memcpy(global+7,&value,sizeof(value));
-    global[9] = resource ? resource->native.ap_rsclen : 0;
-}
-static RESOURCE_CONTEXT **selected(WORD *global, BOOL tree_table)
+static RESOURCE_CONTEXT **selected(AESGLOBAL *global, BOOL tree_table)
 {
     RESOURCE_CONTEXT **link;
-    ULONG image = global_pointer(global,7), trees = global_pointer(global,5);
-    for (link = &resources; *link; link = &(*link)->next)
-        if (tree_table ? (ULONG)(uintptr_t)(*link)->native.ap_ptree == trees :
-            (ULONG)(uintptr_t)(*link)->native.ap_rscmem == image) break;
+    for (link = &aes_app_context(global)->resources.resources; *link; link = &(*link)->next)
+        if (tree_table ? (*link)->trees == global->ap_ptree :
+            (*link)->image == global->ap_rscmem) break;
     return link;
 }
 
@@ -243,7 +196,7 @@ static RESOURCE_CONTEXT **selected(WORD *global, BOOL tree_table)
 static BOOL valid_trees(RESOURCE_CONTEXT *resource, BOOL offsets)
 {
     typedef struct { WORD object, next, last; } FRAME;
-    RSHDR *header = resource->native.ap_rscmem;
+    RSHDR *header = resource->image;
     OBJECT *objects = (OBJECT *)((char *)header+header->rsh_object), *tree;
     FRAME *stack;
     UBYTE *visited, *validated;
@@ -252,12 +205,12 @@ static BOOL valid_trees(RESOURCE_CONTEXT *resource, BOOL offsets)
     BOOL ok = FALSE;
     if (!header->rsh_ntree) return TRUE; /* Free strings/images need no tree. */
     if (header->rsh_nobs <= 0) return FALSE;
-    stack = aes_resource_alloc((LONG)header->rsh_nobs*(sizeof(FRAME)+2));
+    stack = aes_resource_alloc((LONG)header->rsh_nobs*(sizeof(FRAME)+2),resource->owner);
     if (!stack) return FALSE;
     visited = (UBYTE *)(stack+header->rsh_nobs); validated = visited+header->rsh_nobs;
     memset(validated,0,header->rsh_nobs);
     for (i = 0; i < header->rsh_ntree; i++) {
-        tree = resource->native.ap_ptree[i];
+        tree = resource->trees[i];
         if (offsets) tree = (OBJECT *)((char *)header+(uintptr_t)tree);
         root = tree-objects;
         if (root < 0 || root >= header->rsh_nobs) goto done;
@@ -290,44 +243,52 @@ done:
     aes_resource_discard(stack);
     return ok;
 }
-WORD mt_rsrc_load(const char *name, WORD *global)
+WORD mt_rsrc_load(const char *name, AESGLOBAL *global)
 {
-    RESOURCE_CONTEXT *resource, *saved = aes_resource;
+    RESOURCE_CONTEXT *resource, *aes_resource;
+    AES_RESOURCE_STATE *owner;
     LONG handle, session;
+    AESGLOBAL loaded = { 0 };
     BOOL ok;
     if (!name) return 0;
     session = aes_application_session(global);
-    if (session < 0 || !retry_resource_close()) return 0;
-    retry_resource_releases();
-    resource = aes_resource_alloc(sizeof(*resource));
+    if (session < 0) return 0;
+    owner = &aes_app_context(global)->resources;
+    if (!retry_resource_close(owner)) return 0;
+    retry_resource_releases(owner);
+    resource = aes_resource_alloc(sizeof(*resource),owner);
     if (!resource) return 0;
     memset(resource,0,sizeof(*resource));
+    resource->owner = owner;
     if (!aes_layout_metrics(&resource->metrics,global)) { dispose_resource(resource); return 0; }
-    handle = open_resource(name);
+    handle = open_resource(name,global);
     if (handle < 0) { dispose_resource(resource); return 0; }
-    pending_close = handle;
+    owner->pending_close = handle; owner->close_pending = TRUE;
     aes_resource = resource;
-    ok = aes_resource_read(&resource->native,(UWORD)handle) != 0;
-    if (!close_resource_file()) ok = FALSE;
-    if (ok) { resource->header = *resource->native.ap_rscmem; ok = valid_trees(resource,FALSE); }
+    ok = aes_resource_read(aes_resource, &loaded,(UWORD)handle) != 0;
+    resource->image = loaded.ap_rscmem;
+    resource->trees = loaded.ap_ptree;
+    resource->length = loaded.ap_rsclen;
+    if (!close_resource_file(owner)) ok = FALSE;
+    if (ok) { resource->header = *resource->image; ok = valid_trees(resource,FALSE); }
     if (ok && aes_application_session(global) != session) ok = FALSE;
     if (ok) {
-        aes_resource_fix();
-        resource->next = resources; resources = resource;
+        aes_resource_fix(aes_resource);
+        resource->next = owner->resources; owner->resources = resource;
         publish(global,resource);
     } else {
         dispose_resource(resource);
     }
-    aes_resource = saved;
     return ok ? 1 : 0;
 }
-WORD rsrc_load(const char *name) { return mt_rsrc_load(name,aes_global); }
 
-WORD mt_rsrc_rcfix(void *image, WORD *global)
+
+WORD mt_rsrc_rcfix(void *image, AESGLOBAL *global)
 {
     RSHDR *header = image, *staged;
     UBYTE *roles;
     RESOURCE_CONTEXT *resource, *p;
+    AES_RESOURCE_STATE *owner;
     OBJECT *objects;
     LONG session;
     WORD i;
@@ -335,24 +296,26 @@ WORD mt_rsrc_rcfix(void *image, WORD *global)
     if (!header || (uintptr_t)header % __alignof__(void *)) return 0;
     session = aes_application_session(global);
     if (session < 0 || header->rsh_rssize < sizeof(*header)) return 0;
+    owner = &aes_app_context(global)->resources;
     /* Fixing a live image twice must never relocate pointers or scale twice.
      * GEM callers release the selected resource before installing rcfix data. */
     if (*selected(global,FALSE)) return 0;
-    for (p = resources; p; p = p->next)
-        if (p->native.ap_rscmem == image) return 0;
-    retry_resource_releases();
-    resource = aes_resource_alloc(sizeof(*resource));
+    for (p = owner->resources; p; p = p->next)
+        if (p->image == image) return 0;
+    retry_resource_releases(owner);
+    resource = aes_resource_alloc(sizeof(*resource),owner);
     if (!resource) return 0;
     memset(resource,0,sizeof(*resource));
+    resource->owner = owner;
     resource->caller_owned = TRUE;
-    resource->native.ap_rscmem = image;
-    resource->native.ap_rsclen = header->rsh_rssize;
-    resource->native.ap_ptree = (OBJECT **)((char *)image+header->rsh_trindex);
+    resource->image = image;
+    resource->length = header->rsh_rssize;
+    resource->trees = (OBJECT **)((char *)image+header->rsh_trindex);
     resource->header = *header;
     if (!aes_layout_metrics(&resource->metrics,global)) { dispose_resource(resource); return 0; }
-    staged = aes_resource_alloc(header->rsh_rssize);
+    staged = aes_resource_alloc(header->rsh_rssize,owner);
     if (!staged) { dispose_resource(resource); return 0; }
-    roles = aes_resource_alloc(header->rsh_rssize);
+    roles = aes_resource_alloc(header->rsh_rssize,owner);
     if (!roles) {
         aes_resource_discard(staged); dispose_resource(resource); return 0;
     }
@@ -366,39 +329,41 @@ WORD mt_rsrc_rcfix(void *image, WORD *global)
         /* All fallible work precedes the in-place commit. Pointer targets
          * already refer to caller storage, never to the temporary copy. */
         memcpy(image,staged,header->rsh_rssize);
-        resource->next = resources; resources = resource;
+        resource->next = owner->resources; owner->resources = resource;
         publish(global,resource);
     } else dispose_resource(resource);
     aes_resource_discard(roles);
     aes_resource_discard(staged);
     return ok ? 1 : 0;
 }
-WORD rsrc_rcfix(void *image) { return mt_rsrc_rcfix(image,aes_global); }
 
-WORD mt_rsrc_free(WORD *global)
+
+WORD mt_rsrc_free(AESGLOBAL *global)
 {
     RESOURCE_CONTEXT **link, *resource;
     if (aes_application_session(global) < 0) return 0;
     link = selected(global,FALSE); resource = *link;
     if (!resource || (!resource->caller_owned &&
-        aes_resource_release(resource->native.ap_rscmem) != E_OK)) return 0;
+        aes_resource_release(resource->image) != E_OK)) return 0;
     *link = resource->next;
-    resource->native.ap_rscmem = NULL;
+    resource->image = NULL;
     dispose_resource(resource);
     publish(global,NULL);
     return 1;
 }
-WORD rsrc_free(void) { return mt_rsrc_free(aes_global); }
-void aes_resources_reset(void)
+
+BOOL aes_resources_reset(AESGLOBAL *global)
 {
+    AES_RESOURCE_STATE *owner = &aes_app_context(global)->resources;
     RESOURCE_CONTEXT *next;
-    retry_resource_close();
-    while (resources) {
-        next = resources->next;
-        retire_resource(resources);
-        resources = next;
+    retry_resource_close(owner);
+    while (owner->resources) {
+        next = owner->resources->next;
+        retire_resource(owner->resources);
+        owner->resources = next;
     }
-    retry_resource_releases();
+    retry_resource_releases(owner);
+    return !owner->close_pending && !owner->retired_resources && !owner->discarded_allocations;
 }
 static BOOL address_index(const RSHDR *header, WORD type, WORD index)
 {
@@ -415,29 +380,27 @@ static BOOL address_index(const RSHDR *header, WORD type, WORD index)
     }
     return index >= 0 && index < count;
 }
-WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, WORD *global)
+WORD mt_rsrc_gaddr(WORD type, WORD index, void *address, AESGLOBAL *global)
 {
-    RESOURCE_CONTEXT *resource, *saved = aes_resource;
+    RESOURCE_CONTEXT *resource, *aes_resource;
     void *value = (void *)-1L;
     if (!address) return 0;
     if (aes_application_session(global) >= 0) {
         resource = *selected(global,type == R_TREE);
-        if (resource && !memcmp(resource->native.ap_rscmem,&resource->header,sizeof(resource->header)) &&
+        if (resource && !memcmp(resource->image,&resource->header,sizeof(resource->header)) &&
             address_index(&resource->header,type,index)) {
             aes_resource = resource;
-            value = aes_resource_addr(type,index);
-            aes_resource = saved;
-        }
+            value = aes_resource_addr(aes_resource, type,index);
+                }
     }
     memcpy(address,&value,sizeof(value));
     return value != (void *)-1L;
 }
-WORD rsrc_gaddr(WORD type, WORD index, void *address) { return mt_rsrc_gaddr(type,index,address,aes_global); }
-WORD mt_rsrc_saddr(WORD type, WORD index, void *address, WORD *global)
+
+WORD mt_rsrc_saddr(WORD type, WORD index, void *address, AESGLOBAL *global)
 {
     void *slot;
     if (!mt_rsrc_gaddr(type,index,&slot,global) || !slot) return 0;
     memcpy(slot,&address,sizeof(address));
     return 1;
 }
-WORD rsrc_saddr(WORD type, WORD index, void *address) { return mt_rsrc_saddr(type,index,address,aes_global); }

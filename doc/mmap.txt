@@ -65,18 +65,26 @@ Replacing MAP_FIXED (0x10) is explicitly unsupported; it must not be silently
 treated as a non-replacing fixed request.
 
 address is an advisory hint, rounded down to a page. If it is outside the
-mapping window or unavailable, first fit is used instead. The optional
+allocatable range or unavailable, first fit is used instead. The optional
 MAP_FIXED_NOREPLACE (0x100000) requests that exact page-aligned address;
 collision returns EACCDN without replacing or changing any mapping. A fixed
-request outside the window returns EIMBA; an unaligned one returns EINVAL.
+request outside the bounds returns EIMBA; an unaligned one returns EINVAL.
 
 length must be nonzero and is rounded up to whole pages (4096 initially;
 query Sysconf(SC_PAGE_SIZE)). Arithmetic is bounded before rounding. Mappings
-live in [0x01000000, 0x0f000000), separately from program images, ancestor
-basepages, Malloc memory, stacks, guards and kernel mappings. Every process
+may use [0x00010000, USER_ALLOC_LIMIT), where USER_ALLOC_LIMIT is the guard
+below the default stack (0x7efff000 with demand paging, 0x7ffbf000 without).
+The system window [0x08000000, 0x10000000) is reserved, as are the whole
+program image including segment gaps and startup area, pending PE_LOAD
+images, Malloc blocks and the process's current stack and guard. Collision
+with any such reservation returns EACCDN for a fixed request. Checks include
+lazy reservations which have no physical page yet. Ordinary placement first
+tries [0x01000000, 0x0f000000), skipping the system window, then the broader
+range. A high-linked emulator can map private guest RAM at
+0x00010000..0x00ffffff and a native image can occupy 0x41000000. Every process
 owns its reservations and private views. Clean file pages may share physical
 backing; private writes are never visible through a peer's mapping. All returned addresses are positive
-signed GEMDOS longs. Out-of-window/oversized ranges return EIMBA, zero length
+signed GEMDOS longs. Out-of-bounds/oversized ranges return EIMBA, zero length
 EINVAL; exhausted address space, reservation metadata or process limits
 return ENSMEM.
 

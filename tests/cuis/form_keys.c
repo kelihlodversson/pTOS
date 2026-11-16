@@ -6,8 +6,9 @@
 #define VERIFY(c) do { if (!(c)) return 0x7500 | __LINE__; } while (0)
 int gem_form_key_checks(short handle)
 {
-    OBJECT tree[6] = { { 0 } }, single = { 0 }, pixel = { 0 };
-    short next, key, global[15];
+    OBJECT tree[6] = { 0 }, single = { 0 }, pixel = { 0 };
+    short next, key;
+    AESGLOBAL global = { 0 };
     int i, before, above, below;
     for (i = 0; i < 6; i++) {
         tree[i].ob_next = tree[i].ob_head = tree[i].ob_tail = -1;
@@ -21,9 +22,9 @@ int gem_form_key_checks(short handle)
     tree[2].ob_state = OS_DISABLED; tree[3].ob_flags |= OF_HIDETREE;
     tree[5].ob_type = G_BUTTON; tree[5].ob_spec.free_string = "OK";
     tree[5].ob_flags = OF_LASTOB|OF_DEFAULT|OF_SELECTABLE;
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
+    global = aes_global;
     VERIFY(form_keybd(tree,1,88,0x0f09,&next,&key) == 1 && next == 4 && key == 0);
-    VERIFY(mt_form_keybd(tree,1,88,0x5000,&next,&key,global) == 1 && next == 4 && key == 0);
+    VERIFY(mt_form_keybd(tree,1,88,0x5000,&next,&key,&global) == 1 && next == 4 && key == 0);
     VERIFY(form_keybd(tree,4,88,0x4800,&next,&key) == 1 && next == 1 && key == 0);
     VERIFY(form_keybd(tree,4,88,0x0f09,&next,&key) == 1 && next == 4 && key == 0);
     VERIFY(form_keybd(tree,5,88,0x0f09,&next,&key) == 1 && next == 5 && key == 0);
@@ -63,7 +64,7 @@ int gem_form_key_checks(short handle)
     VERIFY(form_keybd(tree,1,88,0x1c0d,&next,&key) == 0 && next == 5 && key == 0);
     VERIFY((tree[5].ob_state & OS_SELECTED) && gem_probe_pixel(handle,11,41) != before);
     VERIFY(objc_change(tree,5,0,0,0,160,120,0,1) == 1 && gem_probe_pixel(handle,11,41) == before);
-    VERIFY(mt_form_keybd(tree,1,88,0x720d,&next,&key,global) == 0 && next == 5 && key == 0);
+    VERIFY(mt_form_keybd(tree,1,88,0x720d,&next,&key,&global) == 0 && next == 5 && key == 0);
     VERIFY(tree[5].ob_state & OS_SELECTED);
     VERIFY(objc_change(tree,5,0,0,0,160,120,0,1) == 1);
     /* Native FORM_KEYBD clips selection to the area below the menu bar. */

@@ -373,7 +373,7 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
  * Ring-3 PE_GO is currently rejected. The legacy give-back path remains for
  * compatible internal callers.
  */
-VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
+VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes, VADDR preferred);
 void kproc_load_release(PD *caller, VADDR va);
 BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages);
 /* Legacy PE_GO give-back: call before kproc_prepare_user(). */

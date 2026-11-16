@@ -218,7 +218,7 @@ static void held_staging_discard(KPROC *source)
     REQUIRE(kproc_reservation_hold(run,(VADDR)(uintptr_t)environment,2,info.identity,ASPACE_PROT_USER,&env_view)==E_OK);
     REQUIRE(kproc_allocation_hold(run,pd,procmem_gen(pd),0,sizeof(PD),ASPACE_PROT_USER,&bp_hold)==E_OK);
     REQUIRE(kproc_allocation_hold(run,environment,procmem_gen(environment),0,2,ASPACE_PROT_USER,&env_hold)==E_OK);
-    va=kproc_load_alloc(run,pd,2*PAGE); REQUIRE(va);
+    va=kproc_load_alloc(run,pd,2*PAGE,0); REQUIRE(va);
     kproc_set_creator(pd,run);
     REQUIRE(kproc_reservation_info(run,va,16,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(run,va,16,info.identity,ASPACE_PROT_USER,&first)==E_OK);
@@ -300,7 +300,7 @@ static void held_stack_growth(KPROC *source,PD *pd,VADDR image_address)
         REQUIRE(prefix==USER_HEAP_BASE);
     }
     REQUIRE(proc_create_clone_process(source,0,&staging)==E_OK && staging);
-    va=kproc_load_alloc(pd,kproc_live_pd(staging),2*PAGE);REQUIRE(va>=image_address+2*PAGE);
+    va=kproc_load_alloc(pd,kproc_live_pd(staging),2*PAGE,0);REQUIRE(va>=image_address+2*PAGE);
     kproc_set_creator(kproc_live_pd(staging),pd);
     REQUIRE(kproc_reservation_info(pd,va,2*PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,va,2*PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&hold)==E_OK);
@@ -385,7 +385,7 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_borrow(run,env));
     /* Exercise the real staged-loader allocation/move primitives. These zero
      * pages are NEVER executed; this is ownership proof, not Pexec4 evidence. */
-    image_address=kproc_load_alloc(run,pd,2*PAGE); REQUIRE(image_address);
+    image_address=kproc_load_alloc(run,pd,2*PAGE,0); REQUIRE(image_address);
     memset(&layout,0,sizeof(layout));
     layout.nseg=2; layout.entry=image_address; layout.end=image_address+2*PAGE;
     layout.seg[0].vaddr=image_address; layout.seg[0].memsz=PAGE; layout.seg[0].flags=5;
@@ -485,7 +485,7 @@ void kproc_region_selftest(void)
     }
 #endif
     REQUIRE(proc_create_clone_process(source,0,&orphan_stage)==E_OK && orphan_stage);
-    orphan_address=kproc_load_alloc(pd,kproc_live_pd(orphan_stage),2*PAGE); REQUIRE(orphan_address);
+    orphan_address=kproc_load_alloc(pd,kproc_live_pd(orphan_stage),2*PAGE,0); REQUIRE(orphan_address);
     kproc_set_creator(kproc_live_pd(orphan_stage),pd);
     REQUIRE(kproc_reservation_info(pd,orphan_address,16,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,orphan_address,16,info.identity,ASPACE_PROT_USER,&orphan_hold)==E_OK);

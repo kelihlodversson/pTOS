@@ -1,6 +1,7 @@
 /* Standard standalone GEM popup menus using caller-local tracking.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
-#include "gem.h"
+#include "libaes.h"
+#include "object_helpers.h"
 #include "gemerror.h"
 #include "application.h"
 #include "transport.h"
@@ -12,7 +13,7 @@
 #include "string.h"
 #define POPUP_ITEMS 4096
 
-typedef struct { WORD *global; GRECT clip; } POPUP_CONTEXT;
+typedef struct { AESGLOBAL *global; GRECT clip; } POPUP_CONTEXT;
 static BOOL popup_draw(void *context, OBJECT *tree, WORD root)
 {
     POPUP_CONTEXT *c = context;
@@ -32,7 +33,7 @@ static BOOL popup_pointer(void *context, WORD *x, WORD *y)
 static WORD popup_find(void *context, OBJECT *tree, WORD root, WORD x, WORD y)
 {
     (void)context;
-    return objc_find(tree,root,1,x,y);
+    return aes_object_find(tree,root,1,x,y);
 }
 static BOOL popup_rect(void *context, OBJECT *tree, WORD item, GRECT *rect)
 {
@@ -63,7 +64,7 @@ static BOOL string_item(OBJECT *object)
     for (n = 0; n <= 127; n++) if (!spec.free_string[n]) return TRUE;
     return FALSE;
 }
-WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, WORD *global)
+WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, AESGLOBAL *global)
 {
     MENU input, output;
     POPUP_CONTEXT c;
@@ -99,7 +100,7 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, WORD *global)
     }
     if (start == NIL || !count) goto done;
     bytes = (LONG)(count+1)*(sizeof(OBJECT)+sizeof(WORD));
-    tree = aes_temporary_alloc(bytes);
+    tree = aes_temporary_alloc(bytes,global);
     if (!tree) goto done;
     map = (WORD *)(tree+count+1);
     tree[0] = *box; tree[0].ob_next = NIL; tree[0].ob_head = 1; tree[0].ob_tail = count;
@@ -138,11 +139,11 @@ WORD mt_menu_popup(MENU *menu, WORD xpos, WORD ypos, MENU *result, WORD *global)
     if (c.clip.g_w <= 0 || c.clip.g_h <= 0 ||
         (ULONG)((c.clip.g_w+15L)&~15L)*(UWORD)c.clip.g_h > VDI_SERVICE_MAX_BITMAP/4) goto done;
     bytes = (LONG)((c.clip.g_w+15L)&~15L)*c.clip.g_h*4;
-    buffer = aes_temporary_alloc(bytes);
+    buffer = aes_temporary_alloc(bytes,global);
     if (!buffer) goto done;
     if (cuis_call6(CUIS_DISPLAY_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     display = TRUE;
-    if (!aes_frames_suspend()) goto done;
+    if (!aes_frames_suspend(global)) goto done;
     overlay = TRUE;
     if (cuis_call6(CUIS_MOUSE_LOCK,session,1,1,0,0,0) != E_OK) goto done;
     grabbed = TRUE;
@@ -162,10 +163,8 @@ done:
     if (display && cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0) != E_OK) ok = FALSE;
     if (buffer && aes_resource_discard(buffer) != E_OK) ok = FALSE;
     if (tree && aes_resource_discard(tree) != E_OK) ok = FALSE;
-    if (overlay) aes_frames_resume();
+    if (overlay) aes_frames_resume(global);
     if (ok && selection > 0) { *result = output; return 1; }
     result->mn_keystate = 0;
     return 0;
 }
-WORD menu_popup(MENU *menu, WORD x, WORD y, MENU *result)
-{ return mt_menu_popup(menu,x,y,result,aes_global); }

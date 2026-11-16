@@ -1,6 +1,6 @@
 /* GEM child launch/notification adapter; shell policy stays in shell.c. */
 #include "emutos.h"
-#include "gem.h"
+#include "libaes.h"
 #include "application.h"
 #include "transport.h"
 #include "gemerror.h"

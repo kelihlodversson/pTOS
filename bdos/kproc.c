@@ -46,6 +46,7 @@
 #endif
 #include "kthread.h"
 #include "proc_clone.h"
+#include "userlayout.h"
 #include "progimage.h"
 #include "kproc_image_policy.h"
 #if CONF_WITH_PROCESS_FILES_TEST
@@ -2824,6 +2825,11 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
                 else if (kproc->nheap)
                     highest = kproc->heap[kproc->nheap - 1].va +
                               (VADDR)kproc->heap[kproc->nheap - 1].pages * USER_PAGE_SIZE;
+                if (kproc->has_image) {
+                    VADDR end = ((kproc->layout.end + USER_PAGE_SIZE - 1) &
+                                 ~(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK;
+                    if (end > highest) highest = end;
+                }
                 if (USER_STACK_TOP - pk->stack_size - USER_PAGE_SIZE >= highest)
                     kproc->stack_size = pk->stack_size;
             }
@@ -3005,7 +3011,8 @@ BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes)
     ASPACE *as;
     KASPACE *owner;
 
-    if (!kproc || kproc->aspace || kproc->pending_as || kproc->has_image || kproc->lost)
+    if (!kproc || kproc->aspace || kproc->pending_as || kproc->has_image || kproc->lost ||
+        !user_layout_range(va, bytes, USER_ALLOC_LIMIT))
         return FALSE;
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
     if (kproc->exec_image_staging) {
@@ -3054,7 +3061,7 @@ void kproc_load_leave(void)
  * The file is in the pages kproc_load_begin() mapped, relocated if it had to
  * be, and laid out as `layout`: each segment gets its own permissions now.
  * FALSE if the layout does not satisfy layout_valid(), leaves no
- * room for the whole startup area inside the image window, or the process has
+ * mapped room for the whole startup area, or the process has
  * no pending address space; the record's destruction frees the pages.
  */
 static BOOL protect_layout(ASPACE *as, const PROG_LAYOUT *layout)
@@ -3083,8 +3090,9 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout)
 
     if (!kproc || kproc->aspace || !kproc->pending_as || kproc->has_image ||
         !layout_valid(layout, FALSE) ||
-        ((layout->end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1)) +
-        USER_IMAGE_SLACK > USER_IMAGE_BASE + USER_IMAGE_SIZE ||
+        !aspace_user_range_ok(kproc->pending_as,
+            (layout->end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1),
+            USER_IMAGE_SLACK, TRUE) ||
         !protect_layout(kproc->pending_as, layout))
         return FALSE;
     kproc->layout = *layout;
@@ -3156,8 +3164,9 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
         bias = USER_IMAGE_BASE - program->base;
     ibias = INTERPRETER_BASE - interpreter->base;
     ibias = (ibias + interpreter->align - 1) & ~(interpreter->align - 1);
-    if (bias % program->align || (UQUAD)program->base + bias < USER_IMAGE_BASE ||
-        (UQUAD)program->base + bias + program->size > USER_IMAGE_BASE + USER_IMAGE_SIZE ||
+    if (program->size > USER_ALLOC_LIMIT - USER_IMAGE_SLACK ||
+        bias % program->align ||
+        !user_layout_range((VADDR)program->base + bias, program->size + USER_IMAGE_SLACK, USER_ALLOC_LIMIT) ||
         (UQUAD)interpreter->base + ibias < INTERPRETER_BASE ||
         (UQUAD)interpreter->base + ibias + interpreter->size > INTERPRETER_LIMIT)
         return EPLFMT;
@@ -3611,6 +3620,180 @@ static VADDR heap_limit(const KPROC *kproc)
     return USER_STACK_TOP - stack_bytes(kproc) - USER_PAGE_SIZE;
 }
 
+/* Every allocator consults the same reservations, including lazy areas
+ * which do not yet have page-table entries.  The image includes startup
+ * space after its last page; gaps between its segments are reserved too. */
+static BOOL image_reservation(const KPROC *kproc, VADDR *first, VADDR *end)
+{
+    ULONG i;
+
+    if (!kproc->has_image || !kproc->layout.nseg)
+        return FALSE;
+    *first = USER_VA_LIMIT;
+    for (i = 0; i < kproc->layout.nseg; i++)
+        if (kproc->layout.seg[i].vaddr < *first)
+            *first = kproc->layout.seg[i].vaddr;
+    *first &= ~(USER_PAGE_SIZE - 1);
+    *end = ((kproc->layout.end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK;
+    return TRUE;
+}
+
+static void reservation_candidate(VADDR lo, VADDR hi, VADDR at, VADDR limit,
+                                    VADDR *first, VADDR *end)
+{
+    if (hi <= at || lo >= limit)
+        return;
+    if (lo < at) lo = at;
+    if (hi > limit) hi = limit;
+    if (lo < *first) { *first = lo; *end = hi; }
+    else if (lo == *first && hi > *end) *end = hi;
+}
+
+#if CONF_WITH_MMAP
+/* Mapping reservations belong to the address space. A PROCESS that has none
+ * yet (still loading) simply has no mappings. */
+static MMAP_REGION *mapping_first(const KPROC *kproc)
+{
+    KASPACE_MMAP *mmap = kaspace_mmap(kproc->active_space);
+
+    return mmap ? mmap->regions : NULL;
+}
+#endif
+
+static void next_reservation(const KPROC *kproc, VADDR at, VADDR limit, BOOL mappings,
+                            VADDR *first, VADDR *end)
+{
+    VADDR lo, hi;
+    ULONG i;
+    const KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+#if CONF_WITH_MMAP
+    const MMAP_REGION *region;
+#endif
+
+    *first = *end = limit;
+    reservation_candidate(USER_SYSTEM_BASE, USER_SYSTEM_LIMIT, at, limit, first, end);
+    if (image_reservation(kproc, &lo, &hi))
+        reservation_candidate(lo, hi, at, limit, first, end);
+    for (i = 0; i < kproc->nheap; i++)
+        reservation_candidate(kproc->heap[i].va,
+            kproc->heap[i].va + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE,
+            at, limit, first, end);
+    /* Ordinary Malloc() blocks live in the address space, staged loader
+     * images (above) in the PROCESS. */
+    if (heap)
+        for (i = 0; i < heap->count; i++)
+            reservation_candidate(heap->blocks[i].va,
+                heap->blocks[i].va + (VADDR)heap->blocks[i].pages * USER_PAGE_SIZE,
+                at, limit, first, end);
+#if CONF_WITH_MMAP
+    if (mappings)
+        for (region = mapping_first(kproc); region; region = region->next)
+            reservation_candidate(region->address, (VADDR)region->address + region->length,
+                                  at, limit, first, end);
+#else
+    (void)mappings;
+#endif
+}
+
+static BOOL reservation_clear(const KPROC *kproc, VADDR at, VADDR bytes, BOOL mappings)
+{
+    VADDR first, end;
+
+    if (!user_layout_range(at, bytes, heap_limit(kproc)))
+        return FALSE;
+    next_reservation(kproc, at, at + bytes, mappings, &first, &end);
+    return first == at + bytes;
+}
+
+static BOOL reservation_free(const KPROC *kproc, VADDR at, VADDR bytes)
+{
+    return reservation_clear(kproc, at, bytes, TRUE);
+}
+
+/* Free space between two reservations. The heap must also stay out of ranges
+ * held by captured snapshots; automatic mmap placement has never consulted
+ * them and keeps its behavior. */
+static VADDR held_heap_gap(const KPROC *owner, VADDR at, VADDR end, VADDR bytes, VADDR *largest);
+
+static VADDR gap_candidate(const KPROC *kproc, VADDR at, VADDR end, VADDR bytes,
+                           VADDR *largest, BOOL honor_held)
+{
+    if (honor_held)
+        return held_heap_gap(kproc, at, end, bytes, largest);
+    if (end - at > *largest)
+        *largest = end - at;
+    return bytes && end - at >= bytes ? at : 0;
+}
+
+static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
+                            VADDR bytes, VADDR *largest, BOOL honor_held)
+{
+    VADDR first, end, found = 0, candidate;
+    VADDR image_first = 0, image_end = 0;
+    ULONG index = 0, ordinary = 0;
+    BOOL system_pending = TRUE;
+    BOOL image_pending = image_reservation(kproc, &image_first, &image_end);
+    const KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+#if CONF_WITH_MMAP
+    const MMAP_REGION *region = mapping_first(kproc);
+#endif
+
+    /* Merge the sorted allocation lists (staged loader images, address-space
+     * Malloc() blocks and mappings) and the fixed intervals. Each reservation
+     * is consumed once, including overlaps with the image, so Malloc(-1) and
+     * first-fit allocation remain linear in the list sizes. */
+    *largest = 0;
+    while (at < limit) {
+        enum { GAP_END, GAP_SYSTEM, GAP_IMAGE, GAP_HEAP, GAP_ORDINARY, GAP_MAPPING } source = GAP_END;
+
+        first = end = limit;
+        if (system_pending && USER_SYSTEM_BASE < first) {
+            first = USER_SYSTEM_BASE;
+            end = USER_SYSTEM_LIMIT;
+            source = GAP_SYSTEM;
+        }
+        if (image_pending && image_first < first) {
+            first = image_first;
+            end = image_end;
+            source = GAP_IMAGE;
+        }
+        if (index < kproc->nheap && kproc->heap[index].va < first) {
+            first = kproc->heap[index].va;
+            end = first + (VADDR)kproc->heap[index].pages * USER_PAGE_SIZE;
+            source = GAP_HEAP;
+        }
+        if (heap && ordinary < heap->count && heap->blocks[ordinary].va < first) {
+            first = heap->blocks[ordinary].va;
+            end = first + (VADDR)heap->blocks[ordinary].pages * USER_PAGE_SIZE;
+            source = GAP_ORDINARY;
+        }
+#if CONF_WITH_MMAP
+        if (region && region->address < first) {
+            first = region->address;
+            end = first + region->length;
+            source = GAP_MAPPING;
+        }
+#endif
+        switch (source) {
+        case GAP_SYSTEM: system_pending = FALSE; break;
+        case GAP_IMAGE: image_pending = FALSE; break;
+        case GAP_HEAP: index++; break;
+        case GAP_ORDINARY: ordinary++; break;
+#if CONF_WITH_MMAP
+        case GAP_MAPPING: region = region->next; break;
+#endif
+        default: break;
+        }
+        if (first > at) {
+            candidate = gap_candidate(kproc, at, first, bytes, largest, honor_held);
+            if (!found && candidate) found = candidate;
+        }
+        if (end > at)
+            at = end;
+    }
+    return found;
+}
+
 /* how many bytes of Malloc()/Mmap() blocks the process holds, and how big its image is
  * (what Psetlimit()'s limits 3 and 2 count) */
 static VADDR heap_malloc_bytes(const KPROC *kproc)
@@ -3672,7 +3855,7 @@ static LONG mapping_length(UQUAD *length)
 {
     if (!*length)
         return EINVAL;
-    if (*length > PTOS_MMAP_LIMIT - PTOS_MMAP_BASE)
+    if (*length > USER_ALLOC_LIMIT - PTOS_MMAP_MIN)
         return EIMBA;
     *length = (*length + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
     return E_OK;
@@ -3681,8 +3864,8 @@ static LONG mapping_length(UQUAD *length)
 static BOOL mapping_range(UQUAD address, UQUAD length)
 {
     return !(address & (USER_PAGE_SIZE - 1)) &&
-           address >= PTOS_MMAP_BASE && address < PTOS_MMAP_LIMIT &&
-           length <= PTOS_MMAP_LIMIT - address;
+           address >= PTOS_MMAP_MIN && address < USER_ALLOC_LIMIT &&
+           length <= USER_ALLOC_LIMIT - address;
 }
 
 static LONG mapping_protection(UQUAD flags, UWORD *prot)
@@ -3705,29 +3888,25 @@ static MMAP_REGION **mapping_slot(KPROC *kproc, UQUAD *address,
                                  UQUAD length, BOOL exact)
 {
     MMAP_REGION **link;
-    UQUAD at;
+    VADDR at, largest, limit = heap_limit(kproc);
 
-    if (*address && mapping_range(*address, length)) {
-        for (link = &kaspace_mmap(kproc->active_space)->regions; *link; link = &(*link)->next) {
-            if (*address + length <= (*link)->address)
-                break;
-            if (*address < (UQUAD)(*link)->address + (*link)->length)
-                break;
-        }
-        if (!*link || *address + length <= (*link)->address)
-            return link;
+    if (limit > USER_ALLOC_LIMIT)
+        limit = USER_ALLOC_LIMIT;
+
+    if (!*address || !mapping_range(*address, length) ||
+        !reservation_free(kproc, (VADDR)*address, (VADDR)length)) {
+        if (exact)
+            return NULL;
+        at = reservation_gap(kproc, PTOS_MMAP_BASE, PTOS_MMAP_LIMIT, (VADDR)length, &largest, FALSE);
+        if (!at)
+            at = reservation_gap(kproc, PTOS_MMAP_MIN, limit, (VADDR)length, &largest, FALSE);
+        if (!at)
+            return NULL;
+        *address = at;
     }
-    if (exact)
-        return NULL;
-    at = PTOS_MMAP_BASE;
-    for (link = &kaspace_mmap(kproc->active_space)->regions; *link; link = &(*link)->next) {
-        if (at + length <= (*link)->address)
-            break;
-        at = (UQUAD)(*link)->address + (*link)->length;
-    }
-    if (!mapping_range(at, length))
-        return NULL;
-    *address = at;
+    for (link = &kaspace_mmap(kproc->active_space)->regions;
+         *link && (*link)->address < *address; link = &(*link)->next)
+        ;
     return link;
 }
 
@@ -3870,7 +4049,8 @@ static LONG do_munmap(PD *pd, UQUAD address, UQUAD length)
     rc = mapping_length(&length);
     if (rc)
         return rc;
-    if (!mapping_range(address, length))
+    if (!mapping_range(address, length) ||
+        !reservation_clear(kproc, (VADDR)address, (VADDR)length, FALSE))
         return EIMBA;
     if (!mapping_owned_range(kproc,(VADDR)address,(VADDR)length)) return EACCDN;
     if (!kaspace_mapping_can_change(kproc->aspace, address, length)) return EACCDN;
@@ -4027,13 +4207,12 @@ static LONG do_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
 #endif
     if (mapping_range(address,length) && !mapping_owned_range(kproc,(VADDR)address,(VADDR)length)) return EACCDN;
     if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
-    if (!mapping_range(address, length)) {
 #if CONF_WITH_ELF_SHARED
-        if (standard_image_range(kproc, address, length))
-            return aspace_protect_private(kproc->aspace, address, length, prot) ? E_OK : EINTRN;
+    if (standard_image_range(kproc, address, length))
+        return aspace_protect_private(kproc->aspace, address, length, prot) ? E_OK : EINTRN;
 #endif
+    if (!mapping_range(address, length))
         return EIMBA;
-    }
     end = address + length;
     /* Check full coverage first, including pages not physically backed. */
     for (region = kaspace_mmap(kproc->active_space)->regions; region && at < end; region = region->next) {
@@ -4177,34 +4356,19 @@ static VADDR held_heap_gap(const KPROC *owner,VADDR at,VADDR end,VADDR bytes,VAD
  * For a new staged image, index is its insertion point in the loader table. */
 static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *largest)
 {
-    VADDR at = USER_HEAP_BASE, found = 0;
-    ULONG i = 0, j = 0;
-    KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
+    VADDR found;
+    ULONG i;
 
-    *largest = 0;
-    for (;;) {
-        BOOL staged = i < kproc->nheap &&
-            (!heap || j >= heap->count || kproc->heap[i].va < heap->blocks[j].va);
-        BOOL ordinary = heap && j < heap->count && !staged;
-        VADDR end = staged ? kproc->heap[i].va :
-                    ordinary ? heap->blocks[j].va : heap_limit(kproc);
-
-        VADDR gap=held_heap_gap(kproc,at,end,bytes,largest);
-        if (!found && gap) { found=gap;*index=i; }
-        if (staged)
-            at = end + (VADDR)kproc->heap[i++].pages * USER_PAGE_SIZE;
-        else if (ordinary)
-            at = end + (VADDR)heap->blocks[j++].pages * USER_PAGE_SIZE;
-        else
-            break;
-        if(at<USER_HEAP_BASE) at=USER_HEAP_BASE;
-    }
+    found = reservation_gap(kproc, USER_HEAP_BASE, heap_limit(kproc), bytes, largest, TRUE);
+    for (i = 0; i < kproc->nheap && kproc->heap[i].va < found; i++)
+        ;
+    *index = i;
     return found;
 }
 
-static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eager)
+static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eager, VADDR preferred)
 {
-    VADDR va, largest, size;
+    VADDR va, largest, size, held_first, held_end;
     ULONG index = 0;
     UQUAD reservation = 0;
 
@@ -4223,7 +4387,14 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
         return 0;                       /* over a Psetlimit() limit */
     if (!(kind == UH_MALLOC ? ordinary_heap_room(kproc) : heap_room(kproc)))
         return 0;
-    va = heap_gap(kproc, size, &index, &largest);
+    if (preferred >= USER_HEAP_BASE && !(preferred & (USER_PAGE_SIZE - 1)) &&
+        reservation_free(kproc, preferred, size) &&
+        !kaspace_next_held(kproc->active_space, preferred, preferred + size, &held_first, &held_end)) {
+        va = preferred;
+        while (index < kproc->nheap && kproc->heap[index].va < va) index++;
+    } else {
+        va = heap_gap(kproc, size, &index, &largest);
+    }
     /* A different PROCESS can own a captured image in this shared root.
      * Lazy publication must obey the same barrier as an eager leaf mutation. */
     if (!va || !kaspace_mapping_can_change(kproc->aspace,va,size)) return 0;
@@ -4490,7 +4661,10 @@ static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
 {
     KPROC *kproc = kproc_find(pd);
-    VADDR old, size, highest;
+    VADDR old, size, highest, first, end;
+#if CONF_WITH_MMAP
+    const MMAP_REGION *region;
+#endif
 
     if (!kproc || !kproc->aspace)
         return EINVFN;
@@ -4534,10 +4708,17 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
             KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
             if (heap && heap->count) {
                 const KASPACE_HEAP_BLOCK *b = &heap->blocks[heap->count - 1];
-                VADDR end = b->va + (VADDR)b->pages * USER_PAGE_SIZE;
-                if (end > highest) highest = end;
+                VADDR heap_end = b->va + (VADDR)b->pages * USER_PAGE_SIZE;
+                if (heap_end > highest) highest = heap_end;
             }
         }
+        if (image_reservation(kproc, &first, &end) && end > highest)
+            highest = end;
+#if CONF_WITH_MMAP
+        for (region = mapping_first(kproc); region; region = region->next)
+            if ((VADDR)region->address + region->length > highest)
+                highest = (VADDR)region->address + region->length;
+#endif
         if (USER_STACK_TOP - size - USER_PAGE_SIZE < highest)
             return ENSMEM;
         if (kproc->stack_low && USER_STACK_TOP - size > kproc->stack_low)
@@ -4637,7 +4818,7 @@ VADDR kproc_uheap_alloc(PD *pd, ULONG bytes)
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) {
-        result=heap_alloc(mutation.process,bytes,UH_MALLOC,NULL,FALSE);mapping_close(&mutation);
+        result=heap_alloc(mutation.process,bytes,UH_MALLOC,NULL,FALSE,0);mapping_close(&mutation);
     }
 #if CONF_WITH_NATIVE_SCHED
     ksched_cleanup_end(&scope);
@@ -4915,14 +5096,14 @@ void kproc_set_give_back(PD *pd, BOOL give_back)
  * move_loaded_image()); Mfree() leaves it alone, and freeing the child's
  * basepage gives it back.
  */
-VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes)
+VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes, VADDR preferred)
 {
     KPROC *ck = kproc_find(child);
     VADDR va;
 
     if (!ck || ck->load_parent)
         return 0;
-    va = heap_alloc(kproc_find(caller), bytes, UH_LOADED, child, TRUE);
+    va = heap_alloc(kproc_find(caller), bytes, UH_LOADED, child, TRUE, preferred);
     if (!va)
         return 0;
     /* recorded with the child at once: a disk error before the load is done

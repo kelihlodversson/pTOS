@@ -1,6 +1,6 @@
 /* Standard GEM contract shared by host mocks and the real x32 client. */
 #define WINDOW_VERIFY(c) do { if (!(c)) return 0x7300 | __LINE__; } while (0)
-static int gem_window_checks(short *global)
+static int gem_window_checks(AESGLOBAL *global)
 {
     short id, ids[64], i, x, y, w, h;
     WINDOW_VERIFY(wind_calc(WC_WORK, 0, 10, 20, 100, 80, &x, &y, &w, &h) == 1);

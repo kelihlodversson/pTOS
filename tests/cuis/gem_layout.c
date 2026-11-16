@@ -6,14 +6,14 @@
 #define VERIFY(c) do { if (!(c)) return 0x7600 | __LINE__; } while (0)
 int gem_layout_checks(short handle, short width, short height)
 {
-    OBJECT tree[2] = { { 0 } }, saved;
+    OBJECT tree[2] = { 0 }, saved;
     GRECT rect, previous;
-    short wchar, hchar, x, y, w, h, global[15];
+    short wchar, hchar, x, y, w, h;
+    AESGLOBAL global = { 0 };
     OBSPEC spec;
     TEDINFO ted = { 0 };
-    int i;
     VERIFY(gem_probe_cell(handle,&wchar,&hchar) == 0);
-    for (i = 0; i < 15; i++) global[i] = aes_global[i];
+    global = aes_global;
     tree[0].ob_next = tree[0].ob_head = tree[0].ob_tail = -1;
     tree[0].ob_type = G_BOX; tree[0].ob_spec.index = 0x1172;
     tree[0].ob_x = 0x0203; tree[0].ob_y = (short)0xff02;
@@ -21,7 +21,7 @@ int gem_layout_checks(short handle, short width, short height)
     tree[1] = tree[0]; tree[1].ob_x = (short)0x8001;
     tree[1].ob_width = 0x0350;
     saved = tree[0];
-    VERIFY(mt_rsrc_obfix(tree,1,global) == 1);
+    VERIFY(mt_rsrc_obfix(tree,1,&global) == 1);
     VERIFY(tree[1].ob_x == wchar+128 && tree[1].ob_y == 2*hchar-1);
     VERIFY(tree[1].ob_width == width+3 && tree[1].ob_height == 3*hchar-3);
     VERIFY(tree[0].ob_x == saved.ob_x && tree[0].ob_width == saved.ob_width);
@@ -34,12 +34,12 @@ int gem_layout_checks(short handle, short width, short height)
     VERIFY(objc_draw(tree,0,0,0,0,width,height) == 1);
     VERIFY(gem_probe_pixel(handle,x+1,y+1) == 2);
     tree[0].ob_state = OS_OUTLINED|OS_SHADOWED; tree[0].ob_spec.index = 0xfe1172;
-    VERIFY(mt_form_center_grect(tree,&rect,global) == 1);
+    VERIFY(mt_form_center_grect(tree,&rect,&global) == 1);
     VERIFY(rect.g_x == (tree[0].ob_x < 3 ? 0 : tree[0].ob_x-3));
     VERIFY(rect.g_y == (tree[0].ob_y < 3 ? 0 : tree[0].ob_y-3));
     VERIFY(rect.g_w == w+10 && rect.g_h == h+10);
     spec = tree[0].ob_spec; tree[0].ob_flags = OF_INDIRECT; tree[0].ob_spec.indirect = &spec;
-    VERIFY(mt_form_center(tree,&x,&y,&w,&h,global) == 1);
+    VERIFY(mt_form_center(tree,&x,&y,&w,&h,&global) == 1);
     VERIFY(x == rect.g_x && y == rect.g_y && w == rect.g_w && h == rect.g_h);
     tree[0].ob_flags = 0; tree[0].ob_spec = spec;
     tree[0].ob_width = width; tree[0].ob_height = height;

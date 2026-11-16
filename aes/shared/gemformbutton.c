@@ -1,6 +1,7 @@
 /* Original GEM form/button interaction shared with caller-local libaes.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #include "aesext.h"
@@ -19,7 +20,7 @@
 #include "gemevlib.h"
 #endif
 
-WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
+WORD fm_button(AES_FORM_PARAM OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
 {
     WORD    tobj;
     WORD    orword;
@@ -61,7 +62,7 @@ WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
                         state = tstate |= SELECTED;
                     else
                         tstate &= ~SELECTED;
-                    ob_change(tree, tobj, tstate, TRUE);
+                    ob_change(AES_FORM_ARG tree, tobj, tstate, TRUE);
                 }
                 objptr = tree + tobj;
                 tobj = objptr->ob_next;
@@ -69,12 +70,12 @@ WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
         }
         else
         {   /* turn on new object   */
-            if (gr_watchbox(tree, new_obj, state^SELECTED, state))
+            if (gr_watchbox(AES_FORM_ARG tree, new_obj, state^SELECTED, state))
                 state ^= SELECTED;
         }
         /* if not touchexit then wait for button up */
         if (cont && (flags & (SELECTABLE | EDITABLE)))
-            ev_button(1, 0x00001, 0x0000, rets);
+            ev_button(AES_FORM_ARG 1, 0x00001, 0x0000, rets);
     }
 
     /* see if this selection gets us out */

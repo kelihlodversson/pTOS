@@ -41,11 +41,18 @@ static void snapshot(MAPPING_LIFETIME_SNAPSHOT *out)
     memset(out, 0, sizeof(*out));
     if (probe(out, MLT_SNAPSHOT)) Pterm(91);
 }
-static void conserve(void)
+/* A successful handoff allocates the fresh startup state before it frees the
+ * retired one. Where their slab class is exactly full, that alternately takes
+ * and returns one slab page, so only there may the page count differ by one;
+ * live blocks and every other counter stay exact. */
+static void conserve(int handoff)
 {
     unsigned i;
     snapshot(&after);
     for (i = 0; i < MLT_FIELDS; i++) if (before.value[i] != after.value[i]) {
+        if (handoff && i == MLT_KHEAP_PAGES &&
+            (before.value[i] - after.value[i] == 1 || after.value[i] - before.value[i] == 1))
+            continue;
         printf("exec transport counter %u: %lu -> %lu cycle %u\r\n", i,
             (unsigned long)before.value[i], (unsigned long)after.value[i], cycle);
         Pterm(92);
@@ -65,7 +72,8 @@ static void transfer(void)
     request.argument = (void *)0x970UL;
     request.stack_base = (void *)stacks[cycle & 1]; request.stack_size = 32768;
     /* Warm bridge/allocation caches and a durable stack hold with rollback.
-     * Every later failure and success compares the unchanged 45 counters. */
+     * Every later failure compares the unchanged 45 counters, and so does
+     * success, apart from conserve()'s one-page slab allowance. */
     if (probe(&request, EXEC_HANDOFF_RUN + 10) != -39L) fail("sealed rollback");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     if (cycle >= 2) snapshot(&before);
@@ -75,7 +83,7 @@ static void transfer(void)
         if (result != (stage == 11 ? -326L : (stage == 7 || stage == 8) ? -36L : -39L))
             fail("failure prefix");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-        if (cycle >= 2) conserve();
+        if (cycle >= 2) conserve(0);
 #endif
     }
     if (probe(&previous, EXEC_HANDOFF_QUERY)) fail("source identity query");
@@ -100,7 +108,7 @@ static void next(void *argument)
     if (Fwrite((short)descriptor, 1, "x") != 1) fail("descriptor continuity");
     if (Mfree((void *)stacks[cycle & 1]) >= 0) fail("active user stack lost its hold");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-    if (cycle >= 2) conserve();
+    if (cycle >= 2) conserve(1);
 #endif
     cycle++;
     if (cycle < 12) transfer();
