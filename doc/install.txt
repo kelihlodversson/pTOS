@@ -14,7 +14,7 @@ published on GitHub Releases, currently for Apple Silicon macOS 26.
 See .claude/skills/toolchain-install/SKILL.md for manual installation,
 restricted environments, host support and verification commands.
 
-SDK 1.0.0 or newer is required. Linux CI pins a GitHub Release in
+SDK 1.0.1 or newer is required. Linux CI pins a GitHub Release in
 tools/ptos-toolchain.sha256, downloads its .deb files, checks each checksum
 and installs them with APT. To reproduce that version locally, use:
 

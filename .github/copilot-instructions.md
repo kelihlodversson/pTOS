@@ -32,7 +32,7 @@ native C compiler and the pTOS SDK: `m68k-unknown-ptos-prgelf-`,
 `arm-unknown-ptos-elf-`, or `x86_64-unknown-ptos-elfx32-`. Install with
 `bash tools/install-ptos-toolchain.sh all` (signed apt.ptos.dev packages on
 Debian/Ubuntu; the pTOS Homebrew tap on macOS). Use `gmake` on macOS.
-SDK 1.0.0 or newer is required. Linux CI adds `--release` to use the
+SDK 1.0.1 or newer is required. Linux CI adds `--release` to use the
 GitHub Release version and package hashes in `tools/ptos-toolchain.sha256`.
 PC builds use the SDK normally; do not clear `CROSS_COMPILE`. Legacy m68k
 choices and explicit prefix overrides remain available. See `doc/install.txt`

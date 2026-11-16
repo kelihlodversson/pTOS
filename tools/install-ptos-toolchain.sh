@@ -77,8 +77,8 @@ case $(uname -s) in
         dpkg-query -W "${packages[@]}"
         for package in "${packages[@]}"; do
             installed=$(dpkg-query -W -f='${Version}' "$package")
-            if ! dpkg --compare-versions "$installed" ge 1.0.0; then
-                echo "pTOS requires SDK 1.0.0 or newer; installed $package $installed" >&2
+            if ! dpkg --compare-versions "$installed" ge 1.0.1; then
+                echo "pTOS requires SDK 1.0.1 or newer; installed $package $installed" >&2
                 exit 1
             fi
             if [ "$source" = --release ] && [ "$installed" != "$version" ]; then

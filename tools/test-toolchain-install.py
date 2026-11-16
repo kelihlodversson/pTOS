@@ -32,7 +32,7 @@ elif name == "apt-get" and os.environ.get("INSTALL_TEST_NEWER"):
     if any(arg.endswith(".deb") for arg in args) and "--allow-downgrades" not in args:
         sys.exit(100)
 elif name == "dpkg-query":
-    version = os.environ.get("INSTALL_TEST_VERSION", "1.0.0")
+    version = os.environ.get("INSTALL_TEST_VERSION", "1.0.1")
     if any(arg.startswith("-f=") for arg in args): print(version)
     else:
         for arg in args:
@@ -63,9 +63,9 @@ class ReleaseInstaller(unittest.TestCase):
         self.work = Path(self.temp.name)
         shutil.copy(ROOT / "tools/install-ptos-toolchain.sh", self.work)
         self.manifest = self.work / "ptos-toolchain.sha256"
-        self.manifest.write_text("# release: 1.0.0\n" + "".join(
-            hashlib.sha256((p + "_1.0.0_amd64.deb").encode()).hexdigest() +
-            "  " + p + "_1.0.0_amd64.deb\n" for p in PACKAGES))
+        self.manifest.write_text("# release: 1.0.1\n" + "".join(
+            hashlib.sha256((p + "_1.0.1_amd64.deb").encode()).hexdigest() +
+            "  " + p + "_1.0.1_amd64.deb\n" for p in PACKAGES))
         binaries = self.work / "bin"
         binaries.mkdir()
         for name in ("uname", "id", "dpkg", "dpkg-query", "curl", "apt-get"):
@@ -92,7 +92,7 @@ class ReleaseInstaller(unittest.TestCase):
             with self.subTest(arch=arch):
                 result = self.run_installer(arch)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(self.installed(), [p + "_1.0.0_amd64.deb" for p in packages])
+                self.assertEqual(self.installed(), [p + "_1.0.1_amd64.deb" for p in packages])
 
     def test_corrupt_download_is_not_installed(self):
         result = self.run_installer(INSTALL_TEST_CORRUPT="1")
@@ -110,7 +110,7 @@ class ReleaseInstaller(unittest.TestCase):
     def test_installed_version_must_match_pin(self):
         result = self.run_installer(INSTALL_TEST_VERSION="2.0.0")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("expected pinned version 1.0.0", result.stderr)
+        self.assertIn("expected pinned version 1.0.1", result.stderr)
 
     def test_newer_installation_can_restore_pin(self):
         result = self.run_installer(INSTALL_TEST_NEWER="1")
@@ -122,7 +122,7 @@ class ReleaseInstaller(unittest.TestCase):
                 self.assertEqual("--allow-downgrades" in args, any(arg.endswith(".deb") for arg in args))
 
     def test_invalid_release(self):
-        self.manifest.write_text(self.manifest.read_text().replace("# release: 1.0.0", "# release: ../bad"))
+        self.manifest.write_text(self.manifest.read_text().replace("# release: 1.0.1", "# release: ../bad"))
         result = self.run_installer()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.installed(), [])

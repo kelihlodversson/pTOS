@@ -1974,25 +1974,14 @@ obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
 # Each test suite object depends on its source and the generated run_tests.c.
-# TEST_SUITE_CFLAGS-<suite> adds flags for that one suite's object.
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
-	$(TEST_CC) $(TEST_CFLAGS) $$(TEST_SUITE_CFLAGS-$(1)) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
+	$(TEST_CC) $(TEST_CFLAGS) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 ifneq ($(filter pclone,$(TEST_SUITES)),)
-# m68k pTOS SDK 1.0.0 miscompiles the suite's Fseek(0,file,0) loop: reload
-# shares one register between the binding's long and short zero inputs, and
-# late-combine then clears only its low word, so the seek offset keeps a stale
-# upper half (kelihlodversson/pTOS-toolchain#18). Of the virt-m68k-aspace
-# objects only this one is affected; drop this once the SDK carries the fix.
-ifdef ARCH_M68K
-ifdef BUILD_TOOLCHAIN_PTOS
-TEST_SUITE_CFLAGS-pclone = -fno-late-combine-instructions
-endif
-endif
 TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
 obj/clone_irq_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
