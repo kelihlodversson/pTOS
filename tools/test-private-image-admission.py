@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Known private-image owner gap: real loader move and value capture, not public fork."""
+"""Private moved-image ownership: production loader, MMU clone and exact cleanup."""
 import argparse
 import os
 import shlex
@@ -13,17 +13,17 @@ root=Path(__file__).resolve().parents[1]
 os.chdir(root)
 os.environ['CONFIG_']=''
 parser=argparse.ArgumentParser()
-parser.add_argument('--require',action='store_true',help='require moved-image admission; currently exits 1')
+parser.add_argument('--require',action='store_true',help='require moved-image admission (retained for CI compatibility)')
 parser.add_argument('--mode',choices=['normal','asan','fortified'],default='normal')
 args=parser.parse_args()
-# Reserved fixture status for the known admission rejection. It must differ
-# from 1, the default failure status of ASan and of UBSan with halt_on_error,
-# and from abort's 134, so that sanitizer failures are never mistaken for it.
-KNOWN_REJECTION=77
 control=r'''
-int main(void)
+static void check_order(BOOL source_first)
 {
     KPROC loader={0},source={0};PD loader_pd={0},source_pd={0};
+    KPROC child={0},foreign={0};PD child_pd={0},foreign_pd={0};
+    KTHREAD alien={0};KASPACE_MEMBER *foreign_members=NULL;
+    KASPACE *copy=NULL;KASPACE_RESERVATION_INFO child_info;
+    VADDR bp,env,dta;PADDR before,after;UWORD rights;
     KTHREAD thread={0};PROG_LAYOUT layout={0};VADDR image;
     ASPACE *destination;BOOL empty_ok,moved_ok,policy_ok;
     KPROC_IMAGE_POLICY policy;
@@ -36,6 +36,16 @@ int main(void)
     source.aspace=destination;source.active_space=kaspace_adopt(destination);
     CHECK(source.active_space);thread.process=&source;thread.space=source.active_space;source.threads=&thread;
     empty_ok=kproc_clone_private_runtime(NULL,&source);CHECK(empty_ok);
+    foreign.pd=&foreign_pd;foreign.number=103;foreign.references=1;source.next=&foreign;
+    alien.process=&foreign;alien.space=source.active_space;foreign.threads=&alien;
+    CHECK(!kproc_clone_private_runtime(NULL,&source)); /* unpublished foreign THREAD */
+    foreign.threads=NULL;foreign.pending_space=source.active_space;
+    CHECK(!kproc_clone_private_runtime(NULL,&source));foreign.pending_space=NULL;
+    CHECK(kaspace_member_new(source.active_space,foreign.number,&foreign,&foreign_members)==E_OK);
+    CHECK(!kproc_clone_private_runtime(NULL,&source));kaspace_member_release(&foreign_members);
+    alien.space=loader.active_space;thread.space=loader.active_space;
+    CHECK(!kproc_clone_private_runtime(NULL,&source));thread.space=source.active_space;
+    CHECK(kproc_clone_private_runtime(NULL,&source));source.next=NULL;
     /* Production PE_LOAD staging, ownership transfer and segment protection.
      * The source's eventual UH_IMAGE is independently owned, not a loan. */
     source.aspace=NULL;selected_root=aspace_root(loader.aspace);
@@ -49,14 +59,57 @@ int main(void)
     CHECK(!source.heap[0].pd && !source.load_parent && !source.lender && !source.give_back);
     CHECK(kproc_thread_is_sole(&source,&thread) && loader.active_space!=source.active_space);
     source.started=TRUE;
+    source.user_start=procmem_alloc(TEST_PAGE,0);source.env_start=procmem_alloc(TEST_PAGE,0);
+    CHECK(source.user_start && source.env_start);
+    source.user_end=source.user_start+TEST_PAGE;source.env_end=source.env_start+TEST_PAGE;
+    source.tpa_gen=procmem_gen(source.user_start);source.env_gen=procmem_gen(source.env_start);
+    CHECK(procmem_set_owner(source.user_start,source.pd) && procmem_set_owner(source.env_start,source.pd));
+    CHECK(aspace_map_procmem(source.aspace,(VADDR)(uintptr_t)source.user_start,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    CHECK(aspace_map_procmem(source.aspace,(VADDR)(uintptr_t)source.env_start,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
+    source.dta=(DTAINFO *)(uintptr_t)(image+TEST_PAGE+32);
+    source.stack_top=USER_STACK_TOP-16;source.stack_low=USER_STACK_TOP-TEST_PAGE;
+    source.entry=layout.entry;
+
     policy_ok=kproc_image_policy_capture(&source,&policy)==E_OK;CHECK(policy_ok);
     moved_ok=kproc_clone_private_runtime(NULL,&source);
     printf("production private admission: empty sole source=%d; committed independently owned UH_IMAGE source=%d; value policy capture=%d\n",empty_ok,moved_ok,policy_ok);
-    source.threads=NULL;kproc_list=NULL;
-    kfree(source.heap);kfree(loader.heap);kaspace_put(source.active_space);kaspace_put(loader.active_space);
+    CHECK(moved_ok && kaspace_clone(source.active_space,&copy)==E_OK);
+    child.pd=&child_pd;child.references=1;child.number=104;source.next=&child;
+    CHECK(kproc_clone_private_runtime(&child,&source));
+    CHECK(!child.nheap && !child.has_image && !child.entry && !child.stack_top);
+    CHECK(child.private_image && child.private_image->heap!=source.heap);
+    private_image_commit(&child);child.active_space=copy;child.aspace=kaspace_backend(copy);child.started=TRUE;
+    CHECK(child.nheap==1 && child.heap!=source.heap && !child.heap[0].pd);
+    CHECK(child.heap[0].reservation && child.heap[0].reservation!=source.heap[0].reservation);
+    CHECK(child.layout.seg[0].src==NULL && !child.layout.seg[0].filesz);
+    CHECK(child.stack_top==source.stack_top && child.stack_low==source.stack_low && child.entry==source.entry);
+    CHECK(kproc_private_image_addresses(&child,&bp,&env,&dta));
+    CHECK(bp==(VADDR)(uintptr_t)source.user_start && env==(VADDR)(uintptr_t)source.env_start && dta==(VADDR)(uintptr_t)source.dta);
+    CHECK(kproc_reservation_info(child.pd,bp,TEST_PAGE,&child_info)==E_OK);
+    CHECK(kproc_reservation_info(child.pd,env,TEST_PAGE,&child_info)==E_OK);
+    CHECK(kproc_reservation_info(child.pd,image+TEST_PAGE,TEST_PAGE,&child_info)==E_OK);
+    CHECK(child_info.identity==child.heap[0].reservation && (child_info.rights&ASPACE_PROT_WRITE));
+    CHECK(aspace_logical_protection(child.aspace,image,&rights) && !(rights&ASPACE_PROT_WRITE));
+    CHECK(aspace_cow_fault(child.aspace,image,ASPACE_PROT_USER|ASPACE_PROT_WRITE)!=1);
+    CHECK(aspace_translate(source.aspace,image+TEST_PAGE,&before,NULL));
+    CHECK(aspace_cow_fault(child.aspace,image+TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE)==1);
+    CHECK(aspace_translate(child.aspace,image+TEST_PAGE,&after,NULL) && before!=after);
+    CHECK(aspace_cow_fault(source.aspace,image+TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE)==1);
+    source.threads=NULL;
+    if(source_first) {kaspace_put(source.active_space);source.active_space=NULL;source.aspace=NULL;procmem_free_owned(source.pd,NULL);
+        CHECK(kproc_reservation_info(child.pd,bp,TEST_PAGE,&child_info)==E_OK);
+        CHECK(kproc_reservation_info(child.pd,env,TEST_PAGE,&child_info)==E_OK);
+    }
+    CHECK(kproc_reservation_info(child.pd,image+TEST_PAGE,TEST_PAGE,&child_info)==E_OK);
+    kfree(child.heap);kfree(child.private_image);kaspace_put(copy);
+    kproc_list=NULL;kfree(source.heap);kfree(loader.heap);
+    kaspace_put(source.active_space);procmem_free_owned(source.pd,NULL);kaspace_put(loader.active_space);
     CHECK(physical_live==ram && metadata_live==metadata && !physical_live && !metadata_live);
     puts("production moved-image control cleanup: exact baseline PASS");
-    return moved_ok?0:KNOWN_REJECTION; /* --require general private-image eligibility */
+}
+int main(void)
+{
+    check_order(FALSE);check_order(TRUE);return 0;
 }
 '''
 with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
@@ -73,15 +126,13 @@ with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
     source=source.replace('#include "procmem_borrow.c"','#include "'+str(root/'tests/procmem_borrow.c')+'"')
     source=source.replace('#include "../bdos/kproc.c"','#include "'+str(root/'bdos/kproc.c')+'"')
     source=source.replace('\nint main(void)\n','\nint shared_interp_original_main(void)\n')
-    fixture=work/'control.c';fixture.write_text(source+control.replace('KNOWN_REJECTION',str(KNOWN_REJECTION)))
+    fixture=work/'control.c';fixture.write_text(source+control)
     flags=['-std=gnu90','-O2','-g','-Wall','-Wextra','-Werror','-fno-builtin','-fno-pie','-no-pie','-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),'-Iinclude/machine/pc-x86_64','-Iinclude/arch/x86_64','-Ibios/machine/pc-x86_64','-Ibios/arch/x86_64','-iquote','bdos','-iquote','bios','-iquote','fs','-iquote','aes','-idirafter','include']
     if args.mode=='asan': flags+=['-fsanitize=address,undefined','-fno-omit-frame-pointer']
     elif args.mode=='fortified': flags+=['-D_FORTIFY_SOURCE=3','-fstack-protector-strong']
     subprocess.run(shlex.split(os.environ.get('HOSTCC','cc'))+flags+[str(fixture),'bdos/kaspace.c','bios/machine/pc-x86_64/x32image.c','lib/ldso/startup.c','-Wl,--gc-sections','-o',str(work/'control')],check=True)
     result=subprocess.run([str(work/'control')])
     print('required moved-image admission exit='+str(result.returncode))
-    if result.returncode not in (0,KNOWN_REJECTION):
-        sys.exit('moved-image control failed with status %d (sanitizer or CHECK failure), not an admission result' % result.returncode)
-    if args.require: sys.exit(0 if result.returncode==0 else 1)
-    assert result.returncode==KNOWN_REJECTION, 'known ownership admission changed; review its proof'
-    print('Known #971 moved-image ownership gap reproduced with exact cleanup; not fork acceptance.')
+    if result.returncode:
+        sys.exit(result.returncode)
+    print('Private moved-image ownership, COW, foreign associations and both cleanup orders: PASS')

@@ -286,6 +286,10 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
             tx->startup || kthread_process(tx->thread) != tx->process ||
             kthread_aspace(tx->thread) != tx->space) return EACCDN;
     } else if (kproc_active_space(tx->source) != tx->source_space) return EACCDN;
+#if CONF_WITH_PRIVATE_CLONE
+    if (tx->space != tx->source_space &&
+        !kproc_clone_private_runtime(NULL,tx->source)) return EACCDN;
+#endif
     /* Identity-only commit cannot publish a startup image. The controlled
      * root runner is a separate NEW_PROCESS-only transaction boundary. */
     if (tx->startup) return thread_startup_publication_check(tx->startup);
@@ -462,6 +466,9 @@ static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 #endif
 #if CONF_WITH_PTERMGRP
         !kproc_group_status(tx->source, NULL) && !kproc_group_status(tx->process, NULL) &&
+#endif
+#if CONF_WITH_PRIVATE_CLONE
+        (tx->space == tx->source_space || kproc_clone_private_runtime(NULL,tx->source)) &&
 #endif
         kproc_active_space(tx->source) == tx->source_space &&
         (tx->policy == PROC_CLONE_SAME_PROCESS || kproc_clone_target_ready(tx->process, tx->thread));
@@ -741,7 +748,7 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
           kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) :
           kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
-        kproc_active_space(tx->source) != tx->source_space) { error = EACCDN; goto failed; }
+        !startup_target_live(tx)) { error = EACCDN; goto failed; }
     /* Only no-allocation/no-callback revalidation, sealing and stores occur
      * under backend exclusion. Cleanup always restores the entry IRQ state. */
     {
@@ -802,7 +809,7 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
     if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
           kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) :
           kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
-        kproc_active_space(tx->source) != tx->source_space) { error = EACCDN; goto failed; }
+        !startup_target_live(tx)) { error = EACCDN; goto failed; }
     error = thread_startup_seal(startup);
 #if CONF_WITH_PROCESS_FILES_TEST
     if (!error && tx->files) error=kproc_files_snapshot_seal(tx->files);

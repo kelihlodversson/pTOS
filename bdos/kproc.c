@@ -255,6 +255,9 @@ struct kproc {
         UQUAD shared_generation; /* exact source-owned PD allocation incarnation */
     } *heap;
     ULONG nheap, heap_capacity;
+#if CONF_WITH_PRIVATE_CLONE
+    struct private_image_snapshot *private_image; /* owned construction/runtime values */
+#endif
     VADDR stack_size;           /* Psetlimit(): the stack's address space; 0: the default */
     VADDR stack_low;            /* the lowest stack page backed so far; 0: none */
     VADDR lim_core, lim_data;   /* Psetlimit(): total / allocatable memory in bytes; 0: no limit */
@@ -276,6 +279,33 @@ struct kproc {
 #endif
     KPROC *next;
 };
+
+#if CONF_WITH_PRIVATE_CLONE
+/* Values and a fresh ledger, never source allocations, loader recipes or pins.
+ * The PROCESS owns this draft through abort, then retains its logical VAs. */
+struct private_image_snapshot {
+    struct uheap_block *heap;
+    ULONG count;
+    BOOL committed,has_image,legacy,top_stack;
+#if CONF_WITH_IMAGE_POLICY
+    BOOL policy_only;
+#endif
+    VADDR basepage,environment,basepage_bytes,environment_bytes,dta,stack_size,stack_low,stack_top,entry;
+    UQUAD basepage_birth,environment_birth;
+    PROG_LAYOUT layout;
+#if KPROC_LEGACY_PRG
+    ULONG text_bytes;
+    BOOL text_recorded;
+    VADDR text_entry;
+#endif
+#if CONF_WITH_ELF_SHARED
+    PROG_LAYOUT interpreter;
+    BOOL standard_entry;
+    UQUAD interp_entry,initial_rsp,interp_bytes;
+#endif
+};
+static void private_image_commit(KPROC *target);
+#endif
 
 static KPROC *kproc_list;
 #if CONF_WITH_PRIVATE_CLONE_TEST
@@ -756,6 +786,24 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     target->stack_size = source->stack_size;
     return TRUE;
 }
+enum { MAPPING_PREPARING=1,MAPPING_PREPARED,MAPPING_ABORTING };
+#if CONF_WITH_PRIVATE_CLONE || CONF_WITH_EXEC_REPLACEMENT_TEST
+/* A constructor may own a root before active_space/pending_space adoption.
+ * Reuse the canonical THREAD/member associations; root refs are not admission. */
+static BOOL exec_space_associated(const KPROC *process,const KASPACE *space)
+{
+    KTHREAD *thread;
+    if (process->active_space==space || process->pending_space==space ||
+        kaspace_member_matches(process->mapping_members,space,process->number,process) ||
+        ((process->mapping_preparation==MAPPING_PREPARING || process->mapping_preparation==MAPPING_PREPARED) &&
+         kaspace_member_matches(process->prepared_mapping_members,space,process->number,process)))
+        return TRUE;
+    for (thread=process->threads;thread;thread=*kthread_next_link(thread))
+        if (kthread_aspace(thread)==space) return TRUE;
+    return FALSE;
+}
+
+#endif
 #if CONF_WITH_PRIVATE_CLONE
 BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
 {
@@ -764,13 +812,36 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
     KASPACE_HEAP *heap;
     ULONG i;
     if (!source || !source->active_space || !source->threads ||
-        !kproc_thread_is_sole(source, source->threads) || source->nheap || source->pending_space ||
+        !kproc_thread_is_sole(source, source->threads) || source->pending_space ||
+        source->load_parent || source->mapping_preparation ||
         source->give_back || source->lender || source->lost) return FALSE;
     original=source->active_space;
     if (!mapping_wait_idle(original) || source->active_space!=original || !source->threads ||
-        !kproc_thread_is_sole(source,source->threads)) return FALSE;
+        !kproc_thread_is_sole(source,source->threads) ||
+        source->aspace!=kaspace_backend(original) ||
+        source->layout.nseg>PROG_MAX_SEGMENTS ||
+#if CONF_WITH_ELF_SHARED
+        source->interpreter_layout.nseg>PROG_MAX_SEGMENTS ||
+#endif
+        kthread_aspace(source->threads)!=original ||
+        !kaspace_private_source_owned(original,source->number,source)) return FALSE;
     for (peer = kproc_list; peer; peer = peer->next)
-        if (peer != source && peer->active_space == source->active_space) return FALSE;
+        if (peer != source && exec_space_associated(peer,original)) return FALSE;
+    if (!source->private_image &&
+        ((source->user_start && (procmem_gen(source->user_start)!=source->tpa_gen ||
+          (VADDR)(uintptr_t)source->user_end<(VADDR)(uintptr_t)source->user_start ||
+          (VADDR)(uintptr_t)source->user_end-(VADDR)(uintptr_t)source->user_start>procmem_size(source->user_start))) ||
+         (source->env_start && (procmem_gen(source->env_start)!=source->env_gen ||
+          (VADDR)(uintptr_t)source->env_end<(VADDR)(uintptr_t)source->env_start ||
+          (VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start>procmem_size(source->env_start)))))
+        return FALSE;
+    for (i=0;i<source->nheap;i++) {
+        const struct uheap_block *block=&source->heap[i];
+        if (block->kind!=UH_IMAGE || block->pd || block->shared_generation || !block->pages ||
+            block->va>=USER_VA_LIMIT || block->pages>(USER_VA_LIMIT-block->va)/USER_PAGE_SIZE ||
+            !aspace_private_range_ok(source->aspace,block->va,(VADDR)block->pages*USER_PAGE_SIZE))
+            return FALSE;
+    }
     heap=kaspace_heap(source->active_space);
     for (i=0;i<heap->count;i++)
         if (!kaspace_mapping_owned(source->active_space,source->number,source,heap->blocks[i].reservation,
@@ -784,15 +855,116 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
     }
 #endif
     if (target) {
-        if (!kproc_clone_target_ready(target, NULL) || target->nheap) return FALSE;
-        target->stack_size = source->stack_size;
-        target->stack_low = source->stack_low;
-        target->stack_top = source->stack_top;
-        target->entry = source->entry;
-        target->clone_top_stack = owns_top_stack(source);
+        struct private_image_snapshot *snapshot;
+        if (!kproc_clone_target_ready(target, NULL) || target->private_image ||
+            source->nheap>~(ULONG)0/sizeof(*source->heap)) return FALSE;
+        snapshot=kalloc(sizeof(*snapshot));
+        if (!snapshot) return FALSE;
+        bzero(snapshot,sizeof(*snapshot));
+        if (source->nheap) {
+            snapshot->heap=kalloc(source->nheap*sizeof(*snapshot->heap));
+            if (!snapshot->heap) { kfree(snapshot);return FALSE; }
+            for (i=0;i<source->nheap;i++) {
+                snapshot->heap[i]=source->heap[i];
+                snapshot->heap[i].reservation=kaspace_reservation_next();
+                if (!snapshot->heap[i].reservation) {
+                    kfree(snapshot->heap);kfree(snapshot);return FALSE;
+                }
+            }
+        }
+        snapshot->count=source->nheap;
+#if CONF_WITH_IMAGE_POLICY
+        snapshot->policy_only=source->image_policy_only;
+#endif
+        snapshot->basepage=source->private_image?source->private_image->basepage:(VADDR)(uintptr_t)source->user_start;
+        snapshot->environment=source->private_image?source->private_image->environment:(VADDR)(uintptr_t)source->env_start;
+        snapshot->basepage_bytes=source->private_image?source->private_image->basepage_bytes:
+            ((VADDR)(uintptr_t)source->user_end-(VADDR)(uintptr_t)source->user_start);
+        snapshot->environment_bytes=source->private_image?source->private_image->environment_bytes:
+            ((VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start);
+        if (snapshot->basepage>=USER_VA_LIMIT || snapshot->basepage_bytes>USER_VA_LIMIT-snapshot->basepage ||
+            snapshot->environment>=USER_VA_LIMIT || snapshot->environment_bytes>USER_VA_LIMIT-snapshot->environment) {
+            kfree(snapshot->heap);kfree(snapshot);return FALSE;
+        }
+        snapshot->basepage_birth=kaspace_reservation_next();
+        snapshot->environment_birth=kaspace_reservation_next();
+        if (!snapshot->basepage_birth || !snapshot->environment_birth) {
+            kfree(snapshot->heap);kfree(snapshot);return FALSE;
+        }
+        snapshot->dta=(VADDR)(uintptr_t)source->dta;
+        snapshot->has_image=source->has_image;snapshot->legacy=source->legacy;
+        snapshot->layout=source->layout;
+        for (i=0;i<snapshot->layout.nseg;i++) {
+            snapshot->layout.seg[i].src=NULL;snapshot->layout.seg[i].filesz=0;
+        }
+        snapshot->stack_size=source->stack_size;snapshot->stack_low=source->stack_low;
+        snapshot->stack_top=source->stack_top;snapshot->entry=source->entry;
+        snapshot->top_stack=owns_top_stack(source);
+#if KPROC_LEGACY_PRG
+        snapshot->text_bytes=source->legacy_text_bytes;snapshot->text_recorded=source->legacy_text_recorded;
+#if CONF_WITH_IMAGE_POLICY
+        snapshot->text_entry=source->legacy_text_entry;
+#endif
+#endif
+#if CONF_WITH_ELF_SHARED
+        snapshot->interpreter=source->interpreter_layout;
+        for (i=0;i<snapshot->interpreter.nseg;i++) {
+            snapshot->interpreter.seg[i].src=NULL;snapshot->interpreter.seg[i].filesz=0;
+        }
+        snapshot->standard_entry=source->standard_entry;snapshot->interp_entry=source->interp_entry;
+        snapshot->initial_rsp=source->initial_rsp;snapshot->interp_bytes=source->interp_bytes;
+#endif
+        target->private_image=snapshot;
     }
     return TRUE;
 }
+static void private_image_commit(KPROC *target)
+{
+    struct private_image_snapshot *snapshot=target->private_image;
+    if (!snapshot || snapshot->committed) return;
+    kfree(target->heap); /* target readiness guarantees an empty ledger */
+    target->heap=snapshot->heap;snapshot->heap=NULL;
+#if CONF_WITH_IMAGE_POLICY
+    target->image_policy_only=snapshot->policy_only;
+#endif
+    target->nheap=target->heap_capacity=snapshot->count;
+    target->layout=snapshot->layout;target->has_image=snapshot->has_image;target->legacy=snapshot->legacy;
+    target->stack_size=snapshot->stack_size;target->stack_low=snapshot->stack_low;
+    target->stack_top=snapshot->stack_top;target->entry=snapshot->entry;
+    target->clone_top_stack=snapshot->top_stack;
+    target->dta=(DTAINFO *)(uintptr_t)snapshot->dta;
+    target->pd->p_xdta=PTR_TO_USERPTR_UNCHECKED((DTA *)(uintptr_t)snapshot->dta);
+#if KPROC_LEGACY_PRG
+    target->legacy_text_bytes=snapshot->text_bytes;target->legacy_text_recorded=snapshot->text_recorded;
+#if CONF_WITH_IMAGE_POLICY
+    target->legacy_text_entry=snapshot->text_entry;
+#endif
+#endif
+#if CONF_WITH_ELF_SHARED
+    target->interpreter_layout=snapshot->interpreter;target->standard_entry=snapshot->standard_entry;
+    target->interp_entry=snapshot->interp_entry;target->initial_rsp=snapshot->initial_rsp;
+    target->interp_bytes=snapshot->interp_bytes;
+#endif
+    snapshot->committed=TRUE;
+}
+
+VADDR kproc_private_environment(PD *pd)
+{
+    KPROC *process=kproc_find(pd);
+    if (process && process->private_image && process->private_image->committed)
+        return process->private_image->environment;
+    return (VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_env);
+}
+
+BOOL kproc_private_image_addresses(const KPROC *process,VADDR *basepage,VADDR *environment,VADDR *dta)
+{
+    if (!process || !process->private_image || !process->private_image->committed) return FALSE;
+    if (basepage) *basepage=process->private_image->basepage;
+    if (environment) *environment=process->private_image->environment;
+    if (dta) *dta=(VADDR)(uintptr_t)process->dta;
+    return TRUE;
+}
+
 #endif
 
 KASPACE *kproc_active_space(const KPROC *process)
@@ -910,6 +1082,9 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
     if (!space || !thread || !kproc_clone_target_ready(p, thread) ||
         kthread_process(thread) != p || kthread_aspace(thread) != space)
         return FALSE;
+#if CONF_WITH_PRIVATE_CLONE
+    private_image_commit(p);
+#endif
     p->active_space = space; /* transfer the transaction's owning reference */
     p->aspace = kaspace_backend(space);
     p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
@@ -928,7 +1103,6 @@ static BOOL mapping_owner_live(const KPROC *p)
         ;
 }
 
-enum { MAPPING_PREPARING=1,MAPPING_PREPARED,MAPPING_ABORTING };
 static LONG mapping_prepare_begin(KPROC *p,KPROC *source,KASPACE *space,KASPACE_MEMBER **result)
 {
     if (!result || *result) return EINVAL;
@@ -1635,6 +1809,9 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
 #if CONF_WITH_IMAGE_POLICY
     image_policy_commit(p);
 #endif
+#if CONF_WITH_PRIVATE_CLONE
+    private_image_commit(p);
+#endif
     /* All references and mappings acquired before sealing. No callbacks. */
     if (p->clone_controller_pd) {
         if (procmem_gen(p->clone_controller_pd) != p->clone_controller_gen)
@@ -1706,20 +1883,6 @@ BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
 static UQUAD last_exec_replacement_ticket;
 
-/* A constructor may own a root before active_space/pending_space adoption.
- * Reuse the canonical THREAD/member associations; root refs are not admission. */
-static BOOL exec_space_associated(const KPROC *process,const KASPACE *space)
-{
-    KTHREAD *thread;
-    if (process->active_space==space || process->pending_space==space ||
-        kaspace_member_matches(process->mapping_members,space,process->number,process) ||
-        ((process->mapping_preparation==MAPPING_PREPARING || process->mapping_preparation==MAPPING_PREPARED) &&
-         kaspace_member_matches(process->prepared_mapping_members,space,process->number,process)))
-        return TRUE;
-    for (thread=process->threads;thread;thread=*kthread_next_link(thread))
-        if (kthread_aspace(thread)==space) return TRUE;
-    return FALSE;
-}
 
 static BOOL exec_replacement_source(KPROC *process,KTHREAD *thread,KASPACE *selected,KPROC *image)
 {
@@ -2077,6 +2240,11 @@ void kproc_destroy(PD *pd)
             kaspace_put(kproc->active_space);
             kstack_free(kproc->kstack_phys);
             kfree(kproc->heap);
+#if CONF_WITH_PRIVATE_CLONE
+            if (kproc->private_image) {
+                kfree(kproc->private_image->heap);kfree(kproc->private_image);
+            }
+#endif
 #endif
             /* Only immutable identity and completion survive. In particular,
              * no retained reference may dereference the now-releasable PD. */
@@ -3674,6 +3842,13 @@ static void next_reservation(const KPROC *kproc, VADDR at, VADDR limit, BOOL map
     reservation_candidate(USER_SYSTEM_BASE, USER_SYSTEM_LIMIT, at, limit, first, end);
     if (image_reservation(kproc, &lo, &hi))
         reservation_candidate(lo, hi, at, limit, first, end);
+#if CONF_WITH_PRIVATE_CLONE
+    if (kproc->private_image && kproc->private_image->committed) {
+        const struct private_image_snapshot *snapshot=kproc->private_image;
+        reservation_candidate(snapshot->basepage,snapshot->basepage+snapshot->basepage_bytes,at,limit,first,end);
+        reservation_candidate(snapshot->environment,snapshot->environment+snapshot->environment_bytes,at,limit,first,end);
+    }
+#endif
     for (i = 0; i < kproc->nheap; i++)
         reservation_candidate(kproc->heap[i].va,
             kproc->heap[i].va + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE,
@@ -3731,6 +3906,11 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
     VADDR first, end, found = 0, candidate;
     VADDR image_first = 0, image_end = 0;
     ULONG index = 0, ordinary = 0;
+#if CONF_WITH_PRIVATE_CLONE
+    const struct private_image_snapshot *snapshot=kproc->private_image;
+    BOOL basepage_pending=snapshot && snapshot->committed && snapshot->basepage_bytes;
+    BOOL environment_pending=snapshot && snapshot->committed && snapshot->environment_bytes;
+#endif
     BOOL system_pending = TRUE;
     BOOL image_pending = image_reservation(kproc, &image_first, &image_end);
     const KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
@@ -3744,7 +3924,7 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
      * first-fit allocation remain linear in the list sizes. */
     *largest = 0;
     while (at < limit) {
-        enum { GAP_END, GAP_SYSTEM, GAP_IMAGE, GAP_HEAP, GAP_ORDINARY, GAP_MAPPING } source = GAP_END;
+        enum { GAP_END, GAP_SYSTEM, GAP_IMAGE, GAP_HEAP, GAP_ORDINARY, GAP_MAPPING, GAP_BASEPAGE, GAP_ENVIRONMENT } source = GAP_END;
 
         first = end = limit;
         if (system_pending && USER_SYSTEM_BASE < first) {
@@ -3757,6 +3937,14 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
             end = image_end;
             source = GAP_IMAGE;
         }
+#if CONF_WITH_PRIVATE_CLONE
+        if (basepage_pending && snapshot->basepage<first) {
+            first=snapshot->basepage;end=first+snapshot->basepage_bytes;source=GAP_BASEPAGE;
+        }
+        if (environment_pending && snapshot->environment<first) {
+            first=snapshot->environment;end=first+snapshot->environment_bytes;source=GAP_ENVIRONMENT;
+        }
+#endif
         if (index < kproc->nheap && kproc->heap[index].va < first) {
             first = kproc->heap[index].va;
             end = first + (VADDR)kproc->heap[index].pages * USER_PAGE_SIZE;
@@ -3775,6 +3963,12 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
         }
 #endif
         switch (source) {
+#if CONF_WITH_PRIVATE_CLONE
+        case GAP_BASEPAGE: basepage_pending=FALSE;break;
+        case GAP_ENVIRONMENT: environment_pending=FALSE;break;
+#else
+        case GAP_BASEPAGE: case GAP_ENVIRONMENT: break;
+#endif
         case GAP_SYSTEM: system_pending = FALSE; break;
         case GAP_IMAGE: image_pending = FALSE; break;
         case GAP_HEAP: index++; break;
@@ -5180,6 +5374,7 @@ static BOOL move_loaded_image(KPROC *kproc, ASPACE *to, PD *launcher)
     kproc->heap[0].kind = UH_IMAGE;
     kproc->heap[0].pd = NULL;
     kproc->heap[0].reservation = b->reservation;
+    kproc->heap[0].shared_generation = 0;
     kproc->nheap = 1;
     if (kproc->give_back) {                 /* PE_GO: only lent, the loader's block stays */
         b->kind = UH_LENT;
@@ -5354,6 +5549,16 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
         /* A broad existing capture cannot mask fresh subrange permissions. */
         captured=TRUE; captured_birth=info.identity;
     }
+#if CONF_WITH_PRIVATE_CLONE
+    if (owner->private_image && owner->private_image->committed) {
+        struct private_image_snapshot *snapshot=owner->private_image;
+        if (address>=snapshot->basepage && address-snapshot->basepage<snapshot->basepage_bytes &&
+            bytes<=snapshot->basepage_bytes-(address-snapshot->basepage)) birth=&snapshot->basepage_birth;
+        else if (address>=snapshot->environment && address-snapshot->environment<snapshot->environment_bytes &&
+            bytes<=snapshot->environment_bytes-(address-snapshot->environment)) birth=&snapshot->environment_birth;
+    }
+    if (!birth) {
+#endif
     if (range_within(address,(ULONG)bytes,owner->user_start,owner->user_end) &&
         procmem_gen(owner->user_start)==owner->tpa_gen) {
         birth=&owner->reservation_birth[0]; raw=TRUE;
@@ -5364,6 +5569,9 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
                address < USER_STACK_TOP && bytes <= USER_STACK_TOP-address) {
         birth=&owner->reservation_birth[2]; lazy=CONF_WITH_DEMAND_PAGING;
     }
+#if CONF_WITH_PRIVATE_CLONE
+    }
+#endif
     /* PE_LOAD's caller owns the child compatibility allocations, while
      * their grants live in this existing borrowed-view ledger. Authenticate
      * the original allocation generation, canonical owner and current PTEs;
