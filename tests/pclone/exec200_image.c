@@ -8,25 +8,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mint/basepage.h>
 
 static void fail(const char *reason, long value)
 {
     printf("Pexec200 image FAIL: %s (%ld)\r\n", reason, value);
     Pterm(85);
 }
-int main(int argc, char **argv)
+int main(void)
 {
     EXEC_REPLACE_TEST_STATE state;
     unsigned long generation, pid, tid, root0, root1;
     long descriptor, parent, result;
     const char *value = getenv("EXEC");
-    char tail[128];
+    char tail[128], line[128];
+    unsigned length;
     _DTA dta;
-    if (argc != 8) fail("argument count", argc);
-    generation = strtoul(argv[1], 0, 10); descriptor = atol(argv[2]);
-    pid = strtoul(argv[3], 0, 10); tid = strtoul(argv[4], 0, 10);
-    root0 = strtoul(argv[5], 0, 10); root1 = strtoul(argv[6], 0, 10);
-    parent = atol(argv[7]);
+    /* The tail the commit copied into this PROCESS's basepage (libcmini's
+     * minimal startup does not split it into argv). */
+    length = (unsigned char)_base->p_cmdlin[0];
+    if (!length || length > 125) fail("command tail length", (long)length);
+    memcpy(line, _base->p_cmdlin + 1, length); line[length] = 0;
+    if (sscanf(line, "%lu %ld %lu %lu %lu %lu %ld", &generation, &descriptor, &pid, &tid,
+               &root0, &root1, &parent) != 7) fail("command tail", (long)length);
     if (exec200_probe(&state, EXEC_REPLACE_QUERY)) fail("query", 0);
     if (state.pid != pid || Pgetpid() != (long)pid) fail("same PID", Pgetpid());
     if (state.tid != tid) fail("same TID", (long)state.tid);
