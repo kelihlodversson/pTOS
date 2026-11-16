@@ -217,7 +217,7 @@ Configuration | Current path | Validation
 --- | --- | ---
 x32, AES=n, LIBAES=n | Native CLI; no GUI library | `configs/pc-x86_64_defconfig`, x86 boot CI
 x32, AES=n, LIBAES=y, EXTERNAL_DESK=n | Shared GEM applications over CUIS | `tests/cuis/gem.c`, combined boot CI
-x32, AES=n, LIBAES=y, EXTERNAL_DESK=y | Resident shared desktop, no kernel AES | `configs/pc-x86_64-libaes-desktop_defconfig`, `tests/x32_desktop/run.py`
+x32, AES=n, LIBAES=y, EXTERNAL_DESK=y | Resident shared desktop, no kernel AES | `configs/pc-x86_64-desktop_defconfig`, `tests/x32_desktop/run.py`
 ARM/m68k, USER_ASPACE=n | Traditional kernel AES/trap/desktop | Native builds and ARM/m68k regression CI
 ARM/m68k, USER_ASPACE=y | Kernel AES unavailable; external libaes is not yet ported | Architecture follow-ups and CLI configuration checks
 

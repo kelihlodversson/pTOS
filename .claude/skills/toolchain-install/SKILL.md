@@ -163,5 +163,5 @@ Verify runtime boot and address-space tests when upgrading the compiler.
 SDK 1.0.1 fixes [toolchain issue #18](https://github.com/kelihlodversson/pTOS-toolchain/issues/18):
 reload shared one register between an asm's long and short inputs of the same
 constant, so libcmini's `Fseek(0, handle, 0)` could push a stale upper word as
-the offset. pTOS builds the pclone suite without any per-object workaround
-again; do not reintroduce `-fno-late-combine-instructions`.
+the offset. Do not work around it with `-fno-late-combine-instructions`;
+require 1.0.1 instead.

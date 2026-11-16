@@ -288,7 +288,6 @@ jobs:
       matrix:
         # The configurations of a group are in .github/ci-configs
         include:
-          - {group: m68k-atari, arch: m68k}
           - {group: m68k-amiga, arch: m68k}
           - {group: m68k-other, arch: m68k}
           - {group: arm-rpi, arch: arm}
@@ -306,6 +305,46 @@ jobs:
       - name: Check clone user ABI layout
         if: matrix.group == 'arm-virt' || matrix.group == 'm68k-other'
         run: sh tools/check-clone-layout.sh "${{ matrix.arch }}"
+
+      - name: Build the configurations
+        run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ptos-${{ matrix.group }}
+          path: products/
+          retention-days: 14
+
+  # The Atari configurations, in a job of their own: the Hatari and pBench
+  # jobs take their systems, test disks and pBench from its artifact (#987),
+  # and wait for this job only (needs: cannot name one entry of a matrix, and
+  # waiting for all of "build" kept them waiting for its slowest group).
+  build-atari:
+    name: build ${{ matrix.group }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The configurations of a group are in .github/ci-configs
+        include:
+          - {group: m68k-atari, arch: m68k}
+    steps:
+      # the configurations with CONF_WITH_VDI_SCALABLE_FONTS build lib/freetype
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+
+      # mkfs.fat and mtools make the Hatari test disks (tools/mkhdisk.sh),
+      # which tools/ci-build.sh makes for the Hatari jobs below
+      - name: Install the disk image tools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: --no-install-recommends dosfstools mtools
 
       - name: Build the configurations
         run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
@@ -555,7 +594,7 @@ jobs:
 
       # The kernel images the arm-rpi job above already built for rpi1-4 --
       # rebuilding them here too would just double the wait.  The artifact
-      # also holds rpi2-kproc, rpi2-sparse and rpi2-test, which are VDI and
+      # also holds rpi2-kproc, rpi2-sparse and rpi2-aspace, which are VDI and
       # test variants and not part of the SD card: they are not copied.
       - name: Collect the rpi1-4 kernel images
         uses: actions/download-artifact@v4
@@ -688,11 +727,214 @@ jobs:
             make -j3 runtests.tos
           done
 
+  # The regression tests under Hatari (tests/, doc in tests/readme.md): the
+  # test disk on an emulated STE in the ST screen modes, a Falcon with a 68030
+  # and with a 68040, and a TT, the MMU ones with the MMU on.  The combinations
+  # are in groups, a job each (tools/ci-hatari.sh): a run takes from seconds
+  # to twenty minutes, and on the four CPUs of one runner they queued for half
+  # an hour.  A group of a pull request has at most four, which start at once.
+  # The systems and their test disks are the ones "build m68k-atari" built
+  # (tools/ci-build.sh, #987): nothing is built here.  The Hatari is the pinned
+  # build of tools/hatari-pin.sh: the 2.4.1 of the 24.04 package hangs the
+  # 68030 address-space runs (#727, #737), and the 2.6.1 of the 26.04 one lacks
+  # the 68030 MMU fixes of 2026 (#805).  The two blitter suites (text_blit and
+  # raster_copy) compare the blitter with the CPU path pixel by pixel, and have
+  # to run, not skip themselves, where there is a blitter; the Falcon is the
+  # one with a data cache.  A pull request runs some of the combinations,
+  # chosen from what depends on the mode and on the kernel (doc/ci.txt); the
+  # nightly and manual runs all of them; a push none.
+  hatari:
+    name: Hatari ${{ matrix.group }}
+    needs: [build-atari]
+    if: ${{ !cancelled() && github.event_name != 'push' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # the groups of tools/ci-hatari.sh (its --check compares them)
+        group: ${{ fromJSON(github.event_name == 'pull_request' && '["st","variants","mmu"]' || '["st","fastcall","kproc","extdesk","mmu"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # the Hatari of tools/hatari-pin.sh, built once and cached (#807)
+      - uses: ./.github/actions/setup-hatari
+
+      - name: Report the Hatari version
+        run: hatari --version || true     # (it exits with 1)
+
+      # the TT mode reads the screen (tools/run-hatari-tests.py)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install the screen reader of the TT mode
+        run: python3 -m pip install --disable-pip-version-check pillow
+
+      - name: Collect the systems and test disks
+        uses: actions/download-artifact@v4
+        with:
+          name: ptos-m68k-atari
+          path: products
+
+      # A run takes three to eleven minutes on a quiet runner (the 68040 ones
+      # are the longest), twice that on a busy one; forty is for one that hangs
+      # (#820), well below the job's time.
+      - name: Run the tests under Hatari
+        env:
+          EVENT: ${{ github.event_name }}
+        run: tools/ci-hatari.sh --group "${{ matrix.group }}"
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hatari-logs-${{ matrix.group }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # One check for the branch protection, under the name the single job had,
+  # whatever the groups are.  Not part of "All builds".
+  hatari-tests:
+    name: Hatari tests
+    needs: [hatari]
+    if: ${{ !cancelled() && github.event_name != 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the groups run every combination once
+        run: tools/ci-hatari.sh --check
+
+      - name: Check the results
+        run: |
+          echo "Hatari groups: ${{ needs.hatari.result }}"
+          if [ '${{ needs.hatari.result }}' != success ]; then
+            echo "::error::at least one Hatari group failed, or did not run: see the jobs \"Hatari GROUP\" (and \"build m68k-atari\", which builds their systems)"
+            exit 1
+          fi
+
+  # Performance check: pBench (tools/pBench, doc/pbench.txt) under Hatari,
+  # compared with the baseline kept in the repository.  A change that makes
+  # the graphics significantly slower fails the check; one that makes them
+  # significantly faster gets a comment on the pull request, so that the
+  # improvement is noticed and the baseline moved up on purpose.  Only Hatari
+  # is used: its clock is the emulated one, so the numbers do not depend on
+  # the runner (QEMU's do).  The three systems and pBench are the ones "build
+  # m68k-atari" built (tools/ci-build.sh, #987); they are measured one after
+  # the other, each against its own baseline, with its own comment.  Hatari
+  # comes from the distribution's packages: the runner is an Ubuntu 26.04, for
+  # its Hatari 2.6 (the baselines are made with it).  Pull requests and manual
+  # runs only.
+  pbench:
+    name: pBench
+    needs: [build-atari]
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Hatari
+        uses: ./.github/actions/apt-install
+        with:
+          packages: --no-install-recommends hatari
+
+      - name: Report the Hatari version
+        run: hatari --version || true     # (it exits with 1)
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Collect the systems and pBench
+        uses: actions/download-artifact@v4
+        with:
+          name: ptos-m68k-atari
+          path: products
+
+      # A mode that gave no result is reported by the comparison, which still
+      # has to run (and fail the job) so that the report, the summary and the
+      # comment are not lost.  A run takes half a minute; one that hangs is
+      # given two minutes, three tries, in two waves of five.  The screen
+      # modes (see run-baselines.py --res): the ST modes of every
+      # configuration, and an emulated Falcon with a 68030 and with a 68040
+      # for the one whose ROM image runs on it.
+      - name: Measure and compare
+        id: measure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          # a pull request from a fork has a read-only token, so there the
+          # summary is all there is
+          CAN_COMMENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          slower=
+          for entry in atari512:low,med,high,f030,f040 atari256:low,med,high atari512-fastcall:f030,f040; do
+            config=${entry%%:*}
+            modes=${entry#*:}
+            echo "::group::$config"
+            python3 tools/pBench/run-baselines.py \
+              --pbench "products/$config/pbench.prg" --out results --jobs 5 --timeout 120 \
+              --res "$modes" \
+              --system "${config}=products/$config/system.img=pTOS ${config} (${GITHUB_SHA::8})" || true
+            # The results as text too, so that baselines can be made from the
+            # log when the artifact cannot be had (no -mfastcall toolchain to
+            # make them with locally either)
+            for f in results/${config}-*.txt; do
+              [ -e "$f" ] || continue
+              echo "== $f"
+              cat "$f"
+            done
+            echo "::endgroup::"
+
+            # 0 as the baseline, 1 slower (or no result), 2 faster
+            rc=0
+            python3 tools/pBench/check-baseline.py --report "report-$config.md" \
+              tools/pBench/ci-baselines results "$config" || rc=$?
+            cat "report-$config.md" >>"$GITHUB_STEP_SUMMARY"
+            [ "$rc" != 1 ] || slower="$slower $config"
+
+            # Update the comment this job made on an earlier push, or make one
+            # when there is something to say: a significant change, in either
+            # direction.
+            if [ "$CAN_COMMENT" = true ]; then
+              marker="<!-- pbench-check:${config} -->"
+              id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                     --paginate --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" | head -n1)
+              if [ -n "$id" ] || [ "$rc" != 0 ]; then
+                { echo "$marker"; cat "report-$config.md"; echo; echo "Commit ${GITHUB_SHA::8}."; } >comment.md
+                if [ -n "$id" ]; then
+                  gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md >/dev/null
+                else
+                  gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+                fi
+              fi
+            fi
+          done
+          if [ -n "$slower" ]; then
+            echo "::error title=pBench::the graphics got significantly slower than tools/pBench/ci-baselines in:$slower (see the summary)"
+            exit 1
+          fi
+
+      # What the baselines in the repository are made from when they have to
+      # be made again: see doc/pbench.txt.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pbench-results
+          path: results/
+          retention-days: 14
+
   # A single job to require in the branch protection rules, so that the list
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, x86_64, regression, shared-pexec, release-archives, raspi-sdcard, homebrew]
+    needs: [build, build-atari, x86_64, regression, shared-pexec, release-archives, raspi-sdcard, homebrew]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
@@ -701,16 +943,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # (for tools/check-duplicate-configs.py, which check-ci-configs.sh runs)
+      - name: Install kconfiglib
+        run: |
+          python3 -m venv /tmp/kconfig-venv
+          /tmp/kconfig-venv/bin/pip install --disable-pip-version-check kconfiglib==14.1.0
+
       # The matrices are not worked out from configs/ (a job of its own for
       # a list that rarely changes): this fails when a configuration is not
-      # in .github/ci-configs or the x86_64 matrix, so that none is left out.
+      # in .github/ci-configs or the x86_64 matrix, so that none is left out,
+      # or when two configurations make the same .config (#989).
       - name: Check that every configuration is built
-        run: tools/check-ci-configs.sh
+        run: PATH=/tmp/kconfig-venv/bin:$PATH tools/check-ci-configs.sh
 
       - name: Check the results
         if: ${{ !cancelled() }}
         run: |
           echo "m68k and arm builds:   ${{ needs.build.result }}"
+          echo "Atari builds:          ${{ needs.build-atari.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
           echo "positive shared Pexec: ${{ needs.shared-pexec.result }}"
@@ -720,6 +970,7 @@ jobs:
 
           ok=true
           [ '${{ needs.build.result }}' = success ] || ok=false
+          [ '${{ needs.build-atari.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
           [ '${{ needs.shared-pexec.result }}' = success ] || ok=false

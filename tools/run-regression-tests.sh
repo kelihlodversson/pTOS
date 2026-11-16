@@ -16,7 +16,7 @@
 #   virt-m68k-aspace  virt-m68k-aspace_defconfig  virt-m68k.elf  qemu-system-m68k -cpu m68040
 #                (the same, every process in an address space of its own)
 #   pc-x86_64    pc-x86_64-desktop_defconfig  pc-x86_64.efi   qemu-system-x86_64 + OVMF
-#   raspi2b      rpi2-test_defconfig          kernel7.img     qemu-system-arm
+#   raspi2b      rpi2_defconfig               kernel7.img     qemu-system-arm
 #   raspi2b-aspace  rpi2-aspace_defconfig           kernel7.img     qemu-system-arm -M raspi2b
 #                (EmuCON on the UART, every process in an address space of its own; the
 #                suite only: QEMU's raspi2b does not switch off)
@@ -336,7 +336,7 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         sleep 2
         ;;
     raspi2b)
-        # the desktop, with the console on the UART too (rpi2-test_defconfig);
+        # the desktop, with the console on the UART too (rpi2_defconfig);
         # emudesk.inf's autorun line starts runtests.tos, whose output is the log.
         # The SD card has to be a power of two in size: vvfat gets a window of 256M
         qemu-system-arm -M raspi2b -bios "$top/kernel7.img" \

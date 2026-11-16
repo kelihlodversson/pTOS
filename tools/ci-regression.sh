@@ -36,9 +36,10 @@ case $machine in
     raspi2b)
         # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
         # screen of the Pi's framebuffer.  The desktop starts the suite and
-        # the console is on the UART as well (rpi2-test_defconfig), where the
-        # script reads the verdict; no shutdown checks, which type into EmuCON
-        config=rpi2-test
+        # the console is on the UART as well (CONF_SERIAL_CONSOLE, the
+        # default on the Pi), where the script reads the verdict; no shutdown
+        # checks, which type into EmuCON
+        config=rpi2
         ;;
     virt-m68k)
         config=virt-m68k-cli-elf

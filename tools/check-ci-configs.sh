@@ -72,5 +72,8 @@ for group in $(sed -e 's/#.*//' "$list" | awk 'NF { print $2 }' | sort -u); do
         fail "group $group of $list is not in the matrix of a job of $workflow"
 done
 
+# no two configurations build the same thing (#989)
+python3 tools/check-duplicate-configs.py || status=1
+
 [ $status -eq 0 ] && echo "Every configuration is built by CI."
 exit $status

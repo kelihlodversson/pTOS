@@ -64,7 +64,7 @@ assert config.syms["CONF_WITH_READ_INF"].str_value == "n"
 assert config.syms["CONF_WITH_LIBAES_DESK"].str_value == "n"
 
 config = kconfiglib.Kconfig(warn_to_stderr=False)
-config.load_config("configs/pc-x86_64-libaes-desktop_defconfig")
+config.load_config("configs/pc-x86_64-desktop_defconfig")
 for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
              "CONF_WITH_DYNAMIC_DESK", "CONF_WITH_X32_VDI"):
     assert config.syms[name].str_value == "y", name
