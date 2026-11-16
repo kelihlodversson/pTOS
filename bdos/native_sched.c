@@ -979,8 +979,10 @@ static void exec_replace_retire(KERNEL_TASK *task)
     run = tx->pd;
     memset(&scope, 0, sizeof(scope));
     ksched_cleanup_begin(&scope);
-    kproc_exec_replacement_retire(&tx->receipt);
+    /* The old root first: it still maps the old environment, which the
+     * container's disposal then frees. */
     kproc_exec_image_retire(&tx->bundle);
+    kproc_exec_replacement_retire(&tx->receipt);
     kaspace_put(tx->old_thread_space);
     kaspace_put(tx->space);
     kaspace_put(tx->target);
@@ -1800,8 +1802,8 @@ void ksched_exec_relaunch_retire(void)
     kstack_free(nx->old_kstack);
     memset(&scope, 0, sizeof(scope));
     ksched_cleanup_begin(&scope);
-    kproc_exec_replacement_retire(&nx->receipt);
     kproc_exec_image_retire(&nx->bundle);
+    kproc_exec_replacement_retire(&nx->receipt);
     kaspace_put(nx->old_thread_space);
     kaspace_put(nx->target);
     ksched_cleanup_end(&scope);

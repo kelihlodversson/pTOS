@@ -1891,8 +1891,9 @@ static BOOL exec_image_source_ok(const KPROC *source, const KPROC *image)
             (!image || (source->borrowed[i].va != (VADDR)(uintptr_t)image->user_start &&
                         source->borrowed[i].va != (VADDR)(uintptr_t)image->env_start)))
             return FALSE;
-    for (i = 0; i < (int)source->nheap; i++)
-        if (source->heap[i].kind == UH_LOADED) return FALSE;
+    /* Heap-ledger blocks (staged, moved or lent images, legacy give-back)
+     * name addresses and reservations of the root being replaced. */
+    if (source->nheap) return FALSE;
     return TRUE;
 }
 
@@ -2041,6 +2042,7 @@ BOOL kproc_exec_image_sealable(const KPROC_EXEC_IMAGE *b)
     return kproc_exec_image_pending(i, b->space, TRUE) && i->exec_basepage == s->pd &&
         !i->legacy && exec_image_source_ok(s, NULL) && s->active_space != b->space &&
         s->disposal_state == PROCESS_LIVE && !s->completed && !s->completion_pending &&
+        procmem_gen(s->user_start) == s->tpa_gen &&
         kproc_exec_generation_capacity(s) &&
         kaspace_member_matches(b->members, b->space, s->number, s) &&
         procmem_gen(s->env_start) == s->env_gen && procmem_owner(s->env_start) == s->pd &&
@@ -2087,7 +2089,8 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     s->interpreter_layout = i->interpreter_layout;
     s->standard_entry = i->standard_entry; s->interp_entry = i->interp_entry;
     s->initial_rsp = i->initial_rsp; s->interp_bytes = i->interp_bytes;
-    i->standard_entry = FALSE;
+    i->standard_entry = FALSE; i->interp_entry = i->initial_rsp = i->interp_bytes = 0;
+    memset(&i->interpreter_layout, 0, sizeof(i->interpreter_layout));
 #if KPROC_SHARED_INTERP
     {
         struct shared_interp_recipe *recipe = s->shared_interp_recipe;
