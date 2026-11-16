@@ -26,6 +26,8 @@ void proc_exec_stack_take(void *launcher, PADDR physical);
 BOOL ksched_exec_handoff_quiescent(const KSCHED_EXEC_HANDOFF *,
                                   const struct kthread *, const void *execution);
 BOOL ksched_exec_handoff_retiring(const THREAD_STARTUP_DRAFT *);
+/* The pending handoff commits an image bundle (Pexec(200)), not the test transport. */
+BOOL ksched_exec_handoff_replacing(const KSCHED_EXEC_HANDOFF *);
 BOOL kthread_exec_handoff_ready(const struct kthread *, const void *execution);
 void kthread_exec_handoff_stack(struct kthread *, const KSCHED_EXEC_HANDOFF *,
                                struct kaspace_lease **new_hold,

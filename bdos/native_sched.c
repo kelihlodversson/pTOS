@@ -129,6 +129,9 @@ typedef struct ksched_nested {
     UQUAD cleanup_serial, cleanup_ticket;
     ULONG cleanup_depth;          /* enclosing cleanup scopes stay with their owner */
     NESTED_STATE state;
+#if CONF_WITH_EXEC_REPLACE
+    struct nested_exec *exec_preparing; /* this frame's Pexec(200), until its boundary */
+#endif
 } KSCHED_NESTED;
 /* Shared queue/policy. Execution state is owned by the selected CPU below. */
 static struct {
@@ -164,7 +167,7 @@ typedef struct {
     void *pending_slot;
 #if CONF_WITH_EXEC_REPLACE
     KSCHED_EXEC_HANDOFF *pending_exec;
-    struct nested_exec *nested_exec, *nested_exec_preparing; /* Pexec(200) relaunch */
+    struct nested_exec *nested_exec; /* committed Pexec(200) relaunch, masked to retire */
 #endif
     ULONG stack[ROOT_STACK_BYTES/sizeof(ULONG)] __attribute__((aligned(16)));
 } NATIVE_SCHED_CPU;
@@ -639,6 +642,10 @@ BOOL ksched_exec_handoff_quiescent(const KSCHED_EXEC_HANDOFF *tx,
         kthread_tid(thread) == tx->tid &&
         kthread_aspace(thread) == (tx->rebound ? tx->target : tx->space) &&
         kproc_active_space(tx->process) == (tx->committed ? tx->target : tx->space);
+}
+BOOL ksched_exec_handoff_replacing(const KSCHED_EXEC_HANDOFF *tx)
+{
+    return tx && tx->bundle && execution_cpu.pending_exec == tx;
 }
 BOOL ksched_exec_handoff_retiring(const THREAD_STARTUP_DRAFT *startup)
 {
@@ -1726,8 +1733,9 @@ static LONG exec_replace_nested(KERNEL_TASK *task, KPROC_EXEC_REPLACEMENT **rece
     THREAD_STARTUP_DRAFT *startup;
     LONG error = EACCDN;
     BOOL masked = FALSE;
-    if (execution_cpu.nested_exec || execution_cpu.nested_exec_preparing ||
-        execution_cpu.pending_exec) return EACCDN;
+    if (execution_cpu.nested_exec || execution_cpu.pending_exec ||
+        task->nested->exec_preparing || kproc_exec_replacement_validate(*receipt))
+        return EACCDN;
     if (replace_injected(1)) return ENSMEM;
     nx = kalloc(sizeof(*nx));
     if (!nx) return ENSMEM;
@@ -1735,7 +1743,7 @@ static LONG exec_replace_nested(KERNEL_TASK *task, KPROC_EXEC_REPLACEMENT **rece
     nx->frame = task->nested;
     nx->carrier_execution = task->execution.identity;
     nx->target = kaspace_share(kproc_exec_replacement_selected(*receipt));
-    execution_cpu.nested_exec_preparing = nx;
+    nx->frame->exec_preparing = nx;
     if (!nx->target || replace_injected(2)) { error = ENSMEM; goto failed; }
     if (!nested_exec_matches(task, nx, *receipt, *bundle)) goto failed;
     /* The launcher, not the scheduler, enters the new image: it needs only
@@ -1765,12 +1773,12 @@ static LONG exec_replace_nested(KERNEL_TASK *task, KPROC_EXEC_REPLACEMENT **rece
     nx->receipt = *receipt; nx->bundle = *bundle;
     *receipt = NULL; *bundle = NULL;
     kproc_exec_replacement_transfer(nx->receipt);
-    execution_cpu.nested_exec_preparing = NULL;
+    nx->frame->exec_preparing = NULL;
     execution_cpu.nested_exec = nx;
     proc_exec_relaunch(run);
 failed:
     if (masked) native_sched_irq_restore(nx->irq_flags);
-    execution_cpu.nested_exec_preparing = NULL;
+    nx->frame->exec_preparing = NULL;
     if (nx->kstack_phys) kstack_free(nx->kstack_phys);
     kaspace_put(nx->target);
     kfree(nx);

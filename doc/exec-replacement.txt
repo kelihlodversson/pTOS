@@ -370,7 +370,9 @@ kernel stack, and that frame is where it is relaunched:
   - The launcher enters the new program from the committed KPROC record,
     as for any launch. On x32 the abandoned system call's GS swap is
     normalised first, and the selectors and FS/GS bases are those of the
-    first launch.
+    first launch; on m68k the FPU state is the launcher's again. (An
+    anchor relaunch, like every fresh task, enters with whatever FS/GS
+    state the CPU holds: the x32 scheduler does not switch it per task.)
 
 The enclosing launcher's Pexec(0) still returns only the final program's exit
 status, exactly once.

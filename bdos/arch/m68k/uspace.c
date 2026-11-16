@@ -417,6 +417,10 @@ relaunch:
          * exactly like a freshly launched one. */
         launch.relaunch = FALSE;
         *fs_error_current() = launch.error;
+        /* Like a fresh launch, the new program starts with the launcher's
+         * FPU state, not the replaced program's. */
+        if (fputype)
+            m68k_fpu_restore(&fpu);
         /* The commit reads the staging container's basepage, which only
          * the kernel root maps once the bundle dropped its loader borrows. */
         aspace_hw_switch(aspace_kernel_root());
