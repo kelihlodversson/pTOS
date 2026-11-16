@@ -314,8 +314,12 @@ static void phase1_policy_child(void *argument)
                 report.worker==Pgetpid() && report.gate) break;
             (void)Syield();
         }
+        if(received!=sizeof(report) || report.magic!=0x50434c4eL ||
+            report.worker!=Pgetpid() || !report.gate) {
+            printf("orphan report gate timeout or I/O failure: bytes=%ld polls=%u\r\n",received,i);
+            (void)Fclose(file);return;
+        }
         error = phase1_policy_checks();
-        if(received<0) error|=512;
         if (!report.gate || report.magic != 0x50434c4eL || report.worker != Pgetpid()) error |= 256;
         report.done = 1; report.error = error;
         if (Fseek(0,file,0) >= 0) (void)Fwrite(file,sizeof(report),&report);

@@ -202,7 +202,11 @@ LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
         /* A private PRG snapshot preserves legacy image policy as well as
          * its independently owned lazy top-stack authority. Image format
          * must not discard that authority on a subsequent shared clone. */
-        if(owns_top_stack(source))
+        if(owns_top_stack(source) && (!source->legacy
+#if CONF_WITH_PRIVATE_CLONE
+            || (source->private_image && source->private_image->committed)
+#endif
+            ))
             DEPENDENCY(shared_logical(set,source,USER_STACK_TOP-stack_bytes(source),stack_bytes(source),ASPACE_PROT_USER));
         DEPENDENCY(shared_source_images(set,source));
     }
