@@ -38,6 +38,9 @@
 #include "native_sched_backend.h"
 #include "arch/arm/irqframe.h"
 #include "thread_startup32.h"
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+#endif
 #include "string.h"
 #include "fs.h"
 #endif
@@ -213,6 +216,34 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 #endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
 static BOOL injected_exit_failure;
+#endif
+
+#if CONF_WITH_EXEC_HANDOFF_TEST
+BOOL proc_exec_stack_snapshot(void **owner, PADDR *physical)
+{
+    struct uspace_launch *launch = get_uspace_launch();
+    if (!launch || launch->pd != run || launch->previous || !launch->stack_phys ||
+        launch->exit_process || launch->fallback_observer ||
+        aspace_hw_current() != kproc_user_root(run) ||
+        !kstack_contains(launch->stack_phys, (uintptr_t)&launch)) return FALSE;
+#if FPU_ALL_BYTES
+    {
+        ULONG fpexc;
+        __asm__ volatile ("vmrs %0,fpexc" : "=r"(fpexc));
+        if ((fpexc & 0xc0000000UL) != 0x40000000UL) return FALSE;
+    }
+#endif
+    *owner = launch; *physical = launch->stack_phys;
+    return TRUE;
+}
+void proc_exec_stack_take(void *owner, PADDR physical)
+{
+    void *actual = NULL;
+    PADDR stack = 0;
+    if (!proc_exec_stack_snapshot(&actual, &stack) || actual != owner || stack != physical)
+        panic("exec handoff: launcher syscall ownership changed");
+    ((struct uspace_launch *)owner)->stack_phys = 0;
+}
 #endif
 
 /* Retain only canonical completion identity through refused exit handoff.

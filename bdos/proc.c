@@ -30,6 +30,9 @@
 #include "process_observer.h"
 #include "process_exec.h"
 #include "exec_replace.h"
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+#endif
 #endif
 #include "gemerror.h"
 #include "biosbind.h"
@@ -1549,7 +1552,11 @@ LONG proc_prepare_scheduled(PD *p)
 }
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {
-    if (ksched_sibling_launch(p)) {
+    if (ksched_sibling_launch(p)
+#if CONF_WITH_EXEC_HANDOFF_TEST
+        || ksched_exec_handoff_launch(p)
+#endif
+       ) {
         /* Existing PROCESS: do not reset parent, loader state or start time.
          * The existing launcher consumes this task's independent startup. */
         run = p;

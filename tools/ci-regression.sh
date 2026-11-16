@@ -109,6 +109,10 @@ assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'
 if os.environ.get('EXEC_REPLACEMENT_TEST') == '1':
     config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == 'y'
+if os.environ.get('EXEC_HANDOFF_TEST') == '1':
+    for required in ('CONF_WITH_EXEC_REPLACEMENT_TEST', 'CONF_WITH_EXEC_HANDOFF_TEST'):
+        config.syms[required].set_value(2)
+        assert config.syms[required].str_value == 'y', required
 if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
     config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'

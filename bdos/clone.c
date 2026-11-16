@@ -9,6 +9,10 @@
 #include "bdosstub.h"
 #include "kproc.h"
 #include "clone_args.h"
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+#include "exec_handoff_test.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "proc_clone.h"
 #if CONF_WITH_PROCESS_FILES_TEST
@@ -396,6 +400,27 @@ static long clone_request(uint64_t address, uint64_t size)
 
 long xclone(uint64_t address, uint64_t size)
 {
+#if CONF_WITH_EXEC_HANDOFF_TEST
+    if (size == EXEC_HANDOFF_QUERY) return ksched_exec_handoff_query((VADDR)address);
+    if (size >= EXEC_HANDOFF_RUN && size <= EXEC_HANDOFF_RUN + EXEC_HANDOFF_FAILURES) {
+        CLONE_ARGS args;
+        THREAD_STARTUP_ARGS startup;
+        LONG error = E_OK;
+        static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
+            CONF_PCLONE_MIN_STACK, CONF_PCLONE_ENTRY_ALIGNMENT };
+        if (clone_copy_v1(&args, address, sizeof(CLONE_USER_V1), clone_copy, &error) != CLONE_COPY_OK)
+            return error ? error : EIMBA;
+        if (args.flags || args.tls || args.child_tid || args.child_pid) return EINVAL;
+        if (clone_validate_v1(&args, &abi, clone_access, NULL) != CLONE_VALID) return EIMBA;
+        startup.entry = (VADDR)(uintptr_t)args.entry;
+        startup.argument = (VADDR)(uintptr_t)args.argument;
+        startup.stack_base = (VADDR)(uintptr_t)args.stack_base;
+        startup.stack_size = args.stack_size;
+        /* This private experiment owns its own exact cleanup scope. Ordinary
+         * Pclone remains inside the unchanged factory scope below. */
+        return ksched_exec_handoff_test(&startup, (UWORD)(size - EXEC_HANDOFF_RUN));
+    }
+#endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
     KSCHED_CLEANUP_SCOPE scope = { 0 };
     LONG result;
