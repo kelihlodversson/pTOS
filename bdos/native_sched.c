@@ -3104,6 +3104,22 @@ BOOL ksched_clone_context(KPROC *source, PD **controller)
         execution_cpu.current->program != run || kproc_live_pd(source) != run) return FALSE;
     *controller = ksched_controller_pd(); return *controller!=NULL;
 }
+#if CONF_WITH_EXEC_REPLACE
+/* Executable replacement creates no dependent, so unlike Pclone it is open
+ * to the innermost nested owner as well as to an anchor execution. */
+BOOL ksched_exec_context(KPROC *source)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    if (!ksched_spawn_allowed() || !source || kproc_live_pd(source) != run) return FALSE;
+#if CONF_WITH_PTERMGRP
+    if (kproc_group_status(source, NULL)) return FALSE;
+#endif
+    if (task->nested)
+        return !task->nested_prepared && task->nested->process == source &&
+            task->nested->program == run && task->nested->state == NESTED_ACTIVE;
+    return task->process == source && task->program == run;
+}
+#endif
 BOOL ksched_loaded_clone_context(KPROC *source,PD **controller)
 {
     KTHREAD *owner;

@@ -41,7 +41,6 @@ static BOOL injected(UWORD stage)
 
 LONG kproc_exec_replacement_validate(const KPROC_EXEC_REPLACEMENT *replacement)
 {
-    PD *controller;
     if (!replacement || !replacement->cleanup.active ||
         replacement->execution != ksched_context_id() ||
         replacement->process_number != kproc_ref_number(replacement->process) ||
@@ -51,7 +50,7 @@ LONG kproc_exec_replacement_validate(const KPROC_EXEC_REPLACEMENT *replacement)
         kthread_aspace(replacement->thread) != replacement->source ||
         !kthread_is_executing(replacement->thread) ||
         ksched_cancellation_pending() ||
-        !ksched_clone_context(replacement->process, &controller) ||
+        !ksched_exec_context(replacement->process) ||
         !kproc_exec_replacement_matches(replacement->process, replacement->thread,
                     replacement->source, replacement->selected,replacement->image,replacement->ticket))
         return EACCDN;
@@ -88,7 +87,6 @@ LONG kproc_exec_replacement_prepare(KPROC *source, KTHREAD *thread, KASPACE *sel
 {
     KPROC_EXEC_REPLACEMENT *replacement;
     KASPACE *original;
-    PD *controller;
     LONG error;
     if (!out || *out || !source || !thread || !selected) return EINVAL;
     original = kproc_active_space(source);
@@ -96,7 +94,7 @@ LONG kproc_exec_replacement_prepare(KPROC *source, KTHREAD *thread, KASPACE *sel
         ksched_exit_thread(run) != thread || kthread_process(thread) != source ||
         kthread_aspace(thread) != original || !kthread_is_executing(thread) ||
         !kproc_thread_is_sole(source, thread) || ksched_cancellation_pending() ||
-        !ksched_clone_context(source, &controller)) return EACCDN;
+        !ksched_exec_context(source)) return EACCDN;
     replacement = kalloc(sizeof(*replacement));
     if (!replacement) return ENSMEM;
     memset(replacement, 0, sizeof(*replacement));

@@ -19,10 +19,9 @@ BOOL kthread_is_executing(const KTHREAD *t) { return t && t->executing; }
 KTHREAD *ksched_exit_thread(PD *pd) { return current_thread && current_thread->process->pd==pd?current_thread:NULL; }
 UQUAD ksched_context_id(void) { return current_execution; }
 BOOL ksched_cancellation_pending(void) { return cancellation; }
-BOOL ksched_clone_context(KPROC *p,PD **controller)
+BOOL ksched_exec_context(KPROC *p)
 {
-    if (!current_thread || current_thread->process!=p || p->pd!=run) return FALSE;
-    *controller=run;return TRUE;
+    return current_thread && current_thread->process==p && p->pd==run;
 }
 void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *s)
 { CHECK(!s->active);s->active=TRUE;s->execution=current_execution;s->thread=current_thread;cleanup_depth++; }

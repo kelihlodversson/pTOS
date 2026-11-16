@@ -88,6 +88,9 @@ BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
 /* Nonmasking query during serialized preparation; begin revalidates it. */
 BOOL ksched_clone_context(struct kproc *source, PD **controller);
+#if CONF_WITH_EXEC_REPLACE
+BOOL ksched_exec_context(struct kproc *source);
+#endif
 /* Loader NEW_PROCESS only: ordinary unmanaged callers use the same global
  * reservation/runqueue without acquiring an attachment or borrowed root. */
 BOOL ksched_loaded_clone_context(struct kproc *,PD **);
