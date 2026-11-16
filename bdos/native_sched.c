@@ -822,8 +822,9 @@ LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bu
     tx->startup = kproc_exec_image_take_startup(tx->bundle);
     if (!tx->startup) goto failed;
     if (replace_injected(3)) { error = ENSMEM; goto failed; }
-    error = thread_startup_retain_stack(tx->startup, &tx->hold);
-    if (error) goto failed;
+    /* No durable stack hold: like any launched program, the new image runs
+     * on its PROCESS's own private stack, not a user heap reservation. The
+     * draft's startup lease covers its resident top until user entry. */
     if (replace_injected(4)) { error = ENSMEM; goto failed; }
     error = thread_startup_run_preflight(tx->startup);
     if (error) goto failed;

@@ -214,8 +214,9 @@ void kthread_exec_handoff_stack(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *hand
 {
     if (!thread || !kthread_exec_handoff_ready(thread, thread->execution) ||
         !ksched_exec_handoff_quiescent(handoff, thread, thread->execution) ||
-        !hold || kaspace_stack_hold_space(*hold) != thread->space || !old || *old)
+        !hold || (*hold && kaspace_stack_hold_space(*hold) != thread->space) || !old || *old)
         panic("exec handoff: unauthenticated stack transfer");
+    /* An empty hold is Pexec(200)'s: the new image's stack is its PROCESS's. */
     *old = thread->stack_hold;
     thread->stack_hold = *hold;
     *hold = NULL;
