@@ -1972,15 +1972,26 @@ obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
 
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
-# Each test suite object depends on its source and the generated run_tests.c
+# Each test suite object depends on its source and the generated run_tests.c.
+# TEST_SUITE_CFLAGS-<suite> adds flags for that one suite's object.
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
-	$(TEST_CC) $(TEST_CFLAGS) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
+	$(TEST_CC) $(TEST_CFLAGS) $$(TEST_SUITE_CFLAGS-$(1)) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
 endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 ifneq ($(filter pclone,$(TEST_SUITES)),)
+# GCC 16's late-combine pass (m68k pTOS SDK 1.0.0) turns the pclone suite
+# into one that corrupts its own test disk on virt-m68k-aspace; at -O1, or at
+# -O2 with only this pass disabled, the same source passes. Whether that is a
+# compiler bug or latent undefined behaviour in the suite is not yet known,
+# so only this object is built without the pass. GCC 14 has no such pass.
+ifdef ARCH_M68K
+ifdef BUILD_TOOLCHAIN_PTOS
+TEST_SUITE_CFLAGS-pclone = -fno-late-combine-instructions
+endif
+endif
 TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
 obj/clone_irq_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
