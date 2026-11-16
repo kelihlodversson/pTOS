@@ -1982,11 +1982,11 @@ $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 ifneq ($(filter pclone,$(TEST_SUITES)),)
-# GCC 16's late-combine pass (m68k pTOS SDK 1.0.0) turns the pclone suite
-# into one that corrupts its own test disk on virt-m68k-aspace; at -O1, or at
-# -O2 with only this pass disabled, the same source passes. Whether that is a
-# compiler bug or latent undefined behaviour in the suite is not yet known,
-# so only this object is built without the pass. GCC 14 has no such pass.
+# m68k pTOS SDK 1.0.0 miscompiles the suite's Fseek(0,file,0) loop: reload
+# shares one register between the binding's long and short zero inputs, and
+# late-combine then clears only its low word, so the seek offset keeps a stale
+# upper half (kelihlodversson/pTOS-toolchain#18). Of the virt-m68k-aspace
+# objects only this one is affected; drop this once the SDK carries the fix.
 ifdef ARCH_M68K
 ifdef BUILD_TOOLCHAIN_PTOS
 TEST_SUITE_CFLAGS-pclone = -fno-late-combine-instructions
