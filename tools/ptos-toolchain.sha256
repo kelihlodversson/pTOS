@@ -1,6 +1,6 @@
-# release: 1.0.0
-# homebrew-tap: 2eb95560742d1a3da3efa26b86d4a1a1fca64611
+# release: 1.0.1
+# homebrew-tap: bd34e377bb4026aa20040de73bf8ae089c7f0c01
 # Official pTOS-toolchain release; update version, tap commit and hashes together.
-d9d46689f79398791ed0e062bb581a260900d9611d5e4359f18692484997a0b0  ptos-sdk-m68k_1.0.0_amd64.deb
-06c855912946b7a06d50c3b8f4bff8717335d43c6da4a4f3e2f824b98ec8f1d4  ptos-sdk-arm_1.0.0_amd64.deb
-5ecfed8e504475ea9d6a913e9acb9175ccd0e36656b3bd689b0ecb998a1e4665  ptos-sdk-x86-64_1.0.0_amd64.deb
+0d7543d5783594be79f82ad07e95378739422e7a20b1611fedd93e70f2ad38d2  ptos-sdk-m68k_1.0.1_amd64.deb
+1e7aff5c130209facbaa1caa08e8102fc292d92845215eeb3ace0b77033d2f38  ptos-sdk-arm_1.0.1_amd64.deb
+21711a7a7707e1773b58544324623b7362484fb0475d1c539dcee789a94c7cc4  ptos-sdk-x86-64_1.0.1_amd64.deb
