@@ -252,7 +252,9 @@ Identity
 Preserved: the KPROC record and number, PID, KTHREAD and TID, parent identity,
 children, open files and their positions, current directories (uft/curdir),
 priority, Psetlimit limits, start time and child usage, completion/observer
-state and the public wait/reap rights.
+state and the public wait/reap rights. A CUIS console lease held by the
+PROCESS moves to the new basepage at the commit, so a full-screen program
+launched on the console may Pexec(200) without losing it.
 
 Replaced, and the old one freed:
   - the basepage and TPA (the new one is the staging container's; its
@@ -263,7 +265,8 @@ Replaced, and the old one freed:
     stack and all Malloc/mmap memory;
   - mapping memberships and allocation/runtime scopes;
   - reservation births, so views of the old root never authenticate the new;
-  - DTA and directory search state, and the old program's GUI clients.
+  - DTA and directory search state, and the old program's GUI (AES/CUIS)
+    clients with their display, mouse and keyboard leases.
 
 Transaction
 -----------

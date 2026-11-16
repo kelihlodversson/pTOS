@@ -2383,6 +2383,9 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     new->p_xdta = PTR_TO_USERPTR((DTA *)new->p_cmdlin);
     exec_image_rekey(old, new);
     fs_exec_rekey_owner(old, new);
+#if CONF_WITH_CUIS
+    cuis_exec_rekey(old, new);
+#endif
     b->committed = TRUE;
 }
 
