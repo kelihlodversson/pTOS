@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-files-') as directory:
     for name in ('CONF_WITH_PLUGGABLE_FS','CONF_WITH_PROCESS_FILES_TEST'):
         config.syms[name].set_value(2)
         assert config.syms[name].str_value=='y'
+    config.syms['CONF_PFS_MAX_SEARCHES'].set_value('16')
     config.syms['CONF_WITH_NATIVE_SCHED'].set_value(0)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),

@@ -132,7 +132,9 @@ int main(void)
     fat_pfs_ops.readdir=directory_read;fat_pfs_ops.clone_iterator=directory_clone;
     fat_pfs_ops.iterator_valid=directory_valid;fat_pfs_ops.close_iterator=directory_close;
     for(mode=0;mode<2;mode++) {
+        UBYTE expected[offsetof(DTAINFO,dt_fattr)];
         setup();CHECK(start(&b)==E_OK);
+        CHECK(kproc_dta_restore(&caller,&a));memcpy(expected,&a,sizeof(expected));
         CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
         CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==E_OK);
         CHECK(child_owner->dta==NULL && !child_owner->dtas[0].va);
@@ -141,8 +143,7 @@ int main(void)
         CHECK(child_owner->dta==&a);
         memset(&a,0xa5,offsetof(DTAINFO,dt_fattr));
         CHECK(kproc_dta_restore(&child,&a));
-        CHECK(!memcmp(child_owner->dtas[0].state,&a,offsetof(DTAINFO,dt_fattr)) ||
-              !memcmp(child_owner->dtas[1].state,&a,offsetof(DTAINFO,dt_fattr)));
+        CHECK(!memcmp(expected,&a,sizeof(expected)));
         if(mode) kproc_destroy(&caller);
         else { CHECK(advance(&a)==E_OK && !strcmp(a.dt_fname,"B.TXT")); }
         run=&child;CHECK(advance(&a)==E_OK && !strcmp(a.dt_fname,"B.TXT"));
@@ -167,6 +168,40 @@ int main(void)
         finish();
     }
     puts("Unsupported iterator, reentrant abort, source retirement, partial provider failure and disk-error rollback preserve exact baselines: PASS");
+    setup();
+    CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);fail_allocate=TRUE;
+    CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==ENSMEM);
+    fail_allocate=FALSE;kproc_files_snapshot_end(&attempt);
+    CHECK(acquired-consumed==1 && iterator_acquired-iterator_consumed==1);
+    CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
+    CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==E_OK);
+    kproc_files_snapshot_end(&attempt);finish();
+    puts("Trusted search metadata allocation failure releases admission and permits an exact retry: PASS");
+    setup();
+    {
+        static DTAINFO searches[KPROC_DTAS+1];
+        static PD unrelated;
+        WORD i,slot;
+        PFS_SEARCH *block;
+        for(i=0;i<KPROC_DTAS+1;i++) CHECK(start(&searches[i])==E_OK);
+        CHECK(advance(&a)==ENMFIL && advance(&searches[0])==ENMFIL);
+        CHECK(acquired-consumed==KPROC_DTAS && iterator_acquired-iterator_consumed==KPROC_DTAS);
+        for(slot=0;slot<CONF_PFS_MAX_SEARCHES;slot++) if(search_slot_free(&pfs_searches[slot])) break;
+        CHECK(slot<CONF_PFS_MAX_SEARCHES);block=&pfs_searches[slot];
+        block->owner=(DTA *)&unrelated;block->proc=&unrelated;
+        CHECK(directory_root(&fat_pfs_ops,2,&block->iterator.directory)==E_OK);
+        block->iterator.position=new_position(0);block->iterator.directory.aux=block->iterator.position;block->iterator.owned=TRUE;
+        CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
+        CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==ENHNDL);
+        CHECK(!child_owner->dtas[0].va);kproc_files_snapshot_end(&attempt);
+        CHECK(acquired-consumed==KPROC_DTAS+1 && iterator_acquired-iterator_consumed==KPROC_DTAS+1);
+        pfs_search_free(block);
+        CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
+        CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==E_OK);
+        kproc_files_snapshot_end(&attempt);
+    }
+    finish();
+    puts("Trusted-cache eviction closes exact iterators; full search-table partial preparation rolls back and retries successfully: PASS");
     setup();
     {
         PFS_SEARCH *search=NULL;

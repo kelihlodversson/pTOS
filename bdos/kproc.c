@@ -3250,12 +3250,13 @@ LONG kproc_search_snapshot_prepare(KPROC *source,KPROC *target,UQUAD ticket,KPRO
     for(i=0;i<KPROC_DTAS;i++) if(source->dtas[i].va) {
         PROCESS_DTA_ENTRY *entry=&draft->entries[i],*original=&source->dtas[i];
         entry->va=original->va;entry->stamp=original->stamp;
+        memcpy(entry->state,original->state,sizeof(entry->state));
 #if CONF_WITH_PLUGGABLE_FS
-        /* PFS positions live in independent provider owners, not DTA cookies. */
+        /* Trusted header bytes carry no PFS iterator/cleanup authority.
+         * Positions live in the independently cloned provider owner. */
         addresses[count++]=(DTAINFO *)(uintptr_t)entry->va;
 #else
         if(!original->directory || original->directory->d_cookie_refs==~(ULONG)0) return EACCDN;
-        memcpy(entry->state,original->state,sizeof(entry->state));
         original->directory->d_cookie_refs++;entry->directory=original->directory;
 #endif
     }

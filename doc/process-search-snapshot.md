@@ -44,3 +44,29 @@ tree. Direct FAT media retirement from inside an active provider stack violates
 that contract and is rejected before tree destruction. Normal media retirement
 closes published/staged FAT searches and invalidates their trusted witnesses and
 PROCESS epochs before the DND tree is freed. No additional registry is involved.
+
+Validation and review
+---------------------
+
+`tools/test-process-search.py` exercises the production PROCESS transaction,
+KPROC trusted cache and PFS owners with a counted provider. It covers exact
+header inheritance/anti-forgery, independent continuation, both cleanup orders,
+metadata/provider failure, full-table partial rollback/retry, cache eviction,
+unsupported/stale associations, reentrant abort/retirement/close, close errors,
+and published/staged media invalidation. Its second fixture executes production
+Fsfirst staging and KASPACE leases with a model MMU, including cross-page output,
+same-address remapping, permission revocation, checked backing failure and disk
+unwind. Both fixtures assert final resource conservation.
+
+The native PROCESS-files regression lane runs private-root snapshots through a
+private test transport. It covers default basepage, stack and cross-page heap
+DTAs, parent/child COW byte isolation, both continuation orders, all existing
+constructor failure prefixes with active searches, and a source that exits
+before its private descendant resumes. FAT and standard-PFS FAT run on x32,
+ARM MMU and m68k MMU where supported; standard-PFS lanes also cover the 9P Q:
+provider. Public Pfork/Pvfork are not enabled by this transport.
+
+Independent kernel/scheduler, filesystem, MMU and resource-ownership reviews
+found and resolved callback-related DTA/iterator lifetime issues. The review
+closures and exact CI head are recorded in the PR. CI runs normal, fortified and
+ASan/UBSan/leak checks, native regressions, ROM builds and compatibility jobs.

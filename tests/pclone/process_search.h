@@ -1,22 +1,38 @@
 /* #984: production private roots and search owners, no public fork ABI. */
 static _DTA *search_a,*search_b;
 static char search_first[14],search_second[14],search_third[14];
+static int search_orphan;
+static long search_marker;
 static void search_entry(void *argument)
 {
     int bad=0;
     (void)argument;
+    if(search_orphan==1) {
+        struct ptos_clone_args nested={0};
+        long stack=Malloc(RUNNABLE_STACK_SIZE),child;
+        if(stack<=0) { (void)Pterm(84);return; }
+        search_orphan=2;nested.flags=CLONE_VM|CLONE_COPY_CWD;nested.entry=search_entry;
+        nested.stack_base=(void *)stack;nested.stack_size=RUNNABLE_STACK_SIZE;
+        child=pclone_trap(&nested,0xc9840000UL|sizeof(nested));
+        /* Exit with the searches still active, before the descendant runs. */
+        (void)Pterm(child>0?83:84);return;
+    }
     if((_DTA *)Fgetdta()!=search_a) bad=1;
     if(Fsnext() || strcmp(search_a->dta_name,search_second)) bad=2;
     if(Fsnext() || strcmp(search_a->dta_name,search_third) || Fsnext()!=-49L) bad=3;
     (void)Fsetdta(search_b);
     if(Fsnext() || strcmp(search_b->dta_name,search_second) ||
        Fsnext() || strcmp(search_b->dta_name,search_third) || Fsnext()!=-49L) bad=4;
+    if(search_orphan==2) {
+        if(Fwrite(search_marker,1,bad?"F":"P")!=1 || Fclose(search_marker)) bad=5;
+        conws(bad?"native source-first private search: FAIL\r\n":"native source-first private search: PASS\r\n");
+    }
     (void)Pterm(bad?84:83);
 }
 static void test_process_search(void)
 {
     char files[3][20]={"C:\\S984A.TMP","C:\\S984B.TMP","C:\\S984C.TMP"};
-    char pattern[]="C:\\S984?.TMP";
+    char pattern[]="C:\\S984?.TMP",marker[]="C:\\S984OK.LOG";
     struct ptos_clone_args args={0};
     _DTA *original=(_DTA *)Fgetdta(),stack_dta;
     long stack=Malloc(RUNNABLE_STACK_SIZE),storage=Malloc(12288),child,status;
@@ -71,6 +87,37 @@ static void test_process_search(void)
             (void)Fsetdta(search_b);while(Fsnext()==0) { }
             (void)Fsetdta(original);
             files_compare(before,"private search snapshot restores exact PROCESS/SFT baseline");
+        }
+        {
+            char byte=0;
+            long expected[8],observed[8];
+            int tries;
+            marker[0]=pattern[0];search_marker=Fcreate(marker,0);
+            ptest_assert_msg(search_marker>=0,"source-first completion marker");
+            if(search_marker>=0) {
+                search_a=original;(void)Fsetdta(search_a);
+                ptest_assert_msg(!Fsfirst(pattern,0),"source-first original DTA");
+                (void)Fsetdta(search_b);ptest_assert_msg(!Fsfirst(pattern,0),"source-first second DTA");
+                (void)Fsetdta(search_a);files_counts(expected);
+                search_orphan=1;child=pclone_trap(&args,0xc9840000UL|sizeof(args));search_orphan=0;
+                ptest_assert_msg(child>0,"publish source-first private worker");
+                if(child>0) {
+                    status=Pwaitpid(child,0,0);
+                    ptest_assert_msg((status>>16)==child && (status&65535)==83,"source exits before inherited search continuation");
+                    for(tries=0;tries<5000;tries++) {
+                        (void)Syield();(void)Fseek(0,search_marker,0);(void)Fread(search_marker,1,&byte);
+                        files_counts(observed);
+                        if(byte && !memcmp(expected,observed,sizeof(expected))) break;
+                    }
+                    ptest_assert_msg(byte=='P' && tries<5000,"orphan private descendant resumes searches and restores exact owners");
+                    ptest_assert_msg(!Fsnext() && !strcmp(search_a->dta_name,search_second),"original search survives both descendant exits");
+                }
+                while(Fsnext()==0) { }
+                (void)Fsetdta(search_b);while(Fsnext()==0) { }
+                (void)Fsetdta(original);
+                ptest_assert_msg(!Fclose(search_marker) && !Fdelete(marker),"source-first marker exact cleanup");
+                files_compare(before,"source-first descendants restore exact PROCESS/SFT baseline");
+            }
         }
         for(i=0;i<3;i++) ptest_assert_msg(!Fdelete(files[i]),"provider search fixtures released");
     }
