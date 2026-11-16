@@ -300,16 +300,22 @@ static void phase1_policy_child(void *argument)
         phase1_resource_error = (int)phase1_policy_checks();
     } else {
         struct phase1_policy_report report;
-        long file = Fopen(phase1_policy_file,2), error;
+        long file = Fopen(phase1_policy_file,2), error,received=0;
         unsigned i;
         if (file < 0) return;
         memset(&report,0,sizeof(report));
         for (i = 0; i < 128; i++) {
-            if (Fseek(0,file,0) < 0 || Fread(file,sizeof(report),&report) != sizeof(report)) break;
-            if (report.gate) break;
+            if (Fseek(0,file,0) < 0) { received=-1;break; }
+            received=Fread(file,sizeof(report),&report);
+            if(received<0) break;
+            /* Publication may follow an early reader. Never run the policy
+             * checks or overwrite the source's header until its explicit gate. */
+            if(received==sizeof(report) && report.magic==0x50434c4eL &&
+                report.worker==Pgetpid() && report.gate) break;
             (void)Syield();
         }
         error = phase1_policy_checks();
+        if(received<0) error|=512;
         if (!report.gate || report.magic != 0x50434c4eL || report.worker != Pgetpid()) error |= 256;
         report.done = 1; report.error = error;
         if (Fseek(0,file,0) >= 0) (void)Fwrite(file,sizeof(report),&report);
@@ -555,6 +561,7 @@ static void test_public_contract(unsigned char *stack)
     {
         static const char tail[] = "\14--abi-staged";
         long image, child, status, report;
+        struct phase1_policy_report unpublished;
         unsigned format;
         for (format = 0; format <
 #if defined(__mc68000__) && defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
@@ -569,7 +576,12 @@ static void test_public_contract(unsigned char *stack)
             phase1_policy_file = format ? PHASE1_POLICY_PRG : PHASE1_POLICY_ELF;
 #endif
             report = Fcreate(phase1_policy_file,0);
-            ptest_assert_msg(report >= 6 && Fclose(report) == 0,"prepare orphan policy report");
+            /* Every opener must see the full record size before the orphan
+             * can run; an early empty-file handle can otherwise close with a
+             * stale size while another handle publishes the source header. */
+            memset(&unpublished,0,sizeof(unpublished));
+            ptest_assert_msg(report >= 6 && Fwrite(report,sizeof(unpublished),&unpublished)==sizeof(unpublished) &&
+                             Fclose(report) == 0,"prepare full unpublished orphan policy report");
             ptest_log_flush();
 #if defined(__mc68000__) && defined(TEST_WITH_ELF_LOADER)
             image = Pexec(3,format ? "C:\\RUNTESTS.TOS" : "C:\\CLNABI.TOS",tail,0);
