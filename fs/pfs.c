@@ -518,6 +518,14 @@ LONG pfs_search_snapshot_prepare(KPROC *source,KPROC *target,UQUAD ticket,
     WORD i,j,slot,matched=0;
     PD *source_pd=kproc_live_pd(source),*target_pd=kproc_live_pd(target);
     if(!prepared || *prepared || !source_pd || !target_pd || !ticket) return EACCDN;
+    /* Raw PD routing cannot authenticate a cookie from an older incarnation,
+     * an untracked boot owner, or another unpublished preparation. */
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) {
+        PFS_SEARCH *search=&pfs_searches[i];
+        if(search->proc==target_pd && !search_slot_free(search)) return EACCDN;
+        if(search->proc==source_pd && (search->process!=source || search->stage ||
+            search->busy || search->retiring || !search->owner)) return EACCDN;
+    }
     for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) {
         PFS_SEARCH *original=&pfs_searches[i],*copy;
         PFS_DISK_FAILURE failure;

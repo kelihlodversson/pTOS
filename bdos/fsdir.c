@@ -328,6 +328,11 @@ static LONG search_body(PD *process,PROCESS_FILES *table,char *name,WORD attr,
     if(table && (table->retiring || kproc_live_pd(table->owner)!=process)) return EACCDN;
     return result;
 }
+static LONG search_guard(PD *process,PROCESS_FILES *table,char *name,WORD attr,
+                         DTAINFO *address,DTAINFO *output,BOOL first,BOOL header,DISK_ERROR *disk)
+{
+    return DISK_CALL_ERROR(search_body(process,table,name,attr,address,output,first,header),disk);
+}
 static LONG admitted_search(char *name,WORD attr,DTAINFO *dta,BOOL first,BOOL header)
 {
     PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
@@ -352,7 +357,7 @@ static LONG admitted_search(char *name,WORD attr,DTAINFO *dta,BOOL first,BOOL he
         }
     }
     if(!result) {
-        result=DISK_CALL_ERROR(search_body(process,operation.table,name,attr,dta,output,first,header),&disk);
+        result=search_guard(process,operation.table,name,attr,dta,output,first,header,&disk);
         if(lease && !disk.code && result!=EACCDN) {
             if(!kaspace_lease_valid(lease) ||
                 kproc_copy_to_user_checked((VADDR)(uintptr_t)dta,output,sizeof(staged))) result=EIMBA;

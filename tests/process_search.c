@@ -24,6 +24,8 @@ static unsigned callback,clone_calls;
 static KPROC_FILE_SNAPSHOT *attempt;
 static KPROC *parent_owner,*child_owner;
 static DTAINFO a,b;
+static BOOL close_reentry,close_failure;
+static LONG start(DTAINFO *);
 static unsigned new_position(LONG offset)
 {
     unsigned i;
@@ -77,7 +79,14 @@ static LONG directory_clone(const PFSCOOKIE *source,LONG position,PFSCOOKIE *out
     *next=new_position(offset);out->aux=*next;return E_OK;
 }
 static LONG directory_close(PFSCOOKIE *cookie,LONG position)
-{ CHECK(directory_valid(cookie,position));directory_release(cookie);return E_OK; }
+{
+    CHECK(directory_valid(cookie,position));directory_release(cookie);
+    if(close_reentry) {
+        PD *saved=run;close_reentry=FALSE;run=&child;
+        CHECK(start(&a)==E_OK);run=saved;
+    }
+    return close_failure?EWRITF:E_OK;
+}
 static LONG start(DTAINFO *dta)
 {
     PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
@@ -130,6 +139,10 @@ int main(void)
         CHECK(kproc_files_snapshot_seal(attempt)==E_OK);
         kproc_files_snapshot_commit(attempt,child_owner);kproc_files_snapshot_end(&attempt);
         CHECK(child_owner->dta==&a);
+        memset(&a,0xa5,offsetof(DTAINFO,dt_fattr));
+        CHECK(kproc_dta_restore(&child,&a));
+        CHECK(!memcmp(child_owner->dtas[0].state,&a,offsetof(DTAINFO,dt_fattr)) ||
+              !memcmp(child_owner->dtas[1].state,&a,offsetof(DTAINFO,dt_fattr)));
         if(mode) kproc_destroy(&caller);
         else { CHECK(advance(&a)==E_OK && !strcmp(a.dt_fname,"B.TXT")); }
         run=&child;CHECK(advance(&a)==E_OK && !strcmp(a.dt_fname,"B.TXT"));
@@ -154,6 +167,18 @@ int main(void)
         finish();
     }
     puts("Unsupported iterator, reentrant abort, source retirement, partial provider failure and disk-error rollback preserve exact baselines: PASS");
+    setup();
+    {
+        PFS_SEARCH *search=NULL;
+        WORD i;
+        for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) if(pfs_searches[i].process==parent_owner) search=&pfs_searches[i];
+        CHECK(search);search->process=NULL;
+        CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
+        CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==EACCDN);
+        kproc_files_snapshot_end(&attempt);search->process=parent_owner;
+    }
+    finish();
+    puts("Stale raw-PD iterator association fails canonical PROCESS admission before publication: PASS");
     setup();CHECK(start(&b)==E_OK);
     CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
     CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==E_OK);
@@ -164,7 +189,11 @@ int main(void)
     CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==E_OK);
     kproc_files_snapshot_end(&attempt);finish();
     puts("Authoritative FAT media invalidation closes published and staged owners, removes stale DTA witnesses and admits a fresh snapshot: PASS");
-    setup();callback=5;CHECK(advance(&a)==EACCDN);finish();
+    setup();callback=5;close_reentry=TRUE;CHECK(advance(&a)==EACCDN);
+    run=&child;CHECK(advance(&a)==E_OK && !strcmp(a.dt_fname,"B.TXT"));finish();
+    setup();close_failure=TRUE;
+    kproc_dta_forget(&caller,&a);kproc_dta_forget(&caller,&a);
+    CHECK(acquired==consumed && iterator_acquired==iterator_consumed);close_failure=FALSE;finish();
     setup();callback=7;
     CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
     CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==EACCDN);finish();

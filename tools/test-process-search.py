@@ -38,3 +38,11 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-files-') as directory:
         'bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c',
         '-Wl,--gc-sections','-o',str(work/'search')],check=True)
     subprocess.run([str(work/'search')],check=True)
+    config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
+    assert config.syms['CONF_WITH_PRIVATE_CLONE'].str_value=='y'
+    config.write_config(str(work/'config'))
+    subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
+                    '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
+    subprocess.run(flags+['tests/process_search_dta.c','bdos/process_files.c',
+        '-Wl,--gc-sections','-o',str(work/'dta')],check=True)
+    subprocess.run([str(work/'dta')],check=True)
