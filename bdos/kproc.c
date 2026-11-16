@@ -2292,7 +2292,6 @@ static void exec_image_rekey(PD *old, PD *new)
         if (k->creator == old) k->creator = new;
 #if CONF_WITH_NATIVE_SCHED
         if (k->async_parent == old) k->async_parent = new;
-        if (k->clone_controller_pd == old) k->clone_controller_pd = new;
 #endif
         if (k->load_parent == old) k->load_parent = new;
         if (k->lender == old) k->lender = new;

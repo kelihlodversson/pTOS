@@ -624,8 +624,9 @@ relaunch:
             if (!pml4_phys || !entry_rip || !user_rsp ||
                 (user_rsp & 15) != (standard_entry ? 0 : 8))
                 panic("x86-64: exec relaunch without a valid address space, entry or stack\n");
-            x86_64_write_cr3(pml4_phys);
+            /* Retire before loading the new root, like m68k and ARM. */
             ksched_exec_relaunch_retire();
+            x86_64_write_cr3(pml4_phys);
             goto relaunch;
         }
 #endif

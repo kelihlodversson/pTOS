@@ -58,10 +58,13 @@ receipt parameter unavailable to public mode3. ELF loading selects the supplied
 private pending KASPACE instead of a caller-heap load. An existing unstarted
 loader KPROC/PD is only an owned image container: it receives no THREAD, scheduler
 slot, observer, runnable publication, inherited descriptor/CWD references or
-mode3 launch grant. The original source KPROC/PID/PD, its descriptor ownership,
-THREAD and active root remain unchanged. Nothing moves the staged PROCESS's
-resource table into the source. Legacy PRG staging is rejected before allocation
-because its moved-TPA ownership requires its own bundle contract.
+mode3 launch grant. Until the commit, the original source KPROC/PID/PD, its
+descriptor ownership, THREAD and active root remain unchanged; nothing moves the
+staged PROCESS's resource table into the source. A classic PRG is staged like
+an ELF image (its TPA is the container's, mapped into the new root at
+preparation). Only the commit swaps basepages: the source adopts the
+container's new PD, TPA and environment, and the container takes the old ones
+to dispose of (see "Identity" below).
 
 The receipt retains and owns disposal of the unstarted loader container.
 Ordinary loader failure may retire it first; abort then releases the retained
@@ -239,7 +242,8 @@ Scope
 ELF and classic PRG targets, with CONF_WITH_USER_ASPACE and the native
 scheduler. An ELF image runs from private pages of a new root and its TPA is
 data; a classic PRG runs from its TPA with its stack at the TPA's top and only
-its recorded text extent executable, exactly as for an ordinary launch.
+its recorded text extent executable, exactly as for an ordinary launch. A PRG
+with an empty text segment, which an ordinary launch accepts, is refused.
 These are rejected with EACCDN by admission and never partially replaced:
   - multi-THREAD PROCESSes;
   - shared-VM (4/104) children and Pclone compatibility state;

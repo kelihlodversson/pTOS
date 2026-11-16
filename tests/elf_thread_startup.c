@@ -33,6 +33,10 @@ static FS_ERROR_STATE disk_error;
 FS_ERROR_STATE *fs_error_current(void) { return &disk_error; }
 UQUAD ksched_context_id(void) { return 1; } /* one modeled CPU continuation */
 BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *draft) { return draft!=NULL; }
+#if CONF_WITH_EXEC_REPLACE
+/* No Pexec(200) handoff runs here: only the stopped scheduler root reclaims. */
+BOOL ksched_exec_handoff_retiring(const THREAD_STARTUP_DRAFT *draft) { (void)draft; return FALSE; }
+#endif
 int fixture_setjmp(jmp_buf state) { (void)state;return 0; }
 void panic(const char *format,...) { fprintf(stderr,"panic: %s\n",format);abort(); }
 void *kalloc(ULONG bytes) { void *p;if(fail_after && !--fail_after)return NULL;p=malloc(bytes);if(p)allocated++;return p; }

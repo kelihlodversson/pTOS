@@ -438,8 +438,10 @@ relaunch:
             entry = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!root || !entry || !user_sp)
             panic("exec relaunch without an address space, entry or stack\n");
-        aspace_hw_switch(root);
+        /* Retire on the kernel root: it maps the old basepage, TPA and
+         * environment the disposal frees; the new root does not. */
         ksched_exec_relaunch_retire();
+        aspace_hw_switch(root);
         goto relaunch;
     }
 #endif
