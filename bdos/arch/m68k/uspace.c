@@ -434,6 +434,8 @@ relaunch:
         entry = (ULONG)kproc_user_entry(p);
         user_sp = (ULONG)kproc_user_stack(p);
         prepared = NULL; startup = NULL; program = FALSE;
+        if (!entry)     /* a classic PRG: its code in its TPA, read while the kernel root is active */
+            entry = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
         if (!root || !entry || !user_sp)
             panic("exec relaunch without an address space, entry or stack\n");
         aspace_hw_switch(root);
