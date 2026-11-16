@@ -311,6 +311,7 @@ struct private_image_snapshot {
 #endif
 };
 static void private_image_commit(KPROC *target);
+static LONG back_user_range(KPROC *,VADDR,ULONG,BOOL,BOOL *);
 #endif
 
 static KPROC *kproc_list;
@@ -785,6 +786,9 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
         !(parent = kproc_retain_live(source)))
         return FALSE;
 #if CONF_WITH_PRIVATE_CLONE
+    /* Numerical user address only. Search caches/iterators remain empty;
+     * a factory PD's supervisor-only default is not the inherited user DTA. */
+    target->dta=source->dta;
     target->logical_context=TRUE;
     target->logical_basepage=source->logical_context?source->logical_basepage:(VADDR)(uintptr_t)source->user_start;
     target->logical_environment=source->logical_context?source->logical_environment:(VADDR)(uintptr_t)source->env_start;
@@ -2696,6 +2700,21 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
 #endif
     }
     kproc->dta = dta;
+#if CONF_WITH_PRIVATE_CLONE
+    if (kproc->aspace) {
+        VADDR basepage=kproc->logical_context?kproc->logical_basepage:(VADDR)(uintptr_t)kproc->user_start;
+        USERPTR_T(DTA) mirror=PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
+        /* The mirror is user memory, never authority. Resolve COW through the
+         * current root; do not write a source allocation through its raw alias.
+         * A protected/unavailable mirror cannot revoke the trusted DTA or
+         * justify widening page rights. */
+        if (basepage && basepage<USER_VA_LIMIT && sizeof(PD)<=USER_VA_LIMIT-basepage &&
+            back_user_range(kproc,basepage+offsetof(PD,p_xdta),sizeof(mirror),TRUE,NULL)==E_OK)
+            (void)aspace_copy_to_user(kproc->aspace,basepage+offsetof(PD,p_xdta),&mirror,sizeof(mirror));
+        if (basepage!=(VADDR)(uintptr_t)pd) pd->p_xdta=mirror;
+        return;
+    }
+#endif
     pd->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
 }
 

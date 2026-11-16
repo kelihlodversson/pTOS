@@ -18,6 +18,8 @@ parser.add_argument('--mode',choices=['normal','asan','fortified'],default='norm
 parser.add_argument('--preset',choices=['pc-x86_64','virt-arm-aspace','virt-m68k-aspace'],default='pc-x86_64')
 args=parser.parse_args()
 control=r'''
+int kprintf(const char *format,...) { (void)format;CHECK(0);return 0; }
+void halt(void) { abort(); }
 #if defined(__m68k__)
 LONG mcpu=40; /* hosted supported 68040 backend */
 #endif
@@ -28,6 +30,8 @@ static void check_order(BOOL source_first)
     KTHREAD alien={0};KASPACE_MEMBER *foreign_members=NULL;
     KASPACE *copy=NULL;KASPACE_RESERVATION_INFO child_info;
     VADDR bp,env,dta;PADDR before,after;UWORD rights;
+    USERPTR_T(DTA) mirror;
+    KPROC descendant={0};PD descendant_pd={0};
     ULONG prefix,pins,live;
     KTHREAD thread={0};PROG_LAYOUT layout={0};VADDR image;
     ASPACE *destination;BOOL empty_ok,moved_ok,policy_ok;
@@ -74,6 +78,14 @@ static void check_order(BOOL source_first)
     source.dta=(DTAINFO *)(uintptr_t)(image+TEST_PAGE+32);
     memset((void *)(uintptr_t)procmem_phys_of((VADDR)(uintptr_t)source.user_start),0xa3,TEST_PAGE);
     memset((void *)(uintptr_t)procmem_phys_of((VADDR)(uintptr_t)source.env_start),0xb4,TEST_PAGE);
+    kproc_set_dta(source.pd,(DTAINFO *)(uintptr_t)((VADDR)(uintptr_t)source.user_start+offsetof(PD,p_cmdlin)));
+    CHECK(aspace_copy_from_user(source.aspace,&mirror,(VADDR)(uintptr_t)source.user_start+offsetof(PD,p_xdta),sizeof(mirror)));
+    CHECK(mirror==PTR_TO_USERPTR_UNCHECKED((DTA *)source.dta));
+    descendant.pd=&descendant_pd;descendant.number=105;descendant.references=1;
+    CHECK(kproc_clone_inherit_identity(&descendant,&source));
+    CHECK(descendant.dta==source.dta && descendant.dta!=(DTAINFO *)descendant_pd.p_cmdlin);
+    CHECK(!descendant.dtas[0].va && !descendant.dtas[0].stamp);
+    kproc_release(descendant.parent_identity);descendant.parent_identity=NULL;
     source.stack_top=USER_STACK_TOP-16;source.stack_low=USER_STACK_TOP-TEST_PAGE;
     source.entry=layout.entry;
 
@@ -108,6 +120,17 @@ static void check_order(BOOL source_first)
     CHECK(aspace_translate(child.aspace,bp,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xa3);
     CHECK(aspace_translate(child.aspace,env,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xb4);
     CHECK(bp==(VADDR)(uintptr_t)source.user_start && env==(VADDR)(uintptr_t)source.env_start && dta==(VADDR)(uintptr_t)source.dta);
+    CHECK(child.dta==source.dta);
+    kproc_set_dta(child.pd,(DTAINFO *)(uintptr_t)(image+TEST_PAGE+32));
+    CHECK(aspace_copy_from_user(child.aspace,&mirror,bp+offsetof(PD,p_xdta),sizeof(mirror)));
+    CHECK(mirror==PTR_TO_USERPTR_UNCHECKED((DTA *)child.dta));
+    CHECK(aspace_copy_from_user(source.aspace,&mirror,bp+offsetof(PD,p_xdta),sizeof(mirror)));
+    CHECK(mirror==PTR_TO_USERPTR_UNCHECKED((DTA *)source.dta) && child.dta!=source.dta);
+    /* Changing a read-only mirror never grants WRITE or changes authority. */
+    CHECK(aspace_protect_private(child.aspace,bp,TEST_PAGE,ASPACE_PROT_USER));
+    kproc_set_dta(child.pd,(DTAINFO *)(uintptr_t)dta);
+    CHECK(child.dta==source.dta && aspace_logical_protection(child.aspace,bp,&rights) && !(rights&ASPACE_PROT_WRITE));
+    CHECK(aspace_protect_private(child.aspace,bp,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
     CHECK(kproc_reservation_info(child.pd,bp,TEST_PAGE,&child_info)==E_OK);
     CHECK(kproc_reservation_info(child.pd,env,TEST_PAGE,&child_info)==E_OK);
     CHECK(kproc_reservation_info(child.pd,image+TEST_PAGE,TEST_PAGE,&child_info)==E_OK);

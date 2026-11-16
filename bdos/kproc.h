@@ -200,7 +200,9 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
 BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source);
 LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source);
 /* Logical original user VAs; no PD allocation or search iterator authority.
- * The DTA value follows Fsetdta; #984 owns iterator inheritance. */
+ * The trusted numerical DTA follows Fsetdta and generic shared lineage;
+ * #984 owns search-cache and iterator inheritance. Fsetdta updates a writable
+ * original basepage mirror through the selected root without widening rights. */
 VADDR kproc_private_environment(PD *);
 BOOL kproc_private_image_addresses(const KPROC *,VADDR *,VADDR *,VADDR *);
 #endif
