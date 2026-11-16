@@ -10,10 +10,10 @@ Scope and capability
 --------------------
 CONF_WITH_EXEC_HANDOFF_TEST defaults off and requires the existing replacement
 test gate and Pclone. No shipped configuration selects it. Private Pclone tags
-in exec_handoff_test.h exercise a same-image, SAME-ROOT transport. Pexec(200)
-remains EINVFN in both ordinary and test kernels. No committed-exec generation
-is published: a transport token conveys no executable-image adoption right.
-This is actual native user execution, but NOT actual executable replacement.
+in exec_handoff_test.h exercise a same-image, SAME-ROOT transport. This test
+transport publishes no committed-exec generation: its token conveys no
+executable-image adoption right. Public Pexec(200) (CONF_WITH_PEXEC200) reuses
+the same phases with an image bundle; see doc/exec-replacement.txt.
 
 Ownership and sequence
 ----------------------
@@ -160,6 +160,6 @@ launch and this same-image transport must not advance it. A future reconciled
 #972 consumer may observe that generation without consuming final completion.
 No #972 parent-suspension policy is implemented or imported here.
 
-Full #970 acceptance remains blocked on that bundle/root commit and real
-Pexec(200) execution/event tests. Passing this transport or staging tests cannot
-be reported as successful Pexec(200), an exec notification, or completed Pvfork.
+The bundle/root commit and the real Pexec(200) execution and event tests are in
+exec-replacement.txt and tests/pclone/exec200_*.c. Passing this transport or the
+staging tests alone is still not evidence of Pexec(200) or of completed Pvfork.

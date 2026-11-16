@@ -1,9 +1,12 @@
 Pexec creation and executable-transition policy audit (#894 / #895)
 =================================================================
 
-#970 transport checkpoint: doc/exec-handoff.txt describes a gated, native
-same-PROCESS/TID fresh-stack NORETURN handoff through the existing scheduler
-root. It keeps the same image/root; mode200 and committed-exec remain missing.
+#970: doc/exec-handoff.txt describes the gated, native same-PROCESS/TID
+fresh-stack NORETURN handoff through the existing scheduler root. Public
+mode200 builds on it (doc/exec-replacement.txt, "Pexec(200) commit design"):
+an anchor is committed at that root, a synchronously nested child through its
+launcher frame, and each commit publishes one committed-exec generation. It is
+gated by CONF_WITH_PEXEC200, default off until owner review.
 The accepted #977 metadata preparation is preserved and supplies no movable
 image ownership. Both fork calls use PRIVATE_VM/COW; no shared-parent detach
 or unfinished fork resource-snapshot prerequisite is added by this transport.
@@ -42,9 +45,9 @@ Mode       Current entry/ownership                 Required migration
            env/TPA owner, then execute/free.       not shared mode4 semantics.
 106        Existing staged image -> async         Preserve isolated consuming
            prepare/spawn, child PID.              launch, observer/wait behavior.
-200        No public implementation, EINVFN.      Reviewed same-PROCESS executable
-                                                   replacement with independent
-                                                   VM and committed detach event.
+200        Gated (CONF_WITH_PEXEC200): ELF target  Same-PROCESS executable
+           replaces the caller in its PROCESS;     replacement with independent
+           PRG target EPLFMT; else EINVFN.         VM and committed-exec event.
 5/7,50     Basepage/flags and NatFeats relocation  Preserve staging and legacy
                                                    boot/ROM compatibility.
 
@@ -204,8 +207,9 @@ must never produce this event. No other observer registry or loader is needed.
 
 The separate #970 staging increment is documented in exec-replacement.txt. Its
 default-off receipt authenticates one exact PROCESS/TID/execution/root tuple and
-uses the existing loader for private ELF staging and rollback. It does not
-implement successful mode200, change a THREAD association, or emit an exec event.
+uses the existing loader for private ELF staging and rollback. The mode200
+commit, THREAD rebind and exec event built on it are in the "Pexec(200) commit
+design" section of exec-replacement.txt.
 
 Inheritance dependency
 ----------------------
