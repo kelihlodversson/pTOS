@@ -201,6 +201,13 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
 /* Sole-thread/exclusive-VM source, no pending loader ledger. NULL target is
  * preflight only; runtime bounds are copied without changing Pexec defaults. */
 BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source);
+LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source);
+/* Logical original user VAs; no PD allocation or search iterator authority.
+ * The trusted numerical DTA follows Fsetdta and generic shared lineage;
+ * #984 owns search-cache and iterator inheritance. Fsetdta updates a writable
+ * original basepage mirror through the selected root without widening rights. */
+VADDR kproc_private_environment(PD *);
+BOOL kproc_private_image_addresses(const KPROC *,VADDR *,VADDR *,VADDR *);
 #endif
 void proc_dispose_process(KPROC *process);
 struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */

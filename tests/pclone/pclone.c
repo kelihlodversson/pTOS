@@ -2,6 +2,7 @@
 #include "test.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
+#include "../../include/shared_pexec_test.h"
 #include "../../include/mman.h"
 #include <mint/osbind.h>
 #include <stdio.h>
@@ -113,6 +114,7 @@ static volatile struct {
     unsigned char *peer_stack,*child_stack;
     unsigned long address;
     long creator,parent,root,tid;
+    unsigned char *dta,*environment;unsigned char dta_byte,environment_byte;
     int32_t peer_pid;
 } captured_probe;
 static long captured_query(unsigned long address)
@@ -125,7 +127,12 @@ static void captured_private_child(void *unused)
     (void)unused;
     if(Pgetpid()==captured_probe.parent || Pgetppid()!=captured_probe.parent ||
        private_query(0)==captured_probe.root || private_query(3)==captured_probe.tid ||
-       captured_query(captured_probe.address)!=expected) bad=1;
+       captured_query(captured_probe.address)!=expected ||
+       (void *)Fgetdta()!=(void *)captured_probe.dta || captured_probe.dta[0]!=captured_probe.dta_byte) bad=1;
+    if(captured_probe.environment[0]!=captured_probe.environment_byte ||
+        Pexec(0,"C:\\GLOBALCH.TOS","\1w",0)!=23) bad=8;
+    captured_probe.environment[0]^=0x33; /* private bytes, not the source env */
+    captured_probe.dta[0]^=0x5a; /* private DTA bytes, no search iterator */
     /* This page was demonstrably absent at the fork boundary. The original
      * stack-owning PROCESS has already retired. No source cleanup ticket is
      * valid backing authority for this child's first read/write fault. */
@@ -161,7 +168,9 @@ static void captured_surviving_peer(void *unused)
         status=Pwaitpid(child,0,0);
         if((status>>16)!=child || (status&65535)!=73 || Pwaitpid(child,1,0)>=0) bad=4;
         if(captured_query(captured_probe.address)!=(expected|(cycle?PRIVATE_SNAPSHOT_PRESENT:0))) bad=5;
-        if(page[0]!=(cycle?0x31:0) || page[17]) bad=6;
+        if(page[0]!=(cycle?0x31:0) || page[17] ||
+            (void *)Fgetdta()!=(void *)captured_probe.dta || captured_probe.dta[0]!=captured_probe.dta_byte ||
+            captured_probe.environment[0]!=captured_probe.environment_byte) bad=6;
         page[0]=0x32;
     }
     conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
@@ -176,6 +185,9 @@ static void captured_creator(void *unused)
     if(Psetlimit(0x100,-1)<65536 || captured_query(0x7fff0000UL)&PRIVATE_SNAPSHOT_PRESENT ||
        captured_query(0x7fff1000UL)&PRIVATE_SNAPSHOT_PRESENT) Pterm(74);
     captured_probe.creator=Pgetpid();captured_probe.peer_pid=0;
+    captured_probe.dta=(unsigned char *)Fgetdta();captured_probe.dta_byte=captured_probe.dta[0];
+    captured_probe.environment=(unsigned char *)_base->p_env;
+    captured_probe.environment_byte=captured_probe.environment[0];
     args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
     args.entry=captured_surviving_peer;args.stack_base=captured_probe.peer_stack;args.stack_size=32768;
     args.child_pid=&captured_probe.peer_pid;
@@ -1746,61 +1758,7 @@ static void test_runnable(void)
 void pclone_run_unmanaged_tests(void);
 void pclone_run_staged_tests(void);
 void pclone_run_staged_tests(void)
-{
-    struct ptos_clone_args args = {0};
-    struct phase1_policy_report report;
-    int32_t pid = -1, tid = -1;
-    long stack = Malloc(RUNNABLE_STACK_SIZE), result, status, file;
-    volatile unsigned char touch;
-    ptest_begin("Pclone from staged executable text");
-    ptest_assert_msg(Dsetpath("C:\\TESTS") == 0 &&
-                     Dgetpath(phase1_policy_cwd,3) == 0 &&
-                     (!strcmp(phase1_policy_cwd,"TESTS") || !strcmp(phase1_policy_cwd,"\\TESTS")),
-                     "staged owner selects inheritable non-root CWD");
-    phase1_policy_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
-    /* Loader-owned slack is resident data, but outside executable segments. */
-    if (_base->p_tbase == (void *)(_base + 1)) {
-        /* Classic p_hitpa is intentionally stale after CRT Mshrink. Use a
-         * resident TPA stack page, not the retired original allocation end. */
-        phase1_policy_hole = (void *)((unsigned long)&touch & ~4095UL);
-        phase1_policy_file = PHASE1_POLICY_PRG;
-        phase1_policy_writable_text = 1;
-    } else {
-        phase1_policy_hole = (void *)(((unsigned long)_base->p_bbase + _base->p_blen + 8191UL) & ~4095UL);
-        phase1_policy_file = PHASE1_POLICY_ELF;
-        phase1_policy_writable_text = 0;
-    }
-    touch = *(volatile unsigned char *)phase1_policy_hole;
-    (void)touch;
-    ptest_assert_msg(stack > 0 && phase1_policy_stack,"staged-image entry stacks");
-    if (stack > 0 && phase1_policy_stack) {
-        ptest_assert_msg(phase1_policy_checks() == 0,"staged owner enforces text/data/BSS/image-hole policy");
-        args.flags = CLONE_VM | CLONE_COPY_CWD; args.entry = phase1_policy_child;
-        args.stack_base = (void *)stack; args.stack_size = RUNNABLE_STACK_SIZE;
-        args.child_pid = &pid; args.child_tid = &tid;
-        phase1_resources = 0; phase1_resource_error = 0;
-        result = pclone_trap(&args,32);
-        ptest_assert_msg(result > 0 && result == tid,"staged CLONE_VM PROCESS child admitted");
-        if (result > 0) {
-            status = Pwaitpid(pid,0,0);
-            ptest_assert_msg((status >> 16) == pid && !(status & 65535) && !phase1_resource_error,
-                             "nested shared child enforces original staged image policy");
-        }
-        /* Do not free the orphan's active stack or its nested-child stack.
-         * Their containing KASPACE owns all pages until its final reference. */
-        args.argument = (void *)1;
-        result = pclone_trap(&args,32);
-        ptest_assert_msg(result > 0 && result == tid,"orphan staged-policy child admitted");
-        ptest_assert_msg(Dsetpath("C:\\") == 0,
-                         "parent changes CWD before orphan continues independently");
-        file = Fopen(phase1_policy_file,2);
-        memset(&report,0,sizeof(report)); report.magic=0x50434c4eL;
-        report.creator=Pgetpid(); report.worker=pid;
-        ptest_assert_msg(file >= 6 && Fwrite(file,sizeof(report),&report) == sizeof(report) && Fclose(file)==0,
-                         "publish orphan identity before staged owner exits");
-    }
-    ptest_pass();
-}
+{ phase1_run_staged(); }
 void pclone_run_unmanaged_tests(void)
 {
     struct ptos_clone_args args = {0};
@@ -1999,6 +1957,36 @@ void test_pclone(void)
             status=Pwaitpid(child,0,0);
             ptest_assert_msg((status>>16)==child && !(status&65535),"immutable image-policy companion passes");
             ptest_assert_msg(Pwaitpid(child,1,0)<0,"immutable image-policy companion reaped once");
+        }
+        /* Measure the entire moved source/child lifetime: a live source may
+         * retain exclusive COW metadata until its next write or retirement. */
+        {
+            SHARED_PEXEC_SNAPSHOT before,after;
+            long loaded;
+            int cycle,index,conserved=1;
+            for(cycle=0;cycle<3;cycle++) {
+                ptest_log_flush();memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+                if(pclone_trap(&before,SHARED_PEXEC_SNAPSHOT_QUERY)!=0) conserved=0;
+                loaded=Pexec(3,"IMAGEPOL.TOS","",0);
+                ptest_assert_msg(loaded>0,"load moved private-image companion");
+                if(loaded>0) {
+                    child=Pexec(106,0,(void *)loaded,0);
+                    ptest_assert_msg(child>0,"start independently owned moved image");
+                    if(child>0) {
+                        status=Pwaitpid(child,0,0);
+                        ptest_assert_msg((status>>16)==child && !(status&65535),"moved image private clone execution passes");
+                    } else {
+                        (void)Mfree(((BASEPAGE *)loaded)->p_env);(void)Mfree((void *)loaded);
+                    }
+                }
+                if(pclone_trap(&after,SHARED_PEXEC_SNAPSHOT_QUERY)!=0) conserved=0;
+                if(cycle>=1) for(index=0;index<SP_COUNT;index++)
+                    if(before.count[index]!=after.count[index]) {
+                        printf("moved image lifetime counter %d: %lu -> %lu\r\n",index,
+                            (unsigned long)before.count[index],(unsigned long)after.count[index]);conserved=0;
+                    }
+            }
+            ptest_assert_msg(conserved,"moved source/child complete lifetimes conserve every resource counter");
         }
 #endif
 #if defined(TEST_WITH_EXEC_HANDOFF_TEST)

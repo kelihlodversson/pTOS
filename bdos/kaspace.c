@@ -704,6 +704,22 @@ static BOOL scope_owned(KASPACE_SCOPE *scope,UQUAD number,void *identity)
     return FALSE;
 }
 
+BOOL kaspace_private_source_owned(const KASPACE *space,UQUAD number,const void *identity)
+{
+    const KASPACE_SCOPE *scope;
+    const KASPACE_LEASE *lease;
+    if (!space || !number || !identity) return FALSE;
+    for (scope=space->scopes;scope;scope=scope->next) {
+        const KASPACE_MEMBER *member;
+        for (member=scope->members;member;member=member->next)
+            if (member->number!=number || member->identity!=identity) return FALSE;
+    }
+    for (lease=space->leases;lease;lease=lease->next)
+        if (lease->attachment_ticket && !lease->revoked &&
+            (lease->owner_number!=number || lease->owner_identity!=identity)) return FALSE;
+    return TRUE;
+}
+
 BOOL kaspace_mapping_owned(KASPACE *space,UQUAD number,void *identity,UQUAD birth,
                            VADDR address,VADDR bytes)
 {
