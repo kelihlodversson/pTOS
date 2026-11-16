@@ -313,6 +313,12 @@ static long clone_request(uint64_t address, uint64_t size)
     }
 #endif
 #if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    /* Real private search inheritance transport; public fork remains gated. */
+    if ((size&0xffffffffffff0000ULL)==0xc9840000ULL) {
+        private_test=TRUE;files_test=TRUE;size&=0xffff;
+    }
+#endif
     /* Private transport for the common resource policy, never a new ABI flag. */
     if ((size&0xffffffffffff0000ULL)==0xc9690000ULL) {
         if (!address && size>=0xc9690100ULL && size<=0xc9690107ULL) {

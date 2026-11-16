@@ -181,7 +181,39 @@ struct pfs_ops {
      * Must not nonlocally escape after consumption. Directory release()
      * semantics are unchanged. NULL uses the historical void release(). */
     LONG (*release_file)(PFSCOOKIE *fc);
+
+    /* Optional directory-iterator ownership contract (not a GEMDOS ABI).
+     * clone receives an owned live iterator; it must preserve source state,
+     * acquire a fresh directory reference and fresh private cursor storage,
+     * and leave outputs empty on failure. Cookies/opaque positions are never
+     * copied by callers. valid performs no I/O or callbacks. close consumes
+     * one owner even on error and must not escape through a nonlocal unwind.
+     * These operations can also serve future canonical directory handles. */
+    LONG (*clone_iterator)(const PFSCOOKIE *,LONG,PFSCOOKIE *,LONG *);
+    BOOL (*iterator_valid)(const PFSCOOKIE *,LONG);
+    LONG (*close_iterator)(PFSCOOKIE *,LONG);
+
 };
+
+typedef struct {
+    PFSCOOKIE directory;
+    LONG position;
+    BOOL owned;
+} PFS_ITERATOR;
+#define PFS_ITERATOR_INIT { { NULL, 0, 0, 0 }, 0, FALSE }
+LONG pfs_iterator_clone(const PFS_ITERATOR *,PFS_ITERATOR *);
+BOOL pfs_iterator_valid(const PFS_ITERATOR *);
+LONG pfs_iterator_close(PFS_ITERATOR *);
+
+#if CONF_WITH_PROCESS_FILES_TEST
+struct kproc;
+LONG pfs_search_snapshot_prepare(struct kproc *,struct kproc *,UQUAD,
+                                 struct dta_info *const *,WORD,WORD *);
+BOOL pfs_search_snapshot_valid(struct kproc *,UQUAD,WORD);
+void pfs_search_snapshot_commit(struct kproc *,UQUAD,WORD);
+void pfs_search_snapshot_abort(struct kproc *,UQUAD);
+void pfs_search_close(struct kproc *,struct dta_info *);
+#endif
 
 /* Claim 'drive' (0 = A:, 1 = B:, ...) for 'fs', up front (e.g. from a
  * driver's own boot-time init, like virtio_blk_init() claims a block
@@ -271,6 +303,8 @@ LONG pfs_do_create(const char *path, UWORD attr);
 LONG pfs_do_unlink(const char *path);
 LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod);
 LONG pfs_do_rename(const char *p1, const char *p2);
+LONG pfs_do_sfirst_to(char *,WORD,struct dta_info *address,struct dta_info *output);
+LONG pfs_do_snext_to(struct dta_info *address,struct dta_info *output);
 LONG pfs_do_sfirst_at(char *path, WORD att, struct dta_info *dta);
 LONG pfs_do_snext_at(struct dta_info *dta);
 

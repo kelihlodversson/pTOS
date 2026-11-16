@@ -126,6 +126,7 @@
 #include "portab.h"
 #include "endian.h"
 #include "fs.h"
+#include "fs_internal.h"
 #include "time.h"
 #include "mem.h"
 #include "gemerror.h"
@@ -135,6 +136,13 @@
 #include "fatfs.h"
 #include "kproc.h"
 #include "bdosstub.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#include "kaspace.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
+#endif
 #if CONF_WITH_PLUGGABLE_FS
 #include "pfs.h"
 #endif
@@ -233,7 +241,7 @@ long xchmod(char *p, WORD wrt, UBYTE mod)
  *  returns:
  *      error code.
  */
-long ixsfirst(char *name, WORD att, DTAINFO *addr)
+long ixsfirst_to(char *name, WORD att, DTAINFO *addr,DTAINFO *owner)
 {
     const char *s;              /*  M01.01.03                   */
     DND *dn;
@@ -249,6 +257,14 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
     if (!dn)
         return EPTHNF;
 
+#if CONF_WITH_PROCESS_FILES_TEST && !CONF_WITH_PLUGGABLE_FS
+    if(addr) {
+        LONG held=kproc_search_fat_attach(run,owner,dn);
+        if(held) return held;
+    }
+#else
+    UNUSED(owner);
+#endif
     /* now scan for filename from start of directory */
 
     pos = 0;
@@ -284,13 +300,83 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
     return E_OK;
 }
 
+long ixsfirst(char *name,WORD att,DTAINFO *addr)
+{ return ixsfirst_to(name,att,addr,addr); }
+
+
+#if CONF_WITH_PROCESS_FILES_TEST
+/* A search and its trusted header mutations are one admitted operation.
+ * Settle the canonical token before a FAT disk-error continuation escapes. */
+static LONG search_body(PD *process,PROCESS_FILES *table,char *name,WORD attr,
+                        DTAINFO *address,DTAINFO *dta,BOOL first,BOOL header)
+{
+    LONG result;
+    if(header) {
+        if(first) kproc_dta_forget(process,address);
+        else if(!kproc_dta_restore_to(process,address,dta)) return ENMFIL;
+    }
+#if CONF_WITH_PLUGGABLE_FS
+    result=first?pfs_do_sfirst_to(name,attr,address,dta):pfs_do_snext_to(address,dta);
+#else
+    result=first?fat_sfirst_path_to(name,attr,address,dta):fat_snext_path_at(dta);
+#endif
+    if(table && (table->retiring || kproc_live_pd(table->owner)!=process)) return EACCDN;
+    if(header) {
+        if(result==E_OK) kproc_dta_save_from(process,address,dta);
+        else if(result<0) kproc_dta_forget(process,address);
+    }
+    if(table && (table->retiring || kproc_live_pd(table->owner)!=process)) return EACCDN;
+    return result;
+}
+static LONG admitted_search(char *name,WORD attr,DTAINFO *dta,BOOL first,BOOL header)
+{
+    PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
+    DISK_ERROR disk={0};
+    PD *process=run;
+    DTAINFO staged,*output=dta;
+    KASPACE_LEASE *lease=NULL;
+    LONG result;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE scope={0};
+    ksched_cleanup_begin(&scope);
+#endif
+    result=process_files_search_begin(process,&operation);
+    if(!result && header && operation.table && kproc_user_aspace(process)) {
+        VADDR address=(VADDR)(uintptr_t)dta;
+        result=kproc_back_user_write_checked(address,sizeof(staged));
+        if(!result) result=kaspace_lease_acquire(kproc_active_space(operation.owner),address,sizeof(staged),
+                                         ASPACE_PROT_USER|ASPACE_PROT_WRITE,&lease);
+        if(!result) {
+            if(!kproc_copy_from_user_resident(&staged,address,sizeof(staged))) result=EIMBA;
+            else output=&staged;
+        }
+    }
+    if(!result) {
+        result=DISK_CALL_ERROR(search_body(process,operation.table,name,attr,dta,output,first,header),&disk);
+        if(lease && !disk.code && result!=EACCDN) {
+            if(!kaspace_lease_valid(lease) ||
+                kproc_copy_to_user_checked((VADDR)(uintptr_t)dta,output,sizeof(staged))) result=EIMBA;
+        }
+        if((disk.code || result==EIMBA) && header) kproc_dta_forget(process,dta);
+    }
+    kaspace_lease_release(&lease);
+    process_files_operation_end(&operation);
+#if CONF_WITH_NATIVE_SCHED
+    ksched_cleanup_end(&scope);
+#endif
+    DISK_RETHROW(disk);
+    return result;
+}
+#endif
 
 /*
  *  xfsfirst_at - search first for matching name, into specified dta
  */
 long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
 {
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PROCESS_FILES_TEST
+    return admitted_search(name,att,dta,TRUE,dta==RUN_XDTA());
+#elif CONF_WITH_PLUGGABLE_FS
     return pfs_do_sfirst_at(name, att, dta);
 #else
     return fat_sfirst_path_at(name, att, dta);
@@ -303,6 +389,9 @@ long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
  */
 long xsfirst(char *name, int att)
 {
+#if CONF_WITH_PROCESS_FILES_TEST
+    return admitted_search(name,(WORD)att,RUN_XDTA(),TRUE,TRUE);
+#else
     DTAINFO *dta = RUN_XDTA();
     long rc;
 
@@ -315,6 +404,7 @@ long xsfirst(char *name, int att)
         kproc_dta_save(run, dta);   /* the search state is the kernel's */
 #endif
     return rc;
+#endif
 }
 
 
@@ -428,7 +518,9 @@ FCB *ixsnext(DTAINFO *dt)
  */
 long xfsnext_at(DTAINFO *dta)
 {
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PROCESS_FILES_TEST
+    return admitted_search(NULL,0,dta,FALSE,dta==RUN_XDTA());
+#elif CONF_WITH_PLUGGABLE_FS
     return pfs_do_snext_at(dta);
 #else
     return fat_snext_path_at(dta);
@@ -441,6 +533,9 @@ long xfsnext_at(DTAINFO *dta)
  */
 long xsnext(void)
 {
+#if CONF_WITH_PROCESS_FILES_TEST
+    return admitted_search(NULL,0,RUN_XDTA(),FALSE,TRUE);
+#else
     DTAINFO *dta = RUN_XDTA();
     long rc;
 
@@ -457,6 +552,7 @@ long xsnext(void)
         kproc_dta_forget(run, dta);     /* the search is over for good */
 #endif
     return rc;
+#endif
 }
 
 
@@ -1115,7 +1211,7 @@ DND *makdnd(DND *p, FCB *b)
         {
             /* do not scavenge if it's locked */
             if ((p1->d_flag & DND_LOCKED)
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
                 || p1->d_cookie_refs
 #endif
                )
@@ -1158,7 +1254,7 @@ DND *makdnd(DND *p, FCB *b)
 
     /* complete the initialization */
 
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
     p1->d_cookie_refs = 0;
 #endif
     p1->d_ofd = (OFD *) 0;
@@ -1484,7 +1580,7 @@ static void process_dnd_tree(DND *dndstart)
          * no children - but are there open files?
          */
         if (dnd->d_files
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
             || dnd->d_cookie_refs
 #endif
            ) {     /* open files in this directory, can't free DND */

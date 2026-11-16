@@ -441,27 +441,154 @@ static LONG pfs_cwd_set(PD *process, WORD drive, struct pfs_ops *fs, PFSCOOKIE *
 /* Fsfirst/Fsnext search state                                        */
 /* ------------------------------------------------------------------ */
 
+BOOL pfs_iterator_valid(const PFS_ITERATOR *iterator)
+{
+    struct pfs_ops *fs;
+    return iterator && iterator->owned && (fs=iterator->directory.fs) &&
+        fs->iterator_valid && fs->iterator_valid(&iterator->directory,iterator->position);
+}
+LONG pfs_iterator_clone(const PFS_ITERATOR *source,PFS_ITERATOR *empty)
+{
+    struct pfs_ops *fs;
+    LONG error;
+    if (!empty || empty->owned || empty->directory.fs) return EINVAL;
+    if (!source || !source->owned || !(fs=source->directory.fs) ||
+        !fs->clone_iterator || !fs->iterator_valid || !fs->close_iterator) return EINVFN;
+    if (!pfs_iterator_valid(source)) return E_CHNG;
+    error=fs->clone_iterator(&source->directory,source->position,&empty->directory,&empty->position);
+    if (error) return error;
+    empty->owned=TRUE;
+    return E_OK;
+}
+LONG pfs_iterator_close(PFS_ITERATOR *iterator)
+{
+    PFS_ITERATOR owned;
+    if (!iterator || !iterator->owned) return E_OK;
+    owned=*iterator;memset(iterator,0,sizeof(*iterator));
+    if (owned.directory.fs->close_iterator)
+        return owned.directory.fs->close_iterator(&owned.directory,owned.position);
+    if (owned.directory.fs->release) owned.directory.fs->release(&owned.directory);
+    return E_OK;
+}
+
 typedef struct {
-    DTA *owner;         /* NULL = free slot */
+    DTA *owner;
     PD *proc;
-    PFSCOOKIE dir;
-    BOOL dir_owned;      /* does this slot own 'dir' (must release it),
-                          * or is it a borrowed alias of a pfs_dirtbl[]
-                          * entry (must not) - see pfs_cwd_get(). */
-    LONG cursor;
+    PFS_ITERATOR iterator;
     UWORD attr;
     char pattern[LEN_ZFNAME];
+#if CONF_WITH_PROCESS_FILES_TEST
+    KPROC *process; /* canonical borrowed identity, owned by PROCESS/operation */
+    UQUAD stage; /* existing PROCESS snapshot ticket, zero when published */
+    UWORD busy;
+    BOOL retiring;
+#endif
 } PFS_SEARCH;
 
 static PFS_SEARCH pfs_searches[CONF_PFS_MAX_SEARCHES];
 
 static void pfs_search_free(PFS_SEARCH *s)
 {
-    PFSCOOKIE cookie = s->dir;
-    BOOL owned = s->dir_owned;
-    memset(s, 0, sizeof(*s));
-    if (owned && cookie.fs && cookie.fs->release) cookie.fs->release(&cookie);
+    PFS_ITERATOR owned;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(s->busy) { s->owner=NULL;s->retiring=TRUE;return; }
+#endif
+    owned=s->iterator;
+    memset(s,0,sizeof(*s));
+    (void)pfs_iterator_close(&owned);
 }
+
+#if CONF_WITH_PROCESS_FILES_TEST
+static BOOL search_slot_free(const PFS_SEARCH *search)
+{ return !search->owner && !search->busy && !search->iterator.owned && !search->stage; }
+static BOOL search_process_live(PROCESS_FILES *table,PD *pd)
+{ return !table || (!table->retiring && kproc_live_pd(table->owner)==pd); }
+static LONG pfs_try_clone(const PFS_ITERATOR *source,PFS_ITERATOR *out,PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(pfs_iterator_clone(source,out),failure); }
+void pfs_search_close(KPROC *process,DTAINFO *address)
+{
+    WORD i;
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++)
+        if(pfs_searches[i].process==process && !pfs_searches[i].stage &&
+            pfs_searches[i].owner==(DTA *)address) pfs_search_free(&pfs_searches[i]);
+}
+LONG pfs_search_snapshot_prepare(KPROC *source,KPROC *target,UQUAD ticket,
+                                DTAINFO *const *addresses,WORD count,WORD *prepared)
+{
+    WORD i,j,slot,matched=0;
+    PD *source_pd=kproc_live_pd(source),*target_pd=kproc_live_pd(target);
+    if(!prepared || *prepared || !source_pd || !target_pd || !ticket) return EACCDN;
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) {
+        PFS_SEARCH *original=&pfs_searches[i],*copy;
+        PFS_DISK_FAILURE failure;
+        LONG error;
+        if(original->process!=source || original->stage || !original->owner) continue;
+        if(original->busy || original->retiring) return EACCDN;
+        for(j=0;j<count;j++) if(original->owner==(DTA *)addresses[j]) break;
+        if(j==count) return EACCDN; /* untracked kernel/private association */
+        for(slot=0;slot<CONF_PFS_MAX_SEARCHES;slot++) if(search_slot_free(&pfs_searches[slot])) break;
+        if(slot==CONF_PFS_MAX_SEARCHES) return ENHNDL;
+        copy=&pfs_searches[slot];memset(copy,0,sizeof(*copy));
+        copy->owner=original->owner;copy->proc=target_pd;copy->process=target;copy->stage=ticket;
+        copy->attr=original->attr;memcpy(copy->pattern,original->pattern,sizeof(copy->pattern));
+        original->busy++;copy->busy++;
+        error=pfs_try_clone(&original->iterator,&copy->iterator,&failure);
+        original->busy--;copy->busy--;
+        if(original->retiring || original->process!=source || !kproc_live_pd(source) || !kproc_live_pd(target)) {
+            if(original->retiring) pfs_search_free(original);
+            error=EACCDN;
+        }
+        if(failure.raised) {
+            pfs_search_free(copy);
+            errcode=failure.code;rwerr=failure.rw;errdrv=failure.drive;longjmp(errbuf,1);
+        }
+        if(error) {pfs_search_free(copy);return error;}
+        (*prepared)++;matched++;
+    }
+    return matched==count?E_OK:EACCDN;
+}
+BOOL pfs_search_snapshot_valid(KPROC *target,UQUAD ticket,WORD count)
+{
+    WORD i,found=0;
+    if(!kproc_live_pd(target)) return FALSE;
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) if(pfs_searches[i].process==target && pfs_searches[i].stage==ticket) {
+        PFS_SEARCH *search=&pfs_searches[i];
+        if(!search->owner || search->busy || search->retiring || !pfs_iterator_valid(&search->iterator)) return FALSE;
+        found++;
+    }
+    return found==count;
+}
+void pfs_search_snapshot_commit(KPROC *target,UQUAD ticket,WORD count)
+{
+    WORD i;
+    if(!pfs_search_snapshot_valid(target,ticket,count)) panic("unprepared search publication");
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++)
+        if(pfs_searches[i].process==target && pfs_searches[i].stage==ticket) pfs_searches[i].stage=0;
+}
+void pfs_search_snapshot_abort(KPROC *target,UQUAD ticket)
+{
+    WORD i;
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++)
+        if(pfs_searches[i].process==target && pfs_searches[i].stage==ticket) pfs_search_free(&pfs_searches[i]);
+}
+static LONG search_readdir(PFS_SEARCH *search,char *name,int size,PFSATTR *attributes)
+{
+    PFS_DISK_FAILURE failure;
+    LONG error;
+    search->busy++;
+    error=pfs_try_readdir(search->iterator.directory.fs,&search->iterator.directory,
+                         &search->iterator.position,name,size,attributes,&failure);
+    search->busy--;
+    if(search->retiring || (search->process && kproc_live_pd(search->process)!=search->proc)) {
+        error=EACCDN; /* the outer search consumes this exact slot once */
+    }
+    if(failure.raised) {
+        pfs_search_free(search);
+        errcode=failure.code;rwerr=failure.rw;errdrv=failure.drive;longjmp(errbuf,1);
+    }
+    return error;
+}
+#endif
 
 /* Is a directory entry with attribute byte 'entry_attr' visible to an
  * Fsfirst/Fsnext search whose caller-supplied filter is 'searchattr'?
@@ -1100,17 +1227,21 @@ LONG pfs_do_rename(const char *p1, const char *p2)
     return rc;
 }
 
-LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
+LONG pfs_do_sfirst_to(char *path, WORD att, DTAINFO *address, DTAINFO *dta)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, (const char **)&path);
     PFSCOOKIE dir;
-    DTA *owner = (DTA *)dta;
+    DTA *owner = (DTA *)address;
     const char *name;
     BOOL owned;
     WORD i;
     LONG rc;
-
+#if CONF_WITH_PROCESS_FILES_TEST
+    PD *process=run;
+    PROCESS_FILES *table=kproc_files(process);
+    if(table && (!table->operations || process_files_change_admission(process))) return EACCDN;
+#endif
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(run)) return EACCDN;
 #endif
@@ -1145,21 +1276,37 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
         owned = TRUE;
     }
 
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(!search_process_live(table,process)) {
+        if(owned && fs->release) fs->release(&dir);
+        return EACCDN;
+    }
+#endif
     /* a new Fsfirst() on a DTA that already has a search running (common
      * - callers rarely exhaust a search before starting another) must
      * replace it, not leak a second slot and leave pfs_do_snext_at()
      * matching whichever of the two comes first in the table. */
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run)
+#if CONF_WITH_PROCESS_FILES_TEST
+            && !pfs_searches[i].stage
+#endif
+            )
             break;
     if (i < CONF_PFS_MAX_SEARCHES)
     {
+#if CONF_WITH_PROCESS_FILES_TEST
+        if(pfs_searches[i].busy) { if(owned && fs->release) fs->release(&dir);return EACCDN; }
+#endif
         pfs_search_free(&pfs_searches[i]);
     }
-    else
     {
         for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
+#if CONF_WITH_PROCESS_FILES_TEST
+            if (search_slot_free(&pfs_searches[i]))
+#else
             if (!pfs_searches[i].owner)
+#endif
                 break;
         if (i == CONF_PFS_MAX_SEARCHES)
         {
@@ -1168,11 +1315,18 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
         }
     }
 
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(!search_process_live(table,process)) {
+        if(owned && fs->release) fs->release(&dir);
+        return EACCDN;
+    }
+    pfs_searches[i].process=table?table->owner:NULL;
+#endif
     pfs_searches[i].owner = owner;
     pfs_searches[i].proc = run;
-    pfs_searches[i].dir = dir;
-    pfs_searches[i].dir_owned = owned;
-    pfs_searches[i].cursor = 0;
+    pfs_searches[i].iterator.directory = dir;
+    pfs_searches[i].iterator.owned = owned;
+    pfs_searches[i].iterator.position = 0;
     pfs_searches[i].attr = att;
     strlcpy(pfs_searches[i].pattern, name, sizeof(pfs_searches[i].pattern));
 
@@ -1187,9 +1341,13 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
         char name8_3[LEN_ZFNAME];
         PFSATTR attr;
 
-        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].dir, &pfs_searches[i].cursor,
+#if CONF_WITH_PROCESS_FILES_TEST
+        rc=search_readdir(&pfs_searches[i],name8_3,sizeof(name8_3),&attr);
+#else
+        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].iterator.directory, &pfs_searches[i].iterator.position,
                           name8_3, sizeof(name8_3), &attr, &_pfs_failure),
                           pfs_search_free(&pfs_searches[i]));
+#endif
         if (rc < 0)
         {
             pfs_search_free(&pfs_searches[i]);
@@ -1209,22 +1367,34 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
     }
 }
 
-LONG pfs_do_snext_at(DTAINFO *dta)
+LONG pfs_do_snext_to(DTAINFO *address,DTAINFO *dta)
 {
-    DTA *owner = (DTA *)dta;
+    DTA *owner = (DTA *)address;
     WORD i;
+#if CONF_WITH_PROCESS_FILES_TEST
+    PROCESS_FILES *table=kproc_files(run);
+    if(table && (!table->operations || process_files_change_admission(run))) return EACCDN;
+#endif
 
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run)
+#if CONF_WITH_PROCESS_FILES_TEST
+            && !pfs_searches[i].stage
+#endif
+            )
             break;
     if (i == CONF_PFS_MAX_SEARCHES)
         return ENMFIL;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(pfs_searches[i].busy || pfs_searches[i].retiring ||
+        (table && pfs_searches[i].process!=table->owner)) return EACCDN;
+#endif
 
     for (;;)
     {
         char name8_3[LEN_ZFNAME];
         PFSATTR attr;
-        struct pfs_ops *fs = pfs_searches[i].dir.fs;
+        struct pfs_ops *fs = pfs_searches[i].iterator.directory.fs;
         LONG rc;
 
         if (!fs || !fs->readdir)
@@ -1233,9 +1403,13 @@ LONG pfs_do_snext_at(DTAINFO *dta)
             return ENMFIL;
         }
 
-        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].dir, &pfs_searches[i].cursor,
+#if CONF_WITH_PROCESS_FILES_TEST
+        rc=search_readdir(&pfs_searches[i],name8_3,sizeof(name8_3),&attr);
+#else
+        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].iterator.directory, &pfs_searches[i].iterator.position,
                           name8_3, sizeof(name8_3), &attr, &_pfs_failure),
                           pfs_search_free(&pfs_searches[i]));
+#endif
         if (rc < 0)
         {
             pfs_search_free(&pfs_searches[i]);
@@ -1251,6 +1425,11 @@ LONG pfs_do_snext_at(DTAINFO *dta)
     }
 }
 
+LONG pfs_do_sfirst_at(char *path,WORD att,DTAINFO *dta)
+{ return pfs_do_sfirst_to(path,att,dta,dta); }
+LONG pfs_do_snext_at(DTAINFO *dta)
+{ return pfs_do_snext_to(dta,dta); }
+
 void pfs_proc_exit(PD *r)
 {
     WORD i;
@@ -1259,7 +1438,11 @@ void pfs_proc_exit(PD *r)
     memcpy(slots, PD_CURDIR(r), sizeof(slots));
     memset(PD_CURDIR(r), 0, sizeof(slots));
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if (pfs_searches[i].proc == r) pfs_search_free(&pfs_searches[i]);
+        if (pfs_searches[i].proc == r
+#if CONF_WITH_PROCESS_FILES_TEST
+            && !pfs_searches[i].stage
+#endif
+            ) pfs_search_free(&pfs_searches[i]);
     for (i = 0; i < NUMCURDIR; i++) pfs_dirtbl_release(slots[i]);
 }
 
@@ -1267,9 +1450,22 @@ void pfs_invalidate_fat_drive(WORD drive)
 {
     WORD i;
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if (pfs_searches[i].proc && pfs_searches[i].dir.fs == &fat_pfs_ops &&
-            ((DND *)(intptr_t)pfs_searches[i].dir.index)->d_drv->m_drvnum == drive)
+        if (pfs_searches[i].proc && pfs_searches[i].iterator.directory.fs == &fat_pfs_ops &&
+            ((DND *)(intptr_t)pfs_searches[i].iterator.directory.index)->d_drv->m_drvnum == drive)
+        {
+#if CONF_WITH_PROCESS_FILES_TEST
+            /* FAT disk errors unwind search/clone guards before osif retires
+             * the DND tree. A direct provider must not retire a live stack's
+             * directory; reject that contract violation before any tree free. */
+            if(pfs_searches[i].busy) panic("FAT media retirement inside iterator operation");
+            if(pfs_searches[i].process) {
+                process_files_invalidate_epoch(kproc_ref_files(pfs_searches[i].process));
+                if(!pfs_searches[i].stage)
+                    kproc_dta_invalidate(pfs_searches[i].process,(DTAINFO *)pfs_searches[i].owner);
+            }
+#endif
             pfs_search_free(&pfs_searches[i]);
+        }
     for (i = 1; i < PFS_MAX_CWD; i++)
         if (pfs_dirtbl[i].use && pfs_dirtbl[i].fs == &fat_pfs_ops &&
             pfs_dirtbl[i].drive == drive)

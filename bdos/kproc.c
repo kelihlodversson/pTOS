@@ -63,6 +63,15 @@ struct shared_interp_recipe { DL_IMAGE program,interpreter; ULONG bias,ibias; ch
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
 
+typedef struct {
+    VADDR va;
+    ULONG stamp;
+    UBYTE state[offsetof(DTAINFO,dt_fattr)];
+#if CONF_WITH_PROCESS_FILES_TEST
+    DND *directory; /* independent legacy FAT hold; NULL for PFS */
+#endif
+} PROCESS_DTA_ENTRY;
+
 enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
        UH_LOADED = 1,           /* a program Pexec(PE_LOAD) loaded for a child, until PE_GO */
        UH_IMAGE = 2,            /* the image of this very process, moved here by PE_GO */
@@ -272,11 +281,7 @@ struct kproc {
     ULONG ancestors;            /* basepage copies on its read-only ancestors page */
     PADDR kstack_phys;          /* its kernel stack (system calls), 0 if none */
     uintptr_t kstack_top;       /* initial stack pointer of that stack */
-    struct {                    /* the search state Fsfirst()/Fsnext() keep in */
-        VADDR va;               /* the DTAs of this process, as the kernel */
-        ULONG stamp;            /* left them, and when (see below) */
-        UBYTE state[offsetof(DTAINFO, dt_fattr)];
-    } dtas[KPROC_DTAS];
+    PROCESS_DTA_ENTRY dtas[KPROC_DTAS];
     ULONG dta_clock;            /* counts the searches, to find the oldest */
     struct {                    /* blocks of a child being launched from this */
         VADDR va, bytes;        /* process, mapped supervisor-only into its */
@@ -2701,6 +2706,9 @@ BOOL kproc_discard(PD *pd)
 void kproc_set_dta(PD *pd, DTAINFO *dta)
 {
     KPROC *kproc = kproc_find(pd);
+#if CONF_WITH_PROCESS_FILES_TEST
+    PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
+#endif
 
     if (!kproc) {
 #if CONF_WITH_USER_ASPACE
@@ -2711,6 +2719,9 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
         return;
 #endif
     }
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(process_files_search_begin(pd,&operation)) return;
+#endif
     kproc->dta = dta;
 #if CONF_WITH_PRIVATE_CLONE
     if (kproc->aspace) {
@@ -2724,10 +2735,16 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
             back_user_range(kproc,basepage+offsetof(PD,p_xdta),sizeof(mirror),TRUE,NULL)==E_OK)
             (void)aspace_copy_to_user(kproc->aspace,basepage+offsetof(PD,p_xdta),&mirror,sizeof(mirror));
         if (basepage!=(VADDR)(uintptr_t)pd) pd->p_xdta=mirror;
+#if CONF_WITH_PROCESS_FILES_TEST
+        process_files_operation_end(&operation);
+#endif
         return;
     }
 #endif
     pd->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
+#if CONF_WITH_PROCESS_FILES_TEST
+    process_files_operation_end(&operation);
+#endif
 }
 
 DTAINFO *kproc_get_dta(PD *pd)
@@ -3130,65 +3147,263 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
  * has not searched with for a while: the table is small) has none, and the
  * search is over.
  */
-BOOL kproc_dta_restore(PD *pd, DTAINFO *dta)
+#if CONF_WITH_PROCESS_FILES_TEST
+struct kproc_search_snapshot {
+    KPROC *source,*target; /* borrowed from the enclosing PROCESS snapshot */
+    UQUAD ticket;
+    DTAINFO *current;
+    ULONG clock;
+    WORD provider_count;
+    BOOL committed,revoked;
+    PROCESS_DTA_ENTRY entries[KPROC_DTAS];
+};
+static void dta_directory_drop(PROCESS_DTA_ENTRY *entry)
 {
-    KPROC *kproc = kproc_find(pd);
-    VADDR va = (VADDR)(uintptr_t)dta;
-    int i;
-
-    if (!kproc || !kproc->aspace)
-        return TRUE;                /* a kernel process's DTA is the kernel's */
-    for (i = 0; i < KPROC_DTAS; i++)
-        if (kproc->dtas[i].va == va) {
-            memcpy(dta, kproc->dtas[i].state, sizeof kproc->dtas[i].state);
-            return TRUE;
-        }
-    return FALSE;
-}
-
-/* a new Fsfirst() starts over: whatever search this DTA held is gone, found
- * anything or not */
-void kproc_dta_forget(PD *pd, const DTAINFO *dta)
-{
-    KPROC *kproc = kproc_find(pd);
-    VADDR va = (VADDR)(uintptr_t)dta;
-    int i;
-
-    if (!kproc || !kproc->aspace)
-        return;
-    for (i = 0; i < KPROC_DTAS; i++)
-        if (kproc->dtas[i].va == va)
-            kproc->dtas[i].va = 0;
-}
-
-void kproc_dta_save(PD *pd, const DTAINFO *dta)
-{
-    KPROC *kproc = kproc_find(pd);
-    VADDR va = (VADDR)(uintptr_t)dta;
-    int i;
-
-    if (!kproc || !kproc->aspace)
-        return;
-    for (i = 0; i < KPROC_DTAS; i++)
-        if (kproc->dtas[i].va == va)
-            break;
-    if (i == KPROC_DTAS) {
-        int j;
-
-        /* a free slot, else the one whose search is the oldest */
-        for (i = 0, j = 0; j < KPROC_DTAS; j++) {
-            if (!kproc->dtas[j].va) {
-                i = j;
-                break;
-            }
-            if ((LONG)(kproc->dtas[j].stamp - kproc->dtas[i].stamp) < 0)
-                i = j;
-        }
-        kproc->dtas[i].va = va;
+    DND *directory=entry->directory;entry->directory=NULL;
+    if(directory) {
+        if(!directory->d_cookie_refs) panic("search directory hold underflow");
+        directory->d_cookie_refs--;
     }
-    kproc->dtas[i].stamp = ++kproc->dta_clock;
-    memcpy(kproc->dtas[i].state, dta, sizeof kproc->dtas[i].state);
 }
+static void dta_entry_close(KPROC *process,PROCESS_DTA_ENTRY *entry)
+{
+    VADDR address=entry->va;
+    entry->va=0;entry->stamp=0;
+    dta_directory_drop(entry);
+#if CONF_WITH_PLUGGABLE_FS
+    if(address) pfs_search_close(process,(DTAINFO *)(uintptr_t)address);
+#else
+    UNUSED(process);UNUSED(address);
+#endif
+}
+/* Authoritative invalidation bypasses snapshot admission. PFS closes its
+ * exact owner separately; this removes only that owner's trusted witness. */
+void kproc_dta_invalidate(KPROC *process,const DTAINFO *address)
+{
+    WORD i;
+    if(!kproc_live_pd(process)) return;
+    for(i=0;i<KPROC_DTAS;i++) if(process->dtas[i].va==(VADDR)(uintptr_t)address) {
+        if(process->dtas[i].directory) panic("PFS witness owns a FAT directory");
+        process->dtas[i].va=0;process->dtas[i].stamp=0;
+    }
+}
+void kproc_search_retire(KPROC *process)
+{
+    WORD i;
+    if(!process) return;
+    for(i=0;i<KPROC_DTAS;i++) dta_entry_close(process,&process->dtas[i]);
+}
+static PROCESS_DTA_ENTRY *dta_entry(KPROC *process,VADDR address)
+{
+    WORD i,oldest=0;
+    PD *pd=process->pd;
+    for(i=0;i<KPROC_DTAS;i++) {
+        if(process->dtas[i].va==address) return &process->dtas[i];
+        if(!process->dtas[i].va) oldest=i;
+        else if(process->dtas[oldest].va &&
+            (LONG)(process->dtas[i].stamp-process->dtas[oldest].stamp)<0) oldest=i;
+    }
+    dta_entry_close(process,&process->dtas[oldest]);
+    if(kproc_live_pd(process)!=pd || process->files.retiring) return NULL;
+    process->dtas[oldest].va=address;
+    return &process->dtas[oldest];
+}
+LONG kproc_search_fat_attach(PD *pd,DTAINFO *dta,DND *directory)
+{
+#if !CONF_WITH_PLUGGABLE_FS
+    KPROC *process=kproc_find(pd);
+    PROCESS_DTA_ENTRY *entry;
+    if(!process || !process->aspace || process->dta!=dta ||
+        (VADDR)(uintptr_t)dta>=USER_VA_LIMIT) return E_OK;
+    if(directory->d_cookie_refs==~(ULONG)0) return ENSMEM;
+    entry=dta_entry(process,(VADDR)(uintptr_t)dta);
+    if(!entry) return EACCDN;
+    if(entry->directory) dta_directory_drop(entry);
+    directory->d_cookie_refs++;entry->directory=directory;
+#else
+    UNUSED(pd);UNUSED(dta);UNUSED(directory);
+#endif
+    return E_OK;
+}
+#if CONF_WITH_PLUGGABLE_FS
+static LONG search_prepare_guard(KPROC *source,KPROC *target,UQUAD ticket,
+                                DTAINFO **addresses,WORD count,WORD *prepared)
+{
+    DISK_ERROR disk={0};
+    return DISK_CALL_ERROR(pfs_search_snapshot_prepare(source,target,ticket,addresses,count,prepared),&disk);
+}
+#endif
+LONG kproc_search_snapshot_prepare(KPROC *source,KPROC *target,UQUAD ticket,KPROC_SEARCH_SNAPSHOT **out)
+{
+    KPROC_SEARCH_SNAPSHOT *draft;
+    WORD i;
+#if CONF_WITH_PLUGGABLE_FS
+    WORD count=0;
+    DTAINFO *addresses[KPROC_DTAS];
+    LONG error;
+#endif
+    if(!out || *out || !source || !target || !ticket || !kproc_live_pd(source) || !kproc_live_pd(target)) return EACCDN;
+    for(i=0;i<KPROC_DTAS;i++) if(target->dtas[i].va || target->dtas[i].directory) return EACCDN;
+    draft=kalloc(sizeof(*draft));if(!draft) return ENSMEM;
+    memset(draft,0,sizeof(*draft));draft->source=source;draft->target=target;draft->ticket=ticket;
+    draft->current=source->dta;draft->clock=source->dta_clock;*out=draft;
+    for(i=0;i<KPROC_DTAS;i++) if(source->dtas[i].va) {
+        PROCESS_DTA_ENTRY *entry=&draft->entries[i],*original=&source->dtas[i];
+        entry->va=original->va;entry->stamp=original->stamp;
+#if CONF_WITH_PLUGGABLE_FS
+        /* PFS positions live in independent provider owners, not DTA cookies. */
+        addresses[count++]=(DTAINFO *)(uintptr_t)entry->va;
+#else
+        if(!original->directory || original->directory->d_cookie_refs==~(ULONG)0) return EACCDN;
+        memcpy(entry->state,original->state,sizeof(entry->state));
+        original->directory->d_cookie_refs++;entry->directory=original->directory;
+#endif
+    }
+#if CONF_WITH_PLUGGABLE_FS
+    error=search_prepare_guard(source,target,ticket,addresses,count,&draft->provider_count);
+    if(error) return error;
+#endif
+    return kproc_search_snapshot_valid(draft)?E_OK:EACCDN;
+}
+BOOL kproc_search_snapshot_valid(const KPROC_SEARCH_SNAPSHOT *draft)
+{
+    WORD i;
+    if(!draft || draft->committed || draft->revoked || !kproc_live_pd(draft->source) || !kproc_live_pd(draft->target)) return FALSE;
+    for(i=0;i<KPROC_DTAS;i++) {
+        if(draft->target->dtas[i].va || draft->target->dtas[i].directory) return FALSE;
+#if !CONF_WITH_PLUGGABLE_FS
+        if(draft->entries[i].va && (!draft->entries[i].directory || !draft->entries[i].directory->d_cookie_refs)) return FALSE;
+#endif
+    }
+#if CONF_WITH_PLUGGABLE_FS
+    if(!pfs_search_snapshot_valid(draft->target,draft->ticket,draft->provider_count)) return FALSE;
+#endif
+    return TRUE;
+}
+void kproc_search_snapshot_commit(KPROC_SEARCH_SNAPSHOT *draft)
+{
+    if(!kproc_search_snapshot_valid(draft)) panic("unprepared PROCESS search commit");
+#if CONF_WITH_PLUGGABLE_FS
+    pfs_search_snapshot_commit(draft->target,draft->ticket,draft->provider_count);
+#endif
+    memcpy(draft->target->dtas,draft->entries,sizeof(draft->entries));
+    memset(draft->entries,0,sizeof(draft->entries));
+    draft->target->dta=draft->current;draft->target->dta_clock=draft->clock;draft->committed=TRUE;
+}
+void kproc_search_snapshot_end(KPROC_SEARCH_SNAPSHOT **handle)
+{
+    KPROC_SEARCH_SNAPSHOT *draft;
+    WORD i;
+    if(!handle || !(draft=*handle)) return;
+    *handle=NULL;
+    if(!draft->committed) {
+#if CONF_WITH_PLUGGABLE_FS
+        pfs_search_snapshot_abort(draft->target,draft->ticket);
+#endif
+        for(i=0;i<KPROC_DTAS;i++) dta_directory_drop(&draft->entries[i]);
+    }
+    kfree(draft);
+}
+void kproc_search_snapshot_invalidate(KPROC_SEARCH_SNAPSHOT *draft,WORD drive)
+{
+    WORD i;
+    if(!draft || draft->committed) return;
+    for(i=0;i<KPROC_DTAS;i++) if(draft->entries[i].directory &&
+        draft->entries[i].directory->d_drv->m_drvnum==drive) {
+        draft->revoked=TRUE;dta_directory_drop(&draft->entries[i]);
+    }
+}
+void kproc_search_invalidate_drive(WORD drive)
+{
+    KPROC *process;
+    WORD i;
+    for(process=kproc_list;process;process=process->next) {
+        process_files_search_invalidate(&process->files,drive);
+        for(i=0;i<KPROC_DTAS;i++) if(process->dtas[i].directory &&
+            process->dtas[i].directory->d_drv->m_drvnum==drive) dta_entry_close(process,&process->dtas[i]);
+    }
+    for(process=retired_processes;process;process=process->next)
+        process_files_search_invalidate(&process->files,drive);
+}
+#endif
+
+BOOL kproc_dta_restore_to(PD *pd,const DTAINFO *address,DTAINFO *dta)
+{
+    KPROC *process=kproc_find(pd);
+    VADDR va=(VADDR)(uintptr_t)address;
+    WORD i;
+    BOOL found=FALSE;
+#if CONF_WITH_PROCESS_FILES_TEST
+    PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
+#endif
+    if(!process || !process->aspace) return TRUE;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(process_files_cache_begin(pd,&operation)) return FALSE;
+#endif
+    for(i=0;i<KPROC_DTAS;i++) if(process->dtas[i].va==va) {
+        memcpy(dta,process->dtas[i].state,sizeof(process->dtas[i].state));found=TRUE;break;
+    }
+#if CONF_WITH_PROCESS_FILES_TEST
+    process_files_operation_end(&operation);
+#endif
+    return found;
+}
+void kproc_dta_forget(PD *pd,const DTAINFO *dta)
+{
+    KPROC *process=kproc_find(pd);
+    WORD i;
+#if CONF_WITH_PROCESS_FILES_TEST
+    PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
+#endif
+    if(!process || !process->aspace) return;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(process_files_cache_begin(pd,&operation)) return;
+#endif
+    for(i=0;i<KPROC_DTAS;i++) if(process->dtas[i].va==(VADDR)(uintptr_t)dta) {
+#if CONF_WITH_PROCESS_FILES_TEST
+        dta_entry_close(process,&process->dtas[i]);
+#else
+        process->dtas[i].va=0;
+#endif
+    }
+#if CONF_WITH_PROCESS_FILES_TEST
+    process_files_operation_end(&operation);
+#endif
+}
+void kproc_dta_save_from(PD *pd,const DTAINFO *address,const DTAINFO *dta)
+{
+    KPROC *process=kproc_find(pd);
+    PROCESS_DTA_ENTRY *entry;
+    UBYTE state[offsetof(DTAINFO,dt_fattr)];
+#if CONF_WITH_PROCESS_FILES_TEST
+    PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
+#else
+    WORD i,oldest=0;
+#endif
+    if(!process || !process->aspace) return;
+    memcpy(state,dta,sizeof(state)); /* before an eviction can invoke a callback */
+#if CONF_WITH_PROCESS_FILES_TEST
+    if(process_files_cache_begin(pd,&operation)) return;
+    entry=dta_entry(process,(VADDR)(uintptr_t)address);
+    if(!entry) { process_files_operation_end(&operation);return; }
+#else
+    for(i=0;i<KPROC_DTAS;i++) {
+        if(process->dtas[i].va==(VADDR)(uintptr_t)address) break;
+        if(!process->dtas[i].va || (process->dtas[oldest].va &&
+            (LONG)(process->dtas[i].stamp-process->dtas[oldest].stamp)<0)) oldest=i;
+    }
+    entry=&process->dtas[i==KPROC_DTAS?oldest:i];entry->va=(VADDR)(uintptr_t)address;
+#endif
+    entry->stamp=++process->dta_clock;memcpy(entry->state,state,sizeof(entry->state));
+#if CONF_WITH_PROCESS_FILES_TEST
+    process_files_operation_end(&operation);
+#endif
+}
+
+BOOL kproc_dta_restore(PD *pd,DTAINFO *dta)
+{ return kproc_dta_restore_to(pd,dta,dta); }
+void kproc_dta_save(PD *pd,const DTAINFO *dta)
+{ kproc_dta_save_from(pd,dta,dta); }
 
 VADDR kproc_ancestors_va(PD *pd)
 {
@@ -5869,6 +6084,8 @@ static LONG checked_copy_range(VADDR address, ULONG size, BOOL write)
     if (process->aspace) return back_user_range(process,address,size,write,NULL);
     return validate_user(address,size,write) ? E_OK : EIMBA;
 }
+LONG kproc_back_user_write_checked(VADDR address,ULONG size)
+{ return checked_copy_range(address,size,TRUE); }
 LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size)
 {
     LONG error;

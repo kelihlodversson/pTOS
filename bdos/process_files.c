@@ -21,7 +21,8 @@ struct kproc_file_snapshot {
     PROCESS_FILES *table;
     UQUAD number,ticket,epoch,execution,target_epoch,target_before;
     UWORD policy;
-    BOOL prepared,sealed,committed;
+    BOOL prepared,sealed,committed,preparing,cancelled;
+    KPROC_SEARCH_SNAPSHOT *search;
     PROCESS_FILE_BINDING binding[NUMHANDLES];
     FS_FILE_REFERENCE references[NUMHANDLES];
 };
@@ -120,6 +121,26 @@ LONG process_files_operation_begin(PD *pd,PROCESS_FILE_OPERATION *operation)
     operation->table=table;operation->owner=owner;
     return E_OK;
 }
+LONG process_files_search_begin(PD *pd,PROCESS_FILE_OPERATION *operation)
+{
+    PROCESS_FILES *table=kproc_files(pd);
+    LONG error;
+    if (table && table->search_busy) return EACCDN;
+    error=process_files_operation_begin(pd,operation);
+    if (!error && table) {
+        table->search_busy=TRUE;table->search_actor=execution_id();operation->search=TRUE;
+    }
+    return error;
+}
+LONG process_files_cache_begin(PD *pd,PROCESS_FILE_OPERATION *operation)
+{
+    PROCESS_FILES *table=kproc_files(pd);
+    /* Trusted header helpers nest only inside their admitted search actor.
+     * Reentrant GEMDOS search/Fsetdta calls still use search_begin and fail. */
+    if (!table || !table->search_busy) return process_files_search_begin(pd,operation);
+    if (table->search_actor!=execution_id()) return EACCDN;
+    return process_files_operation_begin(pd,operation);
+}
 void process_files_operation_end(PROCESS_FILE_OPERATION *operation)
 {
     PROCESS_FILES *table;
@@ -127,6 +148,10 @@ void process_files_operation_end(PROCESS_FILE_OPERATION *operation)
     if (!operation || !(table=operation->table)) return;
     owner=operation->owner;operation->table=NULL;operation->owner=NULL;
     if (!table->operations) panic("PROCESS operation underflow");
+    if (operation->search) {
+        if (!table->search_busy) panic("PROCESS search operation lost");
+        operation->search=FALSE;table->search_busy=FALSE;table->search_actor=0;
+    }
     table->operations--;
     kproc_release(owner);
 }
@@ -135,6 +160,14 @@ void process_files_invalidate_epoch(PROCESS_FILES *table)
     /* Authoritative invalidation cannot wait for or respect a snapshot freeze. */
     if (!table || table->retiring) return;
     if (!next_id(&table->epoch)) { table->epoch=0;table->exhausted=TRUE; }
+}
+
+void process_files_search_invalidate(PROCESS_FILES *table,WORD drive)
+{
+    if (!table) return;
+    if (table->preparation && table->preparation->search)
+        kproc_search_snapshot_invalidate(table->preparation->search,drive);
+    process_files_invalidate_epoch(table);
 }
 
 LONG process_files_resolve(PD *pd,WORD descriptor,WORD *backend,UQUAD *incarnation)
@@ -389,6 +422,7 @@ void process_files_retire(PROCESS_FILES *table)
     owner=kproc_retain_identity(table->owner);
     if (!owner) panic("retiring descriptor identity saturation");
     table->retiring=TRUE;table->epoch=0;
+    kproc_search_retire(table->owner);
     for (i=0;i<NUMHANDLES;i++) {
         PROCESS_FILE_BINDING *binding=&table->binding[i];
         FS_FILE_REFERENCE reference=FS_FILE_REFERENCE_INIT;
@@ -430,16 +464,16 @@ LONG kproc_files_snapshot_begin(KPROC *source,KPROC_FILE_SNAPSHOT **out)
     }
     snapshot->table=table;snapshot->number=table->number;snapshot->ticket=ticket;
     snapshot->epoch=table->epoch;snapshot->execution=execution_id();
-    table->snapshot=ticket;
+    table->snapshot=ticket;table->preparation=snapshot;
     memcpy(snapshot->binding,table->binding,sizeof(snapshot->binding));
     *out=snapshot;return E_OK;
 }
 static BOOL snapshot_identity_live(const KPROC_FILE_SNAPSHOT *snapshot)
 {
     PROCESS_FILES *table;
-    if (!snapshot || snapshot->committed || !(table=snapshot->table) || !snapshot->source ||
+    if (!snapshot || snapshot->committed || snapshot->cancelled || !(table=snapshot->table) || !snapshot->source ||
         table!=kproc_ref_files(snapshot->source) || table->owner!=snapshot->source ||
-        table->number!=snapshot->number || table->snapshot!=snapshot->ticket || table->retiring ||
+        table->number!=snapshot->number || table->snapshot!=snapshot->ticket || table->preparation!=snapshot || table->retiring ||
         table->epoch!=snapshot->epoch || table->operations || table->exhausted ||
         !kproc_live_pd(snapshot->source)) return FALSE;
     if (snapshot->prepared) {
@@ -447,6 +481,7 @@ static BOOL snapshot_identity_live(const KPROC_FILE_SNAPSHOT *snapshot)
         PROCESS_FILES *target=kproc_ref_files(snapshot->target);
         if (!target || target->retiring || target->snapshot || target->operations ||
             target->epoch!=snapshot->target_before || !kproc_live_pd(snapshot->target)) return FALSE;
+        if (snapshot->search && !kproc_search_snapshot_valid(snapshot->search)) return FALSE;
         for (i=0;i<NUMHANDLES;i++)
             if (snapshot->references[i].owned && !fs_reference_publishable(&snapshot->references[i])) return FALSE;
     }
@@ -462,7 +497,7 @@ LONG kproc_files_snapshot_seal(KPROC_FILE_SNAPSHOT *snapshot)
     if (!kproc_files_snapshot_validate(snapshot) || !snapshot->prepared) return EACCDN;
     snapshot->sealed=TRUE;return E_OK;
 }
-LONG kproc_files_snapshot_prepare(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target,UWORD policy)
+static LONG snapshot_prepare_body(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target,UWORD policy)
 {
     PROCESS_FILES *table=kproc_ref_files(target);
     WORD i,limit=policy==PROCESS_FILES_STANDARD?NUMSTD:NUMHANDLES;
@@ -486,8 +521,25 @@ LONG kproc_files_snapshot_prepare(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target,UW
             if (error) return error;
         }
     }
-    if (!kproc_files_snapshot_validate(snapshot)) return EACCDN;
-    snapshot->prepared=TRUE;return E_OK;
+    if (policy==PROCESS_FILES_ALL) {
+        error=kproc_search_snapshot_prepare(snapshot->source,target,snapshot->ticket,&snapshot->search);
+        if (error) return error;
+    }
+    snapshot->prepared=TRUE;
+    return kproc_files_snapshot_validate(snapshot)?E_OK:EACCDN;
+}
+LONG kproc_files_snapshot_prepare(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target,UWORD policy)
+{
+    LONG error;
+    if (!snapshot || snapshot->preparing || snapshot->cancelled) return EACCDN;
+    snapshot->preparing=TRUE;
+    error=snapshot_prepare_body(snapshot,target,policy);
+    snapshot->preparing=FALSE;
+    if (snapshot->cancelled) {
+        KPROC_FILE_SNAPSHOT *discard=snapshot;
+        kproc_files_snapshot_end(&discard);return EACCDN;
+    }
+    return error;
 }
 void kproc_files_snapshot_commit(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target)
 {
@@ -508,7 +560,9 @@ void kproc_files_snapshot_commit(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target)
         if (snapshot->references[i].owned) fs_reference_publish(&snapshot->references[i]);
         mirror(table,i,table->binding[i].state==FILE_EMPTY?0:table->binding[i].handle);
     }
+    if (snapshot->search) kproc_search_snapshot_commit(snapshot->search);
     table->epoch=snapshot->target_epoch;snapshot->committed=TRUE;
+    snapshot->table->preparation=NULL;
     snapshot->table->snapshot=0; /* publication ends mutation admission */
 }
 void kproc_files_snapshot_end(KPROC_FILE_SNAPSHOT **handle)
@@ -517,6 +571,7 @@ void kproc_files_snapshot_end(KPROC_FILE_SNAPSHOT **handle)
     WORD i;
     if (!handle || !(snapshot=*handle)) return;
     *handle=NULL;
+    if (snapshot->preparing) { snapshot->cancelled=TRUE;return; }
     /* This attempt can never publish again. Release admission before any
      * destructor/callback; exact staged references and retained identities
      * keep cleanup safe even if a callback starts a successor snapshot. */
@@ -524,6 +579,8 @@ void kproc_files_snapshot_end(KPROC_FILE_SNAPSHOT **handle)
         if (snapshot->table->snapshot==snapshot->ticket) snapshot->table->snapshot=0;
         else panic("descriptor snapshot admission replaced");
     }
+    if (snapshot->table->preparation==snapshot) snapshot->table->preparation=NULL;
+    kproc_search_snapshot_end(&snapshot->search);
     for (i=0;i<NUMHANDLES;i++) if (snapshot->references[i].owned) {
         FS_CLOSE_REPORT report;
         fs_reference_close(&snapshot->references[i],TRUE,&report);

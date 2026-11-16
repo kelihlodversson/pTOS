@@ -10,6 +10,7 @@
 #undef main
 #include "process_files.h"
 #include "kproc.h"
+#include "process_search_absent.h"
 extern void *malloc(size_t);
 extern void free(void *);
 struct kproc { PD *pd;UQUAD number;ULONG refs;BOOL dead;PROCESS_FILES files; };

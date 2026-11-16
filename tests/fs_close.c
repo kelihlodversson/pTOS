@@ -40,7 +40,14 @@ SBYTE *kproc_uft(PD *pd) { return pd->p_uft; }
 SBYTE get_default_handle(int i) { (void)i; return -1; }
 void kproc_standard_file_invalidate(WORD handle)
 { int i; for(i=0;i<NUMSTD;i++) if(owner.p_uft[i]==handle) owner.p_uft[i]=-1; }
-void mark_bcbs_invalid(int drive) { CHECK(drive==0); invalidations++; }
+void mark_bcbs_invalid(int drive) {
+#ifdef PROCESS_SEARCH_FIXTURE
+    CHECK(drive==0 || drive==2);
+#else
+    CHECK(drive==0);
+#endif
+    invalidations++;
+}
 void xmfreblk(void *p) { CHECK(p==&file); freed++; }
 void flush(BCB *b)
 {
