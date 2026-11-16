@@ -9,6 +9,7 @@ struct kthread;
 struct kaspace;
 struct _pd;
 typedef struct kproc_exec_replacement KPROC_EXEC_REPLACEMENT;
+typedef struct kproc_exec_image KPROC_EXEC_IMAGE;
 
 #if CONF_WITH_EXEC_REPLACE
 /* Caller owns source and a private, unpublished selected root. The current
@@ -47,6 +48,15 @@ void kproc_exec_replacement_drop(struct kproc *, UQUAD ticket);
  * staged image records as its basepage (initial stack, auxv). */
 LONG kproc_exec_image_select(struct kproc *,struct kaspace *,struct _pd *basepage);
 BOOL kproc_exec_image_pending(const struct kproc *,const struct kaspace *,BOOL complete);
+/* Owning image bundle for the source PROCESS, prepared in the selected root
+ * from the completed staging container exactly like an ordinary launch:
+ * mapping membership, new environment, the source's TPA/basepage, parent and
+ * controller mappings, ancestors, private stack and a fresh syscall stack.
+ * Every step is reversible; the source PROCESS is unchanged until commit.
+ * Requires *empty == NULL. Abort is idempotent through the unique handle. */
+LONG kproc_exec_image_prepare(struct kproc *source, struct kproc *image,
+                              struct kaspace *selected, KPROC_EXEC_IMAGE **empty);
+void kproc_exec_image_abort(KPROC_EXEC_IMAGE **);
 /* Committed-exec generation producer, for the scheduler-root commit only.
  * Check capacity while failure is still allowed; advance has no failure return. */
 BOOL kproc_exec_generation_capacity(const struct kproc *);
@@ -57,5 +67,7 @@ void kproc_exec_generation_advance(struct kproc *);
 void kproc_exec_replacement_test_fail_after(UWORD stage);
 #define EXEC_REPLACEMENT_PROBE 0xc9700000UL /* private Pclone test transport */
 LONG kproc_exec_replacement_probe(UWORD fail_after);
+/* Test gate only: fail kproc_exec_image_prepare after the given step (1..8). */
+void kproc_exec_image_test_fail_after(UWORD stage);
 #endif
 #endif
