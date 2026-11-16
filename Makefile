@@ -259,8 +259,13 @@ ifdef ARCH_X86_64
 # on x86-64, where its default sub/add-based outgoing-argument-area
 # handling around calls is not guaranteed to interact correctly with a
 # function using a calling convention other than the compiler's default.
+# -fno-asynchronous-unwind-tables/-fno-unwind-tables: nothing in the kernel
+# unwinds, and the .eh_frame they would add (over 120 KiB with every test
+# option enabled) counts against the 4 MiB boot window that startup.c maps
+# (IMAGE_SPAN_BYTES), like every other loaded section.
 MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
-                -fshort-wchar -fno-ident -maccumulate-outgoing-args
+                -fshort-wchar -fno-ident -maccumulate-outgoing-args \
+                -fno-asynchronous-unwind-tables -fno-unwind-tables
 # --param=min-pagesize=0: the TOS vectors and system variables really live
 # at low constant addresses (bios/vectors.h, tosvars.h), which GCC 12 and
 # later otherwise treat as the unmapped null page (-Warray-bounds).
