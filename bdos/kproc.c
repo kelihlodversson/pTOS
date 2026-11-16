@@ -41,7 +41,7 @@
 #include "procmem.h"
 #include "kaspace.h"
 #include "exec_replace.h"
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
 #include "kthread.h"
@@ -182,7 +182,7 @@ struct kproc {
      * same bounded special R1/R2 receipts without loaded-entry/stack policy. */
     struct shared_exec_regions *shared_inherited;
     BOOL exec_committing; /* Reentrant successor selection, not a blocking lock. */
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
     UQUAD exec_replacement_ticket; /* reversible replacement, not launch selection */
     BOOL exec_image_staging; /* loader container bound to a replacement root */
 #endif
@@ -568,7 +568,7 @@ struct process_exec_handle **kproc_exec_handles(KPROC *owner)
 BOOL kproc_exec_commit_begin(KPROC *owner)
 {
     if (!kproc_live_pd(owner) || owner->exec_committing
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
         || owner->exec_replacement_ticket
 #endif
         ) return FALSE;
@@ -856,7 +856,7 @@ BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
 #endif
 #if CONF_WITH_NATIVE_SCHED
         (p->clone_guarded && !identity_only) ||
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
         p->exec_replacement_ticket ||
 #endif
 #endif
@@ -1284,7 +1284,7 @@ LONG kproc_image_policy_capture(const KPROC *source,KPROC_IMAGE_POLICY *output)
     if (!output) return EINVAL;
     if (!source || !source->references || !mapping_owner_live(source) ||
         source->lost || source->clone_identity_only ||
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
         /* A replacement staging container is owned by its exact #973
          * replacement ticket; it is not a pending launch image. */
         source->exec_image_staging ||
@@ -1703,7 +1703,7 @@ BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
         !*kthread_next_link(thread) && kthread_process(thread) == process;
 }
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
 static UQUAD last_exec_replacement_ticket;
 
 /* A constructor may own a root before active_space/pending_space adoption.
@@ -1796,7 +1796,7 @@ BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL co
         image->exec_image_staging && image->pending_space==selected &&
         (!complete || (image->has_image && image->pending_as==kaspace_backend(selected)));
 }
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread)
 {
     KPROC *peer;
@@ -3014,7 +3014,7 @@ BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes)
     if (!kproc || kproc->aspace || kproc->pending_as || kproc->has_image || kproc->lost ||
         !user_layout_range(va, bytes, USER_ALLOC_LIMIT))
         return FALSE;
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
     if (kproc->exec_image_staging) {
         owner=kproc->pending_space;
         if (!owner) return FALSE;
@@ -3028,7 +3028,7 @@ BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes)
         if (!owner) { aspace_destroy(as); return FALSE; }
     }
     if (!aspace_map_private(as, va, bytes, ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
         if (!kproc->exec_image_staging)
 #endif
         kaspace_put(owner);

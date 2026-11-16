@@ -9,7 +9,7 @@
 #include "proc.h"
 #include "gemerror.h"
 #include "string.h"
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
 
@@ -199,7 +199,7 @@ BOOL kthread_is_executing(const KTHREAD *thread)
     return thread && thread->state == THREAD_EXECUTING;
 }
 
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 BOOL kthread_exec_handoff_ready(const KTHREAD *thread, const void *execution)
 {
     return thread && kthread_is_executing(thread) && thread->attached &&

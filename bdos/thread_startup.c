@@ -101,7 +101,7 @@ LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *ar
 {
     return startup_prepare(space, args, out, TRUE, NULL, NULL, 0);
 }
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 LONG thread_startup_prepare_handoff(KASPACE *space, const THREAD_STARTUP_ARGS *args,
                                     THREAD_STARTUP_DRAFT **out)
@@ -383,7 +383,7 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **handle)
     if (!handle || !*handle) return;
     if ((*handle)->state != THREAD_STARTUP_RUNNABLE ||
         (!ksched_startup_reclaimable(*handle)
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
          && !ksched_exec_handoff_retiring(*handle)
 #endif
         ))

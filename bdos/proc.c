@@ -30,7 +30,7 @@
 #include "process_observer.h"
 #include "process_exec.h"
 #include "exec_replace.h"
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
 #endif
@@ -590,7 +590,7 @@ long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG tok
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL,NULL));
 }
 #endif
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
 LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *replacement,
                                 char *path, char *tail, char *env)
 {
@@ -641,7 +641,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     UNUSED(directory);
 #endif
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
     if (replacement && (flag != PE_LOAD ||
                         kproc_exec_replacement_validate(replacement))) return EACCDN;
 #else
@@ -851,7 +851,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return rc;
     }
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST && KPROC_LEGACY_PRG
+#if CONF_WITH_EXEC_REPLACE && KPROC_LEGACY_PRG
     /* A staged legacy TPA still needs a separate image-bundle contract. Do
      * not start its move/loan ownership path as if it were a private ELF. */
     if (replacement && kpgm_is_prg()) {
@@ -944,7 +944,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         kproc_mark_legacy(p);
 #endif
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
     if (replacement) {
         KPROC *image = kproc_retain(p);
         rc = kproc_exec_replacement_load_begin(replacement,image);
@@ -1553,7 +1553,7 @@ LONG proc_prepare_scheduled(PD *p)
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {
     if (ksched_sibling_launch(p)
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
         || ksched_exec_handoff_launch(p)
 #endif
        ) {

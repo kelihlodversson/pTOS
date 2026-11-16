@@ -78,7 +78,7 @@
 #include "ksched.h"
 #include "thread_startup.h"
 #include "thread_startup_x32.h"
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #include "procmem.h"
 #endif
@@ -230,7 +230,7 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 extern UQUAD x86_64_get_irq_stack(void);
 extern void x86_64_set_irq_stack(UQUAD rsp);
 
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 BOOL proc_exec_stack_snapshot(void **owner, PADDR *physical)
 {
     X86_64_PROCESS_LAUNCH *launch = get_current_launch();

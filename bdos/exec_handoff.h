@@ -9,7 +9,7 @@ struct _pd;
 struct kaspace;
 struct kaspace_lease;
 typedef struct ksched_exec_handoff KSCHED_EXEC_HANDOFF;
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 /* Trusted normalized arguments only. This experiment keeps the active root.
  * Success never returns; every error precedes ownership transfer. */
 LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *, UWORD fail_after);

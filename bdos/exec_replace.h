@@ -9,7 +9,7 @@ struct kthread;
 struct kaspace;
 typedef struct kproc_exec_replacement KPROC_EXEC_REPLACEMENT;
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
 /* Caller owns source and a private, unpublished selected root. The current
  * sole managed THREAD/execution is authenticated. Success retains both roots
  * and source identity, admits one replacement operation and defers cancellation
@@ -28,10 +28,6 @@ LONG kproc_exec_replacement_validate(const KPROC_EXEC_REPLACEMENT *);
  * ownership admission and cancellation protection end only after all releases.
  * Leaves the old user context, root, PID and public completion unchanged. */
 void kproc_exec_replacement_abort(KPROC_EXEC_REPLACEMENT **);
-/* Test gate only: fail after source/old-root/new-root/final-validation prefix. */
-void kproc_exec_replacement_test_fail_after(UWORD stage);
-#define EXEC_REPLACEMENT_PROBE 0xc9700000UL /* private Pclone test transport */
-LONG kproc_exec_replacement_probe(UWORD fail_after);
 /* Existing loader only: bind its fresh, unstarted image container to this
  * selected root before reading file segments. Receipt owns its retained
  * identity and disposal obligation; ordinary exec_common error cleanup stays
@@ -48,5 +44,11 @@ BOOL kproc_exec_replacement_matches(struct kproc *, struct kthread *, struct kas
 void kproc_exec_replacement_drop(struct kproc *, UQUAD ticket);
 LONG kproc_exec_image_select(struct kproc *,struct kaspace *);
 BOOL kproc_exec_image_pending(const struct kproc *,const struct kaspace *,BOOL complete);
+#endif
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+/* Test gate only: fail after source/old-root/new-root/final-validation prefix. */
+void kproc_exec_replacement_test_fail_after(UWORD stage);
+#define EXEC_REPLACEMENT_PROBE 0xc9700000UL /* private Pclone test transport */
+LONG kproc_exec_replacement_probe(UWORD fail_after);
 #endif
 #endif

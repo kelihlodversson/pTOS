@@ -23,6 +23,7 @@ struct kproc_exec_replacement {
     KSCHED_CLEANUP_SCOPE cleanup;
 };
 
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
 static UWORD fail_stage;
 void kproc_exec_replacement_test_fail_after(UWORD stage) { fail_stage=stage; }
 static BOOL injected(UWORD stage)
@@ -30,6 +31,9 @@ static BOOL injected(UWORD stage)
     if (fail_stage!=stage) return FALSE;
     fail_stage=0;return TRUE;
 }
+#else
+#define injected(stage) FALSE
+#endif
 
 LONG kproc_exec_replacement_validate(const KPROC_EXEC_REPLACEMENT *replacement)
 {
@@ -141,6 +145,7 @@ BOOL kproc_exec_replacement_image_ready(const KPROC_EXEC_REPLACEMENT *replacemen
         kproc_exec_image_pending(replacement->image,replacement->selected,TRUE);
 }
 
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
 LONG kproc_exec_replacement_probe(UWORD fail_after)
 {
     KPROC *source=kproc_retain(run),*foreign=NULL;
@@ -210,3 +215,4 @@ done:
     kaspace_put(selected);kproc_release(source);
     return error;
 }
+#endif

@@ -28,9 +28,21 @@ config CONF_WITH_IMAGE_POLICY_TEST
       Test policy capture and its existing trusted NEW_PROCESS publication
       using the ordinary shared-VM clone. This is not private image ownership,
       public fork or same-PROCESS executable replacement.
+config CONF_WITH_EXEC_REPLACE
+    bool "Same-PROCESS executable replacement core for Pexec(200)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    default n
+    help
+      Build the kernel-only replacement transaction for Pexec(200): exact
+      PROCESS/THREAD admission, private ELF staging, the sealed image bundle
+      and the NORETURN commit at the scheduler root, with old-image
+      retirement off-stack and the committed-exec generation. Public mode200
+      stays EINVFN until that path is verified (see doc/exec-replacement.txt).
+
 config CONF_WITH_EXEC_REPLACEMENT_TEST
     bool "Private executable image staging (test only)"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    select CONF_WITH_EXEC_REPLACE
     default n
     help
       Build real private ELF staging and kernel-only reversible exact-PROCESS/THREAD/root admission

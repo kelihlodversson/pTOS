@@ -38,7 +38,7 @@
 #include "native_sched_backend.h"
 #include "arch/m68k/irqframe.h"
 #include "thread_startup32.h"
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
 #include "string.h"
@@ -223,7 +223,7 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 static BOOL injected_exit_failure;
 #endif
 
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 BOOL proc_exec_stack_snapshot(void **owner, PADDR *physical)
 {
     struct uspace_launch *launch = get_uspace_launch();

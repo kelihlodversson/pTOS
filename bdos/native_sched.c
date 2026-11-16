@@ -21,7 +21,7 @@
 #include "kprint.h"
 #include "gemerror.h"
 #include "string.h"
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #include "exec_handoff_test.h"
 #include "kaspace.h"
@@ -39,7 +39,7 @@ extern PD *run;
 
 typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
     , TASK_REPLACING
 #endif
 } TASK_STATE;
@@ -74,7 +74,7 @@ typedef struct kernel_task {
     WORD pid, signal;
     BOOL asynchronous, take_ownership, exited;
     THREAD_STARTUP_DRAFT *startup;
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
     KSCHED_EXEC_HANDOFF *replacement; /* private owning preparation */
     ULONG test_handoffs; /* transport evidence only, never a committed-exec epoch */
 #endif
@@ -156,7 +156,7 @@ typedef struct {
     KSCHED_ADMISSION waiter; /* scoped consumer; independent producers own cells */
     PROC_CLONE_TRANSACTION *pending_clone;
     void *pending_slot;
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
     KSCHED_EXEC_HANDOFF *pending_exec;
 #endif
     ULONG stack[ROOT_STACK_BYTES/sizeof(ULONG)] __attribute__((aligned(16)));
@@ -536,7 +536,7 @@ void ksched_wake_sequence(KSCHED_WAIT_SEQUENCE *source)
     native_sched_irq_restore(flags);
 }
 static UQUAD next_identity;
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 typedef enum { HANDOFF_PREPARING, HANDOFF_PREPARED, HANDOFF_SEALED,
                HANDOFF_TRANSFERRED, HANDOFF_QUIESCENT, HANDOFF_INSTALLED } HANDOFF_STATE;
 struct ksched_exec_handoff {
@@ -966,7 +966,7 @@ BOOL ksched_take_syscall_stack(PD *pd, THREAD_STARTUP_STACK *owner)
     KTHREAD_STACK stack;
     if (!owner || owner->physical || owner->top ||
         (!ksched_sibling_launch(pd)
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
          && !ksched_exec_handoff_launch(pd)
 #endif
         )) return FALSE;
@@ -2544,7 +2544,7 @@ static void scheduler_root_entry(void)
         wake_observed=execution_cpu.wake.sequence;
         check_root_stack();
         cpu_acknowledge_handoff();
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
         exec_handoff_on_root();
 #endif
         if (scheduler.stopping) panic("scheduler: dispatch during shutdown");
