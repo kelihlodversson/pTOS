@@ -1869,7 +1869,7 @@ static BOOL exec_image_ancestors(const KPROC *source, ASPACE *as, const UBYTE *e
 }
 
 /* Sources this PROCESS-local replacement cannot carry into a new image. */
-static BOOL exec_image_source_ok(const KPROC *source)
+static BOOL exec_image_source_ok(const KPROC *source, const KPROC *image)
 {
     int i;
     if (!source || !source->pd || !source->started || !source->active_space || !source->aspace ||
@@ -1884,8 +1884,13 @@ static BOOL exec_image_source_ok(const KPROC *source)
     /* Registered handlers are code addresses of the image being replaced. */
     if (source->callbacks) return FALSE;
 #endif
+    /* A child still being launched; the staging container's own basepage and
+     * environment, which its loader borrowed from the source, are not one. */
     for (i = 0; i < KPROC_BORROWS; i++)
-        if (source->borrowed[i].va) return FALSE;  /* a child still being launched */
+        if (source->borrowed[i].bytes &&
+            (!image || (source->borrowed[i].va != (VADDR)(uintptr_t)image->user_start &&
+                        source->borrowed[i].va != (VADDR)(uintptr_t)image->env_start)))
+            return FALSE;
     for (i = 0; i < (int)source->nheap; i++)
         if (source->heap[i].kind == UH_LOADED) return FALSE;
     return TRUE;
@@ -1916,7 +1921,7 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     LONG error = ENSMEM;
     if (!out || *out) return EINVAL;
     if (!selected || !kproc_exec_image_pending(image, selected, TRUE) ||
-        image->exec_basepage != source->pd || image->legacy || !exec_image_source_ok(source) ||
+        image->exec_basepage != source->pd || image->legacy || !exec_image_source_ok(source, image) ||
         kproc_active_space(source) == selected)
         return EACCDN;
     as = kaspace_backend(selected);
@@ -1927,6 +1932,12 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     b->image = kproc_retain_live(image);
     b->space = kaspace_share(selected);
     if (!b->source || !b->image || !b->space || exec_image_injected(1)) goto failed;
+    /* The loader is done with the container's blocks: drop the source's
+     * supervisor-only borrows of them, whose pins would otherwise block the
+     * environment ownership transfer and outlive the commit. Disposing the
+     * container on failure would drop them the same way. */
+    kproc_unborrow(image->env_start);
+    kproc_unborrow(image->user_start);
     /* 2: the source's membership in the new root, and its scopes. */
     if (kaspace_member_new(selected, source->number, source, &b->members) || exec_image_injected(2))
         goto failed;
@@ -2028,7 +2039,7 @@ BOOL kproc_exec_image_sealable(const KPROC_EXEC_IMAGE *b)
     if (!b || b->committed || !b->source || !b->image || !b->space || !b->members) return FALSE;
     s = b->source; i = b->image;
     return kproc_exec_image_pending(i, b->space, TRUE) && i->exec_basepage == s->pd &&
-        !i->legacy && exec_image_source_ok(s) && s->active_space != b->space &&
+        !i->legacy && exec_image_source_ok(s, NULL) && s->active_space != b->space &&
         s->disposal_state == PROCESS_LIVE && !s->completed && !s->completion_pending &&
         kproc_exec_generation_capacity(s) &&
         kaspace_member_matches(b->members, b->space, s->number, s) &&
