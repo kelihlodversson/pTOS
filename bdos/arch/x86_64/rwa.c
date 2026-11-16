@@ -561,6 +561,9 @@ void gouser_entry(WORD entry_type)
         launch.exit_process = NULL;
         launch.fallback_observer = NULL;
 #endif
+#if CONF_WITH_EXEC_REPLACE
+        launch.relaunch = FALSE;
+#endif
         set_current_launch(&launch);
         __asm__ volatile ("pushfq; popq %0" : "=r"(launcher_flags) :: "memory");
         x86_64_set_kernel_stack(kstack_top);
