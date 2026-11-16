@@ -466,6 +466,9 @@ void gouser_entry(WORD entry_type)
 #if CONF_WITH_NATIVE_SCHED
         THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
         const X32_THREAD_STARTUP_DRAFT *prepared = startup ? thread_startup_image(startup) : NULL;
+#if CONF_WITH_EXEC_REPLACE
+        BOOL program = thread_startup_program_entry(startup);
+#endif
         UWORD launcher_ds, launcher_es, launcher_fs, launcher_gs;
         UQUAD launcher_fsbase, launcher_gsbase;
         THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
@@ -498,6 +501,10 @@ void gouser_entry(WORD entry_type)
         __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
                           : "=r"(launcher_ds), "=r"(launcher_es), "=r"(launcher_fs), "=r"(launcher_gs));
         launcher_fsbase = clone_read_base(0xc0000100UL);
+#if CONF_WITH_EXEC_REPLACE
+        /* Pexec(200): fresh stacks from the draft, ordinary entry from the record */
+        if (program) prepared = NULL;
+#endif
         if (prepared) {
             entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; standard_entry = FALSE;
 #if CONF_WITH_SHARED_VM_PEXEC_TEST
@@ -562,6 +569,9 @@ void gouser_entry(WORD entry_type)
                 thread_startup_entering(startup);
                 x86_64_enter_prepared_user(&prepared->user);
             }
+#endif
+#if CONF_WITH_EXEC_REPLACE
+            if (program) thread_startup_entering(startup);
 #endif
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                               standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);

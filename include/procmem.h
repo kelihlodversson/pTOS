@@ -163,6 +163,7 @@ PADDR procmem_phys_of(VADDR va);
 /* FALSE leaves ownership/reclamation unchanged when a hold excludes transfer.
  * Trusted no-fail callers must preflight before reaching their commit point. */
 BOOL procmem_set_owner(const void *p, const void *owner);
+BOOL procmem_set_owner_ok(const void *p, const void *owner);
 const void *procmem_owner(const void *p);   /* NULL: no live owner, or not allocated */
 void procmem_free_owned(const void *owner, void (*pre_free)(void *base));
 void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base));

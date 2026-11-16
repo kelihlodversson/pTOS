@@ -344,6 +344,15 @@ const void *procmem_owner(const void *p)
     return link ? (*link)->owner : NULL;
 }
 
+/* Exactly the preflight of procmem_set_owner(), for no-fail commit points. */
+BOOL procmem_set_owner_ok(const void *p, const void *owner)
+{
+    struct alloc **link = find_link(p);
+
+    return link && !(*link)->cleanup_owned &&
+        !((*link)->hold_count && ((*link)->owner != owner || (*link)->reclaim));
+}
+
 BOOL procmem_set_owner(const void *p, const void *owner)
 {
     struct alloc **link = find_link(p);

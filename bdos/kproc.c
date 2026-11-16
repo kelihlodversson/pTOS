@@ -1827,10 +1827,13 @@ struct kproc_exec_image {
     KASPACE *space;                 /* retained selected root */
     KASPACE_MEMBER *members;        /* source's membership in the new root */
     KASPACE_SCOPE *allocation_scope, *runtime_scope; /* borrowed from members */
-    PADDR kstack_phys;              /* fresh syscall stack for the relaunch */
-    uintptr_t kstack_top;
+    THREAD_STARTUP_DRAFT *startup;  /* fresh stacks and entry leases for the relaunch */
     ULONG ancestors;
     VADDR entry, stack_top, stack_low, stack_size;
+    /* After the commit: what the source PROCESS gave up, retired off-root */
+    BOOL committed;
+    KASPACE *old_space, *image_space;
+    KASPACE_MEMBER *old_members;
 };
 
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
@@ -1877,6 +1880,10 @@ static BOOL exec_image_source_ok(const KPROC *source)
         source->clone_compat || source->clone_startup)
         return FALSE;
 #endif
+#if CONF_WITH_USER_CALLBACKS
+    /* Registered handlers are code addresses of the image being replaced. */
+    if (source->callbacks) return FALSE;
+#endif
     for (i = 0; i < KPROC_BORROWS; i++)
         if (source->borrowed[i].va) return FALSE;  /* a child still being launched */
     for (i = 0; i < (int)source->nheap; i++)
@@ -1888,10 +1895,12 @@ void kproc_exec_image_abort(KPROC_EXEC_IMAGE **handle)
 {
     KPROC_EXEC_IMAGE *b;
     if (!handle || !*handle) return;
-    b = *handle; *handle = NULL;
+    b = *handle;
+    if (b->committed) panic("exec image: abort after commit");
+    *handle = NULL;
     /* Mappings live in the selected root and go with it; the caller still
      * owns that root and the staging container. */
-    if (b->kstack_phys) kstack_free(b->kstack_phys);
+    thread_startup_abort(&b->startup);
     kaspace_member_release(&b->members);
     kaspace_put(b->space);
     kproc_release(b->image);
@@ -1927,9 +1936,7 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
         kaspace_member_add_runtime(selected, source->number, source, &b->members, &b->runtime_scope))
         goto failed;
 #endif
-    /* 3: a fresh syscall stack; the old one stays in use until retirement. */
-    b->kstack_phys = kstack_alloc(&b->kstack_top);
-    if (!b->kstack_phys || exec_image_injected(3)) goto failed;
+    if (exec_image_injected(3)) goto failed;
     /* 4: the new environment, and the source's TPA, whose first bytes are the
      * basepage the program keeps. An image never executes from its TPA. */
     if (!aspace_map_procmem(as, (VADDR)(uintptr_t)image->env_start,
@@ -1983,18 +1990,28 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
 #endif
     {
         VADDR bytes = b->stack_size ? b->stack_size : USER_STACK_SIZE;
-#if !CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_DEMAND_PAGING
+        /* Lazy, as for an ordinary launch, except for the page the entry
+         * frame lands in: the relaunch's startup lease needs it resident. */
+        bytes = USER_PAGE_SIZE;
+#endif
         if (!aspace_map_private(as, USER_STACK_TOP - bytes, bytes, ASPACE_PROT_WRITE | ASPACE_PROT_USER))
             goto failed;
         b->stack_low = USER_STACK_TOP - bytes;
-#else
-        (void)bytes;
-        b->stack_low = 0;
-#endif
         b->entry = image->layout.entry;
         b->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     }
     if (!b->entry || exec_image_injected(7)) goto failed;
+    /* 8: fresh scheduler/syscall stacks and leases on the new entry and the
+     * resident stack; the old ones stay in use until retirement. */
+    {
+        THREAD_STARTUP_ARGS args;
+        args.entry = b->entry; args.argument = 0;
+        args.stack_base = b->stack_low; args.stack_size = (ULONG)(USER_STACK_TOP - b->stack_low);
+        error = thread_startup_prepare_program(selected, &args, &b->startup);
+        if (error) goto failed;
+        error = ENSMEM;
+    }
     if (exec_image_injected(8)) goto failed;
     *out = b;
     return E_OK;
@@ -2002,8 +2019,126 @@ failed:
     kproc_exec_image_abort(&b);
     return error;
 }
+
+/* Every precondition of kproc_exec_image_commit(), checked in the masked,
+ * no-yield publication window and again by the commit itself. */
+BOOL kproc_exec_image_sealable(const KPROC_EXEC_IMAGE *b)
+{
+    const KPROC *s, *i;
+    if (!b || b->committed || !b->source || !b->image || !b->space || !b->members) return FALSE;
+    s = b->source; i = b->image;
+    return kproc_exec_image_pending(i, b->space, TRUE) && i->exec_basepage == s->pd &&
+        !i->legacy && exec_image_source_ok(s) && s->active_space != b->space &&
+        s->disposal_state == PROCESS_LIVE && !s->completed && !s->completion_pending &&
+        kproc_exec_generation_capacity(s) &&
+        kaspace_member_matches(b->members, b->space, s->number, s) &&
+        procmem_gen(s->env_start) == s->env_gen && procmem_owner(s->env_start) == s->pd &&
+        procmem_gen(i->env_start) == i->env_gen && procmem_owner(i->env_start) == i->pd &&
+        procmem_set_owner_ok(i->env_start, s->pd) && procmem_set_owner_ok(s->env_start, i->pd);
+}
+
+/* No-fail, no-allocation, no-callback commit at the quiescent scheduler root
+ * (#988). The source PROCESS keeps its identity, PD/TPA, files, directories,
+ * parent, children, limits and THREAD; it adopts the bundle's root, image,
+ * environment and stack. The container takes the old environment and the
+ * old root goes to the bundle, both retired later off this stack. */
+void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
+{
+    KPROC *s, *i;
+    PD *pd, *ipd;
+    UBYTE *env_start, *env_end;
+    UQUAD env_gen;
+    UWORD k;
+    if (!kproc_exec_image_sealable(b)) panic("exec image: commit preconditions changed");
+    s = b->source; i = b->image; pd = s->pd; ipd = i->pd;
+    if (!procmem_set_owner(i->env_start, pd) || !procmem_set_owner(s->env_start, ipd))
+        panic("exec image: environment ownership changed after preflight");
+    env_start = s->env_start; env_end = s->env_end; env_gen = s->env_gen;
+    s->env_start = i->env_start; s->env_end = i->env_end; s->env_gen = i->env_gen;
+    i->env_start = env_start; i->env_end = env_end; i->env_gen = env_gen;
+    /* Root and memberships: owning references move, none is taken. */
+    b->old_space = s->active_space; b->old_members = s->mapping_members;
+    s->active_space = b->space; b->space = NULL;
+    s->aspace = kaspace_backend(s->active_space);
+    s->mapping_members = b->members; b->members = NULL;
+    s->allocation_scope = b->allocation_scope; s->runtime_scope = b->runtime_scope;
+    b->allocation_scope = b->runtime_scope = NULL;
+    b->image_space = i->pending_space;
+    i->pending_space = NULL; i->pending_as = NULL;
+    i->exec_image_staging = FALSE; i->exec_basepage = NULL;
+    /* Image, interpreter and stack. */
+    s->layout = i->layout; s->has_image = i->has_image;
+    i->has_image = FALSE; memset(&i->layout, 0, sizeof(i->layout));
+#if CONF_WITH_IMAGE_POLICY
+    s->image_policy_only = FALSE;
+#endif
+#if CONF_WITH_ELF_SHARED
+    s->interpreter_layout = i->interpreter_layout;
+    s->standard_entry = i->standard_entry; s->interp_entry = i->interp_entry;
+    s->initial_rsp = i->initial_rsp; s->interp_bytes = i->interp_bytes;
+    i->standard_entry = FALSE;
+#if KPROC_SHARED_INTERP
+    {
+        struct shared_interp_recipe *recipe = s->shared_interp_recipe;
+        s->shared_interp_recipe = i->shared_interp_recipe; i->shared_interp_recipe = recipe;
+    }
+#endif
+#endif
+    s->legacy = FALSE;
+#if KPROC_LEGACY_PRG
+    s->legacy_text_bytes = 0; s->legacy_text_recorded = FALSE;
+#if CONF_WITH_IMAGE_POLICY
+    s->legacy_text_entry = 0;
+#endif
+#endif
+    s->entry = b->entry; s->stack_top = b->stack_top;
+    s->stack_low = b->stack_low; s->stack_size = b->stack_size;
+    s->ancestors = b->ancestors;
+    /* Views of the old root never authenticate mappings of the new one. */
+    for (k = 0; k < 5; k++) s->reservation_birth[k] = 0;
+    memset(s->dtas, 0, sizeof(s->dtas)); s->dta_clock = 0;
+    memcpy(s->executable_name, i->executable_name, sizeof(s->executable_name));
+    /* The basepage the program keeps describes the new program. */
+    pd->p_tbase = ipd->p_tbase; pd->p_tlen = ipd->p_tlen;
+    pd->p_dbase = ipd->p_dbase; pd->p_dlen = ipd->p_dlen;
+    pd->p_bbase = ipd->p_bbase; pd->p_blen = ipd->p_blen;
+    pd->p_flags = ipd->p_flags;
+    pd->p_env = PTR_TO_USERPTR((char *)s->env_start);
+    memcpy(pd->p_cmdlin, ipd->p_cmdlin, sizeof(pd->p_cmdlin));
+    pd->p_xdta = PTR_TO_USERPTR((DTA *)pd->p_cmdlin);
+    s->dta = (DTAINFO *)pd->p_cmdlin;
+    b->committed = TRUE;
+}
+
+/* After the commit, on the relaunched execution's own fresh stack: the old
+ * root, with every old mapping, and the old memberships. The container is
+ * disposed by its owner, the replacement receipt. */
+THREAD_STARTUP_DRAFT *kproc_exec_image_take_startup(KPROC_EXEC_IMAGE *b)
+{
+    THREAD_STARTUP_DRAFT *startup;
+    if (!b || b->committed || !b->startup) return NULL;
+    startup = b->startup; b->startup = NULL;
+    return startup;
+}
+
+void kproc_exec_image_retire(KPROC_EXEC_IMAGE **handle)
+{
+    KPROC_EXEC_IMAGE *b;
+    if (!handle || !*handle) return;
+    b = *handle;
+    if (!b->committed || b->space || b->members || b->startup)
+        panic("exec image: retiring an uncommitted bundle");
+    *handle = NULL;
+    kaspace_member_release(&b->old_members);
+    kaspace_attachment_release_owner(b->old_space, b->source->number, b->source);
+    kaspace_put(b->old_space);
+    kaspace_put(b->image_space);
+    kproc_release(b->image);
+    kproc_release(b->source);
+    kfree(b);
+}
 #if CONF_WITH_EXEC_REPLACE
-BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread)
+BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread, BOOL replacing)
 {
     KPROC *peer;
     if (!process || !process->pd || process->disposal_state != PROCESS_LIVE ||
@@ -2012,7 +2147,8 @@ BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread)
         !kproc_thread_is_sole(process, thread) || !kthread_is_executing(thread) ||
         kthread_aspace(thread) != process->active_space || process->lost ||
         process->give_back || process->lender || process->mapping_preparation ||
-        process->exec_committing || process->exec_replacement_ticket || process->clone_guarded ||
+        process->exec_committing || !process->exec_replacement_ticket != !replacing ||
+        process->clone_guarded ||
         kaspace_mutation_busy(process->active_space)) return FALSE;
 #if CONF_WITH_IMAGE_POLICY
     if (process->image_preparation) return FALSE;

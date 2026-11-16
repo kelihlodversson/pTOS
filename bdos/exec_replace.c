@@ -21,6 +21,7 @@ struct kproc_exec_replacement {
     UQUAD process_number, execution, ticket;
     ULONG tid;
     KSCHED_CLEANUP_SCOPE cleanup;
+    BOOL transferred; /* past the no-fail Pexec(200) boundary: retire only */
 };
 
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
@@ -59,6 +60,7 @@ void kproc_exec_replacement_abort(KPROC_EXEC_REPLACEMENT **handle)
     KPROC_EXEC_REPLACEMENT *replacement;
     if (!handle || !*handle) return;
     replacement = *handle;
+    if (replacement->transferred) panic("exec replacement: abort after transfer");
     if (!replacement->cleanup.active || replacement->execution != ksched_context_id() ||
         ksched_exit_thread(run) != replacement->thread)
         panic("exec replacement: abort outside owning execution");
@@ -143,6 +145,52 @@ BOOL kproc_exec_replacement_image_ready(const KPROC_EXEC_REPLACEMENT *replacemen
 {
     return replacement && !kproc_exec_replacement_validate(replacement) && replacement->image &&
         kproc_exec_image_pending(replacement->image,replacement->selected,TRUE);
+}
+
+KPROC *kproc_exec_replacement_image(const KPROC_EXEC_REPLACEMENT *replacement)
+{
+    return replacement && !replacement->transferred ? replacement->image : NULL;
+}
+KASPACE *kproc_exec_replacement_selected(const KPROC_EXEC_REPLACEMENT *replacement)
+{
+    return replacement && !replacement->transferred ? replacement->selected : NULL;
+}
+
+/* The no-fail boundary of ksched_exec_replace(), after its own nested scope
+ * ended: cancellation protection ends with the old continuation. */
+void kproc_exec_replacement_transfer(KPROC_EXEC_REPLACEMENT *replacement)
+{
+    if (kproc_exec_replacement_validate(replacement) || replacement->transferred)
+        panic("exec replacement: unauthenticated transfer");
+    ksched_cleanup_end(&replacement->cleanup);
+    replacement->transferred = TRUE;
+}
+/* Quiescent scheduler root: the admission closes with the commit. */
+void kproc_exec_replacement_commit(KPROC_EXEC_REPLACEMENT *replacement)
+{
+    if (!replacement || !replacement->transferred || !replacement->ticket)
+        panic("exec replacement: commit without transfer");
+    kproc_exec_replacement_drop(replacement->process, replacement->ticket);
+    replacement->ticket = 0;
+}
+/* On the relaunched execution, before user entry. The container now owns the
+ * old environment; its disposal releases that with the container's own TPA. */
+void kproc_exec_replacement_retire(KPROC_EXEC_REPLACEMENT **handle)
+{
+    KPROC_EXEC_REPLACEMENT *replacement;
+    if (!handle || !*handle) return;
+    replacement = *handle;
+    if (!replacement->transferred || replacement->ticket)
+        panic("exec replacement: retiring an uncommitted receipt");
+    *handle = NULL;
+    if (replacement->image) {
+        proc_dispose_process(replacement->image);
+        kproc_release(replacement->image);
+    }
+    kaspace_put(replacement->selected);
+    kaspace_put(replacement->source);
+    kproc_release(replacement->process);
+    kfree(replacement);
 }
 
 #if CONF_WITH_EXEC_REPLACEMENT_TEST

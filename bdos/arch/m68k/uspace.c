@@ -317,6 +317,9 @@ void gouser(void)
 #if CONF_WITH_NATIVE_SCHED
     THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
     const THREAD_STARTUP32 *prepared = startup ? thread_startup_image(startup) : NULL;
+#if CONF_WITH_EXEC_REPLACE
+    BOOL program = thread_startup_program_entry(startup);
+#endif
     THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
     if (ksched_take_syscall_stack(p, &syscall_owner)) {
         kstack_phys = syscall_owner.physical;
@@ -324,6 +327,10 @@ void gouser(void)
     } else
 #endif
         kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+#if CONF_WITH_EXEC_REPLACE
+    /* Pexec(200): fresh stacks from the draft, ordinary entry from the record */
+    if (program) prepared = NULL;
+#endif
 #if CONF_WITH_NATIVE_SCHED
     if (prepared) { entry = prepared->entry; user_sp = prepared->sp; }
 #endif
@@ -387,6 +394,9 @@ void gouser(void)
 #if CONF_WITH_FORK_RETURN_TEST
         if (prepared && prepared->saved_return) m68k_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
 #endif
+#endif
+#if CONF_WITH_EXEC_REPLACE
+        if (program) thread_startup_entering(startup);
 #endif
         m68k_enter_user(&initial_entry);
     }

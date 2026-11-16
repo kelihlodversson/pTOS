@@ -221,6 +221,19 @@ void kthread_exec_handoff_stack(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *hand
     *hold = NULL;
     /* Membership, state, root, backend, TID and join completion stay intact. */
 }
+/* Pexec(200) only: the same executing THREAD adopts the committed root. The
+ * caller's owning reference is exchanged for the old one; nothing is freed. */
+void kthread_exec_rebind(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *handoff, KASPACE **space)
+{
+    KASPACE *old;
+    if (!thread || !space || !*space || *space == thread->space ||
+        !kthread_exec_handoff_ready(thread, thread->execution) ||
+        !ksched_exec_handoff_quiescent(handoff, thread, thread->execution))
+        panic("exec handoff: unauthenticated THREAD rebind");
+    old = thread->space;
+    thread->space = *space;
+    *space = old;
+}
 #endif
 
 BOOL kthread_exit_status(const KTHREAD *thread, UWORD *status)

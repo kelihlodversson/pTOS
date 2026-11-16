@@ -23,6 +23,7 @@
 #include "string.h"
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
+#include "exec_replace.h"
 #include "exec_handoff_test.h"
 #include "kaspace.h"
 #endif
@@ -77,6 +78,8 @@ typedef struct kernel_task {
 #if CONF_WITH_EXEC_REPLACE
     KSCHED_EXEC_HANDOFF *replacement; /* private owning preparation */
     ULONG test_handoffs; /* transport evidence only, never a committed-exec epoch */
+    ULONG exec_launches; /* committed Pexec(200) relaunches of this anchor */
+    KSCHED_EXEC_HANDOFF *exec_retired; /* committed, awaiting off-root retirement */
 #endif
     KTHREAD_CONTEXT execution;
     TASK_STATE state;
@@ -557,6 +560,11 @@ struct ksched_exec_handoff {
     KSCHED_CLEANUP_SCOPE cleanup;
     HANDOFF_STATE state;
     uintptr_t irq_flags;
+    /* Pexec(200) only: the image bundle and the root it commits */
+    KPROC_EXEC_REPLACEMENT *receipt;
+    KPROC_EXEC_IMAGE *bundle;
+    KASPACE *target, *old_thread_space;
+    BOOL rebound, committed;
 };
 
 static BOOL exec_handoff_matches(const KSCHED_EXEC_HANDOFF *tx)
@@ -581,9 +589,13 @@ static BOOL exec_handoff_matches(const KSCHED_EXEC_HANDOFF *tx)
         tx->execution == task->execution.identity &&
         tx->space == kthread_aspace(tx->thread) &&
         tx->root == kproc_user_root(run) &&
-        kproc_exec_handoff_allowed(tx->process, tx->thread) &&
+        kproc_exec_handoff_allowed(tx->process, tx->thread, tx->receipt != NULL) &&
         !ksched_cancellation_pending() && tx->cleanup.active &&
-        task->cleanup_depth == 1 && tx->cleanup.depth == 1 &&
+        task->cleanup_depth == (tx->receipt ? 2UL : 1UL) &&
+        tx->cleanup.depth == (tx->receipt ? 2UL : 1UL) &&
+        (!tx->receipt || (!kproc_exec_replacement_validate(tx->receipt) &&
+                          kproc_exec_image_sealable(tx->bundle) &&
+                          kproc_exec_replacement_selected(tx->receipt) == tx->target)) &&
         task->cleanup_ticket == tx->cleanup.ticket &&
         proc_exec_stack_snapshot(&launcher, &syscall) &&
         launcher == tx->launcher && syscall == tx->old_syscall;
@@ -599,6 +611,7 @@ static void exec_handoff_abort(KSCHED_EXEC_HANDOFF **handle)
     *handle = NULL;
     thread_startup_abort(&tx->startup);
     kaspace_lease_release(&tx->hold);
+    kaspace_put(tx->target);
     kaspace_put(tx->space);
     kproc_release(tx->process);
     tx->task->replacement = NULL;
@@ -619,8 +632,9 @@ BOOL ksched_exec_handoff_quiescent(const KSCHED_EXEC_HANDOFF *tx,
         tx->task->execution.identity == tx->execution &&
         kproc_ref_number(tx->process) == tx->number &&
         kproc_live_pd(tx->process) == tx->pd && kproc_ref_pid(tx->process) == tx->pid &&
-        kthread_tid(thread) == tx->tid && kthread_aspace(thread) == tx->space &&
-        kproc_active_space(tx->process) == tx->space;
+        kthread_tid(thread) == tx->tid &&
+        kthread_aspace(thread) == (tx->rebound ? tx->target : tx->space) &&
+        kproc_active_space(tx->process) == (tx->committed ? tx->target : tx->space);
 }
 BOOL ksched_exec_handoff_retiring(const THREAD_STARTUP_DRAFT *startup)
 {
@@ -632,7 +646,7 @@ BOOL ksched_exec_handoff_retiring(const THREAD_STARTUP_DRAFT *startup)
 BOOL ksched_exec_handoff_launch(PD *pd)
 {
     KERNEL_TASK *task = execution_cpu.current;
-    return task && task->program == pd && task->test_handoffs && task->startup &&
+    return task && task->program == pd && (task->test_handoffs || task->exec_launches) && task->startup &&
         task->state == TASK_RUNNING && task->execution.on_cpu &&
         !task->replacement && !task->completion_owner && kthread_is_executing(task->thread);
 }
@@ -673,7 +687,7 @@ LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *args, UWORD failure)
 #endif
     if (!ksched_spawn_allowed() || task->nested || task->nested_prepared ||
         task->replacement || task->cleanup_depth || task->completion_owner || task->dependents ||
-        execution_cpu.pending_exec || !kproc_exec_handoff_allowed(task->process, task->thread) ||
+        execution_cpu.pending_exec || !kproc_exec_handoff_allowed(task->process, task->thread, FALSE) ||
         !proc_exec_stack_snapshot(&launcher, &syscall)) return EACCDN;
     if (next_identity == ~(UQUAD)0 || task->test_handoffs == ~(ULONG)0) return EAGAIN;
     if (failure == 1) return ENSMEM;
@@ -747,6 +761,119 @@ failed:
     return error;
 }
 
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+static UWORD replace_fail_stage;
+void ksched_exec_replace_test_fail_after(UWORD stage) { replace_fail_stage = stage; }
+static BOOL replace_injected(UWORD stage)
+{
+    if (replace_fail_stage != stage) return FALSE;
+    replace_fail_stage = 0; return TRUE;
+}
+#else
+#define replace_injected(stage) FALSE
+#endif
+
+/* Public Pexec(200) commit through the #988 transport. The caller owns the
+ * reversible receipt (whose cleanup scope is this execution's only one) and a
+ * prepared bundle. Every error leaves both with the caller, which aborts them
+ * and still runs the unchanged original program; success never returns. */
+LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bundle)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_EXEC_HANDOFF *tx = NULL;
+    LONG error = EACCDN;
+    void *launcher = NULL;
+    PADDR syscall = 0;
+    UQUAD saved_identity = 0;
+    BOOL identity_injected = FALSE;
+    if (!receipt || !*receipt || !bundle || !*bundle) return EINVAL;
+    if (execution_cpu.leaf_held || execution_cpu.legacy_irq_held) return EACCDN;
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame) return EACCDN;
+#endif
+#if CONF_WITH_PTERMGRP
+    if (task && task->cancel_delivering) return EACCDN;
+#endif
+    /* Anchor executions only: a synchronous nested PROCESS has no
+     * continuation of its own for this transport to replace. */
+    if (!ksched_spawn_allowed() || task->nested || task->nested_prepared ||
+        task->replacement || task->exec_retired || task->cleanup_depth != 1 ||
+        task->completion_owner || task->dependents || execution_cpu.pending_exec ||
+        !kproc_exec_handoff_allowed(task->process, task->thread, TRUE) ||
+        kproc_exec_replacement_validate(*receipt) || !kproc_exec_image_sealable(*bundle) ||
+        !proc_exec_stack_snapshot(&launcher, &syscall)) return EACCDN;
+    if (next_identity == ~(UQUAD)0 || task->exec_launches == ~(ULONG)0) return EAGAIN;
+    if (replace_injected(1)) return ENSMEM;
+    tx = kalloc(sizeof(*tx));
+    if (!tx) return ENSMEM;
+    memset(tx, 0, sizeof(*tx));
+    tx->task = task; tx->thread = task->thread; tx->pd = run;
+    tx->process = kproc_retain_live(task->process);
+    tx->space = kaspace_share(kthread_aspace(task->thread));
+    tx->target = kaspace_share(kproc_exec_replacement_selected(*receipt));
+    tx->number = kproc_ref_number(task->process); tx->pid = task->pid;
+    tx->tid = kthread_tid(task->thread); tx->execution = task->execution.identity;
+    tx->root = kproc_user_root(run); tx->launcher = launcher; tx->old_syscall = syscall;
+    tx->receipt = *receipt; tx->bundle = *bundle;
+    task->replacement = tx;
+    ksched_cleanup_begin(&tx->cleanup);
+    if (!tx->process || !tx->space || !tx->target || replace_injected(2)) { error = ENSMEM; goto failed; }
+    if (!exec_handoff_matches(tx)) goto failed;
+    tx->startup = kproc_exec_image_take_startup(tx->bundle);
+    if (!tx->startup) goto failed;
+    if (replace_injected(3)) { error = ENSMEM; goto failed; }
+    error = thread_startup_retain_stack(tx->startup, &tx->hold);
+    if (error) goto failed;
+    if (replace_injected(4)) { error = ENSMEM; goto failed; }
+    error = thread_startup_run_preflight(tx->startup);
+    if (error) goto failed;
+    tx->state = HANDOFF_PREPARED;
+    if (replace_injected(5)) { error = ENSMEM; goto failed; }
+    if (replace_injected(6)) {
+        /* A stale identity must fail the real matcher. */
+        tx->execution++;
+        if (exec_handoff_matches(tx)) panic("exec replace: stale execution admitted");
+        tx->execution--; error = EACCDN; goto failed;
+    }
+    if (replace_injected(7)) {
+        if (ksched_exec_replace(receipt, bundle) != EACCDN)
+            panic("exec replace: competing commit admitted");
+        error = EACCDN; goto failed;
+    }
+    /* Preparation defers cancellation, not revocation: revalidate after a
+     * genuine cooperative handoff. */
+    ksched_yield();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto failed; }
+    if (replace_injected(8)) { error = ENSMEM; goto failed; }
+    tx->irq_flags = native_sched_irq_save();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto unmask_failed; }
+    if (replace_injected(9)) {
+        saved_identity = next_identity; next_identity = ~(UQUAD)0; identity_injected = TRUE;
+    }
+    if (next_identity == ~(UQUAD)0) { error = EAGAIN; goto unmask_failed; }
+    error = thread_startup_seal(tx->startup);
+    if (error) goto unmask_failed;
+    tx->state = HANDOFF_SEALED;
+    if (replace_injected(10)) { error = ENSMEM; goto unmask_failed; }
+    tx->next_execution = ++next_identity;
+    /* No-fail boundary: the handles now belong to this transaction. */
+    *receipt = NULL; *bundle = NULL;
+    proc_exec_stack_take(tx->launcher, tx->old_syscall);
+    ksched_cleanup_end(&tx->cleanup);
+    kproc_exec_replacement_transfer(tx->receipt);
+    tx->state = HANDOFF_TRANSFERRED;
+    execution_cpu.pending_exec = tx;
+    task->state = TASK_REPLACING;
+    native_sched_save(&task->execution.cpu);
+    longjmp(execution_cpu.resume, 1);
+unmask_failed:
+    if (identity_injected) next_identity = saved_identity;
+    native_sched_irq_restore(tx->irq_flags);
+failed:
+    exec_handoff_abort(&tx);
+    return error;
+}
+
 /* Called only AFTER cpu_acknowledge_handoff(), on the permanent root stack.
  * No callbacks, allocations, user copies or image policy are used to install
  * the fresh context. All destruction follows installation outside the leaf. */
@@ -771,6 +898,18 @@ static void exec_handoff_on_root(void)
         stacks.scheduler.physical == task->execution.stack.physical ||
         stacks.syscall.physical == stacks.scheduler.physical)
         panic("exec handoff: fresh stack ownership changed");
+    if (tx->bundle) {
+        /* Pexec(200) commit: the same THREAD and PROCESS adopt the sealed
+         * bundle's root and image. No allocation, callback or failure. */
+        KASPACE *space = kaspace_share(tx->target);
+        if (!space) panic("exec handoff: committed root reference lost");
+        kthread_exec_rebind(tx->thread, tx, &space);
+        tx->old_thread_space = space;
+        tx->rebound = TRUE;
+        kproc_exec_image_commit(tx->bundle);
+        tx->committed = TRUE;
+        kproc_exec_replacement_commit(tx->receipt);
+    }
     kthread_exec_handoff_stack(tx->thread, tx, &tx->hold, &tx->retired_hold);
     tx->retired_startup = task->startup;
     tx->retired_stack = kthread_stack_detach(&task->execution.stack);
@@ -796,16 +935,54 @@ static void exec_handoff_on_root(void)
     kthread_stack_release(&tx->retired_stack);
     thread_startup_reclaim(&tx->retired_startup);
     kaspace_lease_release(&tx->retired_hold);
-    kaspace_put(tx->space); tx->space = NULL;
-    kproc_release(tx->process); tx->process = NULL;
-    task->test_handoffs++;
     task->replacement = NULL;
     execution_cpu.pending_exec = NULL;
-    kfree(tx);
+    if (tx->bundle) {
+        /* Exactly one committed-exec generation per commit, then one generic
+         * readiness publication. Waiters whose predicates did not change go
+         * back to sleep; nothing completes, reaps or reports a status. */
+        uintptr_t flags = native_sched_irq_save();
+        kproc_exec_generation_advance(tx->process);
+        ksched_wake_publish(&execution_cpu.wake);
+        native_sched_irq_restore(flags);
+        task->exec_launches++;
+        /* The old root, image container and environment are retired by the
+         * relaunched execution on its own fresh stack (exec_replace_retire). */
+        task->exec_retired = tx;
+    } else {
+        kaspace_put(tx->space); tx->space = NULL;
+        kproc_release(tx->process); tx->process = NULL;
+        task->test_handoffs++;
+        kfree(tx);
+        /* Deliberately no KPROC exec epoch or readiness publication: this
+         * token owns same-image transport only, not an image bundle. */
+    }
     native_sched_irq_disable();
     task->state = TASK_NEW;
-    /* Deliberately no KPROC exec epoch or readiness publication: this token
-     * owns same-image transport only, not a sealed executable image bundle. */
+}
+
+/* First action of a relaunched Pexec(200) execution, on its fresh scheduler
+ * stack before user entry: nothing here runs on a retired stack or root. */
+static void exec_replace_retire(KERNEL_TASK *task)
+{
+    KSCHED_EXEC_HANDOFF *tx = task->exec_retired;
+    KSCHED_CLEANUP_SCOPE scope;
+    if (!tx) return;
+    if (!tx->committed || tx->task != task || task->replacement || !task->startup ||
+        task->program != tx->pd || kproc_active_space(tx->process) != tx->target)
+        panic("exec replace: foreign retirement");
+    task->exec_retired = NULL;
+    run = tx->pd;
+    memset(&scope, 0, sizeof(scope));
+    ksched_cleanup_begin(&scope);
+    kproc_exec_replacement_retire(&tx->receipt);
+    kproc_exec_image_retire(&tx->bundle);
+    kaspace_put(tx->old_thread_space);
+    kaspace_put(tx->space);
+    kaspace_put(tx->target);
+    kproc_release(tx->process);
+    ksched_cleanup_end(&scope);
+    kfree(tx);
 }
 #endif
 static KSCHED_WAIT_RESULT wait_observed(BOOL (*ready)(void *), void *argument,
@@ -1763,6 +1940,9 @@ static void task_entry(void)
     KERNEL_TASK *task = execution_cpu.current;
     BOOL refused;
     check_task_thread(task, 2);
+#if CONF_WITH_EXEC_REPLACE
+    exec_replace_retire(task);
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
     lifetime_probe_begin(task);
 #endif

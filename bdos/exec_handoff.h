@@ -14,7 +14,9 @@ typedef struct ksched_exec_handoff KSCHED_EXEC_HANDOFF;
  * Success never returns; every error precedes ownership transfer. */
 LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *, UWORD fail_after);
 LONG ksched_exec_handoff_query(VADDR output);
-BOOL kproc_exec_handoff_allowed(struct kproc *, struct kthread *);
+/* replacing: a Pexec(200) receipt holds the admission ticket (validated by
+ * its owner); otherwise no replacement may be admitted at all. */
+BOOL kproc_exec_handoff_allowed(struct kproc *, struct kthread *, BOOL replacing);
 /* Launcher-owned syscall stack: snapshot is borrowed; take is no-fail after
  * exact-launcher revalidation. Neither operation frees the executing stack. */
 BOOL proc_exec_stack_snapshot(void **launcher, PADDR *physical);
@@ -28,6 +30,7 @@ BOOL kthread_exec_handoff_ready(const struct kthread *, const void *execution);
 void kthread_exec_handoff_stack(struct kthread *, const KSCHED_EXEC_HANDOFF *,
                                struct kaspace_lease **new_hold,
                                struct kaspace_lease **old_hold);
+void kthread_exec_rebind(struct kthread *, const KSCHED_EXEC_HANDOFF *, struct kaspace **space);
 LONG thread_startup_prepare_handoff(struct kaspace *, const THREAD_STARTUP_ARGS *,
                                     THREAD_STARTUP_DRAFT **);
 BOOL ksched_exec_handoff_launch(struct _pd *);
