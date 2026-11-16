@@ -1995,6 +1995,17 @@ void test_pclone(void)
             ptest_assert_msg((status>>16)==child && !(status&65535),"immutable image-policy companion passes");
             ptest_assert_msg(Pwaitpid(child,1,0)<0,"immutable image-policy companion reaped once");
         }
+        /* A real moved UH_IMAGE, independently owned after PE_LOAD. */
+        child=Pexec(3,"IMAGEPOL.TOS","",0);
+        ptest_assert_msg(child>0,"load moved private-image companion");
+        if(child>0) {
+            child=Pexec(106,0,(void *)child,0);
+            ptest_assert_msg(child>0,"start independently owned moved image");
+            if(child>0) {
+                status=Pwaitpid(child,0,0);
+                ptest_assert_msg((status>>16)==child && !(status&65535),"moved image private clone execution passes");
+            }
+        }
 #endif
 #if defined(TEST_WITH_EXEC_HANDOFF_TEST)
         ptest_log_flush();

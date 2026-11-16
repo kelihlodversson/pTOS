@@ -102,11 +102,47 @@ static void test_image_policy(void)
     ptest_pass();
 }
 
+/* Runs both in ordinary loaded images and in the PE_LOAD -> mode 106 moved
+ * image below. Child status crosses the private VM boundary; globals do not. */
+static volatile long private_image_value=0x13579;
+static void private_image_entry(void *argument)
+{
+    long expected=(long)argument;
+    int bad=private_image_value!=0x13579 || Pgetpid()==expected;
+    private_image_value=0x24680;
+    (void)Pterm(bad?79:72);
+}
+static void test_private_image(void)
+{
+    struct ptos_clone_args args={0};
+    SHARED_PEXEC_SNAPSHOT before,after;
+    long stack=Malloc(32768),tid,status;
+    int cycle,ok=1;
+    ptest_begin("private image ownership and COW execution");
+    if(stack<=0) {ptest_assert_msg(0,"allocate private image stack");ptest_pass();return;}
+    args.flags=CLONE_VM;args.entry=private_image_entry;args.argument=(void *)Pgetpid();
+    args.stack_base=(void *)stack;args.stack_size=32768;
+    for(cycle=0;cycle<4;cycle++) {
+        memset((void *)stack,0,32768);private_image_value=0x13579;
+        if(!image_policy_snapshot(&before)) ok=0;
+        tid=pclone_trap(&args,0xc8920000UL|sizeof(args));
+        if(tid<=0) {ok=0;break;}
+        status=Pwaitpid(-1,0,0);
+        if((status&65535)!=72 || private_image_value!=0x13579) ok=0;
+        if(!image_policy_snapshot(&after) || (cycle>=2 && !image_policy_same(&before,&after))) ok=0;
+    }
+    ptest_assert_msg(ok,"independent image child executes; COW writes and exact final counters");
+    ptest_assert_msg(Mfree((void *)stack)==0,"release private image stack");
+    if(ok) conws("native private image execution/COW and exact conservation: PASS\r\n");
+    ptest_pass();
+}
+
 int main(void)
 {
     int failures;
     ptest_log_append();
     test_image_policy();
+    test_private_image();
     failures=ptest_failures();
     ptest_log_flush();
     Pterm(failures);

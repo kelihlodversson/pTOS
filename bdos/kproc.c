@@ -933,7 +933,6 @@ static void private_image_commit(KPROC *target)
     target->stack_top=snapshot->stack_top;target->entry=snapshot->entry;
     target->clone_top_stack=snapshot->top_stack;
     target->dta=(DTAINFO *)(uintptr_t)snapshot->dta;
-    target->pd->p_xdta=PTR_TO_USERPTR_UNCHECKED((DTA *)(uintptr_t)snapshot->dta);
 #if KPROC_LEGACY_PRG
     target->legacy_text_bytes=snapshot->text_bytes;target->legacy_text_recorded=snapshot->text_recorded;
 #if CONF_WITH_IMAGE_POLICY

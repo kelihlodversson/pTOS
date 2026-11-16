@@ -24,6 +24,7 @@ static void check_order(BOOL source_first)
     KTHREAD alien={0};KASPACE_MEMBER *foreign_members=NULL;
     KASPACE *copy=NULL;KASPACE_RESERVATION_INFO child_info;
     VADDR bp,env,dta;PADDR before,after;UWORD rights;
+    ULONG prefix,pins,live;
     KTHREAD thread={0};PROG_LAYOUT layout={0};VADDR image;
     ASPACE *destination;BOOL empty_ok,moved_ok,policy_ok;
     KPROC_IMAGE_POLICY policy;
@@ -67,14 +68,26 @@ static void check_order(BOOL source_first)
     CHECK(aspace_map_procmem(source.aspace,(VADDR)(uintptr_t)source.user_start,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
     CHECK(aspace_map_procmem(source.aspace,(VADDR)(uintptr_t)source.env_start,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
     source.dta=(DTAINFO *)(uintptr_t)(image+TEST_PAGE+32);
+    memset((void *)(uintptr_t)procmem_phys_of((VADDR)(uintptr_t)source.user_start),0xa3,TEST_PAGE);
+    memset((void *)(uintptr_t)procmem_phys_of((VADDR)(uintptr_t)source.env_start),0xb4,TEST_PAGE);
     source.stack_top=USER_STACK_TOP-16;source.stack_low=USER_STACK_TOP-TEST_PAGE;
     source.entry=layout.entry;
 
     policy_ok=kproc_image_policy_capture(&source,&policy)==E_OK;CHECK(policy_ok);
     moved_ok=kproc_clone_private_runtime(NULL,&source);
     printf("production private admission: empty sole source=%d; committed independently owned UH_IMAGE source=%d; value policy capture=%d\n",empty_ok,moved_ok,policy_ok);
+    source.heap[0].kind=UH_LOADED;CHECK(!kproc_clone_private_runtime(NULL,&source));
+    source.heap[0].kind=UH_IMAGE;source.give_back=TRUE;
+    CHECK(!kproc_clone_private_runtime(NULL,&source));source.give_back=FALSE;
+    pins=procmem_pins(source.user_start)+procmem_pins(source.env_start);
     CHECK(moved_ok && kaspace_clone(source.active_space,&copy)==E_OK);
+    CHECK(pins==procmem_pins(source.user_start)+procmem_pins(source.env_start));
     child.pd=&child_pd;child.references=1;child.number=104;source.next=&child;
+    for(prefix=1;prefix<=2;prefix++) {
+        live=metadata_live;fail_metadata=allocation_call+prefix;
+        CHECK(!kproc_clone_private_runtime(&child,&source));reset_failure();
+        CHECK(!child.private_image && !child.heap && metadata_live==live);
+    }
     CHECK(kproc_clone_private_runtime(&child,&source));
     CHECK(!child.nheap && !child.has_image && !child.entry && !child.stack_top);
     CHECK(child.private_image && child.private_image->heap!=source.heap);
@@ -84,6 +97,9 @@ static void check_order(BOOL source_first)
     CHECK(child.layout.seg[0].src==NULL && !child.layout.seg[0].filesz);
     CHECK(child.stack_top==source.stack_top && child.stack_low==source.stack_low && child.entry==source.entry);
     CHECK(kproc_private_image_addresses(&child,&bp,&env,&dta));
+    CHECK(kproc_private_environment(child.pd)==env);
+    CHECK(aspace_translate(child.aspace,bp,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xa3);
+    CHECK(aspace_translate(child.aspace,env,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xb4);
     CHECK(bp==(VADDR)(uintptr_t)source.user_start && env==(VADDR)(uintptr_t)source.env_start && dta==(VADDR)(uintptr_t)source.dta);
     CHECK(kproc_reservation_info(child.pd,bp,TEST_PAGE,&child_info)==E_OK);
     CHECK(kproc_reservation_info(child.pd,env,TEST_PAGE,&child_info)==E_OK);
@@ -97,6 +113,8 @@ static void check_order(BOOL source_first)
     CHECK(aspace_cow_fault(source.aspace,image+TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE)==1);
     source.threads=NULL;
     if(source_first) {kaspace_put(source.active_space);source.active_space=NULL;source.aspace=NULL;procmem_free_owned(source.pd,NULL);
+        CHECK(aspace_translate(child.aspace,bp,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xa3);
+        CHECK(aspace_translate(child.aspace,env,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xb4);
         CHECK(kproc_reservation_info(child.pd,bp,TEST_PAGE,&child_info)==E_OK);
         CHECK(kproc_reservation_info(child.pd,env,TEST_PAGE,&child_info)==E_OK);
     }
