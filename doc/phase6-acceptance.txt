@@ -1,0 +1,28 @@
+#970 executable replacement acceptance checkpoint
+=================================================
+
+Implementation scope and reproducible owner blockers: exec-handoff.txt.
+Accepted base includes merged #973/#974/#975/#977; no #972 import.
+
+The default-off same-image scheduler transport is independently native-testable.
+Its private diagnostic handoff count is NOT a KPROC committed-exec generation.
+The different-root loader receipt still stages/aborts without executable commit.
+Public Pexec(200), Pfork and Pvfork remain EINVFN.
+
+Both eventual fork calls construct independent PRIVATE_VM/COW children; Pvfork
+additionally suspends the exact parent THREAD. No shared-parent VM/user-stack
+detach is needed. Only the exact child's genuine committed-exec generation or
+its later canonical final PROCESS completion may release that dependency.
+Ordinary launch, staging, failure or the same-image transport cannot release it.
+
+Full #970 native acceptance requires a DIFFERENT executable/root through the
+real GEMDOS Pexec(200), retaining PROCESS/PID/PD/initial TID, no old return,
+exactly-once authenticated committed-exec publication and independent later
+completion/reaping. Require x32 FAT, A7 FAT/PFS and 040 FAT/PFS, all resource and
+rollback controls and five shutdown checks each. Do not infer it from this
+prerequisite's tests, synthetic prepared entries or a modeled event.
+
+Exact source revisions, test transcripts, CI workflow results and independent
+read-only owner assessments belong in the #970 Draft PR evidence ledger.
+Neither partial tests nor historical prerequisite CI close #970 or authorize
+production activation, integration merge or issue closure.

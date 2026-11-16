@@ -1,6 +1,11 @@
 Pexec(200): owned private image staging and remaining commit contract (#970)
 =========================================================================
 
+Follow-up: doc/exec-handoff.txt implements the default-off SAME-ROOT native
+scheduler/launcher NORETURN transport prerequisite on the accepted epic that
+includes #977. It conveys no image-bundle right and publishes no exec event.
+The staging transaction below is preserved. Public mode200 remains EINVFN.
+
 Base: accepted epic ec1f04c65d4f7702bd16b9e655f99cceb0a0f91f.
 Consumer: Phase6 #895; architecture/scheduler owner #713; loader migration #894.
 This increment is default-off CONF_WITH_EXEC_REPLACEMENT_TEST. No shipped preset

@@ -9,6 +9,9 @@
 #include "proc.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_EXEC_HANDOFF_TEST
+#include "exec_handoff.h"
+#endif
 
 #if CONF_WITH_PTHJOIN
 struct thread_completion {
@@ -195,6 +198,30 @@ BOOL kthread_is_executing(const KTHREAD *thread)
 {
     return thread && thread->state == THREAD_EXECUTING;
 }
+
+#if CONF_WITH_EXEC_HANDOFF_TEST
+BOOL kthread_exec_handoff_ready(const KTHREAD *thread, const void *execution)
+{
+    return thread && kthread_is_executing(thread) && thread->attached &&
+        !thread->identity_only && thread->execution == execution && thread->reclaim_execution
+#if CONF_WITH_PTHJOIN
+        && !thread->joining
+#endif
+        ;
+}
+void kthread_exec_handoff_stack(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *handoff,
+                               KASPACE_LEASE **hold, KASPACE_LEASE **old)
+{
+    if (!thread || !kthread_exec_handoff_ready(thread, thread->execution) ||
+        !ksched_exec_handoff_quiescent(handoff, thread, thread->execution) ||
+        !hold || kaspace_stack_hold_space(*hold) != thread->space || !old || *old)
+        panic("exec handoff: unauthenticated stack transfer");
+    *old = thread->stack_hold;
+    thread->stack_hold = *hold;
+    *hold = NULL;
+    /* Membership, state, root, backend, TID and join completion stay intact. */
+}
+#endif
 
 BOOL kthread_exit_status(const KTHREAD *thread, UWORD *status)
 {

@@ -1020,7 +1020,7 @@ void kstack_free(PADDR phys)
     if (phys)
         x86_64_pmem_free_pages(phys, X86_64_KSTACK_PAGES);
 }
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_EXEC_HANDOFF_TEST
 BOOL kstack_contains(PADDR phys, uintptr_t address)
 {
     uintptr_t base = X86_64_PHYS_MAP_BASE + phys;

@@ -1996,6 +1996,17 @@ void test_pclone(void)
             ptest_assert_msg(Pwaitpid(child,1,0)<0,"immutable image-policy companion reaped once");
         }
 #endif
+#if defined(TEST_WITH_EXEC_HANDOFF_TEST)
+        ptest_log_flush();
+        child = Pexec(100,"EXECHAND.TOS","",0);
+        ptest_assert_msg(child > 0,"managed execution transport companion starts");
+        if (child > 0) {
+            status = Pwaitpid(child,0,0);
+            ptest_assert_msg((status >> 16) == child && !(status & 65535),
+                             "same-PROCESS transport later completes once");
+            ptest_assert_msg(Pwaitpid(child,1,0) < 0,"transport companion reaped once");
+        }
+#endif
     }
 #endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)

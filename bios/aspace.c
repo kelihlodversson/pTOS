@@ -990,7 +990,7 @@ void kstack_free(PADDR phys)
     if (phys)
         pmem32_free(phys, KSTACK_PAGES);
 }
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_EXEC_HANDOFF_TEST
 BOOL kstack_contains(PADDR phys, uintptr_t address)
 {
     uintptr_t base = (uintptr_t)pmem32_virt(phys);

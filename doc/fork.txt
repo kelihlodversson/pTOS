@@ -31,6 +31,11 @@ prerequisite. It conveys no image, PD, environment, mapping or cleanup ownership
 and cannot replace a live executable. Broader #971 source-image ownership and
 #970 same-PROCESS replacement remain open.
 
+The #970 test-only scheduler/launcher prerequisite in doc/exec-handoff.txt
+proves same-PROCESS/TID NORETURN transport with fresh stacks in the SAME image
+and root. It produces no committed-exec event and is not a Pvfork wake reason.
+Pfork/Pvfork public handlers and their capability rejection are unchanged.
+
 Historical audit
 ----------------
 
