@@ -29,6 +29,16 @@ typedef struct {
     BOOL active;
 } PROCESS_FILE_CLOSE;
 #define PROCESS_FILE_CLOSE_INIT { NULL, NULL, 0, 0, FS_FILE_REFERENCE_INIT, FALSE }
+/* Shared admission for descriptor and search-state operations. Identity
+ * retention keeps this embedded table valid across retirement callbacks. */
+typedef struct {
+    PROCESS_FILES *table;
+    struct kproc *owner;
+} PROCESS_FILE_OPERATION;
+#define PROCESS_FILE_OPERATION_INIT { NULL, NULL }
+LONG process_files_operation_begin(PD *,PROCESS_FILE_OPERATION *);
+void process_files_operation_end(PROCESS_FILE_OPERATION *);
+void process_files_invalidate_epoch(PROCESS_FILES *);
 #define PROCESS_FILES_STANDARD 1U
 #define PROCESS_FILES_ALL      2U
 BOOL process_files_init(PROCESS_FILES *,struct kproc *,SBYTE *standard);

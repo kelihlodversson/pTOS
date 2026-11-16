@@ -103,6 +103,40 @@ LONG process_files_change_admission(PD *pd)
     if (table->retiring || table->snapshot || !kproc_file_references_allowed(pd)) return EACCDN;
     return table->exhausted?EAGAIN:E_OK;
 }
+LONG process_files_operation_begin(PD *pd,PROCESS_FILE_OPERATION *operation)
+{
+    PROCESS_FILES *table=kproc_files(pd);
+    KPROC *owner;
+    UQUAD generation;
+    LONG error;
+    if (!operation || operation->table || operation->owner) return EINVAL;
+    if (!table) return E_OK; /* established boot/legacy caller */
+    if (table->operations==~(ULONG)0) return EAGAIN;
+    owner=kproc_retain_live(table->owner);
+    if (!owner) return EACCDN;
+    error=mutate(table,&generation);
+    if (error) { kproc_release(owner);return error; }
+    table->operations++;
+    operation->table=table;operation->owner=owner;
+    return E_OK;
+}
+void process_files_operation_end(PROCESS_FILE_OPERATION *operation)
+{
+    PROCESS_FILES *table;
+    KPROC *owner;
+    if (!operation || !(table=operation->table)) return;
+    owner=operation->owner;operation->table=NULL;operation->owner=NULL;
+    if (!table->operations) panic("PROCESS operation underflow");
+    table->operations--;
+    kproc_release(owner);
+}
+void process_files_invalidate_epoch(PROCESS_FILES *table)
+{
+    /* Authoritative invalidation cannot wait for or respect a snapshot freeze. */
+    if (!table || table->retiring) return;
+    if (!next_id(&table->epoch)) { table->epoch=0;table->exhausted=TRUE; }
+}
+
 LONG process_files_resolve(PD *pd,WORD descriptor,WORD *backend,UQUAD *incarnation)
 {
     PROCESS_FILES *table=kproc_files(pd);
