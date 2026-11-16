@@ -222,6 +222,19 @@ void kthread_exec_handoff_stack(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *hand
     *hold = NULL;
     /* Membership, state, root, backend, TID and join completion stay intact. */
 }
+/* Pexec(200) of a nested PROCESS: the same rebind under the launcher's
+ * relaunch token instead of the scheduler-root handoff token. */
+void kthread_exec_rebind_nested(KTHREAD *thread, KASPACE **space)
+{
+    KASPACE *old;
+    if (!thread || !space || !*space || *space == thread->space ||
+        !kthread_is_executing(thread) || !thread->attached || thread->identity_only ||
+        !ksched_exec_nested_committing(thread))
+        panic("exec relaunch: unauthenticated THREAD rebind");
+    old = thread->space;
+    thread->space = *space;
+    *space = old;
+}
 /* Pexec(200) only: the same executing THREAD adopts the committed root. The
  * caller's owning reference is exchanged for the old one; nothing is freed. */
 void kthread_exec_rebind(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *handoff, KASPACE **space)

@@ -48,8 +48,9 @@ config CONF_WITH_PEXEC200
       replace the calling program with it, keeping the PROCESS, PID,
       basepage, open files, current directories, parent and children.
       Success does not return; failure returns an error to the unchanged
-      original program. Only an anchor execution can be replaced; a
-      synchronously nested child gets EACCDN (doc/exec-replacement.txt).
+      original program. An asynchronously started PROCESS is replaced
+      through the scheduler-root handoff, a synchronously nested child
+      through its launcher frame (doc/exec-replacement.txt).
 
 config CONF_WITH_EXEC_REPLACEMENT_TEST
     bool "Private executable image staging (test only)"

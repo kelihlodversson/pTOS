@@ -161,6 +161,7 @@ typedef struct {
     void *pending_slot;
 #if CONF_WITH_EXEC_REPLACE
     KSCHED_EXEC_HANDOFF *pending_exec;
+    struct nested_exec *nested_exec, *nested_exec_preparing; /* Pexec(200) relaunch */
 #endif
     ULONG stack[ROOT_STACK_BYTES/sizeof(ULONG)] __attribute__((aligned(16)));
 } NATIVE_SCHED_CPU;
@@ -773,6 +774,7 @@ static BOOL replace_injected(UWORD stage)
 #define replace_injected(stage) FALSE
 #endif
 
+static LONG exec_replace_nested(KERNEL_TASK *, KPROC_EXEC_REPLACEMENT **, KPROC_EXEC_IMAGE **);
 /* Public Pexec(200) commit through the #988 transport. The caller owns the
  * reversible receipt (whose cleanup scope is this execution's only one) and a
  * prepared bundle. Every error leaves both with the caller, which aborts them
@@ -791,11 +793,12 @@ LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bu
 #if CONF_WITH_USER_CALLBACKS
     if (execution_cpu.callback.frame) return EACCDN;
 #endif
+    /* A synchronous nested PROCESS has no continuation of its own: it is
+     * relaunched through its launcher frame instead (exec_replace_nested). */
+    if (task && task->nested && scheduler.active) return exec_replace_nested(task, receipt, bundle);
 #if CONF_WITH_PTERMGRP
     if (task && task->cancel_delivering) return EACCDN;
 #endif
-    /* Anchor executions only: a synchronous nested PROCESS has no
-     * continuation of its own for this transport to replace. */
     if (!ksched_spawn_allowed() || task->nested || task->nested_prepared ||
         task->replacement || task->exec_retired || task->cleanup_depth != 1 ||
         task->completion_owner || task->dependents || execution_cpu.pending_exec ||
@@ -1649,6 +1652,162 @@ BOOL ksched_nested_leave(KPROC *process)
 #endif
     return TRUE;
 }
+
+#if CONF_WITH_EXEC_REPLACE
+/* Pexec(200) of a synchronous nested PROCESS (#713). Its user image runs on
+ * its own syscall stack, entered from a launcher frame on the enclosing
+ * execution's kernel stack. After the fallible preparation below, the no-fail
+ * boundary abandons the old syscall continuation by jumping back into that
+ * launcher, which commits the image off the old stack, switches to the new
+ * root, retires the old one and enters the new program with a fresh stack. */
+typedef struct nested_exec {
+    KSCHED_NESTED *frame;
+    KPROC_EXEC_REPLACEMENT *receipt;
+    KPROC_EXEC_IMAGE *bundle;
+    KASPACE *target, *old_thread_space;
+    PADDR kstack_phys, old_kstack;
+    uintptr_t kstack_top;
+    uintptr_t irq_flags;
+    UQUAD carrier_execution;
+    BOOL committed;
+} NESTED_EXEC;
+
+static BOOL nested_exec_matches(KERNEL_TASK *task, const NESTED_EXEC *nx,
+                                const KPROC_EXEC_REPLACEMENT *receipt, const KPROC_EXEC_IMAGE *bundle)
+{
+    KSCHED_NESTED *frame = nx->frame;
+    return scheduler.active && !scheduler.stopping && task == execution_cpu.current &&
+        task == execution_cpu.inflight && task->state == TASK_RUNNING && task->execution.on_cpu &&
+        task->execution.identity == nx->carrier_execution &&
+        task->nested == frame && !task->nested_prepared && frame->carrier == task &&
+        frame->carrier_execution == task->execution.identity && frame->state == NESTED_ACTIVE &&
+        frame->program == run && kproc_live_pd(frame->process) == run &&
+        ksched_exit_thread(run) == frame->thread && kthread_process(frame->thread) == frame->process &&
+        kthread_is_executing(frame->thread) && !frame->cancel_delivering &&
+        frame->cleanup_depth == 1 && !ksched_cancellation_pending() &&
+        !kproc_exec_replacement_validate(receipt) && kproc_exec_image_sealable(bundle) &&
+        kproc_exec_replacement_selected(receipt) == nx->target &&
+        kproc_exec_handoff_allowed(frame->process, frame->thread, TRUE) &&
+        proc_exec_relaunch_ready(run);
+}
+
+static LONG exec_replace_nested(KERNEL_TASK *task, KPROC_EXEC_REPLACEMENT **receipt,
+                                KPROC_EXEC_IMAGE **bundle)
+{
+    NESTED_EXEC *nx;
+    THREAD_STARTUP_DRAFT *startup;
+    LONG error = EACCDN;
+    BOOL masked = FALSE;
+    if (execution_cpu.nested_exec || execution_cpu.nested_exec_preparing ||
+        execution_cpu.pending_exec) return EACCDN;
+    if (replace_injected(1)) return ENSMEM;
+    nx = kalloc(sizeof(*nx));
+    if (!nx) return ENSMEM;
+    memset(nx, 0, sizeof(*nx));
+    nx->frame = task->nested;
+    nx->carrier_execution = task->execution.identity;
+    nx->target = kaspace_share(kproc_exec_replacement_selected(*receipt));
+    execution_cpu.nested_exec_preparing = nx;
+    if (!nx->target || replace_injected(2)) { error = ENSMEM; goto failed; }
+    if (!nested_exec_matches(task, nx, *receipt, *bundle)) goto failed;
+    /* The launcher, not the scheduler, enters the new image: it needs only
+     * a fresh syscall stack, so the anchor's startup draft is not used. */
+    nx->kstack_phys = kstack_alloc(&nx->kstack_top);
+    if (!nx->kstack_phys || replace_injected(3)) { error = ENSMEM; goto failed; }
+    startup = kproc_exec_image_take_startup(*bundle);
+    thread_startup_abort(&startup);
+    if (replace_injected(4) || replace_injected(5)) { error = ENSMEM; goto failed; }
+    if (replace_injected(6)) {
+        nx->carrier_execution++;
+        if (nested_exec_matches(task, nx, *receipt, *bundle)) panic("exec replace: stale nested execution admitted");
+        nx->carrier_execution--; error = EACCDN; goto failed;
+    }
+    if (replace_injected(7)) {
+        if (ksched_exec_replace(receipt, bundle) != EACCDN) panic("exec replace: competing nested commit admitted");
+        error = EACCDN; goto failed;
+    }
+    ksched_yield();
+    if (!nested_exec_matches(task, nx, *receipt, *bundle)) { error = EACCDN; goto failed; }
+    if (replace_injected(8)) { error = ENSMEM; goto failed; }
+    nx->irq_flags = native_sched_irq_save(); masked = TRUE;
+    if (!nested_exec_matches(task, nx, *receipt, *bundle)) { error = EACCDN; goto failed; }
+    if (replace_injected(9)) { error = EAGAIN; goto failed; }
+    if (replace_injected(10)) { error = ENSMEM; goto failed; }
+    /* No-fail boundary: the handles belong to the relaunch from here on. */
+    nx->receipt = *receipt; nx->bundle = *bundle;
+    *receipt = NULL; *bundle = NULL;
+    kproc_exec_replacement_transfer(nx->receipt);
+    execution_cpu.nested_exec_preparing = NULL;
+    execution_cpu.nested_exec = nx;
+    proc_exec_relaunch(run);
+failed:
+    if (masked) native_sched_irq_restore(nx->irq_flags);
+    execution_cpu.nested_exec_preparing = NULL;
+    if (nx->kstack_phys) kstack_free(nx->kstack_phys);
+    kaspace_put(nx->target);
+    kfree(nx);
+    return error;
+}
+
+BOOL ksched_exec_nested_committing(const KTHREAD *thread)
+{
+    NESTED_EXEC *nx = execution_cpu.nested_exec;
+    KERNEL_TASK *task = execution_cpu.current;
+    return nx && !nx->committed && task && task->nested == nx->frame &&
+        nx->frame->thread == thread && task->execution.identity == nx->carrier_execution;
+}
+
+/* Called by the launcher after its relaunch longjmp, on its own stack with
+ * interrupts still masked: the no-fail commit, then the fresh stack. */
+void ksched_exec_relaunch_commit(PD *pd, PADDR *kstack_phys, uintptr_t *kstack_top)
+{
+    NESTED_EXEC *nx = execution_cpu.nested_exec;
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_NESTED *frame;
+    KASPACE *space;
+    uintptr_t marker;
+    if (!nx || nx->committed || !task || task->nested != nx->frame || pd != run ||
+        nx->frame->program != pd || nx->frame->state != NESTED_ACTIVE ||
+        task->execution.identity != nx->carrier_execution || !kstack_phys || !kstack_top ||
+        kstack_contains(*kstack_phys, (uintptr_t)&marker))
+        panic("exec replace: unauthenticated nested relaunch");
+    frame = nx->frame;
+    space = kaspace_share(nx->target);
+    if (!space) panic("exec replace: committed root reference lost");
+    kthread_exec_rebind_nested(frame->thread, &space);
+    nx->old_thread_space = space;
+    kproc_exec_image_commit(nx->bundle);
+    kproc_exec_replacement_commit(nx->receipt);
+    nx->committed = TRUE;
+    kproc_exec_generation_advance(frame->process);
+    ksched_wake_publish(&execution_cpu.wake);
+    nx->old_kstack = *kstack_phys;
+    *kstack_phys = nx->kstack_phys; *kstack_top = nx->kstack_top;
+    nx->kstack_phys = 0;
+}
+
+/* After the launcher switched to the committed root: interrupts back on,
+ * then the old syscall stack, root, memberships and container retire. */
+void ksched_exec_relaunch_retire(void)
+{
+    NESTED_EXEC *nx = execution_cpu.nested_exec;
+    KSCHED_CLEANUP_SCOPE scope;
+    uintptr_t marker;
+    if (!nx || !nx->committed || kstack_contains(nx->old_kstack, (uintptr_t)&marker))
+        panic("exec replace: nested retirement without commit");
+    execution_cpu.nested_exec = NULL;
+    native_sched_irq_restore(nx->irq_flags);
+    kstack_free(nx->old_kstack);
+    memset(&scope, 0, sizeof(scope));
+    ksched_cleanup_begin(&scope);
+    kproc_exec_replacement_retire(&nx->receipt);
+    kproc_exec_image_retire(&nx->bundle);
+    kaspace_put(nx->old_thread_space);
+    kaspace_put(nx->target);
+    ksched_cleanup_end(&scope);
+    kfree(nx);
+}
+#endif
 
 BOOL ksched_finalizing_process(const KPROC *process)
 {

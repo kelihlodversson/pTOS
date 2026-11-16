@@ -1,11 +1,13 @@
 /* Pexec(200) acceptance subject (#970). Started by the Pclone runner as an
- * anchor PROCESS with Pexec(100). Every injected or genuine preparation
+ * anchor PROCESS with Pexec(100), and again as a synchronously nested child
+ * with Pexec(0) and the tail "N", which takes the launcher relaunch path. Every injected or genuine preparation
  * failure must leave this program running unchanged, with every counter
  * conserved; the final call replaces it with EXEC200B.TOS in the same
  * PROCESS and never returns. */
 #include "exec200_probe.h"
 #include "../../include/mapping_lifetime_test.h"
 #include <mint/mintbind.h>
+#include <mint/basepage.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -66,6 +68,7 @@ int main(void)
     char tail[128];
     unsigned stage;
     long result;
+    int nested = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'N';
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("initial query", 0);
     if (original.generation[0] || original.generation[1]) fail("initial generation", 1);
     if (original.pid != (unsigned long)Pgetpid()) fail("initial PID", Pgetpid());
@@ -92,9 +95,9 @@ int main(void)
     for (stage = 1; stage <= 10; stage++)
         injected(2, stage, stage == 6 || stage == 7 ? -36L : stage == 9 ? -326L : -39L);
     /* The genuine commit: same PROCESS, different executable and root. */
-    sprintf(tail + 1, "1 %ld %lu %lu %lu %lu %ld", descriptor,
+    sprintf(tail + 1, "1 %ld %lu %lu %lu %lu %ld %d", descriptor,
             (unsigned long)original.pid, (unsigned long)original.tid,
-            (unsigned long)original.root[0], (unsigned long)original.root[1], (long)Pgetppid());
+            (unsigned long)original.root[0], (unsigned long)original.root[1], (long)Pgetppid(), nested);
     tail[0] = (char)strlen(tail + 1);
     result = exec200_call("EXEC200B.TOS", tail, environment);
     fail("successful Pexec(200) returned to the old program", result);

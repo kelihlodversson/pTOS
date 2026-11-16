@@ -157,6 +157,9 @@ struct x86_64_process_launch {
     volatile ULONG exit_resident_len;
     volatile BOOL exit_final;
 #endif
+#if CONF_WITH_EXEC_REPLACE
+    volatile BOOL relaunch; /* Pexec(200): enter the committed image again */
+#endif
 };
 
 #if CONF_WITH_NATIVE_SCHED
@@ -425,6 +428,9 @@ void gouser_entry(WORD entry_type)
         launch.exit_process = NULL;
         launch.fallback_observer = NULL;
 #endif
+#if CONF_WITH_EXEC_REPLACE
+        launch.relaunch = FALSE;
+#endif
 
 
         set_current_launch(&launch);
@@ -563,6 +569,9 @@ void gouser_entry(WORD entry_type)
 #if CONF_WITH_NATIVE_SCHED
         launcher_gsbase = clone_read_base(0xc0000101UL);
 #endif
+#if CONF_WITH_EXEC_REPLACE
+relaunch:
+#endif
         if (setjmp(launch.resume) == 0) {
 #if CONF_WITH_NATIVE_SCHED
             if (prepared) {
@@ -576,6 +585,40 @@ void gouser_entry(WORD entry_type)
             x86_64_enter_user(pml4_phys, entry_rip, user_rsp,
                               standard_entry ? 0 : (UQUAD)(uintptr_t)p, entry_type);
         }
+#if CONF_WITH_EXEC_REPLACE
+        if (launch.relaunch) {
+            /* Pexec(200) of this PROCESS: back on the launcher's own stack,
+             * off the replaced program's syscall stack. Normalise the
+             * abandoned system call, give the new program the selectors and
+             * bases its first launch had, commit, switch to the committed
+             * root, retire the old one and enter it like a fresh launch. */
+            PADDR fresh_phys = (PADDR)kstack_phys;
+            uintptr_t fresh_top = (uintptr_t)kstack_top;
+            launch.relaunch = FALSE;
+            *fs_error_current() = launch.error;
+            x86_64_syscall_abandoned();
+            __asm__ volatile ("movw %0,%%ds; movw %1,%%es; movw %2,%%fs; movw %3,%%gs"
+                              :: "r"(launcher_ds), "r"(launcher_es), "r"(launcher_fs), "r"(launcher_gs) : "memory");
+            clone_restore_base(0xc0000100UL, launcher_fsbase);
+            clone_restore_base(0xc0000101UL, launcher_gsbase);
+            ksched_exec_relaunch_commit(p, &fresh_phys, &fresh_top);
+            kstack_phys = (UQUAD)fresh_phys; kstack_top = (UQUAD)fresh_top;
+            launch.stack_phys = kstack_phys;
+            x86_64_set_kernel_stack(kstack_top);
+            x86_64_set_irq_stack(kstack_top + 8);
+            pml4_phys = kproc_user_root(p);
+            entry_rip = kproc_user_entry(p);
+            user_rsp = kproc_user_stack(p);
+            standard_entry = kproc_standard_entry(p);
+            prepared = NULL; startup = NULL; program = FALSE;
+            if (!pml4_phys || !entry_rip || !user_rsp ||
+                (user_rsp & 15) != (standard_entry ? 0 : 8))
+                panic("x86-64: exec relaunch without a valid address space, entry or stack\n");
+            x86_64_write_cr3(pml4_phys);
+            ksched_exec_relaunch_retire();
+            goto relaunch;
+        }
+#endif
         set_current_launch(launch.previous);
         *fs_error_current() = launch.error;
         /* Pterm() was a system call, still on the child's stack with the
@@ -665,6 +708,21 @@ int x86_64_demand_page(UQUAD address, UQUAD error_code)
                 ((error_code & 2) ? ASPACE_PROT_WRITE : 0) |
                 ((error_code & 16) ? ASPACE_PROT_EXEC : 0));
 }
+
+#if CONF_WITH_EXEC_REPLACE
+BOOL proc_exec_relaunch_ready(PD *pd)
+{
+    X86_64_PROCESS_LAUNCH *launch = get_current_launch();
+    return launch && launch->pd == pd && !launch->exit_process && !launch->relaunch;
+}
+void proc_exec_relaunch(PD *pd)
+{
+    X86_64_PROCESS_LAUNCH *launch = get_current_launch();
+    if (!proc_exec_relaunch_ready(pd)) panic("x86-64: exec relaunch with no launch of this process\n");
+    launch->relaunch = TRUE;
+    longjmp(launch->resume, 1);
+}
+#endif
 
 void termuser(void)
 {

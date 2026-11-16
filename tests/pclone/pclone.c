@@ -2032,6 +2032,12 @@ void test_pclone(void)
             ptest_assert_msg(Fdelete("GO970.TMP") == 0 && Fdelete("EXEC200.TMP") == 0,
                              "Pexec(200) test files");
         }
+        /* The same subject as a synchronously nested child: replaced through
+         * its launcher frame, and this Pexec(0) returns its final status. */
+        ptest_log_flush();
+        ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001N",0) == 70,
+                         "nested Pexec(200) relaunch completes once through the launcher");
+        ptest_assert_msg(Fdelete("EXEC200.TMP") == 0,"nested Pexec(200) test file");
 #endif
     }
 #endif

@@ -173,6 +173,9 @@ struct uspace_launch {
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
     volatile BOOL exit_final;
+#if CONF_WITH_EXEC_REPLACE
+    volatile BOOL relaunch; /* Pexec(200): enter the committed image again */
+#endif
 };
 #if CONF_WITH_NATIVE_SCHED
 static struct uspace_launch *get_uspace_launch(void) { return ksched_loaded_launcher(); }
@@ -354,12 +357,18 @@ void gouser(void)
     launch.stack_top = kstack_top;
     launch.exit_process = NULL;
     launch.fallback_observer = NULL;
+#if CONF_WITH_EXEC_REPLACE
+    launch.relaunch = FALSE;
+#endif
     set_uspace_launch(&launch);
     /* the FPU of the launcher is what the child will not see, and what the
      * launcher gets back when it ends */
     if (fputype)
         m68k_fpu_save(&fpu);
     __asm__ volatile ("move.w %%sr,%0" : "=d" (launcher_status));
+#if CONF_WITH_EXEC_REPLACE
+relaunch:
+#endif
     if (setjmp(launch.resume) == 0) {
         ULONG initial[2];
         M68K_USER_ENTRY initial_entry;
@@ -400,6 +409,28 @@ void gouser(void)
 #endif
         m68k_enter_user(&initial_entry);
     }
+#if CONF_WITH_EXEC_REPLACE
+    if (launch.relaunch) {
+        /* Pexec(200) of this PROCESS: back on the launcher's own stack, off
+         * the replaced program's syscall stack. Commit, switch to the
+         * committed root, retire the old one, and enter the new program
+         * exactly like a freshly launched one. */
+        launch.relaunch = FALSE;
+        *fs_error_current() = launch.error;
+        ksched_exec_relaunch_commit(p, &kstack_phys, &kstack_top);
+        launch.stack_phys = kstack_phys;
+        launch.stack_top = kstack_top;
+        root = kproc_user_root(p);
+        entry = (ULONG)kproc_user_entry(p);
+        user_sp = (ULONG)kproc_user_stack(p);
+        prepared = NULL; startup = NULL; program = FALSE;
+        if (!root || !entry || !user_sp)
+            panic("exec relaunch without an address space, entry or stack\n");
+        aspace_hw_switch(root);
+        ksched_exec_relaunch_retire();
+        goto relaunch;
+    }
+#endif
     set_uspace_launch(launch.previous);
     *fs_error_current() = launch.error;
     {
@@ -435,6 +466,21 @@ void gouser(void)
         m68k_fpu_restore(&fpu);
     __asm__ volatile ("move.w %0,%%sr" :: "d" (launcher_status) : "memory", "cc");
 }
+
+#if CONF_WITH_EXEC_REPLACE
+BOOL proc_exec_relaunch_ready(PD *pd)
+{
+    struct uspace_launch *launch = get_uspace_launch();
+    return launch && launch->pd == pd && !launch->exit_process && !launch->relaunch;
+}
+void proc_exec_relaunch(PD *pd)
+{
+    struct uspace_launch *launch = get_uspace_launch();
+    if (!proc_exec_relaunch_ready(pd)) panic("exec relaunch: no launch of this process");
+    launch->relaunch = TRUE;
+    longjmp(launch->resume, 1);
+}
+#endif
 
 void termuser(void)
 {

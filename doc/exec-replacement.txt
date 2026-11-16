@@ -213,7 +213,8 @@ Pexec(200) commit design (#970, PR #999)
 
 Status: implemented behind CONF_WITH_PEXEC200 (default n). The regression
 kernel (CONF_WITH_EXEC_REPLACEMENT_TEST) enables it and runs EXEC200.TOS on
-the native matrix. Shipped configurations enable it only after the native
+the native matrix, both as an anchor (Pexec 100) and synchronously nested
+(Pexec 0). Shipped configurations enable it only after the native
 matrix, CI and owner reviews pass. This section fills the "remaining concrete
 owner contract" of exec-handoff.txt.
 
@@ -232,7 +233,6 @@ basepage only. A classic PRG target runs from its TPA, so replacing it would
 need a new basepage: it is rejected with EPLFMT by staging. A PRG source is
 fine, because its TPA stays its basepage. These are rejected with EACCDN by
 admission and never partially replaced:
-  - a synchronous nested child (see "Anchor executions" below);
   - multi-THREAD PROCESSes;
   - shared-VM (4/104) children and Pclone compatibility state;
   - legacy PE_GO give-back;
@@ -345,14 +345,35 @@ transport, THREAD exit and PROCESS completion never change it. It never wraps:
 capacity is checked in the masked window, and an exhausted counter fails the
 exec cleanly.
 
-Anchor executions
+Nested executions
 -----------------
 The #988 transport replaces a task's own continuation. A child started with
 synchronous Pexec(0) from a managed task runs nested on its parent's carrier
-task (#713) and has no continuation of its own. Pexec(200) from such a child
-returns EACCDN for now; it needs a relaunch through the nested launcher frame.
-Asynchronously started PROCESSes (Pexec 100/104/106 and the scheduler's own
-launches) are anchors.
+task (#713) and has no continuation of its own. It runs on a syscall stack of
+its own, entered from a launcher frame (gouser) on the enclosing execution's
+kernel stack, and that frame is where it is relaunched:
+
+  - ksched_exec_replace finds the innermost nested frame and prepares a fresh
+    syscall stack instead of using the anchor's startup draft. The same ten
+    injectable stages, the cooperative yield and the masked revalidation
+    apply; the frame's cleanup depth must be the receipt's alone.
+  - At the no-fail boundary the receipt's scope ends and proc_exec_relaunch
+    marks the loaded launch and jumps back to it, like Pterm does, with
+    interrupts still masked.
+  - The launcher calls ksched_exec_relaunch_commit, off the abandoned
+    syscall stack: kthread_exec_rebind_nested (authenticated by the pending
+    relaunch, not the scheduler-root token), kproc_exec_image_commit, the
+    ticket drop, and exactly one generation advance plus one wake. It then
+    switches the MMU to the committed root and calls
+    ksched_exec_relaunch_retire, which unmasks interrupts and frees the old
+    syscall stack, container, root and memberships under a cleanup scope.
+  - The launcher enters the new program from the committed KPROC record,
+    as for any launch. On x32 the abandoned system call's GS swap is
+    normalised first, and the selectors and FS/GS bases are those of the
+    first launch.
+
+The enclosing launcher's Pexec(0) still returns only the final program's exit
+status, exactly once.
 
 Gating
 ------
