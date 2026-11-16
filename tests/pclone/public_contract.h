@@ -321,7 +321,7 @@ static void phase1_policy_observe(long staged_pid)
 {
     struct phase1_policy_report report;
     static const char tail[] = "\1w";
-    long file;
+    long file,observed;
     unsigned i;
     /* The tiny existing global-scheduler payload exits23 before its role
      * logic. Four real PROCESS/PD constructions fit while a PRG orphan pins
@@ -348,7 +348,11 @@ static void phase1_policy_observe(long staged_pid)
     if (report.error) {
         char message[96]; sprintf(message,"ABI orphan execute-policy error=%ld\r\n",report.error); conws(message);
     }
-    ptest_assert_msg(report.done && !report.error && Pwaitpid(report.worker,1,0) == -33L,
+    observed=Pwaitpid(report.worker,1,0);
+    if(!report.done || report.error || observed!=-33L)
+        printf("orphan policy done=%ld error=%ld worker=%ld reap=%ld polls=%u\r\n",
+            report.done,report.error,report.worker,observed,i);
+    ptest_assert_msg(report.done && !report.error && observed == -33L,
                      "orphan nested text accepted, data/BSS/hole rejected, no misdirected reap");
     ptest_assert_msg(Fclose(file) == 0 && Fdelete(phase1_policy_file) == 0,"orphan policy report cleanup");
 }
