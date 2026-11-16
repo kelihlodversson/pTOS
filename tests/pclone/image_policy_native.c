@@ -108,6 +108,7 @@ static void test_image_policy(void)
 static volatile long private_image_value=0x13579;
 static unsigned char private_dta[512];
 static void *private_original_dta;
+static char *private_original_environment;
 static void private_image_entry(void *argument)
 {
     long expected=(long)argument;
@@ -115,6 +116,9 @@ static void private_image_entry(void *argument)
     if((void *)Fgetdta()!=private_original_dta) bad=1;
     Fsetdta(private_dta);
     if((void *)Fgetdta()!=private_dta || (void *)_base->p_dta!=private_dta) bad=1;
+    _base->p_env=(char *)0xffff0000UL;
+    if(Pexec(0,"C:\\GLOBALCH.TOS","\1w",0)!=-40L) bad=1;
+    _base->p_env=private_original_environment;
     private_image_value=0x24680;
     (void)Pterm(bad?79:72);
 }
@@ -124,7 +128,7 @@ static void test_private_image(void)
     long stack=Malloc(32768),tid,status;
     int cycle,ok=1;
     ptest_begin("private image ownership and COW execution");
-    private_original_dta=(void *)Fgetdta();
+    private_original_dta=(void *)Fgetdta();private_original_environment=_base->p_env;
     if(stack<=0) {ptest_assert_msg(0,"allocate private image stack");ptest_pass();return;}
     args.flags=CLONE_VM;args.entry=private_image_entry;args.argument=(void *)Pgetpid();
     args.stack_base=(void *)stack;args.stack_size=32768;
@@ -134,7 +138,7 @@ static void test_private_image(void)
         if(tid<=0) {ok=0;break;}
         status=Pwaitpid(-1,0,0);
         if((status&65535)!=72 || private_image_value!=0x13579 ||
-            (void *)Fgetdta()!=private_original_dta || (void *)_base->p_dta!=private_original_dta) ok=0;
+            (void *)Fgetdta()!=private_original_dta || (void *)_base->p_dta!=private_original_dta || _base->p_env!=private_original_environment) ok=0;
     }
     ptest_assert_msg(ok,"independent image child executes with isolated COW writes");
     ptest_assert_msg(Mfree((void *)stack)==0,"release private image stack");

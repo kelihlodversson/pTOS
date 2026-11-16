@@ -976,7 +976,19 @@ static void private_image_commit(KPROC *target)
 VADDR kproc_private_environment(PD *pd)
 {
     KPROC *process=kproc_find(pd);
-    if (process && process->logical_context) return process->logical_environment;
+    if (process && process->logical_context) {
+        USERPTR_T(char) environment;
+        VADDR basepage=process->logical_basepage;
+        /* Match ordinary Pexec's mutable user p_env contract. This value is
+         * input to existing uaccess validation, never allocation authority.
+         * The factory PD and original environment extent retain their own
+         * cleanup identities regardless of what the user writes here. */
+        if (!process->aspace || !basepage || basepage>=USER_VA_LIMIT ||
+            sizeof(PD)>USER_VA_LIMIT-basepage ||
+            !aspace_copy_from_user(process->aspace,&environment,
+                basepage+offsetof(PD,p_env),sizeof(environment))) return 0;
+        return (VADDR)(uintptr_t)USERPTR_TO_PTR(environment);
+    }
     return (VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_env);
 }
 

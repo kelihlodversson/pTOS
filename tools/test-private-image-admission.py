@@ -78,6 +78,8 @@ static void check_order(BOOL source_first)
     source.dta=(DTAINFO *)(uintptr_t)(image+TEST_PAGE+32);
     memset((void *)(uintptr_t)procmem_phys_of((VADDR)(uintptr_t)source.user_start),0xa3,TEST_PAGE);
     memset((void *)(uintptr_t)procmem_phys_of((VADDR)(uintptr_t)source.env_start),0xb4,TEST_PAGE);
+    mirror=PTR_TO_USERPTR_UNCHECKED(source.env_start);
+    CHECK(aspace_copy_to_user(source.aspace,(VADDR)(uintptr_t)source.user_start+offsetof(PD,p_env),&mirror,sizeof(mirror)));
     kproc_set_dta(source.pd,(DTAINFO *)(uintptr_t)((VADDR)(uintptr_t)source.user_start+offsetof(PD,p_cmdlin)));
     CHECK(aspace_copy_from_user(source.aspace,&mirror,(VADDR)(uintptr_t)source.user_start+offsetof(PD,p_xdta),sizeof(mirror)));
     CHECK(mirror==PTR_TO_USERPTR_UNCHECKED((DTA *)source.dta));
@@ -117,6 +119,14 @@ static void check_order(BOOL source_first)
     CHECK(child.stack_top==source.stack_top && child.stack_low==source.stack_low && child.entry==source.entry);
     CHECK(kproc_private_image_addresses(&child,&bp,&env,&dta));
     CHECK(kproc_private_environment(child.pd)==env);
+    mirror=PTR_TO_USERPTR_UNCHECKED((char *)(uintptr_t)(image+TEST_PAGE+64));
+    CHECK(aspace_cow_fault(child.aspace,bp,ASPACE_PROT_USER|ASPACE_PROT_WRITE)!=0);
+    CHECK(aspace_copy_to_user(child.aspace,bp+offsetof(PD,p_env),&mirror,sizeof(mirror)));
+    CHECK(kproc_private_environment(child.pd)==image+TEST_PAGE+64);
+    mirror=PTR_TO_USERPTR_UNCHECKED((char *)(uintptr_t)env);
+    CHECK(aspace_copy_to_user(child.aspace,bp+offsetof(PD,p_env),&mirror,sizeof(mirror)));
+    CHECK(kproc_private_environment(child.pd)==env);
+    CHECK(aspace_copy_from_user(source.aspace,&mirror,bp+offsetof(PD,p_env),sizeof(mirror)) && mirror==env);
     CHECK(aspace_translate(child.aspace,bp,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xa3);
     CHECK(aspace_translate(child.aspace,env,&after,NULL) && *(UBYTE *)(uintptr_t)after==0xb4);
     CHECK(bp==(VADDR)(uintptr_t)source.user_start && env==(VADDR)(uintptr_t)source.env_start && dta==(VADDR)(uintptr_t)source.dta);
@@ -130,6 +140,8 @@ static void check_order(BOOL source_first)
     CHECK(aspace_protect_private(child.aspace,bp,TEST_PAGE,ASPACE_PROT_USER));
     kproc_set_dta(child.pd,(DTAINFO *)(uintptr_t)dta);
     CHECK(child.dta==source.dta && aspace_logical_protection(child.aspace,bp,&rights) && !(rights&ASPACE_PROT_WRITE));
+    CHECK(aspace_protect_private(child.aspace,bp,TEST_PAGE,0));
+    CHECK(kproc_private_environment(child.pd)==0);
     CHECK(aspace_protect_private(child.aspace,bp,TEST_PAGE,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
     CHECK(kproc_reservation_info(child.pd,bp,TEST_PAGE,&child_info)==E_OK);
     CHECK(kproc_reservation_info(child.pd,env,TEST_PAGE,&child_info)==E_OK);
