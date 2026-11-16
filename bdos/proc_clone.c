@@ -218,7 +218,8 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     else {
         error = kaspace_clone(space, &tx->space);
         if (error) goto failed;
-        if (!kproc_clone_private_runtime(tx->process, tx->source)) { error = EACCDN; goto failed; }
+        error=kproc_clone_prepare_private_image(tx->process,tx->source);
+        if (error) goto failed;
         error = ENSMEM;
     }
 #endif

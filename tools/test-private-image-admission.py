@@ -85,9 +85,12 @@ static void check_order(BOOL source_first)
     child.pd=&child_pd;child.references=1;child.number=104;source.next=&child;
     for(prefix=1;prefix<=2;prefix++) {
         live=metadata_live;fail_metadata=allocation_call+prefix;
-        CHECK(!kproc_clone_private_runtime(&child,&source));reset_failure();
+        CHECK(kproc_clone_prepare_private_image(&child,&source)==ENSMEM);reset_failure();
         CHECK(!child.private_image && !child.heap && metadata_live==live);
     }
+    child.heap=kalloc(sizeof(*child.heap));CHECK(child.heap);child.heap_capacity=1;
+    CHECK(kproc_clone_prepare_private_image(&child,&source)==EACCDN);
+    kfree(child.heap);child.heap=NULL;child.heap_capacity=0;
     CHECK(kproc_clone_private_runtime(&child,&source));
     CHECK(!child.nheap && !child.has_image && !child.entry && !child.stack_top);
     CHECK(child.private_image && child.private_image->heap!=source.heap);

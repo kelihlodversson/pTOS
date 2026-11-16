@@ -166,6 +166,12 @@ struct kproc {
     UQUAD tpa_gen;              /* a freed-and-reused address is not trusted */
     UBYTE *user_start;
     UBYTE *user_end;
+#if CONF_WITH_PRIVATE_CLONE
+    /* Logical user context survives generic shared descendants independently
+     * of each PROCESS's supervisor-only compatibility allocations. */
+    BOOL logical_context;
+    VADDR logical_basepage,logical_environment,logical_bp_bytes,logical_env_bytes;
+#endif
     ASPACE *aspace;      /* borrowed from active_space */
     KASPACE *active_space; /* owning reference, NULL until prepared */
     KASPACE_MEMBER *mapping_members; /* authenticated PROCESS lifetime claims */
@@ -778,6 +784,15 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     if (!kproc_clone_target_ready(target, NULL) || target->parent_identity ||
         !(parent = kproc_retain_live(source)))
         return FALSE;
+#if CONF_WITH_PRIVATE_CLONE
+    target->logical_context=TRUE;
+    target->logical_basepage=source->logical_context?source->logical_basepage:(VADDR)(uintptr_t)source->user_start;
+    target->logical_environment=source->logical_context?source->logical_environment:(VADDR)(uintptr_t)source->env_start;
+    target->logical_bp_bytes=source->logical_context?source->logical_bp_bytes:
+        (VADDR)(uintptr_t)source->user_end-(VADDR)(uintptr_t)source->user_start;
+    target->logical_env_bytes=source->logical_context?source->logical_env_bytes:
+        (VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start;
+#endif
     target->parent_identity = parent;
     target->parent = parent->pd; /* borrowed only while identity remains live */
     target->prio = source->prio;
@@ -854,75 +869,79 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
                     region->address,region->length)) return FALSE;
     }
 #endif
-    if (target) {
-        struct private_image_snapshot *snapshot;
-        if (!kproc_clone_target_ready(target, NULL) || target->private_image ||
-            source->nheap>~(ULONG)0/sizeof(*source->heap)) return FALSE;
-        snapshot=kalloc(sizeof(*snapshot));
-        if (!snapshot) return FALSE;
-        bzero(snapshot,sizeof(*snapshot));
-        if (source->nheap) {
-            snapshot->heap=kalloc(source->nheap*sizeof(*snapshot->heap));
-            if (!snapshot->heap) { kfree(snapshot);return FALSE; }
-            for (i=0;i<source->nheap;i++) {
-                snapshot->heap[i]=source->heap[i];
-                snapshot->heap[i].reservation=kaspace_reservation_next();
-                if (!snapshot->heap[i].reservation) {
-                    kfree(snapshot->heap);kfree(snapshot);return FALSE;
-                }
+    return !target || kproc_clone_prepare_private_image(target,source)==E_OK;
+}
+LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source)
+{
+    struct private_image_snapshot *snapshot;
+    ULONG i;
+    if (!kproc_clone_private_runtime(NULL,source)) return EACCDN;
+    if (!kproc_clone_target_ready(target, NULL) || target->heap || target->heap_capacity || target->private_image ||
+        source->nheap>~(ULONG)0/sizeof(*source->heap)) return EACCDN;
+    snapshot=kalloc(sizeof(*snapshot));
+    if (!snapshot) return ENSMEM;
+    bzero(snapshot,sizeof(*snapshot));
+    if (source->nheap) {
+        snapshot->heap=kalloc(source->nheap*sizeof(*snapshot->heap));
+        if (!snapshot->heap) { kfree(snapshot);return ENSMEM; }
+        for (i=0;i<source->nheap;i++) {
+            snapshot->heap[i]=source->heap[i];
+            snapshot->heap[i].reservation=kaspace_reservation_next();
+            if (!snapshot->heap[i].reservation) {
+                kfree(snapshot->heap);kfree(snapshot);return ENSMEM;
             }
         }
-        snapshot->count=source->nheap;
+    }
+    snapshot->count=source->nheap;
 #if CONF_WITH_IMAGE_POLICY
-        snapshot->policy_only=source->image_policy_only;
+    snapshot->policy_only=source->image_policy_only;
 #endif
-        snapshot->basepage=source->private_image?source->private_image->basepage:(VADDR)(uintptr_t)source->user_start;
-        snapshot->environment=source->private_image?source->private_image->environment:(VADDR)(uintptr_t)source->env_start;
-        snapshot->basepage_bytes=source->private_image?source->private_image->basepage_bytes:
-            ((VADDR)(uintptr_t)source->user_end-(VADDR)(uintptr_t)source->user_start);
-        snapshot->environment_bytes=source->private_image?source->private_image->environment_bytes:
-            ((VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start);
-        if (snapshot->basepage>=USER_VA_LIMIT || snapshot->basepage_bytes>USER_VA_LIMIT-snapshot->basepage ||
-            snapshot->environment>=USER_VA_LIMIT || snapshot->environment_bytes>USER_VA_LIMIT-snapshot->environment) {
-            kfree(snapshot->heap);kfree(snapshot);return FALSE;
-        }
-        snapshot->basepage_birth=kaspace_reservation_next();
-        snapshot->environment_birth=kaspace_reservation_next();
-        if (!snapshot->basepage_birth || !snapshot->environment_birth) {
-            kfree(snapshot->heap);kfree(snapshot);return FALSE;
-        }
-        snapshot->dta=(VADDR)(uintptr_t)source->dta;
-        snapshot->has_image=source->has_image;snapshot->legacy=source->legacy;
-        snapshot->layout=source->layout;
-        for (i=0;i<snapshot->layout.nseg;i++) {
-            snapshot->layout.seg[i].src=NULL;snapshot->layout.seg[i].filesz=0;
-        }
-        snapshot->stack_size=source->stack_size;snapshot->stack_low=source->stack_low;
-        snapshot->stack_top=source->stack_top;snapshot->entry=source->entry;
-        snapshot->top_stack=owns_top_stack(source);
+    snapshot->basepage=source->logical_context?source->logical_basepage:(VADDR)(uintptr_t)source->user_start;
+    snapshot->environment=source->logical_context?source->logical_environment:(VADDR)(uintptr_t)source->env_start;
+    snapshot->basepage_bytes=source->logical_context?source->logical_bp_bytes:
+        ((VADDR)(uintptr_t)source->user_end-(VADDR)(uintptr_t)source->user_start);
+    snapshot->environment_bytes=source->logical_context?source->logical_env_bytes:
+        ((VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start);
+    if (snapshot->basepage>=USER_VA_LIMIT || snapshot->basepage_bytes>USER_VA_LIMIT-snapshot->basepage ||
+        snapshot->environment>=USER_VA_LIMIT || snapshot->environment_bytes>USER_VA_LIMIT-snapshot->environment) {
+        kfree(snapshot->heap);kfree(snapshot);return EACCDN;
+    }
+    snapshot->basepage_birth=kaspace_reservation_next();
+    snapshot->environment_birth=kaspace_reservation_next();
+    if (!snapshot->basepage_birth || !snapshot->environment_birth) {
+        kfree(snapshot->heap);kfree(snapshot);return ENSMEM;
+    }
+    snapshot->dta=(VADDR)(uintptr_t)source->dta;
+    snapshot->has_image=source->has_image;snapshot->legacy=source->legacy;
+    snapshot->layout=source->layout;
+    for (i=0;i<snapshot->layout.nseg;i++) {
+        snapshot->layout.seg[i].src=NULL;snapshot->layout.seg[i].filesz=0;
+    }
+    snapshot->stack_size=source->stack_size;snapshot->stack_low=source->stack_low;
+    snapshot->stack_top=source->stack_top;snapshot->entry=source->entry;
+    snapshot->top_stack=owns_top_stack(source);
 #if KPROC_LEGACY_PRG
-        snapshot->text_bytes=source->legacy_text_bytes;snapshot->text_recorded=source->legacy_text_recorded;
+    snapshot->text_bytes=source->legacy_text_bytes;snapshot->text_recorded=source->legacy_text_recorded;
 #if CONF_WITH_IMAGE_POLICY
-        snapshot->text_entry=source->legacy_text_entry;
+    snapshot->text_entry=source->legacy_text_entry;
 #endif
 #endif
 #if CONF_WITH_ELF_SHARED
-        snapshot->interpreter=source->interpreter_layout;
-        for (i=0;i<snapshot->interpreter.nseg;i++) {
-            snapshot->interpreter.seg[i].src=NULL;snapshot->interpreter.seg[i].filesz=0;
-        }
-        snapshot->standard_entry=source->standard_entry;snapshot->interp_entry=source->interp_entry;
-        snapshot->initial_rsp=source->initial_rsp;snapshot->interp_bytes=source->interp_bytes;
-#endif
-        target->private_image=snapshot;
+    snapshot->interpreter=source->interpreter_layout;
+    for (i=0;i<snapshot->interpreter.nseg;i++) {
+        snapshot->interpreter.seg[i].src=NULL;snapshot->interpreter.seg[i].filesz=0;
     }
-    return TRUE;
+    snapshot->standard_entry=source->standard_entry;snapshot->interp_entry=source->interp_entry;
+    snapshot->initial_rsp=source->initial_rsp;snapshot->interp_bytes=source->interp_bytes;
+#endif
+    target->private_image=snapshot;
+    return E_OK;
 }
+
 static void private_image_commit(KPROC *target)
 {
     struct private_image_snapshot *snapshot=target->private_image;
     if (!snapshot || snapshot->committed) return;
-    kfree(target->heap); /* target readiness guarantees an empty ledger */
     target->heap=snapshot->heap;snapshot->heap=NULL;
 #if CONF_WITH_IMAGE_POLICY
     target->image_policy_only=snapshot->policy_only;
@@ -944,14 +963,16 @@ static void private_image_commit(KPROC *target)
     target->interp_entry=snapshot->interp_entry;target->initial_rsp=snapshot->initial_rsp;
     target->interp_bytes=snapshot->interp_bytes;
 #endif
+    target->logical_context=TRUE;
+    target->logical_basepage=snapshot->basepage;target->logical_environment=snapshot->environment;
+    target->logical_bp_bytes=snapshot->basepage_bytes;target->logical_env_bytes=snapshot->environment_bytes;
     snapshot->committed=TRUE;
 }
 
 VADDR kproc_private_environment(PD *pd)
 {
     KPROC *process=kproc_find(pd);
-    if (process && process->private_image && process->private_image->committed)
-        return process->private_image->environment;
+    if (process && process->logical_context) return process->logical_environment;
     return (VADDR)(uintptr_t)USERPTR_TO_PTR(pd->p_env);
 }
 
