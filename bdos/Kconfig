@@ -31,18 +31,19 @@ config CONF_WITH_IMAGE_POLICY_TEST
 config CONF_WITH_EXEC_REPLACE
     bool "Same-PROCESS executable replacement core for Pexec(200)"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
-    default n
+    default y
     help
       Build the kernel-only replacement transaction for Pexec(200): exact
       PROCESS/THREAD admission, private ELF staging, the sealed image bundle
-      and the NORETURN commit at the scheduler root, with old-image
-      retirement off-stack and the committed-exec generation. Public mode200
-      stays EINVFN until that path is verified (see doc/exec-replacement.txt).
+      and the NORETURN commit, at the scheduler root for an anchor and
+      through the launcher frame for a nested child, with old-image
+      retirement off-stack and the committed-exec generation
+      (see doc/exec-replacement.txt).
 
 config CONF_WITH_PEXEC200
     bool "Public Pexec(200): replace the program in the same process"
     depends on CONF_WITH_EXEC_REPLACE
-    default n
+    default y
     help
       Enable GEMDOS Pexec(200, path, tail, env): load an ELF program and
       replace the calling program with it, keeping the PROCESS, PID,

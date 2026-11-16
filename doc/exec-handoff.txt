@@ -12,7 +12,8 @@ CONF_WITH_EXEC_HANDOFF_TEST defaults off and requires the existing replacement
 test gate and Pclone. No shipped configuration selects it. Private Pclone tags
 in exec_handoff_test.h exercise a same-image, SAME-ROOT transport. This test
 transport publishes no committed-exec generation: its token conveys no
-executable-image adoption right. Public Pexec(200) (CONF_WITH_PEXEC200) reuses
+executable-image adoption right. Public Pexec(200) (CONF_WITH_PEXEC200, on by
+default) reuses
 the same phases with an image bundle; see doc/exec-replacement.txt.
 
 Ownership and sequence

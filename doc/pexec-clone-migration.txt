@@ -6,7 +6,7 @@ fresh-stack NORETURN handoff through the existing scheduler root. Public
 mode200 builds on it (doc/exec-replacement.txt, "Pexec(200) commit design"):
 an anchor is committed at that root, a synchronously nested child through its
 launcher frame, and each commit publishes one committed-exec generation. It is
-gated by CONF_WITH_PEXEC200, default off until owner review.
+enabled by CONF_WITH_PEXEC200, on by default where its dependencies are.
 The accepted #977 metadata preparation is preserved and supplies no movable
 image ownership. Both fork calls use PRIVATE_VM/COW; no shared-parent detach
 or unfinished fork resource-snapshot prerequisite is added by this transport.
@@ -45,7 +45,7 @@ Mode       Current entry/ownership                 Required migration
            env/TPA owner, then execute/free.       not shared mode4 semantics.
 106        Existing staged image -> async         Preserve isolated consuming
            prepare/spawn, child PID.              launch, observer/wait behavior.
-200        Gated (CONF_WITH_PEXEC200): ELF target  Same-PROCESS executable
+200        CONF_WITH_PEXEC200 (default on): ELF    Same-PROCESS executable
            replaces the caller in its PROCESS;     replacement with independent
            PRG target EPLFMT; else EINVFN.         VM and committed-exec event.
 5/7,50     Basepage/flags and NatFeats relocation  Preserve staging and legacy

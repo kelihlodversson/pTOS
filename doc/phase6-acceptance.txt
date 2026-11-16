@@ -6,8 +6,7 @@ Accepted base includes merged #973/#974/#975/#977; no #972 import.
 
 The default-off same-image scheduler transport is independently native-testable.
 Its private diagnostic handoff count is NOT a KPROC committed-exec generation.
-Public Pexec(200) is implemented behind CONF_WITH_PEXEC200 (default off; the
-regression kernel enables it): a different-root ELF commit for anchors at the
+Public Pexec(200) is implemented and on by default (CONF_WITH_PEXEC200): a different-root ELF commit for anchors at the
 scheduler root and for nested children through their launcher frame, with one
 KPROC committed-exec generation per commit. Pfork and Pvfork remain EINVFN.
 

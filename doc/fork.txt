@@ -75,7 +75,7 @@ Transactional prepared/no-fail publication  yes      yes        yes
 Saved-return test startup (F1, gated)        yes      A32        040 only
 Independent-VM kaspace_clone                EINVFN   EINVFN     EINVFN
 Fork anonymous writable-page COW             absent   absent     absent
-Pexec(200) committed-exec generation        gated    gated      gated
+Pexec(200) committed-exec generation        yes      yes        yes
 Pfork / Pvfork enabled                      no       no         no
 
 m68k includes the 030/040/060 backends, not just QEMU040. Non-MMU fork and
