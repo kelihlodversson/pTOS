@@ -1834,8 +1834,10 @@ void pclone_run_managed_tests(void)
         memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
 #endif
         ptest_begin("same-PROCESS replacement staging (not Pexec200)");
-        ptest_assert_msg(Pexec(200,"C:\\PIEPROBE.TOS","",0)==-32L,
-                         "public mode200 remains unavailable before real execution commit");
+        /* Public mode200 is enabled with this test configuration: a missing
+         * image fails before any commit and leaves this runner in place. */
+        ptest_assert_msg(Pexec(200,"C:\\NO970.TOS","",0)==-33L,
+                         "public mode200 fails before commit and keeps the caller");
         ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,"warm executable staging owners");
         ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,"warm real private ELF staging and disposal");
         for(stage=0x103;stage<=0x105;stage++)

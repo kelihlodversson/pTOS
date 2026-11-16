@@ -91,7 +91,7 @@ int main(void)
     /* The genuine commit: same PROCESS, different executable and root. */
     sprintf(tail + 1, "1 %ld %lu %lu %lu %lu %ld", descriptor,
             (unsigned long)original.pid, (unsigned long)original.tid,
-            (unsigned long)original.root[0], (unsigned long)original.root[1], Pgetppid());
+            (unsigned long)original.root[0], (unsigned long)original.root[1], (long)Pgetppid());
     tail[0] = (char)strlen(tail + 1);
     result = exec200_call("EXEC200B.TOS", tail, environment);
     fail("successful Pexec(200) returned to the old program", result);
