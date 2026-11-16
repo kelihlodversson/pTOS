@@ -111,7 +111,7 @@ static volatile struct {
     unsigned char *peer_stack,*child_stack;
     unsigned long address;
     long creator,parent,root,tid;
-    unsigned char *dta;unsigned char dta_byte;
+    unsigned char *dta,*environment;unsigned char dta_byte,environment_byte;
     int32_t peer_pid;
 } captured_probe;
 static long captured_query(unsigned long address)
@@ -126,6 +126,9 @@ static void captured_private_child(void *unused)
        private_query(0)==captured_probe.root || private_query(3)==captured_probe.tid ||
        captured_query(captured_probe.address)!=expected ||
        (void *)Fgetdta()!=(void *)captured_probe.dta || captured_probe.dta[0]!=captured_probe.dta_byte) bad=1;
+    if(captured_probe.environment[0]!=captured_probe.environment_byte ||
+        Pexec(0,"C:\\GLOBALCH.TOS","\1w",0)!=23) bad=8;
+    captured_probe.environment[0]^=0x33; /* private bytes, not the source env */
     captured_probe.dta[0]^=0x5a; /* private DTA bytes, no search iterator */
     /* This page was demonstrably absent at the fork boundary. The original
      * stack-owning PROCESS has already retired. No source cleanup ticket is
@@ -163,7 +166,8 @@ static void captured_surviving_peer(void *unused)
         if((status>>16)!=child || (status&65535)!=73 || Pwaitpid(child,1,0)>=0) bad=4;
         if(captured_query(captured_probe.address)!=(expected|(cycle?PRIVATE_SNAPSHOT_PRESENT:0))) bad=5;
         if(page[0]!=(cycle?0x31:0) || page[17] ||
-            (void *)Fgetdta()!=(void *)captured_probe.dta || captured_probe.dta[0]!=captured_probe.dta_byte) bad=6;
+            (void *)Fgetdta()!=(void *)captured_probe.dta || captured_probe.dta[0]!=captured_probe.dta_byte ||
+            captured_probe.environment[0]!=captured_probe.environment_byte) bad=6;
         page[0]=0x32;
     }
     conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
@@ -179,6 +183,8 @@ static void captured_creator(void *unused)
        captured_query(0x7fff1000UL)&PRIVATE_SNAPSHOT_PRESENT) Pterm(74);
     captured_probe.creator=Pgetpid();captured_probe.peer_pid=0;
     captured_probe.dta=(unsigned char *)Fgetdta();captured_probe.dta_byte=captured_probe.dta[0];
+    captured_probe.environment=(unsigned char *)_base->p_env;
+    captured_probe.environment_byte=captured_probe.environment[0];
     args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
     args.entry=captured_surviving_peer;args.stack_base=captured_probe.peer_stack;args.stack_size=32768;
     args.child_pid=&captured_probe.peer_pid;
