@@ -20,19 +20,23 @@ int main(void)
 {
     EXEC_REPLACE_TEST_STATE state;
     unsigned long generation, pid, tid, root0, root1;
-    long descriptor, parent, result;
+    long descriptor, parent, result, position;
     int nested;
     const char *value = getenv("EXEC");
     char tail[128], line[128];
     unsigned length;
-    _DTA dta;
     /* The tail the commit copied into this PROCESS's basepage (libcmini's
      * minimal startup does not split it into argv). */
+    /* The commit reset the DTA to the default in the basepage. */
+    if ((void *)Fgetdta() != (void *)_base->p_cmdlin) fail("default DTA", (long)Fgetdta());
     length = (unsigned char)_base->p_cmdlin[0];
     if (!length || length > 125) fail("command tail length", (long)length);
     memcpy(line, _base->p_cmdlin + 1, length); line[length] = 0;
-    if (sscanf(line, "%lu %ld %lu %lu %lu %lu %ld %d", &generation, &descriptor, &pid, &tid,
-               &root0, &root1, &parent, &nested) != 8) fail("command tail", (long)length);
+    if (sscanf(line, "%lu %ld %lu %lu %lu %lu %ld %d %ld", &generation, &descriptor, &pid, &tid,
+               &root0, &root1, &parent, &nested, &position) != 9) fail("command tail", (long)length);
+    /* The replaced program's directory search must not survive: it was
+     * left open on this same default DTA and PD. */
+    if (generation == 2 && Fsnext() == 0) fail("search survived the exec", 0);
     if (exec200_probe(&state, EXEC_REPLACE_QUERY)) fail("query", 0);
     if (state.pid != pid || Pgetpid() != (long)pid) fail("same PID", Pgetpid());
     if (state.tid != tid) fail("same TID", (long)state.tid);
@@ -40,14 +44,17 @@ int main(void)
     if (state.generation[0] != generation || state.generation[1]) fail("generation", (long)state.generation[0]);
     if (state.root[0] == root0 && state.root[1] == root1) fail("root replaced", (long)root0);
     if (!value || strcmp(value, "970") || !getenv("SECOND")) fail("new environment", 0);
+    if (Fseek(0L, (short)descriptor, 1) != position) fail("descriptor position", position);
     if (Fwrite((short)descriptor, 1, "b") != 1) fail("descriptor survives exec", descriptor);
     if (generation == 1) {
         /* The runner observes the commit first: the PROCESS must not have
          * completed or become reapable through it. */
-        Fsetdta(&dta);
         while (!nested && Fsfirst("GO970.TMP", 0)) (void)Syield();
-        sprintf(tail + 1, "2 %ld %lu %lu %lu %lu %ld %d", descriptor, pid, tid,
-                (unsigned long)state.root[0], (unsigned long)state.root[1], parent, nested);
+        /* Leave a multi-match search open on the default DTA. */
+        if (Fsfirst("*.TOS", 0)) fail("open search", 0);
+        sprintf(tail + 1, "2 %ld %lu %lu %lu %lu %ld %d %ld", descriptor, pid, tid,
+                (unsigned long)state.root[0], (unsigned long)state.root[1], parent, nested,
+                Fseek(0L, (short)descriptor, 1));
         tail[0] = (char)strlen(tail + 1);
         result = Pexec(200, "EXEC200B.TOS", tail, 0); /* inherits this environment */
         fail("second Pexec(200) returned", result);

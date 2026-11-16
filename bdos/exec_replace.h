@@ -67,6 +67,8 @@ BOOL kproc_exec_image_sealable(const KPROC_EXEC_IMAGE *);
 void kproc_exec_image_commit(KPROC_EXEC_IMAGE *);
 /* Off-root, on the relaunched execution: releases the old root/memberships. */
 void kproc_exec_image_retire(KPROC_EXEC_IMAGE **);
+/* After every reference to the old root is gone: trim a classic PRG TPA. */
+void kproc_exec_trim_tpa(struct _pd *);
 /* Receipt side of the commit. transfer: at the no-fail boundary, ends the
  * receipt's cleanup scope. commit: at the quiescent root, drops the ticket.
  * retire: off-root, disposes the container that now owns the old

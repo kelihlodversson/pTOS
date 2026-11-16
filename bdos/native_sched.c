@@ -24,6 +24,9 @@
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #include "exec_replace.h"
+#if CONF_WITH_PLUGGABLE_FS
+#include "pfs.h"
+#endif
 #include "exec_handoff_test.h"
 #include "kaspace.h"
 #endif
@@ -965,29 +968,52 @@ static void exec_handoff_on_root(void)
     task->state = TASK_NEW;
 }
 
+/* Shared off-stack retirement of a committed Pexec(200): the replaced
+ * program's directory searches, the old root and memberships, the container
+ * (which owns the old environment) and the remaining old-root references.
+ * Only then, with nothing but the committed root mapping it, is a classic PRG
+ * TPA trimmed. A procmem block still pinned by a dying root is reclaimed on
+ * its last unpin, so the order of the two retirements is not load-bearing.
+ * Cleanup callbacks may yield but must not unwind: an escaping disk error
+ * would land in an abandoned syscall frame, so it is fatal, as in
+ * proc_finalize_exit(). */
+static void exec_retire_common(PD *pd, KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bundle,
+                               KASPACE **old_thread_space, KASPACE **old_space)
+{
+    KSCHED_CLEANUP_SCOPE scope;
+    FS_ERROR_STATE saved_error = *fs_error_current();
+    if (setjmp(errbuf)) {
+        *fs_error_current() = saved_error;
+        panic("exec replace: retirement cleanup escaped");
+    }
+    memset(&scope, 0, sizeof(scope));
+    ksched_cleanup_begin(&scope);
+#if CONF_WITH_PLUGGABLE_FS
+    pfs_proc_searches_release(pd);
+#endif
+    kproc_exec_image_retire(bundle);
+    kproc_exec_replacement_retire(receipt);
+    kaspace_put(*old_thread_space); *old_thread_space = NULL;
+    kaspace_put(*old_space); *old_space = NULL;
+    kproc_exec_trim_tpa(pd);
+    ksched_cleanup_end(&scope);
+    *fs_error_current() = saved_error;
+}
+
 /* First action of a relaunched Pexec(200) execution, on its fresh scheduler
  * stack before user entry: nothing here runs on a retired stack or root. */
 static void exec_replace_retire(KERNEL_TASK *task)
 {
     KSCHED_EXEC_HANDOFF *tx = task->exec_retired;
-    KSCHED_CLEANUP_SCOPE scope;
     if (!tx) return;
     if (!tx->committed || tx->task != task || task->replacement || !task->startup ||
         task->program != tx->pd || kproc_active_space(tx->process) != tx->target)
         panic("exec replace: foreign retirement");
     task->exec_retired = NULL;
     run = tx->pd;
-    memset(&scope, 0, sizeof(scope));
-    ksched_cleanup_begin(&scope);
-    /* The old root first: it still maps the old environment, which the
-     * container's disposal then frees. */
-    kproc_exec_image_retire(&tx->bundle);
-    kproc_exec_replacement_retire(&tx->receipt);
-    kaspace_put(tx->old_thread_space);
-    kaspace_put(tx->space);
+    exec_retire_common(tx->pd, &tx->receipt, &tx->bundle, &tx->old_thread_space, &tx->space);
     kaspace_put(tx->target);
     kproc_release(tx->process);
-    ksched_cleanup_end(&scope);
     kfree(tx);
 }
 #endif
@@ -1793,20 +1819,13 @@ void ksched_exec_relaunch_commit(PD *pd, PADDR *kstack_phys, uintptr_t *kstack_t
 void ksched_exec_relaunch_retire(void)
 {
     NESTED_EXEC *nx = execution_cpu.nested_exec;
-    KSCHED_CLEANUP_SCOPE scope;
     uintptr_t marker;
     if (!nx || !nx->committed || kstack_contains(nx->old_kstack, (uintptr_t)&marker))
         panic("exec replace: nested retirement without commit");
     execution_cpu.nested_exec = NULL;
     native_sched_irq_restore(nx->irq_flags);
     kstack_free(nx->old_kstack);
-    memset(&scope, 0, sizeof(scope));
-    ksched_cleanup_begin(&scope);
-    kproc_exec_image_retire(&nx->bundle);
-    kproc_exec_replacement_retire(&nx->receipt);
-    kaspace_put(nx->old_thread_space);
-    kaspace_put(nx->target);
-    ksched_cleanup_end(&scope);
+    exec_retire_common(run, &nx->receipt, &nx->bundle, &nx->old_thread_space, &nx->target);
     kfree(nx);
 }
 #endif

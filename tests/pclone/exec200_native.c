@@ -95,9 +95,10 @@ int main(void)
     for (stage = 1; stage <= 10; stage++)
         injected(2, stage, stage == 6 || stage == 7 ? -36L : stage == 9 ? -326L : -39L);
     /* The genuine commit: same PROCESS, different executable and root. */
-    sprintf(tail + 1, "1 %ld %lu %lu %lu %lu %ld %d", descriptor,
+    sprintf(tail + 1, "1 %ld %lu %lu %lu %lu %ld %d %ld", descriptor,
             (unsigned long)original.pid, (unsigned long)original.tid,
-            (unsigned long)original.root[0], (unsigned long)original.root[1], (long)Pgetppid(), nested);
+            (unsigned long)original.root[0], (unsigned long)original.root[1], (long)Pgetppid(), nested,
+            Fseek(0L, (short)descriptor, 1));
     tail[0] = (char)strlen(tail + 1);
     result = exec200_call("EXEC200B.TOS", tail, environment);
     fail("successful Pexec(200) returned to the old program", result);

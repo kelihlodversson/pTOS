@@ -2014,6 +2014,11 @@ void test_pclone(void)
 #endif
 #if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
         ptest_log_flush();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        /* Every success path, not only the injected failures, must retire
+         * the old roots, containers, environments and stacks exactly. */
+        ptest_assert_msg(mlt_snapshot(&mlt_before)==0,"snapshot before Pexec(200) runs");
+#endif
         child = Pexec(100,"EXEC200.TOS","",0);
         ptest_assert_msg(child > 0,"Pexec(200) subject starts as a managed PROCESS");
         if (child > 0) {
@@ -2038,6 +2043,10 @@ void test_pclone(void)
         ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001N",0) == 70,
                          "nested Pexec(200) relaunch completes once through the launcher");
         ptest_assert_msg(Fdelete("EXEC200.TMP") == 0,"nested Pexec(200) test file");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        ptest_assert_msg(mlt_snapshot(&mlt_after)==0,"snapshot after Pexec(200) runs");
+        mlt_equal(&mlt_before,&mlt_after);
+#endif
 #endif
     }
 #endif

@@ -1987,10 +1987,12 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     if (exec_image_injected(6)) goto failed;
     /* 7: the private stack, under the source's own Psetlimit() stack size if
      * it still fits above the new image; a dynamic image has its ELF stack. */
-    b->stack_size = 0;
-    if (source->stack_size && USER_STACK_TOP - source->stack_size - USER_PAGE_SIZE >=
+    /* The limit is this PROCESS's own: keep it, or fail before the commit
+     * when it no longer fits above the new image. */
+    b->stack_size = source->stack_size;
+    if (source->stack_size && USER_STACK_TOP - source->stack_size - USER_PAGE_SIZE <
         ((image->layout.end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK)
-        b->stack_size = source->stack_size;
+        goto failed;
 #if CONF_WITH_ELF_SHARED
     if (image->standard_entry) {
         b->stack_low = image->stack_low;
@@ -2105,6 +2107,7 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     s->legacy_text_entry = 0;
 #endif
 #endif
+    s->load_va = 0; s->load_pages = 0;
     s->entry = b->entry; s->stack_top = b->stack_top;
     s->stack_low = b->stack_low; s->stack_size = b->stack_size;
     s->ancestors = b->ancestors;
@@ -2136,6 +2139,19 @@ KPROC *kproc_test_retain_pid(WORD pid)
     return NULL;
 }
 #endif
+/* After retirement, once no root but the committed one maps the source TPA:
+ * a classic PRG's TPA (its old text, data and free memory) goes back to the
+ * window, down to the basepage the new program keeps. Best effort: a lease or
+ * pin that still covers the tail keeps it, exactly as for Mshrink(). */
+void kproc_exec_trim_tpa(PD *pd)
+{
+#if KPROC_LEGACY_PRG
+    (void)kproc_shrink_tpa(pd, pd, (long)sizeof(PD));
+#else
+    UNUSED(pd);
+#endif
+}
+
 THREAD_STARTUP_DRAFT *kproc_exec_image_take_startup(KPROC_EXEC_IMAGE *b)
 {
     THREAD_STARTUP_DRAFT *startup;
