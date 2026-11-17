@@ -263,8 +263,9 @@ visible in parent private memory. Explicitly shared mappings retain their
 semantics; public MAP_SHARED currently remains unsupported. This difference is
 intentional, not full FreeMiNT Pvfork memory compatibility. Non-MMU shadow fork
 is outside this policy. Public Pfork/Pvfork are enabled by CONF_WITH_PFORK
-(on by default on MMU kernels with demand paging: x32, ARMv7, m68k without
-fastcall) and otherwise return EINVFN; see
+(built in by default on MMU kernels with demand paging: x32, ARMv7, m68k
+without fastcall; on m68k they run only on a 68040) and otherwise return EINVFN;
+see
 freemint-compatibility.txt for the inherited state and the CPUs whose return
 image is admitted. See fork.txt,
 phase6-acceptance.txt and freemint-compatibility.txt.

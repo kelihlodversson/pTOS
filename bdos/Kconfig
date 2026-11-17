@@ -82,7 +82,8 @@ config BUILD_FORK_PROFILE
     def_bool CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && CONF_WITH_FAT_FILE_LIFETIMES && CONF_WITH_ELF_LOADER && (!ARCH_M68K || !CONF_WITH_MFASTCALL) && (!ARCH_ARM || CPU_ARMV7)
     help
       Internal: the MMU kernels whose return image public Pfork/Pvfork
-      admit (x32, ARMv7, m68k without fastcall). There the native process
+      admit (x32, ARMv7, m68k without fastcall; at run time only a 68040
+      forks on m68k, a 68030 gets EINVFN). There the native process
       profile (scheduling, Pclone, Pthjoin, private clone, PROCESS-local
       files and public Pfork/Pvfork) is on by default.
 
