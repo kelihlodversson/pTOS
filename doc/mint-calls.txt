@@ -253,7 +253,8 @@ resuming after the originating trap with child0 and parent positive child PID.
 Failures use signed negative GEMDOS errors; a TID is never returned as a PID.
 Pfork returns the parent immediately after publication. Pvfork blocks only the
 calling parent THREAD until the exact child finally completes or successfully
-commits same-PROCESS/PID Pexec(200) executable replacement. Failed exec, another
+commits same-PROCESS/PID Pexec(200) executable replacement (on ARM/x32, after
+#1008, the equivalent Pexecve(200) commit). Failed exec, another
 PROCESS's completion/launch or a THREAD-only exit cannot release that parent.
 
 Unlike FreeMiNT Pvfork, pTOS MMU Pvfork does NOT share ordinary private memory:

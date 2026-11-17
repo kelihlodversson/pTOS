@@ -270,7 +270,8 @@ config CONF_WITH_PFORK
       Pexec(200). Unlike FreeMiNT's Pvfork, the child's private writes never
       reach the parent's memory. A multi-THREAD or shared-root caller gets
       EACCDN. Only an
-      anchor execution (started with Pexec(100/104) or a clone) may fork: a
+      anchor execution (started with Pexec(100), public Pexec(104) on m68k
+      only, or a clone) may fork: a
       program running nested in its launcher's Pexec(0) owns no dependents
       and gets EINVFN, as for Pclone.
       Supported where the return image is admitted: x86-64 with default
