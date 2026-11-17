@@ -19,7 +19,7 @@
 #include "string.h"
 #include "kprint.h"
 #include "kproc.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "../bdos/process_files.h"
 #include "biosext.h"
 #endif
@@ -477,7 +477,7 @@ typedef struct {
     PFS_ITERATOR iterator;
     UWORD attr;
     char pattern[LEN_ZFNAME];
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     KPROC *process; /* canonical borrowed identity, owned by PROCESS/operation */
     UQUAD stage; /* existing PROCESS snapshot ticket, zero when published */
     UWORD busy;
@@ -490,7 +490,7 @@ static PFS_SEARCH pfs_searches[CONF_PFS_MAX_SEARCHES];
 static void pfs_search_free(PFS_SEARCH *s)
 {
     PFS_ITERATOR owned;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(s->busy) { s->owner=NULL;s->retiring=TRUE;return; }
 #endif
     owned=s->iterator;
@@ -498,7 +498,7 @@ static void pfs_search_free(PFS_SEARCH *s)
     (void)pfs_iterator_close(&owned);
 }
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 static BOOL search_slot_free(const PFS_SEARCH *search)
 { return !search->owner && !search->busy && !search->iterator.owned && !search->stage; }
 static BOOL search_process_live(PROCESS_FILES *table,PD *pd)
@@ -1020,7 +1020,7 @@ LONG pfs_do_getdir(char *buf, WORD drv)
 static LONG pfs_alloc_handle(PFSCOOKIE *fc)
 {
     WORD i;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     LONG descriptor;
 #endif
 
@@ -1037,7 +1037,7 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     sft[i].f_use = 1;
     sft[i].f_ofd = NULL;
     sft[i].f_pfs = *fc;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(run)) {
         descriptor=process_files_open_begin(run,(WORD)(i+NUMSTD));
         if (descriptor<0) {
@@ -1062,7 +1062,7 @@ LONG pfs_do_open(const char *path, WORD mode)
     BOOL owned;
     LONG rc;
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     rc=process_files_change_admission(run);if (rc<0) return rc;
 #endif
     fs = pfs_drive_fs(drive);
@@ -1103,7 +1103,7 @@ LONG pfs_do_create(const char *path, UWORD attr)
     BOOL owned;
     LONG rc;
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     rc=process_files_change_admission(run);if (rc<0) return rc;
 #endif
     fs = pfs_drive_fs(drive);
@@ -1250,7 +1250,7 @@ LONG pfs_do_sfirst_to(char *path, WORD att, DTAINFO *address, DTAINFO *dta)
     BOOL owned;
     WORD i;
     LONG rc;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     PD *process=run;
     PROCESS_FILES *table=kproc_files(process);
     if(table && (!table->operations || process_files_change_admission(process))) return EACCDN;
@@ -1289,7 +1289,7 @@ LONG pfs_do_sfirst_to(char *path, WORD att, DTAINFO *address, DTAINFO *dta)
         owned = TRUE;
     }
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(!search_process_live(table,process)) {
         if(owned && fs->release) fs->release(&dir);
         return EACCDN;
@@ -1301,21 +1301,21 @@ LONG pfs_do_sfirst_to(char *path, WORD att, DTAINFO *address, DTAINFO *dta)
      * matching whichever of the two comes first in the table. */
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
         if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run)
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             && !pfs_searches[i].stage
 #endif
             )
             break;
     if (i < CONF_PFS_MAX_SEARCHES)
     {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         if(pfs_searches[i].busy) { if(owned && fs->release) fs->release(&dir);return EACCDN; }
 #endif
         pfs_search_free(&pfs_searches[i]);
     }
     {
         for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             if (search_slot_free(&pfs_searches[i]))
 #else
             if (!pfs_searches[i].owner)
@@ -1328,7 +1328,7 @@ LONG pfs_do_sfirst_to(char *path, WORD att, DTAINFO *address, DTAINFO *dta)
         }
     }
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(!search_process_live(table,process)) {
         if(owned && fs->release) fs->release(&dir);
         return EACCDN;
@@ -1354,7 +1354,7 @@ LONG pfs_do_sfirst_to(char *path, WORD att, DTAINFO *address, DTAINFO *dta)
         char name8_3[LEN_ZFNAME];
         PFSATTR attr;
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         rc=search_readdir(&pfs_searches[i],name8_3,sizeof(name8_3),&attr);
 #else
         rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].iterator.directory, &pfs_searches[i].iterator.position,
@@ -1384,21 +1384,21 @@ LONG pfs_do_snext_to(DTAINFO *address,DTAINFO *dta)
 {
     DTA *owner = (DTA *)address;
     WORD i;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     PROCESS_FILES *table=kproc_files(run);
     if(table && (!table->operations || process_files_change_admission(run))) return EACCDN;
 #endif
 
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
         if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run)
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             && !pfs_searches[i].stage
 #endif
             )
             break;
     if (i == CONF_PFS_MAX_SEARCHES)
         return ENMFIL;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(pfs_searches[i].busy || pfs_searches[i].retiring ||
         (table && pfs_searches[i].process!=table->owner)) return EACCDN;
 #endif
@@ -1416,7 +1416,7 @@ LONG pfs_do_snext_to(DTAINFO *address,DTAINFO *dta)
             return ENMFIL;
         }
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         rc=search_readdir(&pfs_searches[i],name8_3,sizeof(name8_3),&attr);
 #else
         rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].iterator.directory, &pfs_searches[i].iterator.position,
@@ -1452,7 +1452,7 @@ void pfs_proc_exit(PD *r)
     memset(PD_CURDIR(r), 0, sizeof(slots));
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
         if (pfs_searches[i].proc == r
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             && !pfs_searches[i].stage
 #endif
             ) pfs_search_free(&pfs_searches[i]);
@@ -1466,7 +1466,7 @@ void pfs_invalidate_fat_drive(WORD drive)
         if (pfs_searches[i].proc && pfs_searches[i].iterator.directory.fs == &fat_pfs_ops &&
             ((DND *)(intptr_t)pfs_searches[i].iterator.directory.index)->d_drv->m_drvnum == drive)
         {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             /* FAT disk errors unwind search/clone guards before osif retires
              * the DND tree. A direct provider must not retire a live stack's
              * directory; reject that contract violation before any tree free. */

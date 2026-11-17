@@ -205,7 +205,7 @@ LONG pfs_iterator_clone(const PFS_ITERATOR *,PFS_ITERATOR *);
 BOOL pfs_iterator_valid(const PFS_ITERATOR *);
 LONG pfs_iterator_close(PFS_ITERATOR *);
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 struct kproc;
 LONG pfs_search_snapshot_prepare(struct kproc *,struct kproc *,UQUAD,
                                  struct dta_info *const *,WORD,WORD *);

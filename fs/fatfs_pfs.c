@@ -25,7 +25,7 @@
 #include "endian.h"
 #include "time.h"
 #include "../bdos/bdosstub.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "../bdos/process_files.h"
 #endif
 
@@ -196,7 +196,7 @@ static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *
     char n[2], a[11];                       /*  M01.01.03   */
     int i, f2;                              /*  M01.01.03   */
     LONG pos, rc;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     rc=process_files_change_admission(run);if (rc<0) return rc;
 #endif
 
@@ -447,7 +447,7 @@ static LONG fat_rmdir_dnd(DND *d)
 
     if (!d->d_parent)
         return EACCDN;
-#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES
     if (d->d_cookie_refs) return EACCDN;
 #endif
 
@@ -547,7 +547,7 @@ static BOOL fat_open_descendants(const DND *dn)
 {
     const DND *child;
     if (dn->d_files) return TRUE;
-#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES
     if (dn->d_cookie_refs) return TRUE;
 #endif
     for (child = dn->d_left; child; child = child->d_right)
@@ -574,7 +574,7 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     LONG fileln, rc;
     PFSCOOKIE newfc;
     BOOL was_locked, destination_locked;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     rc=process_files_change_admission(run);if (rc<0) return rc;
 #endif
 
@@ -703,14 +703,14 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
         }
         dfd->o_flag |= O_DIRTY;
         if (att&FA_SUBDIR) {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             WORD backend=(WORD)hnew;
             if (process_files_managed(run) && process_files_resolve(run,(WORD)hnew,&backend,NULL)!=E_OK)
                 panic("directory temporary descriptor lost");
 #endif
             ixclose(fd2,CL_DIR|CL_FULL);
             xmfreblk(fd2);
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             fs_sft_invalidated(backend-NUMSTD);
             sft[backend-NUMSTD].f_own=0;sft[backend-NUMSTD].f_use=0;sft[backend-NUMSTD].f_ofd=0;
 #else
