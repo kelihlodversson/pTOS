@@ -217,7 +217,13 @@ Pexec(200) commit design (#970, PR #999)
 Status: implemented and on by default (CONF_WITH_PEXEC200, which needs
 CONF_WITH_USER_ASPACE, CONF_WITH_NATIVE_SCHED and CONF_WITH_ELF_LOADER). The
 regression kernel runs EXEC200.TOS on the native matrix, both as an anchor
-(Pexec 100) and synchronously nested (Pexec 0). This section fills the
+(Pexec 100) and synchronously nested (Pexec 0). The anchor also forks a
+private-VM clone (the private Pclone test selector, what Pfork/Pvfork will
+create) that runs every injected failure and the whole replacement chain in
+its own PROCESS, while the parent checks that its own pages and state are
+untouched and that the replacing clone leaves exactly what a clone that
+just exits leaves (copy-on-write tracking of the parent's own frames may
+only shrink). This section fills the
 "remaining concrete owner contract" of exec-handoff.txt.
 
 Interface and FreeMiNT compatibility
