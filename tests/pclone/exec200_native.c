@@ -29,7 +29,7 @@ static void fail(const char *reason, long value)
     Pterm(83);
 }
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-static void conserved(const MAPPING_LIFETIME_SNAPSHOT *reference, const char *what);
+static void conserved(const MAPPING_LIFETIME_SNAPSHOT *reference, const char *what, int cow);
 #endif
 static void unchanged(const char *what)
 {
@@ -40,23 +40,33 @@ static void unchanged(const char *what)
     if (Fwrite((short)descriptor, 1, "a") != 1) fail("descriptor after failure", descriptor);
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     if (!baseline) return;
-    conserved(&before, what);
+    conserved(&before, what, 0);
 #endif
 }
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-static void conserved(const MAPPING_LIFETIME_SNAPSHOT *reference, const char *what)
+/* cow: the copy-on-write tracking of this program's own pages, which the
+ * kernel keeps per shared frame, depends on which pages each clone wrote;
+ * after a clone it may only shrink, never grow. */
+static int cow_tracked(unsigned i)
+{
+    return i == MLT_KHEAP_BLOCKS || i == MLT_KHEAP_PAGES || i == MLT_COW_FRAMES || i == MLT_COW_REFS;
+}
+static void conserved(const MAPPING_LIFETIME_SNAPSHOT *reference, const char *what, int cow)
 {
     unsigned i;
+    int bad = 0;
     snapshot(&after);
     for (i = 0; i < MLT_FIELDS; i++) if (reference->value[i] != after.value[i]) {
         /* Retired startup state can take or return one slab page. */
         if (i == MLT_KHEAP_PAGES &&
             (reference->value[i] - after.value[i] == 1 || after.value[i] - reference->value[i] == 1))
             continue;
+        if (cow && cow_tracked(i) && after.value[i] < reference->value[i]) continue;
         printf("Pexec200 counter %u: %lu -> %lu after %s\r\n", i,
                (unsigned long)reference->value[i], (unsigned long)after.value[i], what);
-        Pterm(82);
+        bad = 1;
     }
+    if (bad) Pterm(82);
 }
 #endif
 static void injected_target(const char *path, unsigned kind, unsigned stage, long expected)
@@ -172,7 +182,7 @@ static void clone_case(void)
     clone_run(0);
     snapshot(&control);
     clone_run(1);
-    conserved(&control, "private clone Pexec(200)");
+    conserved(&control, "private clone Pexec(200)", 1);
     baseline = 0;               /* this program's own state, not its counters */
     unchanged("private clone Pexec(200)");
     baseline = 1;
