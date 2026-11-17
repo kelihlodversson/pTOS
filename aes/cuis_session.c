@@ -1547,6 +1547,19 @@ static void session_exit_client(CUIS_CLIENT *client)
     }
 }
 
+#if CONF_WITH_EXEC_REPLACE
+/* Pexec(200): the PROCESS that holds the console continues on a new
+ * basepage. The lease follows it; the old basepage's disposal must not end
+ * it. No allocation and no failure: this runs inside the commit. */
+void cuis_exec_rekey(PD *old, PD *new)
+{
+    UQUAD flags = cuis_input_lock();
+    if (console_owner == old) console_owner = new;
+    if (console_launch_image == old) console_launch_image = new;
+    cuis_input_unlock(flags);
+}
+#endif
+
 void cuis_process_exit(PD *owner)
 {
     CUIS_CLIENT *client;

@@ -28,15 +28,45 @@ config CONF_WITH_IMAGE_POLICY_TEST
       Test policy capture and its existing trusted NEW_PROCESS publication
       using the ordinary shared-VM clone. This is not private image ownership,
       public fork or same-PROCESS executable replacement.
+config CONF_WITH_EXEC_REPLACE
+    bool "Same-PROCESS executable replacement core for Pexec(200)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    default y
+    help
+      Build the kernel-only replacement transaction for Pexec(200): exact
+      PROCESS/THREAD admission, private ELF staging, the sealed image bundle
+      and the NORETURN commit, at the scheduler root for an anchor and
+      through the launcher frame for a nested child, with old-image
+      retirement off-stack and the committed-exec generation
+      (see doc/exec-replacement.txt).
+
+config CONF_WITH_PEXEC200
+    bool "Public Pexec(200): replace the program in the same process"
+    depends on CONF_WITH_EXEC_REPLACE
+    default y
+    help
+      Enable GEMDOS Pexec(200, path, tail, env), as in FreeMiNT: load an
+      ELF or classic PRG program into a new basepage and replace the calling
+      program with it, keeping the PROCESS, PID, open files, current
+      directories, parent and children, and freeing the old program's
+      basepage, environment and memory.
+      Success does not return; failure returns an error to the unchanged
+      original program. An asynchronously started PROCESS is replaced
+      through the scheduler-root handoff, a synchronously nested child
+      through its launcher frame (doc/exec-replacement.txt).
+
 config CONF_WITH_EXEC_REPLACEMENT_TEST
     bool "Private executable image staging (test only)"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    select CONF_WITH_EXEC_REPLACE
+    select CONF_WITH_PEXEC200
     default n
     help
-      Build real private ELF staging and kernel-only reversible exact-PROCESS/THREAD/root admission
-      prerequisite for Pexec(200). This does not implement executable image
-      replacement, publish committed-exec events or enable public mode200.
-      No shipped preset selects this experimental preparation interface.
+      Build the Pexec(200) regression probes: private ELF staging and
+      reversible admission, injected failures at every receipt, image-bundle
+      and commit stage, an identity/root/generation query and a committed-exec
+      generation waiter, plus the EXEC200 native test programs. Enables
+      public Pexec(200) in the test kernel. No shipped preset selects it.
 
 config CONF_WITH_EXEC_HANDOFF_TEST
     bool "Same-image NORETURN execution transport (test only)"

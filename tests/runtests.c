@@ -20,6 +20,21 @@ void pclone_run_staged_tests(void);
 #if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
 void shared_vm_run_managed_tests(void);
 #endif
+
+#if defined(__mc68000__) && defined(TEST_IS_PRG)
+/*
+ * A classic PRG keeps its stack in its TPA, by default libcmini's MINKEEP
+ * (64 KiB). On MMU m68k kernels the runner nests itself up to three deep
+ * (top level, Pclone worker, nested ABI child) inside the 2 MiB procmem
+ * window, where that default left the last copy no headroom at all: a few
+ * hundred bytes of new test code made its startup fail with Pterm(-1).
+ * The deepest runner frame is 16 KiB (tests/mmap), so 32 KiB still leaves
+ * the call chain room. Private-stack builds (ELF, ARM, x32) are unaffected:
+ * there a positive _stksize would instead become a Psetlimit() cap.
+ */
+long _stksize = 32L * 1024;
+#endif
+
 int main(void)
 {
     int failures;

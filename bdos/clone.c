@@ -25,6 +25,7 @@
 #endif
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
 #include "exec_replace.h"
+#include "exec_handoff_test.h"
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 #include "kthread.h"
@@ -400,6 +401,10 @@ static long clone_request(uint64_t address, uint64_t size)
 
 long xclone(uint64_t address, uint64_t size)
 {
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+    if (size >= EXEC_REPLACE_ARM && size <= EXEC_REPLACE_WAIT + 0xff)
+        return kproc_exec_replace_test((VADDR)address, (ULONG)size);
+#endif
 #if CONF_WITH_EXEC_HANDOFF_TEST
     if (size == EXEC_HANDOFF_QUERY) return ksched_exec_handoff_query((VADDR)address);
     if (size >= EXEC_HANDOFF_RUN && size <= EXEC_HANDOFF_RUN + EXEC_HANDOFF_FAILURES) {

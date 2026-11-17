@@ -30,7 +30,7 @@
 #include "process_observer.h"
 #include "process_exec.h"
 #include "exec_replace.h"
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
 #endif
@@ -559,6 +559,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
+#if CONF_WITH_PEXEC200
+    if (flag == PE_EXEC_REPLACE) return proc_exec_replace(path, tail, env);
+#endif
     return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
@@ -590,12 +593,12 @@ long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG tok
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL,NULL));
 }
 #endif
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
 LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *replacement,
                                 char *path, char *tail, char *env)
 {
     LONG result;
-    if (kproc_exec_replacement_validate(replacement) || !path || !tail || !env)
+    if (kproc_exec_replacement_validate(replacement) || !path || !tail)
         return EACCDN;
     result = DISK_CALL(exec_common(PE_LOAD,path,tail,env,0,0,FALSE,
                                   NULL,NULL,NULL,replacement));
@@ -641,7 +644,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     UNUSED(directory);
 #endif
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
     if (replacement && (flag != PE_LOAD ||
                         kproc_exec_replacement_validate(replacement))) return EACCDN;
 #else
@@ -857,17 +860,6 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return rc;
     }
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST && KPROC_LEGACY_PRG
-    /* A staged legacy TPA still needs a separate image-bundle contract. Do
-     * not start its move/loan ownership path as if it were a private ELF. */
-    if (replacement && kpgm_is_prg()) {
-#if CONF_WITH_BINFMT
-        binfmt_release(&interpreter);
-#endif
-        xclose(fh);
-        return EINVFN;
-    }
-#endif
     /* allocate the environment first, depending on memory policy */
     env_ptr = alloc_env(hdr.h01_flags, env);
     if (env_ptr == NULL) {
@@ -950,7 +942,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         kproc_mark_legacy(p);
 #endif
 
-#if CONF_WITH_EXEC_REPLACEMENT_TEST
+#if CONF_WITH_EXEC_REPLACE
     if (replacement) {
         KPROC *image = kproc_retain(p);
         rc = kproc_exec_replacement_load_begin(replacement,image);
@@ -1563,7 +1555,7 @@ LONG proc_prepare_scheduled(PD *p)
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {
     if (ksched_sibling_launch(p)
-#if CONF_WITH_EXEC_HANDOFF_TEST
+#if CONF_WITH_EXEC_REPLACE
         || ksched_exec_handoff_launch(p)
 #endif
        ) {

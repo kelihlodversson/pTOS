@@ -10,6 +10,9 @@
 #include <string.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+#include "exec200_probe.h"
+#endif
 
 #if defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)
 static long pclone_trap(const void *args, unsigned long size)
@@ -1789,8 +1792,10 @@ void pclone_run_managed_tests(void)
         memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
 #endif
         ptest_begin("same-PROCESS replacement staging (not Pexec200)");
-        ptest_assert_msg(Pexec(200,"C:\\PIEPROBE.TOS","",0)==-32L,
-                         "public mode200 remains unavailable before real execution commit");
+        /* Public mode200 is enabled with this test configuration: a missing
+         * image fails before any commit and leaves this runner in place. */
+        ptest_assert_msg(Pexec(200,"C:\\NO970.TOS","",0)==-33L,
+                         "public mode200 fails before commit and keeps the caller");
         ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,"warm executable staging owners");
         ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,"warm real private ELF staging and disposal");
         for(stage=0x103;stage<=0x105;stage++)
@@ -1994,6 +1999,42 @@ void test_pclone(void)
                              "same-PROCESS transport later completes once");
             ptest_assert_msg(Pwaitpid(child,1,0) < 0,"transport companion reaped once");
         }
+#endif
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+        ptest_log_flush();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        /* Every success path, not only the injected failures, must retire
+         * the old roots, containers, environments and stacks exactly. */
+        ptest_assert_msg(mlt_snapshot(&mlt_before)==0,"snapshot before Pexec(200) runs");
+#endif
+        child = Pexec(100,"EXEC200.TOS","",0);
+        ptest_assert_msg(child > 0,"Pexec(200) subject starts as a managed PROCESS");
+        if (child > 0) {
+            long event = exec200_probe((const void *)(long)child, EXEC_REPLACE_WAIT + 0);
+            long go;
+            /* One committed generation, observed while the PROCESS is live. */
+            ptest_assert_msg((event & 0x1ff) == 1,"committed-exec generation 1 observed, not completion");
+            ptest_assert_msg(Pwaitpid(child,1,0) == 0,"exec neither completes nor publishes the PROCESS for reaping");
+            go = Fcreate("GO970.TMP",0);
+            ptest_assert_msg(go >= 0,"release the replaced image");
+            if (go >= 0) Fclose((short)go);
+            status = Pwaitpid(child,0,0);
+            ptest_assert_msg((status >> 16) == child && (status & 65535) == 70,
+                             "replaced PROCESS later completes once, from its final image");
+            ptest_assert_msg(Pwaitpid(child,1,0) < 0,"replaced PROCESS reaped once");
+            ptest_assert_msg(Fdelete("GO970.TMP") == 0 && Fdelete("EXEC200.TMP") == 0,
+                             "Pexec(200) test files");
+        }
+        /* The same subject as a synchronously nested child: replaced through
+         * its launcher frame, and this Pexec(0) returns its final status. */
+        ptest_log_flush();
+        ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001N",0) == 70,
+                         "nested Pexec(200) relaunch completes once through the launcher");
+        ptest_assert_msg(Fdelete("EXEC200.TMP") == 0,"nested Pexec(200) test file");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        ptest_assert_msg(mlt_snapshot(&mlt_after)==0,"snapshot after Pexec(200) runs");
+        mlt_equal(&mlt_before,&mlt_after);
+#endif
 #endif
     }
 #endif
