@@ -100,5 +100,7 @@ static void test_process_files(void)
     ptest_pass();
     if(!ptest_failures())conws("native PROCESS descriptor inheritance/ownership: PASS\r\n");
 }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
 #include "process_search.h"
+#endif
 #endif

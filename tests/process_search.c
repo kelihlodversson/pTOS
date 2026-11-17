@@ -24,7 +24,7 @@ static unsigned callback,clone_calls;
 static KPROC_FILE_SNAPSHOT *attempt;
 static KPROC *parent_owner,*child_owner;
 static DTAINFO a,b;
-static BOOL close_reentry,close_failure;
+static BOOL close_reentry,close_failure,shutdown_destroy;
 static LONG start(DTAINFO *);
 static unsigned new_position(LONG offset)
 {
@@ -81,6 +81,14 @@ static LONG directory_clone(const PFSCOOKIE *source,LONG position,PFSCOOKIE *out
 static LONG directory_close(PFSCOOKIE *cookie,LONG position)
 {
     CHECK(directory_valid(cookie,position));directory_release(cookie);
+    if(shutdown_destroy) {
+        WORD i;
+        shutdown_destroy=FALSE;
+        CHECK(kproc_find(&caller)==parent_owner && parent_owner->files.retiring);
+        for(i=0;i<KPROC_DTAS;i++)
+            CHECK(!parent_owner->dtas[i].va && !parent_owner->dtas[i].directory);
+        kproc_destroy(&caller);
+    }
     if(close_reentry) {
         PD *saved=run;close_reentry=FALSE;run=&child;
         CHECK(start(&a)==E_OK);run=saved;
@@ -233,6 +241,16 @@ int main(void)
     CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
     CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_ALL)==EACCDN);finish();
     puts("In-flight source retirement and target retirement during provider clone release each exact owner once: PASS");
+    setup();CHECK(start(&b)==E_OK);shutdown_destroy=TRUE;
+    kproc_files_shutdown();
+    CHECK(!shutdown_destroy && !kproc_find(&caller));
+    CHECK(acquired==consumed && iterator_acquired==iterator_consumed);
+    {
+        WORD i;
+        for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) CHECK(search_slot_free(&pfs_searches[i]));
+    }
+    finish();
+    puts("Shutdown detaches every DTA before a close callback destroys its registered PROCESS; exact iterator and metadata baseline: PASS");
     setup();CHECK(kproc_files_snapshot_begin(parent_owner,&attempt)==E_OK);
     CHECK(kproc_files_snapshot_prepare(attempt,child_owner,PROCESS_FILES_STANDARD)==E_OK);
     CHECK(kproc_files_snapshot_seal(attempt)==E_OK);kproc_files_snapshot_commit(attempt,child_owner);

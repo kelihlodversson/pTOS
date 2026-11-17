@@ -3189,9 +3189,15 @@ void kproc_dta_invalidate(KPROC *process,const DTAINFO *address)
 }
 void kproc_search_retire(KPROC *process)
 {
+    PROCESS_DTA_ENTRY entries[KPROC_DTAS];
     WORD i;
     if(!process) return;
-    for(i=0;i<KPROC_DTAS;i++) dta_entry_close(process,&process->dtas[i]);
+    /* Retirement can start while this PROCESS is still registered. A close
+     * callback may destroy it and wipe the heavy payload, so move every
+     * cleanup right off that payload before invoking the first callback. */
+    memcpy(entries,process->dtas,sizeof(entries));
+    memset(process->dtas,0,sizeof(process->dtas));
+    for(i=0;i<KPROC_DTAS;i++) dta_entry_close(process,&entries[i]);
 }
 static PROCESS_DTA_ENTRY *dta_entry(KPROC *process,VADDR address)
 {
