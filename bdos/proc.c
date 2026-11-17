@@ -1170,7 +1170,7 @@ static LONG init_pd_standard_files_from(PD *p, PD *source)
     LONG error = E_OK, rc;
 #if CONF_WITH_PROCESS_FILES
     if (process_files_managed(p))
-        return process_files_inherit_standard(p,source);
+        return process_files_inherit_exec(p,source);
 #endif
 
     /* Preserve existing Pexec inheritance while allowing checked factory use. */

@@ -503,7 +503,8 @@ static LONG snapshot_prepare_body(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target,UW
     WORD i,limit=policy==PROCESS_FILES_STANDARD?NUMSTD:NUMHANDLES;
     LONG error;
     if (!kproc_files_snapshot_validate(snapshot) || snapshot->prepared || snapshot->target || !table || target==snapshot->source ||
-        (policy!=PROCESS_FILES_STANDARD && policy!=PROCESS_FILES_ALL) || table->retiring ||
+        (policy!=PROCESS_FILES_STANDARD && policy!=PROCESS_FILES_ALL &&
+         policy!=PROCESS_FILES_DESCRIPTORS) || table->retiring ||
         table->snapshot || table->operations || table->exhausted || !kproc_live_pd(target)) return EACCDN;
     for (i=0;i<NUMHANDLES;i++) if (table->binding[i].state!=FILE_EMPTY && table->binding[i].handle>=NUMSTD)
         return EACCDN;
@@ -588,7 +589,12 @@ void kproc_files_snapshot_end(KPROC_FILE_SNAPSHOT **handle)
     }
     kproc_release(snapshot->target);kproc_release(snapshot->source);kfree(snapshot);
 }
-LONG process_files_inherit_standard(PD *target,PD *source)
+/* A Pexec child: like a FreeMiNT Pexec child (and every TOS program, whose
+ * handles are global) it can use each of its parent's open descriptors,
+ * under the same local numbers, with its own close rights; it starts with
+ * its own DTA and no directory searches. A nonmanaged boot caller hands on
+ * its standard handles only. */
+LONG process_files_inherit_exec(PD *target,PD *source)
 {
     WORD i;
     KPROC_FILE_SNAPSHOT *snapshot=NULL;
@@ -604,7 +610,7 @@ LONG process_files_inherit_standard(PD *target,PD *source)
     }
     if (!parent || !child) { error=EACCDN;goto done; }
     error=kproc_files_snapshot_begin(parent,&snapshot);
-    if (!error) error=kproc_files_snapshot_prepare(snapshot,child,PROCESS_FILES_STANDARD);
+    if (!error) error=kproc_files_snapshot_prepare(snapshot,child,PROCESS_FILES_DESCRIPTORS);
     if (!error) error=kproc_files_snapshot_seal(snapshot);
     if (!error) kproc_files_snapshot_commit(snapshot,child);
     kproc_files_snapshot_end(&snapshot);

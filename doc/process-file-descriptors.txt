@@ -80,7 +80,10 @@ bindings, seals at final creator preflight and commits beside existing mapping,
 THREAD and scheduler publication. Abort releases snapshot ownership before other
 resource destructors. Identity-only rejection of a startup draft is readonly.
 The raw resource factory rejects COPY_FILES because it cannot itself promise the
-final publication check. Pexec-style STANDARD inheritance keeps its own policy;
+final publication check. A Pexec child inherits every descriptor (DESCRIPTORS:
+like ALL without the DTA/search state), as in FreeMiNT and as TOS programs
+expect from the global handle table; a nonmanaged boot caller hands on its
+standard handles only;
 CWD remains independently selectable. No SFT counters are mutated by proc_clone.
 
 Supported resource policy
