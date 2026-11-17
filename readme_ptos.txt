@@ -19,8 +19,9 @@ https://github.com/emutos/emutos
 For pTOS source code, build instructions, and issue tracking, visit:
 https://github.com/kelihlodversson/pTOS
 
-MMU fork compatibility: the planned pTOS Pvfork uses private copy-on-write
-memory, deliberately differing from FreeMiNT's shared-memory Pvfork. Public
-Pfork/Pvfork are an experimental option (CONF_WITH_PFORK). See
+MMU fork compatibility: pTOS Pvfork uses private copy-on-write memory,
+deliberately differing from FreeMiNT's shared-memory Pvfork. Public
+Pfork/Pvfork (CONF_WITH_PFORK) are on by default on MMU kernels with demand
+paging: x32, ARMv7 and m68k without fastcall. See
  doc/freemint-compatibility.txt
 for the precise memory and parent-suspension policy.

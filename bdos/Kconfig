@@ -78,10 +78,18 @@ config CONF_WITH_EXEC_HANDOFF_TEST
       this is not executable replacement or a committed-exec producer.
       Pexec(200) remains EINVFN. No shipped preset enables this experiment.
 
+config BUILD_FORK_PROFILE
+    def_bool CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && CONF_WITH_FAT_FILE_LIFETIMES && CONF_WITH_ELF_LOADER && (!ARCH_M68K || !CONF_WITH_MFASTCALL) && (!ARCH_ARM || CPU_ARMV7)
+    help
+      Internal: the MMU kernels whose return image public Pfork/Pvfork
+      admit (x32, ARMv7, m68k without fastcall). There the native process
+      profile (scheduling, Pclone, Pthjoin, private clone, PROCESS-local
+      files and public Pfork/Pvfork) is on by default.
+
 config CONF_WITH_PROCESS_FILES
-    bool "Experimental PROCESS-local descriptors and search state"
+    bool "PROCESS-local descriptors and search state"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_FAT_FILE_LIFETIMES
-    default n
+    default y if BUILD_FORK_PROFILE
     help
       Give every managed PROCESS one local descriptor namespace with exact
       SFT incarnation bindings, PROCESS-owned DTA/directory-search state
@@ -98,13 +106,13 @@ config CONF_WITH_PROCESS_FILES_TEST
       Pclone descriptor-snapshot selectors, counters and failure injection.
 
 config CONF_WITH_PRIVATE_CLONE
-    bool "Experimental independent MMU address-space clone"
+    bool "Independent MMU address-space clone (COW)"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING
-    default n
+    default y if BUILD_FORK_PROFILE
     help
       Transactional private address-space cloning and anonymous COW on the
-      validated x32, ARMv7 and m68k 68040 MMU backends. This does not enable
-      public Pfork/Pvfork or supply fork resource inheritance.
+      validated x32, ARMv7 and m68k 68040 MMU backends. By itself this does
+      not enable public Pfork/Pvfork or supply fork resource inheritance.
 
 config CONF_WITH_PRIVATE_CLONE_TEST
     bool "Native private-VM clone/COW tests (test transport only)"
@@ -124,9 +132,9 @@ config CONF_WITH_PRIVATE_SNAPSHOT_TEST
       existing trusted clone and mapping lifetime machinery, not public fork.
 
 config CONF_WITH_PCLONE
-    bool "Experimental Pclone"
+    bool "Pclone"
     depends on CONF_WITH_KPROC
-    default n
+    default y if BUILD_FORK_PROFILE
     help
       Route Pclone through its architecture ABI dispatcher and validate its
       arguments on address-space kernels. Managed native tasks on x32, ARM MMU
@@ -156,10 +164,12 @@ config CONF_PCLONE_ENTRY_ALIGNMENT
 config CONF_WITH_NATIVE_SCHED
     bool "Cooperative native scheduling"
     depends on CONF_WITH_USER_ASPACE
+    default y if BUILD_FORK_PROFILE
     help
       Kernel-owned cooperative native process scheduling and standard MiNT
-      asynchronous launch, yield and child waits. Selected by CUIS initially;
-      independent of GUI session and input services. No preemption or Pfork.
+      asynchronous launch, yield and child waits. Selected by CUIS and on by
+      default in the native process profile; independent of GUI session and
+      input services. No preemption.
       Available on x32, ARM MMU and m68k MMU user-address-space kernels.
       Scheduling is cooperative and does not require CUIS or external libaes.
 
@@ -211,7 +221,7 @@ config CONF_WITH_PTERMGRP
 config CONF_WITH_PTHJOIN
     bool "Managed per-TID thread joins"
     depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
-    default n
+    default y if BUILD_FORK_PROFILE
     help
       Retain small per-TID completion records after safe execution-stack reap.
       Pthjoin joins only managed threads in the calling PROCESS; no GUI,
@@ -231,7 +241,7 @@ config CONF_WITH_FORK_RETURN_TEST
       selector supplies full PROCESS resource inheritance or a public fork ABI.
       ARM admission is limited to the reviewed ARMv7 backend; the RPi1's
       VFP-only target is not supported by the D32 register probe.
-      This is not Pfork or Pvfork; both public calls remain unsupported.
+      This test selector is not Pfork or Pvfork (CONF_WITH_PFORK).
 
 config CONF_WITH_FORK_CORE
     bool
@@ -253,12 +263,12 @@ config CONF_WITH_SAVED_RETURN
       resumes after the same trap (Pfork/Pvfork and the test probe).
 
 config CONF_WITH_PFORK
-    bool "Experimental public Pfork and Pvfork"
+    bool "Public Pfork and Pvfork"
     depends on CONF_WITH_PRIVATE_CLONE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
     depends on CONF_WITH_PTHJOIN && CONF_WITH_PROCESS_FILES && CONF_WITH_PEXEC200
     depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
     depends on !ARCH_ARM || CPU_ARMV7
-    default n
+    default y
     help
       MiNT Pfork() and Pvfork(): the sole THREAD of a PROCESS forks an
       independent PROCESS with a private copy-on-write address space that

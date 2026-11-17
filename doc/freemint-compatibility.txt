@@ -17,8 +17,10 @@ with pTOS's MMU Pvfork policy. Explicitly shared mappings retain their own
 semantics; pTOS's public MAP_SHARED is currently unsupported. Non-MMU fork is
 outside this initial implementation.
 
-Public Pfork/Pvfork are available with CONF_WITH_PFORK (experimental, off by
-default; it needs CONF_WITH_PROCESS_FILES and public Pexec(200)). The child
+Public Pfork/Pvfork are available with CONF_WITH_PFORK, which is on by default
+on MMU kernels with demand paging (x32, ARMv7, m68k without fastcall), together
+with the native scheduling, Pclone, Pthjoin, private clone, PROCESS-local files
+and public Pexec(200) it needs. Elsewhere both calls return EINVFN. The child
 inherits every descriptor with its shared file position, the current
 directories, the DTA and directory searches, the environment and limits.
 Pvfork's parent resumes at the child's final completion or committed

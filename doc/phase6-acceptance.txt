@@ -199,7 +199,8 @@ Initial policy
 Reject non-sole THREAD and other live same-root PROCESS callers before resources.
 Do not copy C stacks, jmp_buf, scheduler continuations, borrowed parent PD or
 return-frame pointers. Copy only user state into child-owned startup. Public
-Pfork/Pvfork are CONF_WITH_PFORK (experimental) and return EINVFN without it.
+Pfork/Pvfork are CONF_WITH_PFORK (on by default in the native process profile)
+and return EINVFN without it.
 The test-only private continuation has no descriptor inheritance claim. Neither an exit-only
 Pvfork approximation nor a passing prerequisite completes public fork.
 
@@ -331,7 +332,8 @@ requests none. UID/GID are fixed0; groups remain the existing
 single-process model; signal masks/dispositions are unsupported, not silently
 claimed. Fault/completion identity stays the child's exact PROCESS/THREAD.
 
-Public Pfork/Pvfork (CONF_WITH_PFORK, experimental): implemented over the same
+Public Pfork/Pvfork (CONF_WITH_PFORK, on by default with the native process
+profile on MMU kernels with demand paging): implemented over the same
 saved-return private constructor with PROC_CLONE_COPY_STANDARD_HANDLES|COPY_CWD|
 COPY_FILES (descriptors, directories, DTA/search state through the PROCESS
 file snapshot, #969/#984). Pvfork's parent resumes at the exact child's
