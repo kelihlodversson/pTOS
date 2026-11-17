@@ -21,13 +21,14 @@ models test readiness ownership only. Public opcodes remain unsupported.
 The parent-policy cases run in the small FORKPAR.TOS companion after the
 existing managed self-test, preserving the classic two-MiB procmem limit and
 the original self-Pexec ABI controls. Both canonical child status and its
-required marker gate acceptance. On x32/A32 the checked 512-byte capture window
-ends at SP rounded up to 16 bytes: SYSCALL and SVC need no user-stack bytes
-above SP, so a caller at the exclusive stack top is admitted. The x32 128-byte
-red zone stays inside the window. Native stack-top (SP==TOP-8 and SP==TOP) and
-underflow controls exercise that boundary; resident mapping, rights and lease
-checks still apply. On m68k the window ends just above USP, covering the
-TRAP #1 argument words. Before startup validation the child's return-PC page is
+required marker gate acceptance. The checked capture window is the least the
+continuation needs, so callers at the exclusive stack top or near their lower
+stack guard are admitted. On x32/A32 it ends at SP rounded up to 16 bytes, since
+SYSCALL and SVC need no user-stack bytes above SP; it is 144 bytes on x32
+(covering the 128-byte red zone) and 16 bytes on A32, which has none. On m68k it
+is 48 bytes from just below USP to just above the TRAP #1 argument words. Native
+stack-top (SP==TOP-8 and SP==TOP) and underflow controls exercise that
+boundary; resident mapping, rights and lease checks still apply. Before startup validation the child's return-PC page is
 materialized (USER|EXEC), so a trap that ends at a page boundary can resume on
 an untouched demand-paged text page.
 
@@ -150,8 +151,8 @@ The test supplies an allocated, resident user stack and switches to its middle
 in assembly before the originating trap. Both contexts execute the instruction
 after that SAME trap. The child never returns through a shared C frame: it
 checks user state, records its PID/TID/SP, then calls raw Pterm. The parent is
-blocked in the kernel throughout. The bounded 512-byte mapping window covers
-this assembly-only stack use and red zone; it is not a general fork stack
+blocked in the kernel throughout. The bounded capture window pins the pages under
+this assembly-only stack use (and the x32 red zone); it is not a general fork stack
 reservation or a safe arbitrary-C shared-stack API.
 
 All three native probes check result branches, distinct PID/TID, original SP,

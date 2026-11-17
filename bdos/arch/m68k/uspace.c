@@ -149,12 +149,12 @@ void m68k_gemdos_dispatch(struct uframe *f)
                 saved.user.fpu[1]) { f->d[0] = EINVFN; return; }
         }
         saved.mappings.entry = saved.user.frame.pc;
-        /* A shallow caller need not own 256 bytes above its USP: keep the
-         * checked resident window below it, ending just above the trap's
-         * argument words, as on x32 and ARM. */
-        if (f->usp < 496) { f->d[0] = EINVFN; return; }
-        saved.mappings.stack_base = (f->usp - 496) & ~15UL;
-        saved.mappings.stack_size = 512;
+        /* The checked resident window is the least the continuation needs:
+         * from just below USP to just above the trap's argument words, so
+         * a shallow caller or one near its lower stack limit forks too. */
+        if (f->usp < 16) { f->d[0] = EINVFN; return; }
+        saved.mappings.stack_base = (f->usp - 16) & ~15UL;
+        saved.mappings.stack_size = 48;
 #if CONF_WITH_PFORK
         if (pw[0] != 0x190) {
             f->d[0] = proc_clone_fork(&saved, pw[0] == GEMDOS_PVFORK);
