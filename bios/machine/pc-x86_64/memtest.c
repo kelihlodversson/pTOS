@@ -5360,6 +5360,14 @@ static void test_file_mmap(void)
     int i, before = failures;
 
     snap(&snapshot);
+    /* Create the mapping processes before the fixture is open: a basepage
+     * child inherits its parent's open descriptors (Pexec semantics), and
+     * these must hold the file only through their mappings. */
+    a = new_basepage(); b = new_basepage(); c = new_basepage();
+    if (!a || !b || !c || !kproc_prepare_user(a, run) ||
+        !kproc_prepare_user(b, run) || !kproc_prepare_user(c, run)) {
+        CHECK(FALSE, "prepare file mapping address spaces"); goto done;
+    }
     fd = DISK_CALL(xcreat(path, 0));
     CHECK(fd >= NUMSTD, "create file mapping fixture");
     if (fd < NUMSTD) goto done;
@@ -5369,11 +5377,6 @@ static void test_file_mmap(void)
     }
     CHECK(i == 257, "write patterned file mapping fixture");
     media = getofd(fd)->o_dmd; head = getofd(fd)->o_dfd->o_strtcl;
-    a = new_basepage(); b = new_basepage(); c = new_basepage();
-    if (!a || !b || !c || !kproc_prepare_user(a, run) ||
-        !kproc_prepare_user(b, run) || !kproc_prepare_user(c, run)) {
-        CHECK(FALSE, "prepare file mapping address spaces"); goto done;
-    }
     as = kproc_user_aspace(a); bs = kproc_user_aspace(b); cs = kproc_user_aspace(c);
     CHECK(kproc_mmap(a, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE &&
           kproc_mmap(b, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE,
