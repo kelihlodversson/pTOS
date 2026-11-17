@@ -170,6 +170,12 @@ int main(void)
     injected_target("EXEC200.TOS", 2, 10, -39L);
 #endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    if (!nested) {
+        /* The clone's stack is this program's first Malloc block: grow the
+         * heap ledger to its kept capacity before the baseline. */
+        void *warm = (void *)Malloc(32768);
+        if (!warm || Mfree(warm)) fail("heap warm-up", 0);
+    }
     snapshot(&before);
     baseline = 1;
 #endif
