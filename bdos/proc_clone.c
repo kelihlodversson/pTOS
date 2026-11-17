@@ -672,6 +672,12 @@ static LONG return_clone(SYSCALL_RETURN *saved, UWORD fail_stage, UWORD resource
         7
 #endif
         || kproc_has_aspace_peer(source)) goto done;
+    /* Back the captured stack window in the caller first, through its own
+     * stack, heap, mapping and captured-lazy authority, so the clone holds
+     * every page of it; an untouched page below SP is not an error. */
+    error = kproc_back_user_write_checked(saved->mappings.stack_base, saved->mappings.stack_size);
+    if (error) goto done;
+    error = EINVFN;
     args.source = source; args.prepared_process = NULL;
     args.process_policy = PROC_CLONE_NEW_PROCESS;
     args.vm_policy = private_vm ? PROC_CLONE_PRIVATE_VM : PROC_CLONE_SHARE_VM;

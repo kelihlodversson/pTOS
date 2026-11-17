@@ -108,6 +108,9 @@ void arm_gemdos_dispatch(struct uframe *f)
             }
         }
 #endif
+        /* A32 user mode only: a Thumb (or other) caller is refused before
+         * any construction, wherever its return address lies. */
+        if ((f->spsr & 0x3f) != 0x10) { f->r[0] = EINVFN; return; }
         memset(&saved, 0, sizeof(saved));
         memcpy(&saved.user, f, sizeof(*f));
         saved.mappings.entry = f->lr;

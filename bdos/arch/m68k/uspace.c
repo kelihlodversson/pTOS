@@ -149,7 +149,11 @@ void m68k_gemdos_dispatch(struct uframe *f)
                 saved.user.fpu[1]) { f->d[0] = EINVFN; return; }
         }
         saved.mappings.entry = saved.user.frame.pc;
-        saved.mappings.stack_base = (f->usp - 256) & ~15UL;
+        /* A shallow caller need not own 256 bytes above its USP: keep the
+         * checked resident window below it, ending just above the trap's
+         * argument words, as on x32 and ARM. */
+        if (f->usp < 496) { f->d[0] = EINVFN; return; }
+        saved.mappings.stack_base = (f->usp - 496) & ~15UL;
         saved.mappings.stack_size = 512;
 #if CONF_WITH_PFORK
         if (pw[0] != 0x190) {

@@ -222,6 +222,26 @@ static void test_cow_vfork_exec_release(void)
     ptest_assert_msg(Fdelete("C:\\FORKGO.TMP")==0,"Pvfork exec release test file");
 }
 #endif
+#if defined(TEST_WITH_PFORK) && !defined(__mc68000__)
+/* Pfork with untouched, demand-paged stack pages just below its SP: an
+ * alloca()'d gap is never written, and its size sweeps SP across a page. */
+static long __attribute__((noinline)) fork_below_gap(void)
+{
+    long pid=Pfork();
+    if(pid==0) Pterm(73);
+    return pid;
+}
+static int __attribute__((noinline)) fork_at_depth(unsigned long depth)
+{
+    char *gap=(char *)__builtin_alloca(depth);
+    long pid,status;
+    __asm__ volatile("" : : "r"(gap) : "memory");
+    pid=fork_below_gap();
+    if(pid<=0) return 0;
+    status=Pwaitpid(pid,0,0);
+    return (status>>16)==pid && (status&65535)==73 && Pwaitpid(pid,1,0)<0;
+}
+#endif
 #if defined(TEST_WITH_PFORK)
 /* Public MiNT Pfork()/Pvfork() (CONF_WITH_PFORK). The child inherits every
  * descriptor with its shared file position, the current directory, the DTA
@@ -284,6 +304,15 @@ static void test_public_fork(void)
     ptest_assert_msg((status>>16)==pid && (status&65535)==76,"Pvfork child completes once from its new image");
     ptest_assert_msg(Pwaitpid(pid,1,0)<0,"Pvfork child reaped once");
     ptest_assert_msg(Fdelete("C:\\FORKGO.TMP")==0,"Pvfork test file");
+#if !defined(__mc68000__)
+    {
+        unsigned long offset;
+        int forked=1;
+        for(offset=0;offset<4096;offset+=256)
+            if(!fork_at_depth(0x18000UL+offset)) forked=0;
+        ptest_assert_msg(forked,"Pfork with untouched demand-paged stack pages below SP");
+    }
+#endif
 }
 #endif
 int main(void)
