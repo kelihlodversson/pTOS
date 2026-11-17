@@ -99,7 +99,13 @@ static void test_cow_vfork_continuation(void)
             if(local!=0x13572468UL || private_probe.cell!=0x11223344UL || private_probe.heap[17]!=0x31)bad=1;
             if(pclone_trap(0,0x895ffffdUL)!=1)bad=1;
             local=0x24681357UL;private_probe.cell=0x66778899UL;private_probe.heap[17]=0x71;
+            /* A failed exec never releases the parent: public Pexec(200)
+             * admits this private-VM child and fails to find the file. */
+#if defined(TEST_WITH_PEXEC200)
+            if(Pexec(200,"MISSING.TOS","",0)!=-33L || pclone_trap(0,0x895ffffdUL)!=1)bad=1;
+#else
             if(Pexec(200,"MISSING.TOS","",0)!=-32L || pclone_trap(0,0x895ffffdUL)!=1)bad=1;
+#endif
             if(cycle==0 || cycle==1) {
                 long nested=pclone_trap(0,cycle?0x895fc000UL:0x895f8000UL);
                 if(nested==0) { local=0;private_probe.heap[17]=0xff;Pterm(75); }
