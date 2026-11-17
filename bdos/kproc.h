@@ -63,6 +63,21 @@ void kproc_set_dta(PD *pd, DTAINFO *dta);
 DTAINFO *kproc_get_dta(PD *pd);
 #if CONF_WITH_KPROC
 typedef struct kproc KPROC;
+struct _dnd;
+struct dta_info;
+#if CONF_WITH_PROCESS_FILES_TEST
+typedef struct kproc_search_snapshot KPROC_SEARCH_SNAPSHOT;
+LONG kproc_search_snapshot_prepare(KPROC *,KPROC *,UQUAD,KPROC_SEARCH_SNAPSHOT **);
+BOOL kproc_search_snapshot_valid(const KPROC_SEARCH_SNAPSHOT *);
+void kproc_search_snapshot_commit(KPROC_SEARCH_SNAPSHOT *);
+void kproc_search_snapshot_end(KPROC_SEARCH_SNAPSHOT **);
+void kproc_search_snapshot_invalidate(KPROC_SEARCH_SNAPSHOT *,WORD);
+void kproc_search_invalidate_drive(WORD);
+void kproc_search_retire(KPROC *);
+void kproc_dta_invalidate(KPROC *,const struct dta_info *);
+LONG kproc_search_fat_attach(PD *,struct dta_info *,struct _dnd *);
+#endif
+
 #include "process_identity.h"
 #include "process_completion.h"
 /* Snapshot queries never own wait/reap rights. Numbers are not kernel pointers,
@@ -391,6 +406,8 @@ void kproc_set_give_back(PD *pd, BOOL give_back);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */
+BOOL kproc_dta_restore_to(PD *,const DTAINFO *address,DTAINFO *output);
+void kproc_dta_save_from(PD *,const DTAINFO *address,const DTAINFO *input);
 BOOL kproc_dta_restore(PD *pd, DTAINFO *dta);
 void kproc_dta_save(PD *pd, const DTAINFO *dta);
 void kproc_dta_forget(PD *pd, const DTAINFO *dta);   /* a new Fsfirst() starts */
@@ -514,6 +531,7 @@ BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);
  * later mapping changes fail instead of unwinding resource-owning callers. */
 /* Materialize legitimate lazy pages but return EIMBA/ENSMEM/EREADF instead
  * of terminating. Existing ordinary copies keep their fatal fault policy. */
+LONG kproc_back_user_write_checked(VADDR address,ULONG size);
 LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
 LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);

@@ -313,7 +313,7 @@ struct _dnd         /* directory node descriptor */
 
     long d_scan;        /*  current posn in dir for DND tree    */
     OFD  *d_files;      /* open files on this node              */
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
     ULONG d_cookie_refs; /* independently owned FAT directory cookies */
 #endif
 }  ;

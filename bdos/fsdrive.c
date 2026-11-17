@@ -216,7 +216,7 @@ WORD log_media(BPB *b, int drv)
     dm->m_drvnum = drv;         /*  drv nbr into media descr    */
     f->o_dmd = dm;              /*  link to OFD for rt dir file */
 
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
     d->d_cookie_refs = 0;
 #endif
     d->d_drv = dm;              /*  link root DND with DMD      */

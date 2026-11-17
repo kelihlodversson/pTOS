@@ -3,6 +3,11 @@
 #define main observer_fixture_main
 #include "process_observer.c"
 #undef main
+#ifndef PROCESS_SEARCH_FIXTURE
+/* This fixture retires descriptors only; its PFS searches are empty. */
+void pfs_search_close(KPROC *process,DTAINFO *address)
+{ (void)process;(void)address; }
+#endif
 #define main close_fixture_main
 #define run close_fixture_run
 #define panic close_fixture_panic
@@ -30,6 +35,9 @@ static LONG retirement_release(PFSCOOKIE *cookie)
     kproc_destroy(&caller); /* preceding list element/cursor may disappear */
     return E_OK;
 }
+#ifdef PROCESS_SEARCH_FIXTURE
+#define main descriptor_retirement_main
+#endif
 int main(void)
 {
     struct pfs_ops operations={0};
