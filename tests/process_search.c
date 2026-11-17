@@ -25,6 +25,7 @@ static KPROC_FILE_SNAPSHOT *attempt;
 static KPROC *parent_owner,*child_owner;
 static DTAINFO a,b;
 static BOOL close_reentry,close_failure,shutdown_destroy;
+static WORD eviction_retire,first_read_retire;
 static LONG start(DTAINFO *);
 static unsigned new_position(LONG offset)
 {
@@ -61,6 +62,12 @@ static LONG directory_read(PFSCOOKIE *cookie,LONG *position,char *name,int cap,P
     if(!*position) { *position=new_position(0);cookie->aux=*position; }
     CHECK(directory_valid(cookie,*position));
     offset=positions[*position].offset++;
+    if(first_read_retire) {
+        WORD mode=first_read_retire;first_read_retire=0;
+        if(mode==1) process_files_retire(&parent_owner->files);
+        else if(mode==2) kproc_destroy(&caller);
+        else CHECK(kproc_begin_file_cleanup(&caller));
+    }
     if(callback==5) { callback=0;kproc_destroy(&caller); }
     if(offset>=3) return ENMFIL;
     memset(attr,0,sizeof(*attr));strlcpy(name,offset==0?"A.TXT":offset==1?"B.TXT":"C.TXT",cap);
@@ -81,6 +88,11 @@ static LONG directory_clone(const PFSCOOKIE *source,LONG position,PFSCOOKIE *out
 static LONG directory_close(PFSCOOKIE *cookie,LONG position)
 {
     CHECK(directory_valid(cookie,position));directory_release(cookie);
+    if(eviction_retire) {
+        WORD mode=eviction_retire;eviction_retire=0;
+        if(mode==1) process_files_retire(&parent_owner->files);
+        else kproc_destroy(&caller);
+    }
     if(shutdown_destroy) {
         WORD i;
         shutdown_destroy=FALSE;
@@ -98,11 +110,14 @@ static LONG directory_close(PFSCOOKIE *cookie,LONG position)
 static LONG start(DTAINFO *dta)
 {
     PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
+    PD *process=run;
     LONG result;
     CHECK(process_files_search_begin(run,&operation)==E_OK);
     kproc_dta_forget(run,dta);
     result=pfs_do_sfirst_at("C:\\*.TXT",0,dta);
     if(result==E_OK) kproc_dta_save(run,dta);
+    if(operation.table && (operation.table->retiring ||
+        kproc_live_pd(operation.owner)!=process)) result=EACCDN;
     process_files_operation_end(&operation);return result;
 }
 static LONG advance(DTAINFO *dta)
@@ -210,6 +225,39 @@ int main(void)
     }
     finish();
     puts("Trusted-cache eviction closes exact iterators; full search-table partial preparation rolls back and retries successfully: PASS");
+    for(mode=1;mode<=2;mode++) {
+        static DTAINFO searches[KPROC_DTAS];
+        WORD i;
+        setup();
+        for(i=0;i<KPROC_DTAS-1;i++) CHECK(start(&searches[i])==E_OK);
+        CHECK(acquired-consumed==KPROC_DTAS);
+        eviction_retire=(WORD)mode;
+        CHECK(start(&searches[KPROC_DTAS-1])==EACCDN && !eviction_retire);
+        CHECK(acquired==consumed && iterator_acquired==iterator_consumed);
+        for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) {
+            CHECK(search_slot_free(&pfs_searches[i]));
+            CHECK(!pfs_searches[i].process && !pfs_searches[i].proc);
+        }
+        finish();
+    }
+    puts("Full-cache eviction retirement/destruction closes the pending uncached search before releasing its PROCESS identity: PASS");
+    for(mode=1;mode<=2;mode++) {
+        WORD i;
+        setup();first_read_retire=(WORD)mode;
+        CHECK(start(&b)==EACCDN && !first_read_retire);
+        CHECK(acquired==consumed && iterator_acquired==iterator_consumed);
+        for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) {
+            CHECK(search_slot_free(&pfs_searches[i]));
+            CHECK(!pfs_searches[i].process && !pfs_searches[i].proc);
+        }
+        finish();
+    }
+    puts("Retirement during the first provider read closes its uncached iterator for both live and destroyed PROCESSes: PASS");
+    setup();first_read_retire=3;
+    CHECK(start(&b)==EACCDN && !first_read_retire);
+    CHECK(acquired-consumed==1 && iterator_acquired-iterator_consumed==1);
+    finish();
+    puts("Closed cleanup admission during the first provider read rejects and consumes the uncached iterator: PASS");
     setup();
     {
         PFS_SEARCH *search=NULL;

@@ -3392,7 +3392,14 @@ void kproc_dta_save_from(PD *pd,const DTAINFO *address,const DTAINFO *dta)
 #if CONF_WITH_PROCESS_FILES_TEST
     if(process_files_cache_begin(pd,&operation)) return;
     entry=dta_entry(process,(VADDR)(uintptr_t)address);
-    if(!entry) { process_files_operation_end(&operation);return; }
+    if(!entry) {
+#if CONF_WITH_PLUGGABLE_FS
+        /* Fsfirst may already own an iterator at this address. Eviction can
+         * retire the PROCESS before that iterator gains a cache witness. */
+        pfs_search_close(operation.owner,(DTAINFO *)address);
+#endif
+        process_files_operation_end(&operation);return;
+    }
 #else
     for(i=0;i<KPROC_DTAS;i++) {
         if(process->dtas[i].va==(VADDR)(uintptr_t)address) break;

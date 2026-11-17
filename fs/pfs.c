@@ -502,7 +502,11 @@ static void pfs_search_free(PFS_SEARCH *s)
 static BOOL search_slot_free(const PFS_SEARCH *search)
 { return !search->owner && !search->busy && !search->iterator.owned && !search->stage; }
 static BOOL search_process_live(PROCESS_FILES *table,PD *pd)
-{ return !table || (!table->retiring && kproc_live_pd(table->owner)==pd); }
+{
+    /* Shutdown closes cleanup admission before retiring individual tables. */
+    return !table || (!table->retiring && kproc_live_pd(table->owner)==pd &&
+                      kproc_file_references_allowed(pd));
+}
 static LONG pfs_try_clone(const PFS_ITERATOR *source,PFS_ITERATOR *out,PFS_DISK_FAILURE *failure)
 { return PFS_TRY(pfs_iterator_clone(source,out),failure); }
 void pfs_search_close(KPROC *process,DTAINFO *address)
@@ -587,7 +591,8 @@ static LONG search_readdir(PFS_SEARCH *search,char *name,int size,PFSATTR *attri
     error=pfs_try_readdir(search->iterator.directory.fs,&search->iterator.directory,
                          &search->iterator.position,name,size,attributes,&failure);
     search->busy--;
-    if(search->retiring || (search->process && kproc_live_pd(search->process)!=search->proc)) {
+    if(search->retiring || (search->process &&
+        !search_process_live(kproc_ref_files(search->process),search->proc))) {
         error=EACCDN; /* the outer search consumes this exact slot once */
     }
     if(failure.raised) {
