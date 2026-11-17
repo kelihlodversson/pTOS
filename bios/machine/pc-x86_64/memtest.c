@@ -1724,6 +1724,9 @@ static void test_residual_alias_retirement(void)
     if (failures==initial_failures) kprintf("native exhausted ordinary aliases with retained SFT owner: PASS\r\n");
 }
 
+/* Legacy (non-PROCESS-local) descriptor table contract: see
+ * test_proc_clone_factory(). Not built with CONF_WITH_PROCESS_FILES. */
+#if !CONF_WITH_PROCESS_FILES
 static void test_residual_file_ownership(void)
 {
     SNAP s;
@@ -1778,9 +1781,13 @@ static void test_residual_file_ownership(void)
     kproc_release(identity);
     same(&s,"residual file recovery returns exact resource baseline");
 }
+#endif
 
 /* Native production media invalidation/PD cleanup with a test-owned FAT OFD.
  * No mounted drive is changed; the synthetic medium owns only this OFD. */
+/* Legacy (non-PROCESS-local) descriptor table contract: see
+ * test_proc_clone_factory(). Not built with CONF_WITH_PROCESS_FILES. */
+#if !CONF_WITH_PROCESS_FILES
 static void test_invalidated_standard_aliases(void)
 {
     SNAP before;
@@ -1825,6 +1832,7 @@ static void test_invalidated_standard_aliases(void)
     kproc_release(identity);
     same(&before,"media invalidation, slot reuse and PD disposal return resource baseline");
 }
+#endif
 
 static void test_kthread_live_disposal(void)
 {
@@ -2456,6 +2464,12 @@ static void test_proc_clone_invalidation(void)
 
 /* Real low-memory allocations, PID identity, standard-handle/CWD inheritance
  * and generic disposal. The factory does not build an execution context. */
+/* The legacy (non-PROCESS-local) descriptor contract of the resource
+ * factory: it edits PD_UFT slots and counts SFT references directly. With
+ * CONF_WITH_PROCESS_FILES a PROCESS owns a local descriptor namespace and
+ * clones inherit it through the files snapshot instead; that path is tested
+ * by tools/test-process-files.py and the native PROCESS descriptor runs. */
+#if !CONF_WITH_PROCESS_FILES
 static void test_proc_clone_factory(void)
 {
     SNAP baseline, acquired;
@@ -2606,6 +2620,7 @@ static void test_proc_clone_factory(void)
     same(&baseline, "factory source-first cleanup and final owned-result release");
     kcprintf("x86-64 clone PROCESS factory: %s\n", failures == before ? "PASS" : "FAIL");
 }
+#endif
 
 #if CONF_WITH_NATIVE_SCHED
 /* These identity-only startup drafts never enter user code or backend stacks.
@@ -7000,7 +7015,9 @@ void x86_64_memtest_run(void)
     test_kthread_relationships();
     test_proc_clone();
     test_proc_clone_invalidation();
+#if !CONF_WITH_PROCESS_FILES
     test_proc_clone_factory();
+#endif
 #if CONF_WITH_NATIVE_SCHED
     test_proc_clone_startup();
     test_return_bridge();
@@ -7008,10 +7025,14 @@ void x86_64_memtest_run(void)
     test_clone_execution();
 #endif
 #endif
+#if !CONF_WITH_PROCESS_FILES
     test_residual_file_ownership();
+#endif
     test_checked_file_references();
     test_residual_alias_retirement();
+#if !CONF_WITH_PROCESS_FILES
     test_invalidated_standard_aliases();
+#endif
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();
