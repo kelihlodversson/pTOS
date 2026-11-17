@@ -15,6 +15,7 @@
 void pclone_run_managed_tests(void);
 void pclone_run_unmanaged_tests(void);
 void pclone_run_staged_tests(void);
+long pclone_run_anchored_probe(void);
 #endif
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
@@ -54,6 +55,12 @@ int main(void)
                  !memcmp(_base->p_cmdlin + 1,"--abi-staged",12);
     if (worker || unmanaged || staged)
         ptest_log_append();
+    /* #1015: run as a managed THREAD's Pexec(0) child, an anchor. */
+    if ((unsigned char)_base->p_cmdlin[0] == 14 && !memcmp(_base->p_cmdlin + 1, "--abi-anchored", 14)) {
+        long status = pclone_run_anchored_probe();
+        Pterm((short)status);
+        return (int)status;
+    }
 #endif
 
     conws("pTOS regression tests\r\n\r\n");

@@ -585,7 +585,9 @@ static BOOL exec_handoff_matches(const KSCHED_EXEC_HANDOFF *tx)
         task->execution.owner_cpu == execution_cpu.number &&
         !task->nested && !task->nested_prepared && !task->completion_owner && !task->dependents &&
         !task->ready && !task->argument && !task->observation.source &&
-        !task->synchronous_waiter && !task->synchronous_wait_process &&
+        /* Pexec(200) keeps this task and PID, so an exact waiter's claim (an
+         * anchored Pexec(0) parent's, #1015) stays valid across it. */
+        (tx->receipt || (!task->synchronous_waiter && !task->synchronous_wait_process)) &&
         !task->process_completed && !task->result_published && !task->exited &&
         !task->execution.syscall_stack.physical &&
         tx->process == task->process && tx->pd == run && task->program == run &&

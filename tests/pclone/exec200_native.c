@@ -1,6 +1,7 @@
 /* Pexec(200) acceptance subject (#970). Started by the Pclone runner as an
- * anchor PROCESS with Pexec(100), and again as a synchronously nested child
- * with Pexec(0) and the tail "N", which takes the launcher relaunch path.
+ * anchor PROCESS with Pexec(100), as an anchored Pexec(0) child (tail "A",
+ * #1015), and as a synchronously nested child on the nested carrier with
+ * Pexec(0) and the tail "N", which takes the launcher relaunch path.
  * Every injected or genuine preparation failure must leave this program
  * running unchanged, with every counter conserved; the genuine call replaces
  * it with the ELF image EXEC200B.TOS in the same PROCESS and never returns.
@@ -93,7 +94,8 @@ static void final_program(void)
     if (t.generation != 3) exec200_fail("final", "generation", (long)t.generation);
     if (Fsnext() == 0) exec200_fail("final", "search survived the exec", 0);
     if (Fclose((short)t.descriptor)) exec200_fail("final", "descriptor close", t.descriptor);
-    Cconws(t.nested == 2 ? "native Pexec(200) from a private-VM clone: PASS\r\n" :
+    Cconws(t.nested == 3 ? "native Pexec(200) from an anchored Pexec(0) child: PASS\r\n" :
+           t.nested == 2 ? "native Pexec(200) from a private-VM clone: PASS\r\n" :
            t.nested ? "native nested Pexec(200) launcher relaunch: PASS\r\n"
                     : "native Pexec(200) same-PROCESS executable/root replacement: PASS\r\n");
     Pterm(70);
@@ -191,7 +193,9 @@ static void clone_case(void)
 #endif
 int main(void)
 {
-    int nested = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'N';
+    /* 'N': a nested carrier execution; 'A': an anchored Pexec(0) child (#1015). */
+    int nested = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'N' ? 1 :
+                 (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'A' ? 3 : 0;
     if ((unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'F') final_program();
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("initial query", 0);
     if (original.generation[0] || original.generation[1]) fail("initial generation", 1);

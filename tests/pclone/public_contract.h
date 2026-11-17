@@ -450,20 +450,39 @@ static void test_public_contract(unsigned char *stack)
     result = pclone_trap(&good,32);
     phase1_finish(result,pid); /* retry after every failure */
     phase1_account("cross/retry",baseline);
+#if defined(TEST_WITH_IMAGE_POLICY_TEST)
+#define PHASE1_SMALL_PROBE "IMAGEPOL.TOS"
+#else
+#define PHASE1_SMALL_PROBE "runtests.tos"
+#endif
+#if PCLONE_NESTED_CARRIER
     {
         static const char tail[] = "\017--abi-unmanaged";
         ptest_log_flush();
         /* Keep the unsupported-context probe small when the full optional
-         * staging/ownership suite occupies m68k's bounded classic window. */
-        ptest_assert_msg(Pexec(0,
-#if defined(TEST_WITH_IMAGE_POLICY_TEST)
-                         "IMAGEPOL.TOS",
-#else
-                         "runtests.tos",
-#endif
-                         tail,0) == 0,"nested synchronous launcher is not a managed THREAD");
+         * staging/ownership suite occupies m68k's bounded classic window.
+         * Only a nested carrier execution is unmanaged (#1015). */
+        pclone_nest_synchronous(1);
+        ptest_assert_msg(Pexec(0,PHASE1_SMALL_PROBE,tail,0) == 0,
+                         "nested synchronous launcher is not a managed THREAD");
+        pclone_nest_synchronous(0);
     }
     phase1_account("nested",baseline);
+#endif
+    {
+        /* #1015: a managed THREAD's Pexec(0) child is an anchor that owns
+         * dependents, and Pexec(0) returns its whole 16-bit status. */
+        long status;
+        ptest_log_flush();
+        status = Pexec(0,PHASE1_SMALL_PROBE,ANCHORED_PROBE_TAIL,0);
+        if (status != ANCHORED_PROBE_STATUS) printf("anchored Pexec(0) probe: %lx\r\n",(unsigned long)status);
+        ptest_assert_msg(status == ANCHORED_PROBE_STATUS,
+                         "Pexec(0) child is an anchor: Pclone, Pthjoin, Pfork and its 16-bit status");
+        ptest_assert_msg(Pwaitpid(-1,1,0) == -33L,"the anchored child was reaped exactly once, by Pexec(0)");
+        if (status == ANCHORED_PROBE_STATUS) conws("native anchored Pexec(0) child owns dependents: PASS\r\n");
+    }
+    phase1_account("anchored",baseline);
+#undef PHASE1_SMALL_PROBE
     {
         static const char tail[] = "\14--abi-staged";
         long image, child, status, report;
