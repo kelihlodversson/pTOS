@@ -1831,6 +1831,9 @@ void pclone_run_managed_tests(void)
 #endif
 #if defined(TEST_WITH_PROCESS_FILES)
     test_process_files();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    test_process_search();
+#endif
 #endif
 #if defined(TEST_WITH_FORK_RETURN_TEST)
     test_saved_return();

@@ -953,6 +953,9 @@ restrt:
             /* first, out with the old stuff */
             dmd = drvtbl[errdrv];
             dn = dmd->m_dtl;
+#if CONF_WITH_PROCESS_FILES_TEST
+            kproc_search_invalidate_drive(errdrv);
+#endif
 #if CONF_WITH_PLUGGABLE_FS
             pfs_invalidate_fat_drive(errdrv);
 #endif

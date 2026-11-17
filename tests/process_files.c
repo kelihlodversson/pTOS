@@ -10,6 +10,7 @@
 #undef main
 #include "process_files.h"
 #include "kproc.h"
+#include "process_search_absent.h"
 extern void *malloc(size_t);
 extern void free(void *);
 struct kproc { PD *pd;UQUAD number;ULONG refs;BOOL dead;PROCESS_FILES files; };
@@ -151,6 +152,19 @@ int main(void)
     }
     puts("Trusted boot standard handoff and preexisting explicit ownership import preserve refs; inconsistent aliases rejected: PASS");
     run=&owner;descriptor=open_bound();before=allocations-frees;
+    {
+        PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
+        UQUAD epoch=processes[0].files.epoch;
+        CHECK(process_files_operation_begin(run,&operation)==E_OK);
+        CHECK(processes[0].files.operations==1 && processes[0].files.epoch!=epoch);
+        CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==EACCDN && !snapshot);
+        process_files_operation_end(&operation);process_files_operation_end(&operation);
+        CHECK(!processes[0].files.operations);
+        CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==E_OK);
+        CHECK(process_files_operation_begin(run,&operation)==EACCDN);
+        process_files_invalidate_epoch(&processes[0].files);
+        CHECK(!kproc_files_snapshot_validate(snapshot));kproc_files_snapshot_end(&snapshot);
+    }
     fail_allocation=TRUE;CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==ENSMEM && !snapshot);fail_allocation=FALSE;
     CHECK(allocations-frees==before);
     CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==E_OK);

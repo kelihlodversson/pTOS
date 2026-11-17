@@ -23,6 +23,7 @@
  * position just past the last byte written; the caller is responsible
  * for null-terminating (see xgetdir() for the pattern this follows).
  */
+long ixsfirst_to(char *,WORD,DTAINFO *output,DTAINFO *owner);
 char *dopath(DND *p, char *buf, int *len);
 
 /* One directory-search step, given caller-owned search state 'dt'

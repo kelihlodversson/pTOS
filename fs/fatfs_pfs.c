@@ -447,7 +447,7 @@ static LONG fat_rmdir_dnd(DND *d)
 
     if (!d->d_parent)
         return EACCDN;
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
     if (d->d_cookie_refs) return EACCDN;
 #endif
 
@@ -547,7 +547,7 @@ static BOOL fat_open_descendants(const DND *dn)
 {
     const DND *child;
     if (dn->d_files) return TRUE;
-#if CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
     if (dn->d_cookie_refs) return TRUE;
 #endif
     for (child = dn->d_left; child; child = child->d_right)
@@ -985,6 +985,37 @@ static void fat_release(PFSCOOKIE *fc)
     }
 }
 
+static BOOL fat_iterator_valid(const PFSCOOKIE *directory,LONG position)
+{
+    WORD slot;
+    if(position<=0 || position>CONF_PFS_MAX_SEARCHES) return FALSE;
+    slot=(WORD)(position-1);
+    return directory && directory->fs==&fat_pfs_ops && directory->pos==-1 &&
+        directory->aux==position && position>0 && position<=CONF_PFS_MAX_SEARCHES &&
+        fat_readdir_pool[slot].used;
+}
+static LONG fat_iterator_clone(const PFSCOOKIE *source,LONG position,PFSCOOKIE *out,LONG *cursor)
+{
+    WORD slot;
+    LONG error;
+    DND *directory=COOKIE_TO_DND(source);
+    if (!fat_iterator_valid(source,position)) return E_CHNG;
+    for(slot=0;slot<CONF_PFS_MAX_SEARCHES;slot++) if(!fat_readdir_pool[slot].used) break;
+    if(slot==CONF_PFS_MAX_SEARCHES) return ENHNDL;
+    error=fat_directory_cookie(directory,out);
+    if(error) return error;
+    memset(&fat_readdir_pool[slot].dta,0,sizeof(DTAINFO));
+    /* Logical FAT continuation fields only, never the source slot's owner. */
+    memcpy(&fat_readdir_pool[slot].dta,&fat_readdir_pool[position-1].dta,offsetof(DTAINFO,dt_fattr));
+    fat_readdir_pool[slot].used=TRUE;
+    out->aux=slot+1;*cursor=slot+1;
+    return E_OK;
+}
+static LONG fat_iterator_close(PFSCOOKIE *directory,LONG position)
+{
+    (void)position;fat_release(directory);return E_OK;
+}
+
 struct pfs_ops fat_pfs_ops = {
     fat_root,
     fat_lookup,
@@ -1005,7 +1036,8 @@ struct pfs_ops fat_pfs_ops = {
     TRUE            /* native_handles: fat_open()/fat_create() already
                      * allocate a real sft[] slot - see fat_open()/
                      * fat_create() and pfs_do_open()/pfs_do_create()
-                     * in fs/pfs.c. */
+                     * in fs/pfs.c. */,
+    NULL, NULL, fat_iterator_clone, fat_iterator_valid, fat_iterator_close
 };
 
 #endif /* CONF_WITH_PLUGGABLE_FS */
@@ -1025,16 +1057,19 @@ static BOOL contains_wildcard_characters(const char *test)
     return FALSE;
 }
 
-LONG fat_sfirst_path_at(char *name, WORD att, DTAINFO *dt)
+LONG fat_sfirst_path_to(char *name,WORD att,DTAINFO *owner,DTAINFO *dt)
 {
     long result;
 
     dt->dt_offset_drive = -1L;
-    result = ixsfirst(name, att, dt);
+    result = ixsfirst_to(name,att,dt,owner);
     if ((result < 0) || !contains_wildcard_characters(name))
         return result;
     return E_OK;
 }
+
+LONG fat_sfirst_path_at(char *name,WORD att,DTAINFO *dt)
+{ return fat_sfirst_path_to(name,att,dt,dt); }
 
 LONG fat_snext_path_at(DTAINFO *dt)
 {

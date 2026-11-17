@@ -13,8 +13,10 @@ typedef struct {
 typedef struct {
     struct kproc *owner; /* borrowed: this table is embedded in that identity */
     UQUAD number, epoch, snapshot;
+    KPROC_FILE_SNAPSHOT *preparation; /* borrowed from this exact snapshot ticket */
     ULONG operations;
-    BOOL retiring, exhausted;
+    BOOL retiring, exhausted, search_busy;
+    UQUAD search_actor;
     SBYTE *standard; /* this KPROC's own UFT mirror, cleared at retirement */
     PROCESS_FILE_BINDING binding[NUMHANDLES];
 } PROCESS_FILES;
@@ -29,6 +31,20 @@ typedef struct {
     BOOL active;
 } PROCESS_FILE_CLOSE;
 #define PROCESS_FILE_CLOSE_INIT { NULL, NULL, 0, 0, FS_FILE_REFERENCE_INIT, FALSE }
+/* Shared admission for descriptor and search-state operations. Identity
+ * retention keeps this embedded table valid across retirement callbacks. */
+typedef struct {
+    PROCESS_FILES *table;
+    struct kproc *owner;
+    BOOL search;
+} PROCESS_FILE_OPERATION;
+#define PROCESS_FILE_OPERATION_INIT { NULL, NULL, FALSE }
+LONG process_files_operation_begin(PD *,PROCESS_FILE_OPERATION *);
+LONG process_files_search_begin(PD *,PROCESS_FILE_OPERATION *);
+LONG process_files_cache_begin(PD *,PROCESS_FILE_OPERATION *);
+void process_files_operation_end(PROCESS_FILE_OPERATION *);
+void process_files_invalidate_epoch(PROCESS_FILES *);
+void process_files_search_invalidate(PROCESS_FILES *,WORD);
 #define PROCESS_FILES_STANDARD 1U
 #define PROCESS_FILES_ALL      2U
 BOOL process_files_init(PROCESS_FILES *,struct kproc *,SBYTE *standard);
