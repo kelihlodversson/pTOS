@@ -5,7 +5,8 @@ python3 tools/test-scheduler-probes.py
 python3 tools/test-shared-root-mapping.py
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-kaspace.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config configs/pc-x86_64_defconfig \
+cat configs/pc-x86_64_defconfig tools/hosted-legacy-profile.config > "$work/legacy.config"
+CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/legacy.config" \
     --header "$work/autoconf.h" --makefile "$work/auto.conf"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 -iquote bdos \
@@ -33,6 +34,7 @@ for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
 import kconfiglib, sys
 k = kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/' + sys.argv[1] + '_defconfig')
+k.load_config('tools/hosted-legacy-profile.config', replace=False)
 k.syms['CONF_WITH_MMAP'].set_value(2)
 assert k.syms['CONF_WITH_MMAP'].str_value == 'y'
 k.write_config(sys.argv[2])
@@ -69,6 +71,7 @@ PY
 import kconfiglib, sys
 k = kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/' + sys.argv[1] + '_defconfig')
+k.load_config('tools/hosted-legacy-profile.config', replace=False)
 k.syms['CONF_WITH_MMAP'].set_value(0)
 if sys.argv[1] == 'pc-x86_64':
     k.syms['CONF_WITH_X86_64_MEMTEST'].set_value(2)
@@ -102,6 +105,7 @@ CONFIG_= python3 - "$work/config" <<'PY'
 import kconfiglib, sys
 k = kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/pc-x86_64_defconfig')
+k.load_config('tools/hosted-legacy-profile.config', replace=False)
 k.syms['CONF_WITH_ELF_SHARED'].set_value(2)
 k.syms['CONF_WITH_LIBAES'].set_value(2)
 for name in ('CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN', 'CONF_WITH_FORK_RETURN_TEST', 'CONF_WITH_PRIVATE_CLONE'):

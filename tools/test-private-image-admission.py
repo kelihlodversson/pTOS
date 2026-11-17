@@ -176,6 +176,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
     work=Path(tmp)
     k=kconfiglib.Kconfig(warn_to_stderr=False)
     k.load_config('configs/'+args.preset+'_defconfig')
+    k.load_config('tools/hosted-legacy-profile.config', replace=False)
     arch,machine={'pc-x86_64':('x86_64','pc-x86_64'),'virt-arm-aspace':('arm','virt-arm'),'virt-m68k-aspace':('m68k','virt-m68k')}[args.preset]
     for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_SHARED_VM_PEXEC_TEST','CONF_WITH_ELF_SHARED','CONF_WITH_MMAP','CONF_WITH_PRIVATE_CLONE','CONF_WITH_IMAGE_POLICY'):
         k.syms[name].set_value(2)

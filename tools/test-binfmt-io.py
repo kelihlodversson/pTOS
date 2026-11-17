@@ -12,8 +12,12 @@ os.chdir(root)
 os.environ["CONFIG_"] = ""
 with tempfile.TemporaryDirectory(prefix="binfmt-io-") as temp:
     work = Path(temp)
+    # The configuration this fixture was written for: the native process
+    # profile off (tools/hosted-legacy-profile.config).
+    (work / "legacy.config").write_text(Path("configs/pc-x86_64_defconfig").read_text() +
+                                        Path("tools/hosted-legacy-profile.config").read_text())
     subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
-                    "--config", "configs/pc-x86_64_defconfig", "--header",
+                    "--config", str(work / "legacy.config"), "--header",
                     str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")], check=True)
     (work / "setjmp.h").write_text("#include <setjmp.h>\n")
     command = shlex.split(os.environ.get("HOSTCC", "cc"))

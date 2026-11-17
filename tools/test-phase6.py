@@ -43,6 +43,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-phase6-') as directory:
             continue
         config = kconfiglib.Kconfig(warn_to_stderr=False)
         config.load_config('configs/' + preset + '_defconfig')
+        config.load_config('tools/hosted-legacy-profile.config', replace=False)
         if name == 'fs':
             config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2)
         else:

@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-image-policy-") as directory:
     work = Path(directory)
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/pc-x86_64_defconfig")
+    config.load_config("tools/hosted-legacy-profile.config", replace=False)
     assert config.syms["CONF_WITH_IMAGE_POLICY"].str_value == "n"
     for name in ("CONF_WITH_ELF_SHARED", "CONF_WITH_CUIS", "CONF_WITH_X32_VDI",
                  "CONF_WITH_USER_CALLBACKS", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP"):
