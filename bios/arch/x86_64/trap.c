@@ -194,12 +194,13 @@ static LONG return_probe(x86_64_trap_frame_t *f)
     u->gs_base=return_read_msr(0xc0000102); /* user half while SWAPGS is active */
     memcpy(u->fpu, (const UBYTE *)f - 512, 512);
     saved.mappings.entry=u->rip;
-    if (u->rsp<496) return EINVFN;
-    /* Keep the checked resident window below the actual continuation.
-     * A shallow SysV frame need not own 256 bytes above RSP. The end is
-     * RSP+1..16, with the 128-byte red zone inside the unchanged 512-byte
-     * window. Full selected-root range/rights validation still applies. */
-    saved.mappings.stack_base=(u->rsp - 496) & ~15ULL;
+    /* Keep the checked resident window below the actual continuation:
+     * SYSCALL needs no user-stack bytes above RSP, so the window ends at
+     * RSP rounded up to 16 (RSP itself at the exclusive stack top), with
+     * the 128-byte red zone inside the 512-byte window. Full selected-root
+     * range/rights validation still applies. */
+    if (u->rsp<512 || u->rsp>USER_VA_LIMIT) return EINVFN;
+    saved.mappings.stack_base=((u->rsp + 15) & ~15ULL) - 512;
     saved.mappings.stack_size=512;
 #if CONF_WITH_PFORK
     if ((ULONG)f->rax != 0x190)

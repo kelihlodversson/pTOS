@@ -114,10 +114,11 @@ void arm_gemdos_dispatch(struct uframe *f)
         memset(&saved, 0, sizeof(saved));
         memcpy(&saved.user, f, sizeof(*f));
         saved.mappings.entry = f->lr;
-        if (f->usp<496) { f->r[0]=EINVFN; return; }
-        /* A shallow A32 frame does not own 256 bytes above its live SP.
-         * Keep the same checked resident window mostly below the frame. */
-        saved.mappings.stack_base = (f->usp - 496) & ~15UL;
+        /* SVC takes its arguments in registers and needs no user-stack
+         * bytes above SP: the checked window ends at SP rounded up to 16,
+         * so a caller at the exclusive stack top forks too. */
+        if (f->usp<512 || f->usp>USER_VA_LIMIT) { f->r[0]=EINVFN; return; }
+        saved.mappings.stack_base = ((f->usp + 15) & ~15UL) - 512;
         saved.mappings.stack_size = 512;
 #if CONF_WITH_PFORK
         if (pw[0] != 0x190) {

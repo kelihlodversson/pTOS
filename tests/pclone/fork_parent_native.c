@@ -63,13 +63,22 @@ static void test_cow_vfork_continuation(void)
 #if defined(__x86_64__) || defined(__arm__)
     ptest_assert_msg(stack_edge_trap(0)==-32L && pclone_trap(0,0x895ffffcUL)==dependencies,
                      "saved-return stack-window subtraction rejects underflow before resources");
-    pid=stack_edge_trap(0x7ffffff8UL);
-    if(pid==0)Pterm(73);
-    ptest_assert_msg(pid>0,"saved-return accepts valid shallow top-of-stack continuation");
-    if(pid>0) {
-        status=Pwaitpid(pid,1,0);
-        ptest_assert_msg((status>>16)==pid && (status&65535)==73 && Pwaitpid(pid,1,0)<0,
-                         "top-of-stack child resumes after trap and completes before parent return");
+    {
+        /* TOP-8, and SP at the exclusive stack top itself: neither SYSCALL
+         * nor SVC needs user-stack bytes above SP. */
+        static const unsigned long edge[2]={0x7ffffff8UL,0x80000000UL};
+        int i;
+        for(i=0;i<2;i++) {
+            pid=stack_edge_trap(edge[i]);
+            if(pid==0)Pterm(73);
+            ptest_assert_msg(pid>0,i?"saved-return accepts SP at the exclusive stack top":
+                             "saved-return accepts valid shallow top-of-stack continuation");
+            if(pid>0) {
+                status=Pwaitpid(pid,1,0);
+                ptest_assert_msg((status>>16)==pid && (status&65535)==73 && Pwaitpid(pid,1,0)<0,
+                                 "top-of-stack child resumes after trap and completes before parent return");
+            }
+        }
     }
 #endif
     ptest_assert_msg(pclone_trap(0,0x895f4000UL)==-32L &&
@@ -291,6 +300,9 @@ static void test_public_fork(void)
     (void)Fdelete("C:\\FORKGO.TMP");
     pid=Pvfork();
     if(pid==0) {
+        /* The parent must be blocked on this exact child before its exec:
+         * a Pvfork that behaved like Pfork would fail here. */
+        if(pclone_trap(0,0x895ffffdUL)!=1) Pterm(77);
         (void)Pexec(200,"FORKPAR.TOS","\001W",0);
         Pterm(75);
         for(;;) { }

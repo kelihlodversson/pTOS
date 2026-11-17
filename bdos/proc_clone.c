@@ -608,6 +608,14 @@ LONG proc_clone_prepare_saved_return(PROC_CLONE_TRANSACTION *tx, const SYSCALL_R
 #endif
     return thread_startup_prepare_saved_return(tx->space, saved, &tx->startup);
 }
+static LONG return_back_continuation(KASPACE *space, const SYSCALL_RETURN *saved)
+{
+    LONG error = public_back_range(space, saved->mappings.entry, 1,
+                                   ASPACE_PROT_USER | ASPACE_PROT_EXEC);
+    if (error) return error;
+    return public_back_range(space, saved->mappings.stack_base,
+                             saved->mappings.stack_size, ASPACE_PROT_USER | ASPACE_PROT_WRITE);
+}
 static BOOL return_child_completed(void *context)
 {
     PROCESS_COMPLETION completed;
@@ -685,8 +693,9 @@ static LONG return_clone(SYSCALL_RETURN *saved, UWORD fail_stage, UWORD resource
 #define RETURN_STAGE(call) do { error = (call); if (error) goto done; \
     if (++stage == fail_stage) { error = ENSMEM; goto done; } } while (0)
     RETURN_STAGE(proc_clone(&args, &tx));
-    RETURN_STAGE(public_back_range(tx->space, saved->mappings.stack_base,
-        saved->mappings.stack_size, ASPACE_PROT_USER | ASPACE_PROT_WRITE));
+    /* The return PC can start an untouched demand-paged page (a trap that
+     * ends at a page boundary); materialize it as clone_start_entry() does. */
+    RETURN_STAGE(return_back_continuation(tx->space, saved));
     RETURN_STAGE(proc_clone_prepare_saved_return(tx, saved));
     RETURN_STAGE(proc_clone_retain_startup_stack(tx));
     RETURN_STAGE(proc_clone_prepare_outputs(tx, 0, 0));
