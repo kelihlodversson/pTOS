@@ -167,7 +167,9 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
 #if CONF_WITH_SAVED_RETURN
 #include "../../../bdos/syscall_return.h"
+#include "../../../bdos/kproc.h"
 #include "string.h"
+extern PD *run;
 static UQUAD return_read_msr(ULONG msr)
 {
     ULONG lo, hi;

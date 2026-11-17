@@ -22,9 +22,12 @@ default; it needs CONF_WITH_PROCESS_FILES and public Pexec(200)). The child
 inherits every descriptor with its shared file position, the current
 directories, the DTA and directory searches, the environment and limits.
 Pvfork's parent resumes at the child's final completion or committed
-Pexec(200). A multi-THREAD caller gets EACCDN. The return image is admitted
-on x86-64, on ARMv7 with an idle VFP and on a 68040 format-0 trap frame with
-an idle FPU; on any other CPU or state (68030/6888x, 68060, fastcall, Thumb)
+Pexec(200). A multi-THREAD or shared-root caller gets EACCDN. Only an anchor execution
+(started with Pexec(100/104) or a clone) may fork; a program running nested
+in its launcher's Pexec(0) gets EINVFN, as for Pclone. The return image is admitted
+on x86-64 with the default segment registers and no FS/GS base (no TLS), on
+ARMv7 (A32) with an idle VFP and on a 68040 format-0 trap frame with an idle
+FPU; on any other CPU or state (68030/6888x, 68060, fastcall, Thumb)
 both calls return EINVFN. No general signals/TLS/preemption support is
 implied. See fork.txt and
 phase6-acceptance.txt for the current supported configuration and evidence.

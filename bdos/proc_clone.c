@@ -655,6 +655,9 @@ static LONG return_clone(SYSCALL_RETURN *saved, UWORD fail_stage, UWORD resource
     if (suspend_parent && !(fail_stage&FORK_RETURN_PRIVATE)) goto done;
     fail_stage&=~FORK_RETURN_VFORK;
 #endif
+    /* Public Pfork/Pvfork refuse a multi-THREAD or shared-root caller with
+     * EACCDN; the test probe keeps its EINVFN contract. */
+    if (resources) error = EACCDN;
     if (!kproc_thread_is_sole(source,saved->owner)) goto done;
 #if CONF_WITH_PRIVATE_CLONE
     private_vm = (fail_stage & FORK_RETURN_PRIVATE) != 0;
@@ -700,7 +703,9 @@ static LONG return_clone(SYSCALL_RETURN *saved, UWORD fail_stage, UWORD resource
         if (suspend_parent) {
             error=fork_parent_wait(dependency,&reason);
             cancelled=ksched_cancellation_pending();
-            if (error) goto done;
+            /* The child is published either way: unless the parent itself
+             * is cancelled, it gets the PID to reap, not a bare error. */
+            if (error && cancelled) goto done;
         }
 #endif
         error = created.pid;

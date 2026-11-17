@@ -268,9 +268,14 @@ config CONF_WITH_PFORK
       environment and limits. Pfork's parent continues at once; Pvfork's
       parent waits until the child's final completion or its committed
       Pexec(200). Unlike FreeMiNT's Pvfork, the child's private writes never
-      reach the parent's memory. A multi-THREAD caller gets EACCDN.
-      Supported where the return image is admitted: x86-64, ARMv7 with an
-      idle VFP state and a 68040 format-0 trap frame with an idle FPU; on
+      reach the parent's memory. A multi-THREAD or shared-root caller gets
+      EACCDN. Only an
+      anchor execution (started with Pexec(100/104) or a clone) may fork: a
+      program running nested in its launcher's Pexec(0) owns no dependents
+      and gets EINVFN, as for Pclone.
+      Supported where the return image is admitted: x86-64 with default
+      segments and no FS/GS base, ARMv7 A32 with an idle VFP state and a
+      68040 format-0 trap frame with an idle FPU; on
       any other CPU or state both calls return EINVFN.
 
 

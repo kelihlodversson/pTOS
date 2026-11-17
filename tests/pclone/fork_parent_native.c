@@ -237,12 +237,15 @@ static void test_public_fork(void)
     ptest_assert_msg(fd>=0,"public fork descriptor in the current directory");
     if(fd<0) return;
     ptest_assert_msg(Fwrite((short)fd,1,"A")==1,"parent writes before Pfork");
+    /* An open directory search on the inherited DTA (#984). */
+    ptest_assert_msg(Fsfirst("*.TOS",0)==0,"parent starts a directory search before Pfork");
     pid=Pfork();
     if(pid==0) {
         int bad=Pgetppid()!=parent || Pgetpid()==parent || (void *)Fgetdta()!=dta ||
                 local!=0x5a5a1234UL;
         local=0;
         if(Fwrite((short)fd,1,"B")!=1 || Fclose((short)fd)) bad=1;
+        if(Fsnext()!=0) bad=1; /* continues the inherited search */
         Pterm(bad?74:73);
         for(;;) { }
     }
@@ -250,9 +253,10 @@ static void test_public_fork(void)
     if(pid>0) {
         status=Pwaitpid(pid,0,0);
         ptest_assert_msg((status>>16)==pid && (status&65535)==73,
-                         "Pfork child inherits the descriptor, directory, DTA and parent");
+                         "Pfork child inherits the descriptor, directory, DTA, search and parent");
         ptest_assert_msg(Pwaitpid(pid,1,0)<0,"Pfork child reaped once");
         ptest_assert_msg(local==0x5a5a1234UL,"Pfork child's private writes do not reach the parent");
+        ptest_assert_msg(Fsnext()==0,"parent's own search continues independently of the child's");
     }
     ptest_assert_msg(Fwrite((short)fd,1,"C")==1,"parent descriptor survives the child's close");
     ptest_assert_msg(Fclose((short)fd)==0,"parent closes its own binding");

@@ -186,6 +186,8 @@ jobs:
           /tmp/elf-shared-venv/bin/python tools/test-phase6.py --require lazy
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
+      - name: Build public Pfork/Pvfork without test transports
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/check-pfork-build.sh
       - name: Build the enabled freestanding x32 core
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
