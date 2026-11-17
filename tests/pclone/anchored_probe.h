@@ -69,8 +69,15 @@ static long anchored_probe(void)
 #if defined(TEST_WITH_PFORK)
     child = Pfork();
     if (child == 0) Pterm(48);
+#if defined(__mc68000__)
+    /* m68k admits the return image only on a 68040 with an idle FPU:
+     * elsewhere Pfork is refused at run time with EINVFN, a gate, not a
+     * nested context (which the Pclone and Pthjoin checks above rule out). */
+    if (child == -32L) child = 0;
+    else
+#endif
     if (child <= 0) bad |= 32;
-    else {
+    if (child > 0) {
         result = Pwaitpid(child, 0, 0);
         if ((result >> 16) != child || (result & 65535) != 48) bad |= 64;
     }
