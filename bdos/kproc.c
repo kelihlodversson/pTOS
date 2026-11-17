@@ -2062,20 +2062,23 @@ static BOOL exec_image_injected(UWORD stage)
  * parent chain; only the copies' p_env follows the new environment block. */
 static BOOL exec_image_ancestors(const KPROC *source, ASPACE *as, const UBYTE *env, ULONG *count)
 {
-    static UBYTE page[USER_ANCESTORS * sizeof(PD)];
-    PD *copy = (PD *)page;
+    /* Owned by this preparation, not static: two PROCESSes may prepare at
+     * once if either copy blocks. */
+    PD *copy;
     ULONG n = source->ancestors, i;
+    BOOL ok;
     *count = 0;
     if (!n) return TRUE;
-    if (n > USER_ANCESTORS || !source->aspace ||
-        !aspace_copy_from_user(source->aspace, page, USER_ANCESTORS_VA, n * sizeof(PD)))
-        return FALSE;
-    for (i = 0; i < n; i++)
+    if (n > USER_ANCESTORS || !source->aspace) return FALSE;
+    copy = kalloc(USER_ANCESTORS * sizeof(PD));
+    if (!copy) return FALSE;
+    ok = aspace_copy_from_user(source->aspace, copy, USER_ANCESTORS_VA, n * sizeof(PD));
+    for (i = 0; ok && i < n; i++)
         copy[i].p_env = PTR_TO_USERPTR((char *)env);
-    if (!aspace_load_private(as, USER_ANCESTORS_VA, 4096, ASPACE_PROT_USER, page, n * sizeof(PD)))
-        return FALSE;
-    *count = n;
-    return TRUE;
+    ok = ok && aspace_load_private(as, USER_ANCESTORS_VA, 4096, ASPACE_PROT_USER, copy, n * sizeof(PD));
+    kfree(copy);
+    if (ok) *count = n;
+    return ok;
 }
 
 /* Sources this PROCESS-local replacement cannot carry into a new image. */

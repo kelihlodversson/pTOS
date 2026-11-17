@@ -246,7 +246,11 @@ its recorded text extent executable, exactly as for an ordinary launch. A PRG
 with an empty text segment, which an ordinary launch accepts, is refused.
 These are rejected with EACCDN by admission and never partially replaced:
   - multi-THREAD PROCESSes;
-  - shared-VM (4/104) children and Pclone compatibility state;
+  - shared-VM (4/104) children, Pclone compatibility state and every
+    Pclone-created PROCESS, including the private-VM (COW) children Pfork
+    and Pvfork will create: fork followed by Pexec(200) needs the clone's
+    logical basepage/environment, private image and stack state reset at
+    the commit first;
   - legacy PE_GO give-back and heap-ledger image blocks;
   - a launcher with a child it is still loading;
   - a PROCESS with registered user callbacks, which name code of the old image.
