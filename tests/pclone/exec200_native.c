@@ -28,30 +28,37 @@ static void fail(const char *reason, long value)
     printf("Pexec200 subject FAIL: %s (%ld)\r\n", reason, value);
     Pterm(83);
 }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+static void conserved(const MAPPING_LIFETIME_SNAPSHOT *reference, const char *what);
+#endif
 static void unchanged(const char *what)
 {
     EXEC_REPLACE_TEST_STATE now;
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-    unsigned i;
-#endif
     if (exec200_probe(&now, EXEC_REPLACE_QUERY)) fail("query", 0);
     if (memcmp(&now, &original, sizeof(now))) fail(what, (long)now.generation[0]);
     if (Pgetpid() != (long)original.pid) fail("PID after failure", Pgetpid());
     if (Fwrite((short)descriptor, 1, "a") != 1) fail("descriptor after failure", descriptor);
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     if (!baseline) return;
-    snapshot(&after);
-    for (i = 0; i < MLT_FIELDS; i++) if (before.value[i] != after.value[i]) {
-        /* Retired startup state can take or return one slab page. */
-        if (i == MLT_KHEAP_PAGES &&
-            (before.value[i] - after.value[i] == 1 || after.value[i] - before.value[i] == 1))
-            continue;
-        printf("Pexec200 counter %u: %lu -> %lu after %s\r\n", i,
-               (unsigned long)before.value[i], (unsigned long)after.value[i], what);
-        Pterm(82);
-    }
+    conserved(&before, what);
 #endif
 }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+static void conserved(const MAPPING_LIFETIME_SNAPSHOT *reference, const char *what)
+{
+    unsigned i;
+    snapshot(&after);
+    for (i = 0; i < MLT_FIELDS; i++) if (reference->value[i] != after.value[i]) {
+        /* Retired startup state can take or return one slab page. */
+        if (i == MLT_KHEAP_PAGES &&
+            (reference->value[i] - after.value[i] == 1 || after.value[i] - reference->value[i] == 1))
+            continue;
+        printf("Pexec200 counter %u: %lu -> %lu after %s\r\n", i,
+               (unsigned long)reference->value[i], (unsigned long)after.value[i], what);
+        Pterm(82);
+    }
+}
+#endif
 static void injected_target(const char *path, unsigned kind, unsigned stage, long expected)
 {
     long result;
@@ -118,10 +125,12 @@ static void replace(int nested)
 /* #1003: a private-VM (COW) clone, what Pfork/Pvfork create, replaces
  * itself in its own PROCESS while its parent waits. */
 static volatile unsigned long clone_cell = 0x5eed1003UL;
+static int clone_exec;
 static void clone_entry(void *argument)
 {
     (void)argument;
     clone_cell = 0xc10e1003UL;   /* a private write the parent must never see */
+    if (!clone_exec) Pterm(70);  /* the control: the same clone, no exec */
     baseline = 0;
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("clone query", 0);
     if (original.generation[0] || original.generation[1]) fail("clone generation", 1);
@@ -134,11 +143,12 @@ static void clone_entry(void *argument)
     failures();
     replace(2);
 }
-static void clone_case(void)
+static void clone_run(int exec)
 {
     struct ptos_clone_args args;
     unsigned char *stack = (unsigned char *)Malloc(32768);
     long child, status;
+    clone_exec = exec;
     if (!stack) fail("clone stack", 0);
     memset(stack, 0, 32768); memset(&args, 0, sizeof(args));
     args.flags = CLONE_VM | CLONE_COPY_STANDARD_HANDLES | CLONE_COPY_CWD; /* private-VM test selector */
@@ -150,8 +160,23 @@ static void clone_case(void)
     if (Pwaitpid(child, 1, 0) >= 0) fail("clone reaped once", child);
     if (clone_cell != 0x5eed1003UL) fail("parent pages after the clone's exec", (long)clone_cell);
     if (Mfree(stack)) fail("clone stack release", 0);
-    if (Fdelete("EXEC200C.TMP")) fail("clone descriptor closed", 0);
+    if (exec && Fdelete("EXEC200C.TMP")) fail("clone descriptor closed", 0);
+}
+/* Cloning leaves this program's own pages copy-on-write tracked, so the
+ * reference is a control clone that exits without replacing itself: the
+ * replacement must leave exactly what that one does. */
+static void clone_case(void)
+{
+    MAPPING_LIFETIME_SNAPSHOT control;
+    clone_run(0);
+    clone_run(0);
+    snapshot(&control);
+    clone_run(1);
+    conserved(&control, "private clone Pexec(200)");
+    baseline = 0;               /* this program's own state, not its counters */
     unchanged("private clone Pexec(200)");
+    baseline = 1;
+    snapshot(&before);
 }
 #endif
 int main(void)
