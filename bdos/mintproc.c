@@ -154,10 +154,10 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     {
     case GEMDOS_PFORK:
     case GEMDOS_PVFORK:
-        /* Recognize the no-argument MiNT ABI, but fail before constructing
-         * identities or suspending the caller. Test-gated saved-return/COW
-         * is not complete PROCESS inheritance; committed Pexec(200) replacement
-         * is still missing. See doc/phase6-acceptance.txt. */
+        /* With CONF_WITH_PFORK the architecture trap captures the caller's
+         * return image and forks before this dispatcher (proc_clone_fork);
+         * a call that reaches here is unsupported or its CPU state was not
+         * admitted. Fail before constructing identities or suspending. */
         return EINVFN;
 #if CONF_WITH_PCLONE
     case GEMDOS_PCLONE:

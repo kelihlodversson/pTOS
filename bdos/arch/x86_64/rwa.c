@@ -529,7 +529,7 @@ void gouser_entry(WORD entry_type)
         if (!pml4_phys || !kstack_phys || !user_rsp)
             panic("x86-64: process launched without an address space, stack or kernel stack\n");
         if (
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
             !(prepared && prepared->saved_return) &&
 #endif
             (user_rsp & 15) != (standard_entry ? 0 : 8))

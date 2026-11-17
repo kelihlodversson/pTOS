@@ -7,7 +7,7 @@
 struct kthread;
 struct kaspace;
 struct proc_clone_transaction;
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 #if ARCH_X86_64
 #include "arch/x86_64/thread_startup_x32.h"
 typedef X32_THREAD_ENTRY_IMAGE SYSCALL_USER_IMAGE;
@@ -45,6 +45,11 @@ typedef struct syscall_return {
 #define FORK_RETURN_PRIVATE 0x8000U /* requires both private native test gates */
 #define FORK_RETURN_VFORK   0x4000U /* PRIVATE required; exact-child parent wait */
 LONG proc_clone_return_probe(SYSCALL_RETURN *, UWORD fail_stage);
+#if CONF_WITH_PFORK
+#include "mintproc.h"
+/* Public Pfork (vfork FALSE) / Pvfork (TRUE) from a captured trap. */
+LONG proc_clone_fork(SYSCALL_RETURN *, BOOL vfork);
+#endif
 LONG proc_clone_prepare_saved_return(struct proc_clone_transaction *, const SYSCALL_RETURN *);
 LONG thread_startup_prepare_saved_return(struct kaspace *, const SYSCALL_RETURN *, THREAD_STARTUP_DRAFT **);
 #if CONF_WITH_PRIVATE_CLONE

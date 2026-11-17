@@ -329,10 +329,16 @@ policy remain prerequisites. UID/GID are fixed0; groups remain the existing
 single-process model; signal masks/dispositions are unsupported, not silently
 claimed. Fault/completion identity stays the child's exact PROCESS/THREAD.
 
-Public Pfork: 0% accepted public syscall semantics; test-only construction/VM
-continuation is an implemented prerequisite, not completed public functionality.
-Public Pvfork: 0% accepted public syscall semantics; no committed exec detach or
-public dependency is implemented. This is Outcome B, never 100% Phase6.
+Public Pfork/Pvfork (CONF_WITH_PFORK, experimental): implemented over the same
+saved-return private constructor with PROC_CLONE_COPY_STANDARD_HANDLES|COPY_CWD|
+COPY_FILES (descriptors, directories, DTA/search state through the PROCESS
+file snapshot, #969/#984). Pvfork's parent resumes at the exact child's
+final completion or committed Pexec(200) (#970/#1003). Architecture scope is
+narrowed at the trap capture: x86-64, ARMv7 with idle VFP, 68040 format-0
+frame with idle FPU; other CPUs/states return EINVFN (P6-ARCH). The fork core
+and descriptor machinery are now production options (CONF_WITH_FORK_CORE,
+CONF_WITH_SAVED_RETURN, CONF_WITH_PROCESS_FILES); the _TEST options add only
+their transports.
 
 Preliminary cba92cad3 source: x32 ordinary and shared-Pexec-gated native25/0,
 five shutdown checks; private register and original-stack markers PASS. Hosted
@@ -364,7 +370,7 @@ Its private diagnostic handoff count is NOT a KPROC committed-exec generation.
 Public Pexec(200) is implemented and on by default (CONF_WITH_PEXEC200): a different-root ELF or classic PRG commit on a new
 basepage (FreeMiNT overlay semantics) for anchors at the
 scheduler root and for nested children through their launcher frame, with one
-KPROC committed-exec generation per commit. Pfork and Pvfork remain EINVFN.
+KPROC committed-exec generation per commit. Pfork and Pvfork are CONF_WITH_PFORK.
 
 Both eventual fork calls construct independent PRIVATE_VM/COW children; Pvfork
 additionally suspends the exact parent THREAD. No shared-parent VM/user-stack

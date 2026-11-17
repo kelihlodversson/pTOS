@@ -454,7 +454,7 @@ KASPACE *kaspace_stack_hold_space(const KASPACE_LEASE *hold)
     return hold && hold->stack && hold->held && kaspace_lease_valid(hold) ? hold->space : NULL;
 }
 
-#if CONF_WITH_PRIVATE_CLONE && CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_PRIVATE_CLONE && CONF_WITH_SAVED_RETURN
 LONG kaspace_stack_hold_private_copy(KASPACE *space,VADDR address,VADDR bytes,KASPACE_LEASE **result)
 {
     KASPACE_LEASE *lease=NULL;

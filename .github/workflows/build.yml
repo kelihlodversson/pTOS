@@ -177,7 +177,7 @@ jobs:
           PATH=/tmp/elf-shared-venv/bin:$PATH HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-kaspace.sh
           HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-phase6.py
           HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-phase6.py
-          for capability in fs exec; do
+          for capability in fs; do
             status=0
             /tmp/elf-shared-venv/bin/python tools/test-phase6.py --require "$capability" || status=$?
             test "$status" = 1 || { echo "expected verified prerequisite failure: $capability (got $status)"; exit 1; }

@@ -150,7 +150,7 @@ arm_user_entry_common:
 
 #endif /* CONF_WITH_USER_ASPACE */
 
-#if CONF_WITH_USER_ASPACE && CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_USER_ASPACE && CONF_WITH_SAVED_RETURN
         .text
         .globl C_SYM(arm_enter_saved_user)
 C_SYM(arm_enter_saved_user):

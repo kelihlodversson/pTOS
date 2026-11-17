@@ -18,7 +18,7 @@ attachment or VM detachment is required for COW Pvfork. Public Pexec(200)
 (#970, #999) replaces a private-VM child in its own PROCESS (#1003, #1007) and
 publishes the committed-exec generation the Pvfork release reads.
 
-Public opcodes0x11b/0x113 remain EINVFN until common resource/snapshot prerequisites
+Public opcodes0x11b/0x113 are CONF_WITH_PFORK (experimental; EINVFN without it), after the resource/snapshot prerequisites
 and public native acceptance. The existing0x895f0000 shared-return experiment is
 historical CPU startup coverage ONLY, never the Pvfork implementation. New private
 selectors share one constructor;0x895fc000 adds exact-child parent suspension.
@@ -176,8 +176,10 @@ copy unit test or successful compilation cannot establish this milestone.
 
 Validation of this checkpoint
 -----------------------------
-tests/pclone uses real Pfork/Pvfork traps repeatedly and checks signed EINVFN,
-continued parent execution and stable PID. These are capability-rejection
-tests only; they do not exercise fork branch execution, isolation or vfork
-parent suspension. Native results and CI must be recorded separately in the
+Without CONF_WITH_PFORK, tests/pclone uses real Pfork/Pvfork traps repeatedly
+and checks signed EINVFN, continued parent execution and stable PID. With it,
+FORKPAR.TOS runs the public calls: a Pfork child inheriting a descriptor with
+its shared file position, the directory, the DTA and its parent, and a Pvfork
+child whose Pexec(200), by a path relative to the inherited directory,
+resumes the parent before the child completes. Native results and CI must be recorded separately in the
 draft PR; no native fork success or full F1-F5 acceptance is claimed here.

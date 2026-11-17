@@ -165,7 +165,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  */
 /* The loaded swap state belongs to this CPU alongside its entry stack slots. */
 
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 #include "../../../bdos/syscall_return.h"
 #include "string.h"
 static UQUAD return_read_msr(ULONG msr)
@@ -199,7 +199,15 @@ static LONG return_probe(x86_64_trap_frame_t *f)
      * window. Full selected-root range/rights validation still applies. */
     saved.mappings.stack_base=(u->rsp - 496) & ~15ULL;
     saved.mappings.stack_size=512;
+#if CONF_WITH_PFORK
+    if ((ULONG)f->rax != 0x190)
+        return proc_clone_fork(&saved, (ULONG)f->rax == GEMDOS_PVFORK);
+#endif
+#if CONF_WITH_FORK_RETURN_TEST
     return proc_clone_return_probe(&saved, (UWORD)f->rsi);
+#else
+    return EINVFN;
+#endif
 }
 #endif
 
@@ -224,9 +232,17 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     if (from_ring3)
         x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
 #endif
+#if CONF_WITH_SAVED_RETURN
+    if (from_ring3 && (
 #if CONF_WITH_FORK_RETURN_TEST
-    if (from_ring3 && frame->rax == 0x100000190ULL && !frame->rdi &&
-        (frame->rsi & 0xffff0000UL) == FORK_RETURN_PROBE)
+        (frame->rax == 0x100000190ULL && !frame->rdi &&
+         (frame->rsi & 0xffff0000UL) == FORK_RETURN_PROBE) ||
+#endif
+#if CONF_WITH_PFORK
+        frame->rax == (0x100000000ULL | GEMDOS_PFORK) ||
+        frame->rax == (0x100000000ULL | GEMDOS_PVFORK) ||
+#endif
+        FALSE))
         frame->rax = (QUAD)return_probe(frame);
     else
 #endif

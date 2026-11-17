@@ -2,7 +2,7 @@
 #ifndef PROCESS_FILES_H
 #define PROCESS_FILES_H
 #include "fs.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 struct kproc;
 typedef struct kproc_file_snapshot KPROC_FILE_SNAPSHOT;
 typedef struct {

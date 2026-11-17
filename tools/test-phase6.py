@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Reproduce Phase6 production contracts; MMU, disk and registry are host models.
 
-Default asserts current blockers and balanced ownership. --require fs|exec|lazy
-runs a positive capability control, expected to exit 1 until its prerequisite
-is implemented. The lazy one is: a private clone inherits captured lazy
-reservation authority (#971, #974/#1000), so its control passes in both modes.
-This does not execute a user trap or implement public fork.
+Default asserts current blockers and balanced ownership. --require fs|lazy
+runs a positive capability control. fs exits 1: the legacy global descriptor
+table cannot give a child independent bindings, which is why public
+Pfork/Pvfork requires CONF_WITH_PROCESS_FILES. lazy passes: a private clone
+inherits captured lazy reservation authority (#971, #974/#1000). The former
+exec control modelled a root-attach design that same-PROCESS Pexec(200) does
+not use; the native EXEC200 and FORKPAR tests replace it. This does not
+execute a user trap.
 """
 import argparse
 import os
@@ -20,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
 os.environ['CONFIG_'] = ''
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--require', choices=('fs', 'exec', 'lazy'))
+parser.add_argument('--require', choices=('fs', 'lazy'))
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix='ptos-phase6-') as directory:
     work = Path(directory)
@@ -33,7 +36,6 @@ with tempfile.TemporaryDirectory(prefix='ptos-phase6-') as directory:
     cases = {
         'fs': ('virt-arm-aspace', ['tests/fork_descriptor_control.c', 'bdos/fsclose.c',
                     'bdos/fsopnclo.c', 'bdos/fshand.c', 'bdos/fsmain.c']),
-        'exec': ('pc-x86_64', ['tests/fork_exec_control.c', 'bdos/kthread.c']),
         'lazy': ('pc-x86_64', ['tests/fork_lazy_control.c', 'bdos/kaspace.c']),
     }
     for name, (preset, sources) in cases.items():
@@ -48,8 +50,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-phase6-') as directory:
                            'CONF_WITH_CUIS', 'CONF_WITH_X32_VDI', 'CONF_WITH_USER_CALLBACKS'):
                 config.syms[symbol].set_value(0)
             config.syms['CONF_WITH_X86_64_MEMTEST'].set_value(2)
-            config.syms['CONF_WITH_MMAP'].set_value(2 if name == 'exec' else 0)
-            config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2 if name == 'lazy' else 0)
+            config.syms['CONF_WITH_MMAP'].set_value(0)
+            config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
         config.write_config(str(work/'config'))
         subprocess.run([sys.executable, 'tools/genconfig.py', '--kconfig', 'Kconfig',
                         '--config', str(work/'config'), '--header', str(work/'autoconf.h'),

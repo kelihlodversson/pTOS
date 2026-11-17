@@ -176,7 +176,7 @@ LONG thread_startup_arch_public_return(void *image, const void *bridge)
     if (!draft || !address) return EIMBA;
     draft->return_pc = address; return E_OK;
 }
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
 {
     X32_THREAD_STARTUP_DRAFT *draft = image;

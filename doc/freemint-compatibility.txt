@@ -17,9 +17,14 @@ with pTOS's MMU Pvfork policy. Explicitly shared mappings retain their own
 semantics; pTOS's public MAP_SHARED is currently unsupported. Non-MMU fork is
 outside this initial implementation.
 
-Public Pfork/Pvfork are currently unavailable (EINVFN). The tested private
-construction and suspended-parent probes do not establish public API support.
-Full descriptor inheritance, private snapshot ownership and same-process exec
-acceptance are tracked by #969, #971 and #970. No general signals/TLS/preemption
-or arbitrary CPU/FPU restart support is implied. See fork.txt and
+Public Pfork/Pvfork are available with CONF_WITH_PFORK (experimental, off by
+default; it needs CONF_WITH_PROCESS_FILES and public Pexec(200)). The child
+inherits every descriptor with its shared file position, the current
+directories, the DTA and directory searches, the environment and limits.
+Pvfork's parent resumes at the child's final completion or committed
+Pexec(200). A multi-THREAD caller gets EACCDN. The return image is admitted
+on x86-64, on ARMv7 with an idle VFP and on a 68040 format-0 trap frame with
+an idle FPU; on any other CPU or state (68030/6888x, 68060, fastcall, Thumb)
+both calls return EINVFN. No general signals/TLS/preemption support is
+implied. See fork.txt and
 phase6-acceptance.txt for the current supported configuration and evidence.

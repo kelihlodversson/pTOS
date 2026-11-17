@@ -241,7 +241,7 @@ void kaspace_put(KASPACE *space);
 LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 #if CONF_WITH_PRIVATE_CLONE
 BOOL kaspace_has_captured_lazy(const KASPACE *source);
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 /* Authenticated independent saved-return startup only. Holds resident private
  * writable leaves in the selected root, without creating lazy authority. */
 LONG kaspace_stack_hold_private_copy(KASPACE *, VADDR, VADDR, KASPACE_LEASE **);

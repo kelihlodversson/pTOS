@@ -867,6 +867,11 @@ if grep -q '^#define CONF_WITH_FORK_CORE 1' "$top/obj/autoconf.h" &&
     record "native Pvfork exec release" FAIL "a Pvfork child's committed Pexec(200) did not release its parent"
 fi
 
+if grep -q '^#define CONF_WITH_PFORK 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native public Pfork/Pvfork with inherited descriptors: PASS' "$suite_log"; then
+    record "native public Pfork/Pvfork" FAIL "configured public Pfork/Pvfork did not pass"
+fi
+
 if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
     for marker in 'native private-VM syscall-return registers (not Pfork): PASS' \

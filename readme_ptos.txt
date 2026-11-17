@@ -21,6 +21,6 @@ https://github.com/kelihlodversson/pTOS
 
 MMU fork compatibility: the planned pTOS Pvfork uses private copy-on-write
 memory, deliberately differing from FreeMiNT's shared-memory Pvfork. Public
-Pfork/Pvfork remain unavailable pending acceptance. See
+Pfork/Pvfork are an experimental option (CONF_WITH_PFORK). See
  doc/freemint-compatibility.txt
 for the precise memory and parent-suspension policy.

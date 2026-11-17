@@ -261,7 +261,8 @@ child writes to private/anonymous memory and its private user stack are not
 visible in parent private memory. Explicitly shared mappings retain their
 semantics; public MAP_SHARED currently remains unsupported. This difference is
 intentional, not full FreeMiNT Pvfork memory compatibility. Non-MMU shadow fork
-is outside this policy. Public Pfork/Pvfork currently remain EINVFN pending
-#969/#971 resource/snapshot acceptance and #970 full exec behavior. Native
-Pclone test selectors are not public fork ABI acceptance. See fork.txt,
+is outside this policy. Public Pfork/Pvfork are enabled by CONF_WITH_PFORK
+(experimental, off by default) and otherwise return EINVFN; see
+freemint-compatibility.txt for the inherited state and the CPUs whose return
+image is admitted. See fork.txt,
 phase6-acceptance.txt and freemint-compatibility.txt.

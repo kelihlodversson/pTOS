@@ -1978,6 +1978,7 @@ void test_pclone(void)
     /* These no-argument calls must fail before creating a child or blocking
      * the parent until saved-context/private-VM/exec-detach support exists.
      * Exercise the actual native trap and signed error result repeatedly. */
+#if !defined(TEST_WITH_PFORK)
     {
         long pid = Pgetpid();
         int fork_cycle;
@@ -1987,6 +1988,7 @@ void test_pclone(void)
         }
         ptest_assert_msg(Pgetpid() == pid,"rejected fork preserves caller PID");
     }
+#endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     ptest_assert_msg(private_query(1)==0 && private_query(2)==0,"initial COW frame/reference baseline");
 #endif

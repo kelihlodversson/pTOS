@@ -22,7 +22,7 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 #if CONF_WITH_USER_ASPACE
@@ -420,7 +420,7 @@ static void release_pd_files(PD *r)
     /* Close admission before any callback can attach another reference to
      * this retiring table, including an already-visited standard index. */
     if (!kproc_begin_file_cleanup(r)) return;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(r)) {
         process_files_retire(kproc_files(r));
         goto directories;
@@ -460,7 +460,7 @@ static void release_pd_files(PD *r)
 #endif
         }
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 directories:
 #endif
 #if CONF_WITH_PLUGGABLE_FS
@@ -1168,7 +1168,7 @@ static LONG init_pd_standard_files_from(PD *p, PD *source)
 {
     int i;
     LONG error = E_OK, rc;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(p))
         return process_files_inherit_standard(p,source);
 #endif
@@ -1249,7 +1249,7 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
     KPROC *process;
 
     if (!result || *result || (resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     /* The factory alone cannot admit full inheritance through publication. */
     if (resources&PROC_CLONE_COPY_FILES) return EINVAL;
 #endif

@@ -46,7 +46,7 @@
 #endif
 #include "arch/arm/fpusave.h"
 #include "syscall_return.h"
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 extern void arm_enter_saved_user(const void *, ULONG) NORETURN;
 #endif
 
@@ -87,8 +87,15 @@ void arm_gemdos_dispatch(struct uframe *f)
 
     for (i = 0; i < 8; i++)
         pw[i] = (long)f->r[i];
+#if CONF_WITH_SAVED_RETURN
+    if (
 #if CONF_WITH_FORK_RETURN_TEST
-    if (pw[0] == 0x190 && !pw[1] && ((ULONG)pw[2] & 0xffff0000UL) == FORK_RETURN_PROBE) {
+        (pw[0] == 0x190 && !pw[1] && ((ULONG)pw[2] & 0xffff0000UL) == FORK_RETURN_PROBE) ||
+#endif
+#if CONF_WITH_PFORK
+        pw[0] == GEMDOS_PFORK || pw[0] == GEMDOS_PVFORK ||
+#endif
+        FALSE) {
         SYSCALL_RETURN saved;
         typedef char frame_size_check[(sizeof(saved.user) == sizeof(*f)) ? 1 : -1];
         (void)sizeof(frame_size_check);
@@ -109,7 +116,15 @@ void arm_gemdos_dispatch(struct uframe *f)
          * Keep the same checked resident window mostly below the frame. */
         saved.mappings.stack_base = (f->usp - 496) & ~15UL;
         saved.mappings.stack_size = 512;
+#if CONF_WITH_PFORK
+        if (pw[0] != 0x190) {
+            f->r[0] = proc_clone_fork(&saved, pw[0] == GEMDOS_PVFORK);
+            return;
+        }
+#endif
+#if CONF_WITH_FORK_RETURN_TEST
         f->r[0] = proc_clone_return_probe(&saved, (UWORD)pw[2]);
+#endif
         return;
     }
 #endif
@@ -372,7 +387,7 @@ relaunch:
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) {
             thread_startup_entering(startup);
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
             if (prepared->saved_return) arm_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
 #endif
             arm_enter_prepared_user(prepared, (ULONG)kstack_top);

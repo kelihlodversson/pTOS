@@ -20,7 +20,7 @@
 #include "kproc.h"
 #endif
 #include "bdosstub.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 
@@ -55,7 +55,7 @@ long ixforce(int std, int h, PD *p)
 
     if ((std < 0) || (std >= NUMSTD))   /* validate standard handle */
         return EIHNDL;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(p)) {
         LONG result;
         if (h<0) {
@@ -133,7 +133,7 @@ long xdup(WORD h)
 
     if ((h < 0) || (h >= NUMSTD))
         return EIHNDL;          /* only dup standard */
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(run)) return process_files_duplicate(run,h,run,-1);
 #endif
 #if CONF_WITH_USER_ASPACE

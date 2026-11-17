@@ -222,6 +222,66 @@ static void test_cow_vfork_exec_release(void)
     ptest_assert_msg(Fdelete("C:\\FORKGO.TMP")==0,"Pvfork exec release test file");
 }
 #endif
+#if defined(TEST_WITH_PFORK)
+/* Public MiNT Pfork()/Pvfork() (CONF_WITH_PFORK). The child inherits every
+ * descriptor with its shared file position, the current directory, the DTA
+ * address and its parent; its private writes stay its own. */
+static void test_public_fork(void)
+{
+    long fd,pid,status,go,parent=Pgetpid();
+    char buffer[4];
+    volatile unsigned long local=0x5a5a1234UL;
+    void *dta=(void *)Fgetdta();
+    (void)Fdelete("FORKPUB.TMP");
+    fd=Fcreate("FORKPUB.TMP",0);
+    ptest_assert_msg(fd>=0,"public fork descriptor in the current directory");
+    if(fd<0) return;
+    ptest_assert_msg(Fwrite((short)fd,1,"A")==1,"parent writes before Pfork");
+    pid=Pfork();
+    if(pid==0) {
+        int bad=Pgetppid()!=parent || Pgetpid()==parent || (void *)Fgetdta()!=dta ||
+                local!=0x5a5a1234UL;
+        local=0;
+        if(Fwrite((short)fd,1,"B")!=1 || Fclose((short)fd)) bad=1;
+        Pterm(bad?74:73);
+        for(;;) { }
+    }
+    ptest_assert_msg(pid>0 && pid!=parent,"Pfork returns the child's PID to its parent");
+    if(pid>0) {
+        status=Pwaitpid(pid,0,0);
+        ptest_assert_msg((status>>16)==pid && (status&65535)==73,
+                         "Pfork child inherits the descriptor, directory, DTA and parent");
+        ptest_assert_msg(Pwaitpid(pid,1,0)<0,"Pfork child reaped once");
+        ptest_assert_msg(local==0x5a5a1234UL,"Pfork child's private writes do not reach the parent");
+    }
+    ptest_assert_msg(Fwrite((short)fd,1,"C")==1,"parent descriptor survives the child's close");
+    ptest_assert_msg(Fclose((short)fd)==0,"parent closes its own binding");
+    fd=Fopen("FORKPUB.TMP",0);
+    memset(buffer,0,sizeof(buffer));
+    ptest_assert_msg(fd>=0 && Fread((short)fd,3,buffer)==3 && !memcmp(buffer,"ABC",3),
+                     "parent and Pfork child share one file position");
+    if(fd>=0) (void)Fclose((short)fd);
+    ptest_assert_msg(Fdelete("FORKPUB.TMP")==0,"public fork test file");
+    /* Pvfork: the parent resumes at the child's committed Pexec(200), here
+     * by a path relative to the inherited directory. */
+    (void)Fdelete("C:\\FORKGO.TMP");
+    pid=Pvfork();
+    if(pid==0) {
+        (void)Pexec(200,"FORKPAR.TOS","\001W",0);
+        Pterm(75);
+        for(;;) { }
+    }
+    ptest_assert_msg(pid>0 && pid!=parent,"Pvfork returns the child's PID to its parent");
+    if(pid<=0) return;
+    ptest_assert_msg(Pwaitpid(pid,1,0)==0,"Pvfork parent resumes at the child's Pexec(200) commit");
+    go=Fcreate("C:\\FORKGO.TMP",0);
+    if(go>=0) (void)Fclose((short)go);
+    status=Pwaitpid(pid,0,0);
+    ptest_assert_msg((status>>16)==pid && (status&65535)==76,"Pvfork child completes once from its new image");
+    ptest_assert_msg(Pwaitpid(pid,1,0)<0,"Pvfork child reaped once");
+    ptest_assert_msg(Fdelete("C:\\FORKGO.TMP")==0,"Pvfork test file");
+}
+#endif
 int main(void)
 {
     int failures;
@@ -241,6 +301,9 @@ int main(void)
 #if defined(TEST_WITH_PEXEC200)
         test_cow_vfork_exec_release();
 #endif
+#if defined(TEST_WITH_PFORK)
+        test_public_fork();
+#endif
         ptest_assert_msg(Mfree(private_probe.heap)==0,"COW parent-policy heap released after final child reap");
     }
     ptest_pass();
@@ -248,6 +311,9 @@ int main(void)
     if(!failures)conws("native COW Pvfork parent dependency (test-only, no exec commit): PASS\r\n");
 #if defined(TEST_WITH_PEXEC200)
     if(!failures)conws("native COW Pvfork parent released at committed Pexec(200): PASS\r\n");
+#endif
+#if defined(TEST_WITH_PFORK)
+    if(!failures)conws("native public Pfork/Pvfork with inherited descriptors: PASS\r\n");
 #endif
     ptest_log_flush();
     Pterm(failures);
