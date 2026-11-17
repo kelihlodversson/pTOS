@@ -1163,14 +1163,19 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     *b++ = 0;
 }
 
-/* duplicate files */
-static LONG init_pd_standard_files_from(PD *p, PD *source)
+/* duplicate files: a Pexec child gets every descriptor of its parent
+ * (exec_all), the clone factory's COPY_STANDARD_HANDLES only handles 0..2.
+ * Without PROCESS-local files both share the legacy global table. */
+static LONG init_pd_standard_files_from(PD *p, PD *source, BOOL exec_all)
 {
     int i;
     LONG error = E_OK, rc;
 #if CONF_WITH_PROCESS_FILES
     if (process_files_managed(p))
-        return process_files_inherit_exec(p,source);
+        return process_files_inherit(p,source,
+            exec_all ? PROCESS_FILES_DESCRIPTORS : PROCESS_FILES_STANDARD);
+#else
+    (void)exec_all;
 #endif
 
     /* Preserve existing Pexec inheritance while allowing checked factory use. */
@@ -1222,7 +1227,7 @@ static LONG init_pd_files(PD *p)
     (void)init_pd_cwd_from(p, run);
 #endif
     /* Preserve Pexec's existing standard-file inheritance policy. */
-    (void)init_pd_standard_files_from(p, run);
+    (void)init_pd_standard_files_from(p, run, TRUE);
     return E_OK;
 }
 
@@ -1273,7 +1278,7 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
     if (clone_factory_injected(3)) goto record_failed;
     if (!kproc_clone_inherit_identity(process, source)) { error = EACCDN; goto record_failed; }
     if (resources & PROC_CLONE_COPY_STANDARD_HANDLES) {
-        error = init_pd_standard_files_from(p, parent);
+        error = init_pd_standard_files_from(p, parent, FALSE);
         if (error != E_OK) goto record_failed;
     }
     error = ENSMEM;

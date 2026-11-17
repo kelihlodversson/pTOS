@@ -589,17 +589,21 @@ void kproc_files_snapshot_end(KPROC_FILE_SNAPSHOT **handle)
     }
     kproc_release(snapshot->target);kproc_release(snapshot->source);kfree(snapshot);
 }
-/* A Pexec child: like a FreeMiNT Pexec child (and every TOS program, whose
- * handles are global) it can use each of its parent's open descriptors,
- * under the same local numbers, with its own close rights; it starts with
- * its own DTA and no directory searches. A nonmanaged boot caller hands on
- * its standard handles only. */
-LONG process_files_inherit_exec(PD *target,PD *source)
+/* PROCESS_FILES_DESCRIPTORS for a Pexec child: like a FreeMiNT Pexec child
+ * (and every TOS program, whose handles are global) it can use each of its
+ * parent's open descriptors, under the same local numbers, with its own close
+ * rights; it starts with its own DTA and no directory searches.
+ * PROCESS_FILES_STANDARD for the clone factory's COPY_STANDARD_HANDLES. A
+ * nonmanaged boot caller hands on its standard handles only. */
+LONG process_files_inherit(PD *target,PD *source,UWORD policy)
 {
     WORD i;
     KPROC_FILE_SNAPSHOT *snapshot=NULL;
-    KPROC *parent=kproc_retain(source),*child=kproc_retain(target);
+    KPROC *parent,*child;
     LONG error;
+    /* ALL also carries DTA/search state: fork's snapshot, not this path. */
+    if (policy!=PROCESS_FILES_STANDARD && policy!=PROCESS_FILES_DESCRIPTORS) return EINVAL;
+    parent=kproc_retain(source);child=kproc_retain(target);
     if (child && !process_files_managed(source)) {
         error=E_OK;
         for (i=0;i<NUMSTD;i++) {
@@ -610,7 +614,7 @@ LONG process_files_inherit_exec(PD *target,PD *source)
     }
     if (!parent || !child) { error=EACCDN;goto done; }
     error=kproc_files_snapshot_begin(parent,&snapshot);
-    if (!error) error=kproc_files_snapshot_prepare(snapshot,child,PROCESS_FILES_DESCRIPTORS);
+    if (!error) error=kproc_files_snapshot_prepare(snapshot,child,policy);
     if (!error) error=kproc_files_snapshot_seal(snapshot);
     if (!error) kproc_files_snapshot_commit(snapshot,child);
     kproc_files_snapshot_end(&snapshot);

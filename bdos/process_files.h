@@ -67,7 +67,7 @@ void process_files_invalidate(PROCESS_FILES *,WORD backend,UQUAD incarnation);
 void process_files_retire(PROCESS_FILES *);
 void kproc_files_shutdown(void);
 LONG kproc_files_test_count(UWORD field);
-LONG process_files_inherit_exec(PD *target,PD *source);
+LONG process_files_inherit(PD *target,PD *source,UWORD policy);
 LONG kproc_files_snapshot_begin(struct kproc *,KPROC_FILE_SNAPSHOT **);
 BOOL kproc_files_snapshot_validate(const KPROC_FILE_SNAPSHOT *);
 LONG kproc_files_snapshot_prepare(KPROC_FILE_SNAPSHOT *,struct kproc *target,UWORD policy);
