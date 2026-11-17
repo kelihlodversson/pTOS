@@ -656,9 +656,8 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
 #if CONF_WITH_PRIVATE_CLONE_TEST
     private_vm = (fail_stage & FORK_RETURN_PRIVATE) != 0;
     fail_stage &= ~FORK_RETURN_PRIVATE;
-    /* kaspace_clone copies heap/mmap ledgers, not captured lazy receipts.
-     * Refuse conservatively before resources; never drop valid source rights. */
-    if (private_vm && kaspace_has_captured_lazy(saved->space)) { error = EACCDN; goto done; }
+    /* kaspace_clone copies captured lazy reservations into the child's own
+     * canonical records (#971, #1000), so a source holding them forks too. */
 #endif
     if (fail_stage >
 #if CONF_WITH_FORK_CORE

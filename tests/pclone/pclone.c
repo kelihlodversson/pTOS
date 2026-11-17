@@ -200,6 +200,29 @@ static void captured_surviving_peer(void *unused)
         page=(volatile unsigned char *)captured_probe.address;
         captured_probe.parent=Pgetpid();captured_probe.root=private_query(0);captured_probe.tid=private_query(3);
         if(captured_query(captured_probe.address)!=expected) bad=2;
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+        {
+            /* A saved-return private fork (what Pfork/Pvfork use) of this
+             * source, which holds a captured lazy reservation: the child
+             * inherits that authority as its own and backs the page itself. */
+            long forked=pclone_trap(0,0x895f8000UL);
+            if(forked==0) {
+                int lazy_bad=captured_query(captured_probe.address)!=expected;
+                if(page[0] || page[17]) lazy_bad=1;
+                page[0]=0x73;page[17]=0x74;
+                if(page[0]!=0x73 || page[17]!=0x74 ||
+                   !(captured_query(captured_probe.address)&PRIVATE_SNAPSHOT_PRESENT)) lazy_bad=1;
+                Pterm(lazy_bad?74:73);
+                for(;;) { }
+            }
+            if(forked<=0) bad=10;
+            else {
+                status=Pwaitpid(forked,0,0);
+                if((status>>16)!=forked || (status&65535)!=73 || Pwaitpid(forked,1,0)>=0) bad=11;
+                if(captured_query(captured_probe.address)!=expected) bad=12; /* parent still lazy */
+            }
+        }
+#endif
         args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
         args.entry=captured_private_child;args.stack_base=captured_probe.child_stack;args.stack_size=32768;
         for(stage=1;stage<=24;stage++) {
@@ -219,6 +242,7 @@ static void captured_surviving_peer(void *unused)
             captured_probe.environment[0]!=captured_probe.environment_byte) bad=6;
         page[0]=0x32;
     }
+    if(bad) printf("captured snapshot failure %d\r\n",bad);
     conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
                "native captured ancestor-stack private snapshot after source exit, both write orders: PASS\r\n");
     Pterm(bad?74:73);

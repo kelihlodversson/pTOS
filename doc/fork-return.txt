@@ -49,8 +49,10 @@ diagnostic globals. A nonblocking wait immediately after construction proves
 parent independence. Architecture admission remains unchanged (040 only on
 m68k; no new 030/060/FPIAR proof is implied).
 
-Captured LAZY receipts are conservatively rejected before construction: their
-authority is not cloned by kaspace_clone (#971). Moved image nheap and other
+A source holding captured LAZY receipts is admitted: kaspace_clone copies
+their authority into the child's own canonical records (#971, #1000), and the
+child backs such a page from its own record (tests/pclone/pclone.c, captured
+snapshot run). Moved image nheap and other
 existing private-runtime restrictions remain. No complete descriptor, basepage,
 environment, DTA/search or signal inheritance is claimed (#969). No public
 Pfork/Pvfork activation or Pexec200 replacement (#970) follows from this probe.

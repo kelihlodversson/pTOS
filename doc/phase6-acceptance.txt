@@ -302,7 +302,8 @@ P6-SNAPSHOT / #971 (general Pfork AND Pvfork sources; #891/#892/#958/#894):
   captured lazy authority into fresh child births/owners, not borrowed leases.
   Separate moved-image UH_IMAGE/nheap ownership and original basepage/environment/
   DTA representation must be defined before removing private_runtime's guard.
-  Current adapter conservatively rejects ANY captured lazy receipt before clone.
+  The adapter rejected ANY captured lazy receipt before clone; since the epic
+  merge (#1000) it admits them, and the saved-return child backs the page itself.
   Closure: actual surviving shared descendant -> private child, absent ancestor
   stack, permissions/PROT_NONE, heap/mmap/file backing, both write orders, creator/
   parent-first exit, stale captures, each failure prefix and final counters.
