@@ -141,7 +141,7 @@ static void clone_case(void)
     long child, status;
     if (!stack) fail("clone stack", 0);
     memset(stack, 0, 32768); memset(&args, 0, sizeof(args));
-    args.flags = CLONE_VM | CLONE_COPY_STANDARD_HANDLES; /* private-VM test selector */
+    args.flags = CLONE_VM | CLONE_COPY_STANDARD_HANDLES | CLONE_COPY_CWD; /* private-VM test selector */
     args.entry = clone_entry; args.stack_base = stack; args.stack_size = 32768;
     child = exec200_probe(&args, 0xc8920000UL | sizeof(args));
     if (child <= 0 || child == Pgetpid()) fail("private clone", child);
