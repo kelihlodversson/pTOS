@@ -216,8 +216,9 @@ Pexec(200) commit design (#970, PR #999)
 
 Status: implemented and on by default (CONF_WITH_PEXEC200, which needs
 CONF_WITH_USER_ASPACE, CONF_WITH_NATIVE_SCHED and CONF_WITH_ELF_LOADER). The
-regression kernel runs EXEC200.TOS on the native matrix, both as an anchor
-(Pexec 100) and synchronously nested (Pexec 0). The anchor also forks a
+regression kernel runs EXEC200.TOS on the native matrix as an anchor (Pexec
+100), as an anchored Pexec(0) child (#1015) and, through the regression
+kernels' nested-carrier switch, synchronously nested (Pexec 0). The anchor also forks a
 private-VM clone (the private Pclone test selector, what Pfork/Pvfork will
 create) that runs every injected failure and the whole replacement chain in
 its own PROCESS, while the parent checks that its own pages and state are
@@ -381,8 +382,11 @@ exec cleanly.
 Nested executions
 -----------------
 The #988 transport replaces a task's own continuation. A child started with
-synchronous Pexec(0) from a managed task runs nested on its parent's carrier
-task (#713) and has no continuation of its own. It runs on a syscall stack of
+synchronous Pexec(0) from a managed THREAD is an anchor (#1015) and is
+replaced like any other; its waiting parent's exact claim stays valid on the
+same task and PID. A child the kernel, a user callback or a THREAD-less
+launcher starts with Pexec(0) runs nested on its parent's carrier task (#713)
+and has no continuation of its own. It runs on a syscall stack of
 its own, entered from a launcher frame (gouser) on the enclosing execution's
 kernel stack, and that frame is where it is relaunched:
 

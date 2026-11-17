@@ -33,8 +33,12 @@ slot index or execution controller. Cached task parent PD links are valid only
 while that parent lives; ksched_exiting clears ALL of them before PD retirement.
 A historical parent identity retains no descriptors, PD or ASPACE. Async zombies
 and CUIS observers remain independent; #909 is the sole public PROCESS wait
-consumer. Nested synchronous Pexec remains on its existing carrier continuation
-and returns its own child's status; cancellation waits for its safe boundary.
+consumer. Pexec(0) from a managed THREAD launches an anchor and waits for that
+exact child (#1015, freemint-compatibility.txt); a cancelled waiter releases
+its claim and orphans the child. Nested synchronous Pexec, now only for the
+kernel, user callbacks and THREAD-less launchers, remains on its existing
+carrier continuation and returns its own child's status; cancellation waits
+for its safe boundary.
 
 Admission, result delivery and return
 -------------------------------------

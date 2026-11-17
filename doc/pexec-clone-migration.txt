@@ -4,8 +4,8 @@ Pexec creation and executable-transition policy audit (#894 / #895)
 #970: doc/exec-handoff.txt describes the gated, native same-PROCESS/TID
 fresh-stack NORETURN handoff through the existing scheduler root. Public
 mode200 builds on it (doc/exec-replacement.txt, "Pexec(200) commit design"):
-an anchor is committed at that root, a synchronously nested child through its
-launcher frame, and each commit publishes one committed-exec generation. It is
+an anchor (including a managed THREAD's Pexec(0) child, #1015) is committed at
+that root, a synchronously nested child through its launcher frame, and each commit publishes one committed-exec generation. It is
 enabled by CONF_WITH_PEXEC200, on by default where its dependencies are.
 The accepted #977 metadata preparation is preserved and supplies no movable
 image ownership. Both fork calls use PRIVATE_VM/COW; no shared-parent detach
