@@ -2818,6 +2818,9 @@ static struct {
  * syscall is enabled. Loader/observer ownership is production, not a model. */
 /* Minimal #933 integration: ordinary loader/admission and actual FAT aliases.
  * Recovery owns only exact SFT transfer tickets, never launch rights or PDs. */
+/* Legacy (non-PROCESS-local) descriptor table contract: see
+ * test_proc_clone_factory(). Not built with CONF_WITH_PROCESS_FILES. */
+#if !CONF_WITH_PROCESS_FILES
 static LONG test_restore_file_alias(WORD file, WORD saved)
 {
     LONG error=kdos_fclose(file); /* Drop the extra alias, not the explicit file. */
@@ -2890,6 +2893,7 @@ static void test_exec_sft_failures(KPROC *owner)
         process_observer_release(&observer); process_observer_release(&next);
     }
 }
+#endif
 static void test_native_exec_request(KPROC *owner)
 {
     VADDR data, request_address, lazy_environment;
@@ -2897,7 +2901,9 @@ static void test_native_exec_request(KPROC *owner)
     PROCESS_EXEC_REQUEST request;
     PROCESS_COMPLETION completion;
     static const char path[]="C:\\X32HELLO.TOS", tail[]={2,'O','n',0}, environment[]={0,0};
+#if !CONF_WITH_PROCESS_FILES
     test_exec_sft_failures(owner);
+#endif
     data=kproc_mmap(run,0,2*PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     if ((LONG)data>0) {
         UBYTE byte=1;
