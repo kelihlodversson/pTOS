@@ -1760,8 +1760,11 @@ void kproc_test_controller_first(KPROC *p) { p->test_controller_first = TRUE; }
 #endif
 void kproc_clone_drop_compat(KPROC *p)
 {
-    if (!p || !p->clone_compat) return;
+    if (!p) return;
+    /* A clone that replaced itself (Pexec(200)) keeps its exit controller
+     * without its old compatibility root. */
     clone_drop_controller(p);
+    if (!p->clone_compat) return;
     if ((p->clone_maps & 2) && !kaspace_retire_borrow(p->clone_compat,
             (VADDR)(uintptr_t)p->env_start,p->env_end-p->env_start)) panic("held clone environment retirement");
     if ((p->clone_maps & 1) && !kaspace_retire_borrow(p->clone_compat,
@@ -2047,6 +2050,12 @@ struct kproc_exec_image {
     USERPTR_T(PD) parent_link;
     char lddrv;
     UBYTE curdrv;
+    /* Taken at the commit: the clone's compatibility borrows in the old
+     * root, at the old basepage's addresses, released at retirement. */
+    KASPACE *compat;
+    UBYTE compat_maps;
+    VADDR compat_tpa, compat_tpa_bytes, compat_env, compat_env_bytes;
+    PD *compat_controller;
 #endif
     /* After the commit: what the source PROCESS gave up, retired off-root */
     BOOL committed;
@@ -2104,8 +2113,11 @@ static BOOL exec_image_ancestors(const KPROC *source, ASPACE *as, const UBYTE *e
 static BOOL exec_private_clone(const KPROC *process)
 {
 #if CONF_WITH_PRIVATE_CLONE
-    return process->clone_guarded && !process->threaded && !process->clone_compat &&
-        !process->clone_controller_pd && !process->shared_exec && !process->shared_inherited &&
+    /* Its compatibility borrows (factory basepage, environment, exit
+     * controller) are in its own root, which the replacement retires. */
+    return process->clone_guarded && !process->threaded &&
+        (!process->clone_compat || process->clone_compat == process->active_space) &&
+        !process->shared_exec && !process->shared_inherited &&
         process->private_image && process->private_image->committed && process->logical_context;
 #else
     UNUSED(process);
@@ -2123,7 +2135,7 @@ static BOOL exec_image_source_ok(const KPROC *source, const KPROC *image)
 #if CONF_WITH_NATIVE_SCHED
     if (source->shared_exec || source->shared_inherited ||
         (source->clone_guarded && !exec_private_clone(source)) ||
-        source->clone_compat || source->clone_startup)
+        (source->clone_compat && !exec_private_clone(source)) || source->clone_startup)
         return FALSE;
 #endif
 #if CONF_WITH_USER_CALLBACKS
@@ -2440,6 +2452,16 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
         new->p_curdrv = b->curdrv;
         new->p_lddrv = b->lddrv;
         i->private_image = s->private_image; s->private_image = NULL;
+        if (s->clone_compat) {
+            b->compat = s->clone_compat; b->compat_maps = s->clone_maps;
+            b->compat_tpa = (VADDR)(uintptr_t)i->user_start;
+            b->compat_tpa_bytes = (VADDR)(i->user_end - i->user_start);
+            b->compat_env = (VADDR)(uintptr_t)i->env_start;
+            b->compat_env_bytes = (VADDR)(i->env_end - i->env_start);
+            if (s->clone_controller_borrowed) b->compat_controller = s->clone_controller_pd;
+            s->clone_controller_borrowed = FALSE;
+            s->clone_compat = NULL; s->clone_maps = 0;
+        }
         s->logical_context = FALSE;
         s->logical_basepage = s->logical_environment = 0;
         s->logical_bp_bytes = s->logical_env_bytes = 0;
@@ -2488,6 +2510,20 @@ void kproc_exec_image_retire(KPROC_EXEC_IMAGE **handle)
     if (!b->committed || b->space || b->members || b->startup)
         panic("exec image: retiring an uncommitted bundle");
     *handle = NULL;
+#if CONF_WITH_PRIVATE_CLONE
+    /* A clone's compatibility borrows go before the container frees the
+     * old basepage and environment, in kproc_clone_drop_compat()'s order.
+     * The exit controller's pin stays with the PROCESS. */
+    if (b->compat) {
+        if (b->compat_controller)
+            aspace_unborrow(kaspace_backend(b->compat), (VADDR)(uintptr_t)b->compat_controller, sizeof(PD));
+        if ((b->compat_maps & 2) && !kaspace_retire_borrow(b->compat, b->compat_env, b->compat_env_bytes))
+            panic("exec image: held clone environment retirement");
+        if ((b->compat_maps & 1) && !kaspace_retire_borrow(b->compat, b->compat_tpa, b->compat_tpa_bytes))
+            panic("exec image: held clone basepage retirement");
+        kaspace_put(b->compat); b->compat = NULL;
+    }
+#endif
     kaspace_member_release(&b->old_members);
     kaspace_attachment_release_owner(b->old_space, b->source->number, b->source);
     kaspace_put(b->old_space);
