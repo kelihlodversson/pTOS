@@ -150,11 +150,15 @@ void m68k_gemdos_dispatch(struct uframe *f)
         }
         saved.mappings.entry = saved.user.frame.pc;
         /* The checked resident window is the least the continuation needs:
-         * from just below USP to just above the trap's argument words, so
-         * a shallow caller or one near its lower stack limit forks too. */
-        if (f->usp < 16) { f->d[0] = EINVFN; return; }
-        saved.mappings.stack_base = (f->usp - 16) & ~15UL;
-        saved.mappings.stack_size = 48;
+         * the 16 bytes ending exactly after the trap's argument words (the
+         * function word for Pfork/Pvfork, five words for the Pclone probe),
+         * so a shallow caller or one near its lower stack limit forks too. */
+        {
+            ULONG end = f->usp + (pw[0] == 0x190 ? 10 : 2);
+            if (end < 16) { f->d[0] = EINVFN; return; }
+            saved.mappings.stack_base = end - 16;
+            saved.mappings.stack_size = 16;
+        }
 #if CONF_WITH_PFORK
         if (pw[0] != 0x190) {
             f->d[0] = proc_clone_fork(&saved, pw[0] == GEMDOS_PVFORK);

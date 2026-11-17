@@ -26,7 +26,8 @@ continuation needs, so callers at the exclusive stack top or near their lower
 stack guard are admitted. On x32/A32 it ends at SP rounded up to 16 bytes, since
 SYSCALL and SVC need no user-stack bytes above SP; it is 144 bytes on x32
 (covering the 128-byte red zone) and 16 bytes on A32, which has none. On m68k it
-is 48 bytes from just below USP to just above the TRAP #1 argument words. Native
+is the 16 bytes ending exactly after the TRAP #1 argument words (two bytes for
+Pfork/Pvfork, ten for the Pclone probe). Native
 stack-top (SP==TOP-8 and SP==TOP) and underflow controls exercise that
 boundary; resident mapping, rights and lease checks still apply. Before startup validation the child's return-PC page is
 materialized (USER|EXEC), so a trap that ends at a page boundary can resume on
