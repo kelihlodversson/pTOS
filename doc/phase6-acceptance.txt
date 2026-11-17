@@ -6,7 +6,8 @@ Accepted base includes merged #973/#974/#975/#977; no #972 import.
 
 The default-off same-image scheduler transport is independently native-testable.
 Its private diagnostic handoff count is NOT a KPROC committed-exec generation.
-Public Pexec(200) is implemented and on by default (CONF_WITH_PEXEC200): a different-root ELF commit for anchors at the
+Public Pexec(200) is implemented and on by default (CONF_WITH_PEXEC200): a different-root ELF or classic PRG commit on a new
+basepage (FreeMiNT overlay semantics) for anchors at the
 scheduler root and for nested children through their launcher frame, with one
 KPROC committed-exec generation per commit. Pfork and Pvfork remain EINVFN.
 
@@ -17,7 +18,7 @@ its later canonical final PROCESS completion may release that dependency.
 Ordinary launch, staging, failure or the same-image transport cannot release it.
 
 Full #970 native acceptance requires a DIFFERENT executable/root through the
-real GEMDOS Pexec(200), retaining PROCESS/PID/PD/initial TID, no old return,
+real GEMDOS Pexec(200), retaining PROCESS/PID/initial TID on a new basepage, no old return,
 exactly-once authenticated committed-exec publication and independent later
 completion/reaping. Require x32 FAT, A7 FAT/PFS and 040 FAT/PFS, all resource and
 rollback controls and five shutdown checks each. Do not infer it from this

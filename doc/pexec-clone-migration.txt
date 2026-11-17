@@ -45,9 +45,10 @@ Mode       Current entry/ownership                 Required migration
            env/TPA owner, then execute/free.       not shared mode4 semantics.
 106        Existing staged image -> async         Preserve isolated consuming
            prepare/spawn, child PID.              launch, observer/wait behavior.
-200        CONF_WITH_PEXEC200 (default on): ELF    Same-PROCESS executable
-           replaces the caller in its PROCESS;     replacement with independent
-           PRG target EPLFMT; else EINVFN.         VM and committed-exec event.
+200        CONF_WITH_PEXEC200 (default on): an     Same-PROCESS executable
+           ELF or classic PRG on a new basepage    replacement with independent
+           replaces the caller in its PROCESS      VM and committed-exec event
+           (FreeMiNT overlay); else EINVFN.        (exec-replacement.txt).
 5/7,50     Basepage/flags and NatFeats relocation  Preserve staging and legacy
                                                    boot/ROM compatibility.
 
@@ -207,7 +208,7 @@ must never produce this event. No other observer registry or loader is needed.
 
 The separate #970 staging increment is documented in exec-replacement.txt. Its
 default-off receipt authenticates one exact PROCESS/TID/execution/root tuple and
-uses the existing loader for private ELF staging and rollback. The mode200
+uses the existing loader for private ELF and PRG staging and rollback. The mode200
 commit, THREAD rebind and exec event built on it are in the "Pexec(200) commit
 design" section of exec-replacement.txt.
 
