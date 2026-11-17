@@ -309,7 +309,7 @@ static void test_public_fork(void)
         unsigned long offset;
         int forked=1;
         for(offset=0;offset<4096;offset+=256)
-            if(!fork_at_depth(0x18000UL+offset)) forked=0;
+            if(!fork_at_depth(0x4000UL+offset)) forked=0; /* inside an inherited small stack limit */
         ptest_assert_msg(forked,"Pfork with untouched demand-paged stack pages below SP");
     }
 #endif
