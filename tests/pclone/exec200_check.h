@@ -50,6 +50,9 @@ static __attribute__((unused)) void exec200_verify(const char *who, EXEC200_TAIL
         exec200_fail(who, "generation", (long)state.generation[0]);
     if (state.root[0] == t->root0 && state.root[1] == t->root1) exec200_fail(who, "root replaced", (long)t->root0);
     if ((unsigned long)_base == t->base) exec200_fail(who, "new basepage", (long)t->base);
+    /* The parent link the new basepage took must be readable in the new
+     * root (the ancestors page), not a dangling address of the old one. */
+    if (_base->p_parent) (void)*(volatile const char *)_base->p_parent;
     if (!value || strcmp(value, "970") || !getenv("SECOND")) exec200_fail(who, "new environment", 0);
     if (Fseek(0L, (short)t->descriptor, 1) != t->position) exec200_fail(who, "descriptor position", t->position);
     if (Fwrite((short)t->descriptor, 1, "b") != 1) exec200_fail(who, "descriptor survives exec", t->descriptor);

@@ -879,6 +879,13 @@ if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
     record "native nested Pexec(200)" FAIL "a synchronously nested child was not replaced"
 fi
 
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) from a private-VM clone: PASS' "$suite_log"; then
+    record "native Pexec(200) from a clone" FAIL "a private-VM (fork) clone was not replaced"
+fi
+
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
     record "native TID joining" FAIL "configured Pthjoin worker did not pass"

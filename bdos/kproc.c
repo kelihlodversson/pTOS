@@ -1760,8 +1760,11 @@ void kproc_test_controller_first(KPROC *p) { p->test_controller_first = TRUE; }
 #endif
 void kproc_clone_drop_compat(KPROC *p)
 {
-    if (!p || !p->clone_compat) return;
+    if (!p) return;
+    /* A clone that replaced itself (Pexec(200)) keeps its exit controller
+     * without its old compatibility root. */
     clone_drop_controller(p);
+    if (!p->clone_compat) return;
     if ((p->clone_maps & 2) && !kaspace_retire_borrow(p->clone_compat,
             (VADDR)(uintptr_t)p->env_start,p->env_end-p->env_start)) panic("held clone environment retirement");
     if ((p->clone_maps & 1) && !kaspace_retire_borrow(p->clone_compat,
@@ -2040,6 +2043,20 @@ struct kproc_exec_image {
     THREAD_STARTUP_DRAFT *startup;  /* fresh stacks and entry leases for the relaunch */
     ULONG ancestors;
     VADDR entry, stack_top, stack_low, stack_size;
+#if CONF_WITH_PRIVATE_CLONE
+    /* A private-VM clone's basepage is its logical one (#1003): the parent
+     * link and drives the new basepage takes, read at preparation. */
+    BOOL logical;
+    USERPTR_T(PD) parent_link;
+    char lddrv;
+    UBYTE curdrv;
+    /* Taken at the commit: the clone's compatibility borrows in the old
+     * root, at the old basepage's addresses, released at retirement. */
+    KASPACE *compat;
+    UBYTE compat_maps;
+    VADDR compat_tpa, compat_tpa_bytes, compat_env, compat_env_bytes;
+    PD *compat_controller;
+#endif
     /* After the commit: what the source PROCESS gave up, retired off-root */
     BOOL committed;
     KASPACE *old_space, *image_space;
@@ -2059,13 +2076,17 @@ static BOOL exec_image_injected(UWORD stage)
 #endif
 
 /* The source's own ancestors page, copied into the new root. Exec keeps the
- * parent chain; only the copies' p_env follows the new environment block. */
-static BOOL exec_image_ancestors(const KPROC *source, ASPACE *as, const UBYTE *env, ULONG *count)
+ * parent chain; only the copies' p_env follows the new environment block.
+ * A private-VM clone's chain is the one its logical basepage links to: the
+ * copy of the page its parent had, whose length it walks (the page is
+ * read-only to the program, so the chain is the kernel's own). */
+static BOOL exec_image_ancestors(const KPROC *source, ASPACE *as, const UBYTE *env,
+                                 BOOL walk, ULONG *count)
 {
     /* Owned by this preparation, not static: two PROCESSes may prepare at
      * once if either copy blocks. */
     PD *copy;
-    ULONG n = source->ancestors, i;
+    ULONG n = walk ? USER_ANCESTORS : source->ancestors, i;
     BOOL ok;
     *count = 0;
     if (!n) return TRUE;
@@ -2073,12 +2094,35 @@ static BOOL exec_image_ancestors(const KPROC *source, ASPACE *as, const UBYTE *e
     copy = kalloc(USER_ANCESTORS * sizeof(PD));
     if (!copy) return FALSE;
     ok = aspace_copy_from_user(source->aspace, copy, USER_ANCESTORS_VA, n * sizeof(PD));
+    if (ok && walk)
+        for (n = 1; n < USER_ANCESTORS &&
+             (VADDR)(uintptr_t)USERPTR_TO_PTR(copy[n - 1].p_parent) ==
+             USER_ANCESTORS_VA + n * sizeof(PD); n++)
+            ;
     for (i = 0; ok && i < n; i++)
         copy[i].p_env = PTR_TO_USERPTR((char *)env);
     ok = ok && aspace_load_private(as, USER_ANCESTORS_VA, 4096, ASPACE_PROT_USER, copy, n * sizeof(PD));
     kfree(copy);
     if (ok) *count = n;
     return ok;
+}
+
+/* A started, single-THREAD private-VM clone (what Pfork/Pvfork create,
+ * #1003) replaces itself like any other PROCESS; every other guarded clone
+ * shares a root, a THREAD group or compatibility state with a peer. */
+static BOOL exec_private_clone(const KPROC *process)
+{
+#if CONF_WITH_PRIVATE_CLONE
+    /* Its compatibility borrows (factory basepage, environment, exit
+     * controller) are in its own root, which the replacement retires. */
+    return process->clone_guarded && !process->threaded &&
+        (!process->clone_compat || process->clone_compat == process->active_space) &&
+        !process->shared_exec && !process->shared_inherited &&
+        process->private_image && process->private_image->committed && process->logical_context;
+#else
+    UNUSED(process);
+    return FALSE;
+#endif
 }
 
 /* Sources this PROCESS-local replacement cannot carry into a new image. */
@@ -2089,8 +2133,9 @@ static BOOL exec_image_source_ok(const KPROC *source, const KPROC *image)
         source->kstack_phys || source->load_parent || source->give_back || source->lender)
         return FALSE;
 #if CONF_WITH_NATIVE_SCHED
-    if (source->shared_exec || source->shared_inherited || source->clone_guarded ||
-        source->clone_compat || source->clone_startup)
+    if (source->shared_exec || source->shared_inherited ||
+        (source->clone_guarded && !exec_private_clone(source)) ||
+        (source->clone_compat && !exec_private_clone(source)) || source->clone_startup)
         return FALSE;
 #endif
 #if CONF_WITH_USER_CALLBACKS
@@ -2145,6 +2190,17 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     b->image = kproc_retain_live(image);
     b->space = kaspace_share(selected);
     if (!b->source || !b->image || !b->space || exec_image_injected(1)) goto failed;
+#if CONF_WITH_PRIVATE_CLONE
+    if (source->logical_context) {
+        PD logical;
+        if (!source->logical_basepage ||
+            !aspace_copy_from_user(source->aspace, &logical, source->logical_basepage, sizeof(PD)))
+            goto failed;
+        b->logical = TRUE;
+        b->parent_link = logical.p_parent;
+        b->lddrv = logical.p_lddrv; b->curdrv = logical.p_curdrv;
+    }
+#endif
     /* The loader is done with the container's blocks: drop the source's
      * supervisor-only borrows of them, which would otherwise outlive the
      * commit as stale records of the source. Disposing the container on
@@ -2196,8 +2252,16 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
 #endif
     if (exec_image_injected(5)) goto failed;
     /* 6: ancestors and the per-root runtime pages. */
-    if (!exec_image_ancestors(source, as, image->env_start, &b->ancestors))
-        goto failed;
+    {
+        BOOL walk = FALSE;
+#if CONF_WITH_PRIVATE_CLONE
+        if (b->logical)
+            walk = (VADDR)(uintptr_t)USERPTR_TO_PTR(b->parent_link) == USER_ANCESTORS_VA;
+        if (b->logical && !walk) b->ancestors = 0; else
+#endif
+        if (!exec_image_ancestors(source, as, image->env_start, walk, &b->ancestors))
+            goto failed;
+    }
 #if CONF_WITH_USER_CALLBACKS
     if (!user_callback_image_load(as)) goto failed;
 #endif
@@ -2379,9 +2443,36 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     /* The new basepage: the old one's parent link (the ancestors page, at the
      * same address in the new root) and default drive; the kernel keeps the
      * authoritative file and directory tables in the PROCESS record. */
-    new->p_parent = old->p_parent;
-    new->p_curdrv = old->p_curdrv;
-    new->p_lddrv = old->p_lddrv;
+#if CONF_WITH_PRIVATE_CLONE
+    if (b->logical) {
+        /* A private-VM clone's basepage was its logical one; its factory
+         * basepage and the snapshot of its parent's image go with the
+         * container, and it is no longer a clone of anything. */
+        new->p_parent = b->parent_link;
+        new->p_curdrv = b->curdrv;
+        new->p_lddrv = b->lddrv;
+        i->private_image = s->private_image; s->private_image = NULL;
+        if (s->clone_compat) {
+            b->compat = s->clone_compat; b->compat_maps = s->clone_maps;
+            b->compat_tpa = (VADDR)(uintptr_t)i->user_start;
+            b->compat_tpa_bytes = (VADDR)(i->user_end - i->user_start);
+            b->compat_env = (VADDR)(uintptr_t)i->env_start;
+            b->compat_env_bytes = (VADDR)(i->env_end - i->env_start);
+            if (s->clone_controller_borrowed) b->compat_controller = s->clone_controller_pd;
+            s->clone_controller_borrowed = FALSE;
+            s->clone_compat = NULL; s->clone_maps = 0;
+        }
+        s->logical_context = FALSE;
+        s->logical_basepage = s->logical_environment = 0;
+        s->logical_bp_bytes = s->logical_env_bytes = 0;
+        s->clone_guarded = FALSE; s->clone_top_stack = FALSE;
+    } else
+#endif
+    {
+        new->p_parent = old->p_parent;
+        new->p_curdrv = old->p_curdrv;
+        new->p_lddrv = old->p_lddrv;
+    }
     new->p_xdta = PTR_TO_USERPTR((DTA *)new->p_cmdlin);
     exec_image_rekey(old, new);
     fs_exec_rekey_owner(old, new);
@@ -2419,6 +2510,20 @@ void kproc_exec_image_retire(KPROC_EXEC_IMAGE **handle)
     if (!b->committed || b->space || b->members || b->startup)
         panic("exec image: retiring an uncommitted bundle");
     *handle = NULL;
+#if CONF_WITH_PRIVATE_CLONE
+    /* A clone's compatibility borrows go before the container frees the
+     * old basepage and environment, in kproc_clone_drop_compat()'s order.
+     * The exit controller's pin stays with the PROCESS. */
+    if (b->compat) {
+        if (b->compat_controller)
+            aspace_unborrow(kaspace_backend(b->compat), (VADDR)(uintptr_t)b->compat_controller, sizeof(PD));
+        if ((b->compat_maps & 2) && !kaspace_retire_borrow(b->compat, b->compat_env, b->compat_env_bytes))
+            panic("exec image: held clone environment retirement");
+        if ((b->compat_maps & 1) && !kaspace_retire_borrow(b->compat, b->compat_tpa, b->compat_tpa_bytes))
+            panic("exec image: held clone basepage retirement");
+        kaspace_put(b->compat); b->compat = NULL;
+    }
+#endif
     kaspace_member_release(&b->old_members);
     kaspace_attachment_release_owner(b->old_space, b->source->number, b->source);
     kaspace_put(b->old_space);
@@ -2438,7 +2543,7 @@ BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread, BOOL replacing)
         kthread_aspace(thread) != process->active_space || process->lost ||
         process->give_back || process->lender || process->mapping_preparation ||
         process->exec_committing || !process->exec_replacement_ticket != !replacing ||
-        process->clone_guarded ||
+        (process->clone_guarded && (!replacing || !exec_private_clone(process))) ||
         kaspace_mutation_busy(process->active_space)) return FALSE;
 #if CONF_WITH_IMAGE_POLICY
     if (process->image_preparation) return FALSE;
