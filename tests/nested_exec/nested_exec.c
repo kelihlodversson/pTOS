@@ -155,6 +155,9 @@ static void test_chains(int tracked)
             snapshot(&now);
             ptest_assert_msg(same(&base, &now), "identities, address spaces and stacks return to the baseline");
             previous = leaf;
+        } else if (anchored) {
+            snapshot(&now);
+            ptest_assert_msg(same(&base, &now), "an anchored chain returns every counted resource");
         }
     }
     if (tracked) {
@@ -178,7 +181,7 @@ static void test_chains(int tracked)
             previous = leaf;
         }
     }
-    if (tracked) {
+    if (tracked || anchored) {
         snapshot(&now);
         ptest_assert_msg(same(&base, &now), "repeated chains conserve every counted resource");
     }

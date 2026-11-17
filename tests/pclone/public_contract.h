@@ -271,6 +271,20 @@ static void phase1_account(const char *stage, long baseline)
     }
 }
 
+#if defined(TEST_WITH_PTHJOIN)
+static volatile long anchored_thief_stop, anchored_thief_taken, anchored_thief_polls;
+static void anchored_thief(void *argument)
+{
+    (void)argument;
+    while (!anchored_thief_stop) {
+        long result = Pwaitpid(-1,1,0);
+        if (result > 0) anchored_thief_taken = result;
+        anchored_thief_polls++;
+        (void)Syield();
+    }
+    Pterm(0);
+}
+#endif
 static void test_public_contract(unsigned char *stack)
 {
     struct {
@@ -473,13 +487,38 @@ static void test_public_contract(unsigned char *stack)
         /* #1015: a managed THREAD's Pexec(0) child is an anchor that owns
          * dependents, and Pexec(0) returns its whole 16-bit status. */
         long status;
+#if defined(TEST_WITH_PTHJOIN)
+        /* Throughout, a sibling THREAD polls wait-any: the child is claimed
+         * by its Pexec(0) before it runs, so no other THREAD can reap it. */
+        int32_t thief_pid = 0, thief_tid = 0;
+        unsigned char *thief_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
+        anchored_thief_stop = anchored_thief_taken = anchored_thief_polls = 0;
+        ptest_assert_msg(thief_stack && launch_entry(anchored_thief,CLONE_VM|CLONE_SAME_PROCESS,
+                         thief_stack,&thief_pid,&thief_tid) > 0,"wait-any sibling THREAD started");
+        while (thief_tid > 0 && !anchored_thief_polls) (void)Syield();
+#endif
         ptest_log_flush();
         status = Pexec(0,PHASE1_SMALL_PROBE,ANCHORED_PROBE_TAIL,0);
         if (status != ANCHORED_PROBE_STATUS) printf("anchored Pexec(0) probe: %lx\r\n",(unsigned long)status);
         ptest_assert_msg(status == ANCHORED_PROBE_STATUS,
                          "Pexec(0) child is an anchor: Pclone, Pthjoin, Pfork and its 16-bit status");
+#if defined(TEST_WITH_PTHJOIN)
+        if (thief_tid > 0) {
+            long polls = anchored_thief_polls;
+            for (;;) {
+                (void)Syield();
+                if (anchored_thief_polls > polls + 1) break; /* it polled after the reap, too */
+            }
+            anchored_thief_stop = 1;
+            ptest_assert_msg(join_tid(thief_tid,0) == 0,"wait-any sibling THREAD joined");
+            ptest_assert_msg(!anchored_thief_taken && anchored_thief_polls > 2,
+                             "no other THREAD's wait-any can take an anchored Pexec(0) child");
+        }
+        if (thief_stack) ptest_assert_msg(Mfree(thief_stack) == 0,"wait-any sibling stack released");
+#endif
         ptest_assert_msg(Pwaitpid(-1,1,0) == -33L,"the anchored child was reaped exactly once, by Pexec(0)");
-        if (status == ANCHORED_PROBE_STATUS) conws("native anchored Pexec(0) child owns dependents: PASS\r\n");
+        if (status == ANCHORED_PROBE_STATUS && !ptest_failures())
+            conws("native anchored Pexec(0) child owns dependents: PASS\r\n");
     }
     phase1_account("anchored",baseline);
 #undef PHASE1_SMALL_PROBE
