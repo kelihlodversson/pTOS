@@ -76,15 +76,86 @@ static void final_program(void)
     if (t.generation != 3) exec200_fail("final", "generation", (long)t.generation);
     if (Fsnext() == 0) exec200_fail("final", "search survived the exec", 0);
     if (Fclose((short)t.descriptor)) exec200_fail("final", "descriptor close", t.descriptor);
-    Cconws(t.nested ? "native nested Pexec(200) launcher relaunch: PASS\r\n"
+    Cconws(t.nested == 2 ? "native Pexec(200) from a private-VM clone: PASS\r\n" :
+           t.nested ? "native nested Pexec(200) launcher relaunch: PASS\r\n"
                     : "native Pexec(200) same-PROCESS executable/root replacement: PASS\r\n");
     Pterm(70);
 }
-int main(void)
+/* Every injected preparation failure, then the genuine replacement: the
+ * same sequence for the subject and for its private-VM clone. */
+static void failures(void)
 {
-    EXEC200_TAIL t;
     unsigned stage;
     long result;
+    if ((result = exec200_call("NO970.TOS", "\0", environment)) != -33L) fail("missing file", result);
+    unchanged("missing file");
+    if ((result = exec200_call("LOADFAIL.TOS", "\0", environment)) >= 0) fail("load failure", result);
+    unchanged("load failure");
+    for (stage = 1; stage <= 4; stage++) injected(3, stage, -39L);
+    for (stage = 1; stage <= 8; stage++) injected(1, stage, -39L);
+#if defined(__mc68000__)
+    /* The same bundle stages with a classic PRG target. */
+    for (stage = 1; stage <= 8; stage++) injected_target("EXEC200.TOS", 1, stage, -39L);
+#endif
+    for (stage = 1; stage <= 10; stage++)
+        injected(2, stage, stage == 6 || stage == 7 ? -36L : stage == 9 ? -326L : -39L);
+}
+static void replace(int nested)
+{
+    EXEC200_TAIL t;
+    long result;
+    /* The genuine commit: same PROCESS, different executable, basepage and
+     * root. The tail starts the chain at generation 1. */
+    memset(&t, 0, sizeof(t));
+    t.generation = 0; t.descriptor = descriptor;
+    t.pid = original.pid; t.tid = original.tid;
+    t.root0 = original.root[0]; t.root1 = original.root[1];
+    t.parent = Pgetppid(); t.nested = nested;
+    result = exec200_next("EXEC200B.TOS", 0, &t, environment);
+    fail("successful Pexec(200) returned to the old program", result);
+}
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+/* #1003: a private-VM (COW) clone, what Pfork/Pvfork create, replaces
+ * itself in its own PROCESS while its parent waits. */
+static volatile unsigned long clone_cell = 0x5eed1003UL;
+static void clone_entry(void *argument)
+{
+    (void)argument;
+    clone_cell = 0xc10e1003UL;   /* a private write the parent must never see */
+    baseline = 0;
+    if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("clone query", 0);
+    if (original.generation[0] || original.generation[1]) fail("clone generation", 1);
+    if (original.pid != (unsigned long)Pgetpid()) fail("clone PID", Pgetpid());
+    descriptor = Fcreate("EXEC200C.TMP", 0);
+    if (descriptor < 0) fail("clone descriptor", descriptor);
+    injected(2, 10, -39L);
+    snapshot(&before);
+    baseline = 1;
+    failures();
+    replace(2);
+}
+static void clone_case(void)
+{
+    struct ptos_clone_args args;
+    unsigned char *stack = (unsigned char *)Malloc(32768);
+    long child, status;
+    if (!stack) fail("clone stack", 0);
+    memset(stack, 0, 32768); memset(&args, 0, sizeof(args));
+    args.flags = CLONE_VM | CLONE_COPY_STANDARD_HANDLES; /* private-VM test selector */
+    args.entry = clone_entry; args.stack_base = stack; args.stack_size = 32768;
+    child = exec200_probe(&args, 0xc8920000UL | sizeof(args));
+    if (child <= 0 || child == Pgetpid()) fail("private clone", child);
+    status = Pwaitpid(child, 0, 0);
+    if ((status >> 16) != child || (status & 65535) != 70) fail("clone Pexec(200) chain", status);
+    if (Pwaitpid(child, 1, 0) >= 0) fail("clone reaped once", child);
+    if (clone_cell != 0x5eed1003UL) fail("parent pages after the clone's exec", (long)clone_cell);
+    if (Mfree(stack)) fail("clone stack release", 0);
+    if (Fdelete("EXEC200C.TMP")) fail("clone descriptor closed", 0);
+    unchanged("private clone Pexec(200)");
+}
+#endif
+int main(void)
+{
     int nested = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'N';
     if ((unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'F') final_program();
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("initial query", 0);
@@ -102,26 +173,10 @@ int main(void)
     snapshot(&before);
     baseline = 1;
 #endif
-    if ((result = exec200_call("NO970.TOS", "\0", environment)) != -33L) fail("missing file", result);
-    unchanged("missing file");
-    if ((result = exec200_call("LOADFAIL.TOS", "\0", environment)) >= 0) fail("load failure", result);
-    unchanged("load failure");
-    for (stage = 1; stage <= 4; stage++) injected(3, stage, -39L);
-    for (stage = 1; stage <= 8; stage++) injected(1, stage, -39L);
-#if defined(__mc68000__)
-    /* The same bundle stages with a classic PRG target. */
-    for (stage = 1; stage <= 8; stage++) injected_target("EXEC200.TOS", 1, stage, -39L);
+    failures();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    if (!nested) clone_case();
 #endif
-    for (stage = 1; stage <= 10; stage++)
-        injected(2, stage, stage == 6 || stage == 7 ? -36L : stage == 9 ? -326L : -39L);
-    /* The genuine commit: same PROCESS, different executable, basepage and
-     * root. The tail starts the chain at generation 1. */
-    memset(&t, 0, sizeof(t));
-    t.generation = 0; t.descriptor = descriptor;
-    t.pid = original.pid; t.tid = original.tid;
-    t.root0 = original.root[0]; t.root1 = original.root[1];
-    t.parent = Pgetppid(); t.nested = nested;
-    result = exec200_next("EXEC200B.TOS", 0, &t, environment);
-    fail("successful Pexec(200) returned to the old program", result);
+    replace(nested);
     return 84;
 }

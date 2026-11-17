@@ -244,16 +244,23 @@ scheduler. An ELF image runs from private pages of a new root and its TPA is
 data; a classic PRG runs from its TPA with its stack at the TPA's top and only
 its recorded text extent executable, exactly as for an ordinary launch. A PRG
 with an empty text segment, which an ordinary launch accepts, is refused.
+A single-THREAD private-VM (COW) clone, which is what Pfork and Pvfork
+create, replaces itself like any other PROCESS (#1003). Its user-visible
+basepage is its logical one (the copy of its parent's, at the parent's
+address in its own root), so the new basepage takes that one's p_parent and
+drives, and the new root gets the ancestors chain that basepage links to,
+walked in the clone's copy of the page. At the commit the clone stops being
+one: its logical basepage/environment, the snapshot of its parent's image and
+its guard and inherited-stack flags are cleared, and the container disposes
+of the factory basepage and the snapshot with the old program.
+
 These are rejected with EACCDN by admission and never partially replaced:
-  - multi-THREAD PROCESSes;
-  - shared-VM (4/104) children, Pclone compatibility state and every
-    Pclone-created PROCESS, including the private-VM (COW) children Pfork
-    and Pvfork will create: fork followed by Pexec(200) needs the clone's
-    logical basepage/environment, private image and stack state reset at
-    the commit first;
+  - multi-THREAD PROCESSes, and clones that were ever multi-THREAD (#1005);
+  - shared-VM (4/104) children and Pclone compatibility state (#1004);
   - legacy PE_GO give-back and heap-ledger image blocks;
   - a launcher with a child it is still loading;
-  - a PROCESS with registered user callbacks, which name code of the old image.
+  - a PROCESS with registered user callbacks, which name code of the old image
+    (#1006).
 
 Identity
 --------
