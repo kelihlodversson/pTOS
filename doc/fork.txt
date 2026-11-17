@@ -1,43 +1,42 @@
 Pfork / Pvfork prerequisite audit (#895)
 ======================================
 
-Current MMU policy (2026-11-15)
--------------------------------
-Both calls will use the existing PRIVATE_VM/COW proc_clone construction.
-Pfork permits the calling parent THREAD to continue immediately; Pvfork
-suspends that THREAD until its exact child's final PROCESS completion or
-successful same-PROCESS/PID Pexec(200) commit. Neither public syscall is
-enabled by the private-snapshot prerequisite described in
-doc/private-snapshot.txt. Descriptor ownership (#969), complete KPROC image
-snapshot ownership (#971) and executable replacement (#970) remain distinct
-acceptance gates.
+Binding MMU fork policy (#895, COW Pvfork)
+------------------------------------------
+Pfork and Pvfork use ONE NEW_PROCESS/PRIVATE_VM/COW saved-return construction.
+Both create an independent PROCESS/PID, initial THREAD/TID and KASPACE with
+private COW user stack and mappings. Pfork lets the parent continue immediately;
+Pvfork suspends only the calling parent THREAD until the exact child's final
+PROCESS completion or authenticated successful same-PROCESS/PID Pexec200 commit.
+Parent returns child PID, child returns0, errors are signed GEMDOS errors.
 
-This is an intentional difference from FreeMiNT Pvfork: ordinary private and
-anonymous child writes, including stack writes, do not modify the parent's
-private memory. Actual shared mappings retain their supported mapping
-semantics; MAP_SHARED itself remains unsupported in the current MMU API.
-There is no special shared user stack and no SHARE_VM Pvfork constructor.
-Legacy non-MMU fork behavior is outside this scope (#911).
+This deliberately differs from FreeMiNT Pvfork's shared memory: ordinary private
+child writes are NOT visible in the parent's private memory. Explicitly shared
+mappings keep their mapping semantics; public MAP_SHARED is currently unsupported
+by pTOS and is not enabled here. No special shared user stack, shared parent-root
+attachment or VM detachment is required for COW Pvfork. Public Pexec(200)
+(#970, #999) replaces a private-VM child in its own PROCESS (#1003, #1007) and
+publishes the committed-exec generation the Pvfork release reads.
 
-The accepted epic 00292ebe60ef3ff31f15d56659c5c85938b57a00 already contains
-test-gated independent roots and anonymous COW (#934). Draft #972's separate
-2042d866802bfb0cea6e23fb148d0c53eca9d088 proof combines private COW with
-saved return on x32, A32 and restricted 040. Neither proof is public fork
-acceptance. The historical audit below predates those increments and must
-not be read as the current dependency matrix.
+Public opcodes0x11b/0x113 are CONF_WITH_PFORK (built in by default on MMU kernels with demand paging: x32, ARMv7, m68k without fastcall, where only a 68040 forks at run time; EINVFN without it), after the resource/snapshot prerequisites
+and public native acceptance. The existing0x895f0000 shared-return experiment is
+historical CPU startup coverage ONLY, never the Pvfork implementation. New private
+selectors share one constructor;0x895fc000 adds exact-child parent suspension.
+See fork-return.txt and phase6-acceptance.txt for current source/test evidence.
+The prerequisites #969 descriptors, #971 private snapshots (BOTH calls; see
+private-snapshot.txt), #970/#1003 executable replacement (full Pvfork) and
+#984 trusted DTA/search snapshots (#1001) are all merged. See
+freemint-compatibility.txt for user-facing scope.
 
-doc/image-policy.txt describes the separate value-only executable-policy
-prerequisite. It conveys no image, PD, environment, mapping or cleanup ownership
-and cannot replace a live executable. Broader #971 source-image ownership and
-#970 same-PROCESS replacement remain open.
+Historical audit and shared-stack proposal (superseded)
+-------------------------------------------------------
+The historical capability table and shared-stack Pvfork constraints below are
+retained for attribution. They are NOT current backend status or Pvfork policy.
 
-The #970 test-only scheduler/launcher prerequisite in doc/exec-handoff.txt
-proves same-PROCESS/TID NORETURN transport with fresh stacks in the SAME image
-and root. It produces no committed-exec event and is not a Pvfork wake reason.
-Pfork/Pvfork public handlers and their capability rejection are unchanged.
-
-Historical audit
-----------------
+Current Phase6 matrix and remaining verified blockers: phase6-acceptance.txt.
+The historical independent-VM "EINVFN" capability table below predates #934.
+Do not use it as current backend status. Private saved-return continuation is
+now combined behind BOTH native test gates; public Pfork/Pvfork still reject.
 
 Baseline: epic/889-process-scheduling, 7ae4f508cc26df4d0efae19dd3849738f1de114f.
 The original unsupported-capability audit is retained below. The F1 saved-
@@ -177,8 +176,10 @@ copy unit test or successful compilation cannot establish this milestone.
 
 Validation of this checkpoint
 -----------------------------
-tests/pclone uses real Pfork/Pvfork traps repeatedly and checks signed EINVFN,
-continued parent execution and stable PID. These are capability-rejection
-tests only; they do not exercise fork branch execution, isolation or vfork
-parent suspension. Native results and CI must be recorded separately in the
+Without CONF_WITH_PFORK, tests/pclone uses real Pfork/Pvfork traps repeatedly
+and checks signed EINVFN, continued parent execution and stable PID. With it,
+FORKPAR.TOS runs the public calls: a Pfork child inheriting a descriptor with
+its shared file position, the directory, the DTA and its parent, and a Pvfork
+child whose Pexec(200), by a path relative to the inherited directory,
+resumes the parent before the child completes. Native results and CI must be recorded separately in the
 draft PR; no native fork success or full F1-F5 acceptance is claimed here.

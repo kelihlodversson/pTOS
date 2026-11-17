@@ -46,7 +46,7 @@
 #endif
 #include "arch/arm/fpusave.h"
 #include "syscall_return.h"
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 extern void arm_enter_saved_user(const void *, ULONG) NORETURN;
 #endif
 
@@ -87,8 +87,15 @@ void arm_gemdos_dispatch(struct uframe *f)
 
     for (i = 0; i < 8; i++)
         pw[i] = (long)f->r[i];
+#if CONF_WITH_SAVED_RETURN
+    if (
 #if CONF_WITH_FORK_RETURN_TEST
-    if (pw[0] == 0x190 && !pw[1] && ((ULONG)pw[2] & 0xffff0000UL) == FORK_RETURN_PROBE) {
+        (pw[0] == 0x190 && !pw[1] && ((ULONG)pw[2] & 0xffff0000UL) == FORK_RETURN_PROBE) ||
+#endif
+#if CONF_WITH_PFORK
+        pw[0] == GEMDOS_PFORK || pw[0] == GEMDOS_PVFORK ||
+#endif
+        FALSE) {
         SYSCALL_RETURN saved;
         typedef char frame_size_check[(sizeof(saved.user) == sizeof(*f)) ? 1 : -1];
         (void)sizeof(frame_size_check);
@@ -101,12 +108,28 @@ void arm_gemdos_dispatch(struct uframe *f)
             }
         }
 #endif
+        /* A32 user mode only: a Thumb (or other) caller is refused before
+         * any construction, wherever its return address lies. */
+        if ((f->spsr & 0x3f) != 0x10) { f->r[0] = EINVFN; return; }
         memset(&saved, 0, sizeof(saved));
         memcpy(&saved.user, f, sizeof(*f));
         saved.mappings.entry = f->lr;
-        saved.mappings.stack_base = (f->usp - 256) & ~15UL;
-        saved.mappings.stack_size = 512;
+        /* SVC takes its arguments in registers and needs no user-stack
+         * bytes above SP, and A32 has no red zone: the checked window is
+         * the 16 bytes ending at SP rounded up to 16, so callers at the
+         * exclusive stack top or near their lower stack guard fork too. */
+        if (f->usp<16 || f->usp>USER_VA_LIMIT) { f->r[0]=EINVFN; return; }
+        saved.mappings.stack_base = ((f->usp + 15) & ~15UL) - 16;
+        saved.mappings.stack_size = 16;
+#if CONF_WITH_PFORK
+        if (pw[0] != 0x190) {
+            f->r[0] = proc_clone_fork(&saved, pw[0] == GEMDOS_PVFORK);
+            return;
+        }
+#endif
+#if CONF_WITH_FORK_RETURN_TEST
         f->r[0] = proc_clone_return_probe(&saved, (UWORD)pw[2]);
+#endif
         return;
     }
 #endif
@@ -369,7 +392,7 @@ relaunch:
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) {
             thread_startup_entering(startup);
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
             if (prepared->saved_return) arm_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
 #endif
             arm_enter_prepared_user(prepared, (ULONG)kstack_top);

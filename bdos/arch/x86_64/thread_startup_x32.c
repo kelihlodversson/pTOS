@@ -176,7 +176,7 @@ LONG thread_startup_arch_public_return(void *image, const void *bridge)
     if (!draft || !address) return EIMBA;
     draft->return_pc = address; return E_OK;
 }
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
 {
     X32_THREAD_STARTUP_DRAFT *draft = image;
@@ -184,7 +184,7 @@ LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
         saved->user.ss != X86_64_USER_DATA_SEL ||
         saved->user.rip != saved->mappings.entry ||
         saved->user.rsp < saved->mappings.stack_base + 128 ||
-        saved->user.rsp >= saved->mappings.stack_base + saved->mappings.stack_size ||
+        saved->user.rsp > saved->mappings.stack_base + saved->mappings.stack_size ||
         (saved->user.rflags & 0x27000)) return EINVFN;
     /* The integrated cooperative context has no general segment/TLS switch
      * contract. Capture all fields, but do not admit nondefault state until

@@ -7,7 +7,7 @@
 struct kthread;
 struct kaspace;
 struct proc_clone_transaction;
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 #if ARCH_X86_64
 #include "arch/x86_64/thread_startup_x32.h"
 typedef X32_THREAD_ENTRY_IMAGE SYSCALL_USER_IMAGE;
@@ -42,9 +42,20 @@ typedef struct syscall_return {
 } SYSCALL_RETURN;
 /* Reserved Pclone(NULL, size) test transport; no production ABI assignment. */
 #define FORK_RETURN_PROBE 0x895f0000UL
+#define FORK_RETURN_PRIVATE 0x8000U /* private COW child (needs CONF_WITH_PRIVATE_CLONE) */
+#define FORK_RETURN_VFORK   0x4000U /* PRIVATE required; exact-child parent wait */
 LONG proc_clone_return_probe(SYSCALL_RETURN *, UWORD fail_stage);
+#if CONF_WITH_PFORK
+#include "mintproc.h"
+/* Public Pfork (vfork FALSE) / Pvfork (TRUE) from a captured trap. */
+LONG proc_clone_fork(SYSCALL_RETURN *, BOOL vfork);
+#endif
 LONG proc_clone_prepare_saved_return(struct proc_clone_transaction *, const SYSCALL_RETURN *);
 LONG thread_startup_prepare_saved_return(struct kaspace *, const SYSCALL_RETURN *, THREAD_STARTUP_DRAFT **);
+#if CONF_WITH_PRIVATE_CLONE
+LONG thread_startup_prepare_cloned_return(struct kaspace *source, struct kaspace *selected,
+                                         const SYSCALL_RETURN *, THREAD_STARTUP_DRAFT **);
+#endif
 LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *);
 #endif
 #endif

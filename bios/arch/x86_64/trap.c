@@ -165,9 +165,11 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  */
 /* The loaded swap state belongs to this CPU alongside its entry stack slots. */
 
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 #include "../../../bdos/syscall_return.h"
+#include "../../../bdos/kproc.h"
 #include "string.h"
+extern PD *run;
 static UQUAD return_read_msr(ULONG msr)
 {
     ULONG lo, hi;
@@ -192,9 +194,24 @@ static LONG return_probe(x86_64_trap_frame_t *f)
     u->gs_base=return_read_msr(0xc0000102); /* user half while SWAPGS is active */
     memcpy(u->fpu, (const UBYTE *)f - 512, 512);
     saved.mappings.entry=u->rip;
-    saved.mappings.stack_base=(u->rsp - 256) & ~15ULL;
-    saved.mappings.stack_size=512;
+    /* The checked resident window is the least the continuation needs:
+     * SYSCALL needs no user-stack bytes above RSP, so it ends at RSP
+     * rounded up to 16 (RSP itself at the exclusive stack top), and it
+     * reaches down only over the 128-byte red zone, so a caller near its
+     * lower stack guard forks too. Full selected-root range/rights
+     * validation still applies. */
+    if (u->rsp<144 || u->rsp>USER_VA_LIMIT) return EINVFN;
+    saved.mappings.stack_base=((u->rsp + 15) & ~15ULL) - 144;
+    saved.mappings.stack_size=144;
+#if CONF_WITH_PFORK
+    if ((ULONG)f->rax != 0x190)
+        return proc_clone_fork(&saved, (ULONG)f->rax == GEMDOS_PVFORK);
+#endif
+#if CONF_WITH_FORK_RETURN_TEST
     return proc_clone_return_probe(&saved, (UWORD)f->rsi);
+#else
+    return EINVFN;
+#endif
 }
 #endif
 
@@ -219,9 +236,17 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
     if (from_ring3)
         x86_64_memtest_callback_syscall(frame->rax, frame->rsi);
 #endif
+#if CONF_WITH_SAVED_RETURN
+    if (from_ring3 && (
 #if CONF_WITH_FORK_RETURN_TEST
-    if (from_ring3 && frame->rax == 0x100000190ULL && !frame->rdi &&
-        (frame->rsi & 0xffff0000UL) == FORK_RETURN_PROBE)
+        (frame->rax == 0x100000190ULL && !frame->rdi &&
+         (frame->rsi & 0xffff0000UL) == FORK_RETURN_PROBE) ||
+#endif
+#if CONF_WITH_PFORK
+        frame->rax == (0x100000000ULL | GEMDOS_PFORK) ||
+        frame->rax == (0x100000000ULL | GEMDOS_PVFORK) ||
+#endif
+        FALSE))
         frame->rax = (QUAD)return_probe(frame);
     else
 #endif

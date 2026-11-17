@@ -49,7 +49,7 @@
 #include "userlayout.h"
 #include "progimage.h"
 #include "kproc_image_policy.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 #if CONF_WITH_ELF_SHARED
@@ -67,7 +67,7 @@ typedef struct {
     VADDR va;
     ULONG stamp;
     UBYTE state[offsetof(DTAINFO,dt_fattr)];
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     DND *directory; /* independent legacy FAT hold; NULL for PFS */
 #endif
 } PROCESS_DTA_ENTRY;
@@ -135,7 +135,7 @@ struct kproc {
     PD *destroying_pd; /* Non-owning address only during active destruction. */
     LONG cleanup_error;
     ULONG cleanup_transferred;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     PROCESS_FILES files; /* identity-owned table; empty after resource retirement */
 #endif
     UQUAD completion_order;
@@ -380,7 +380,7 @@ static void mapping_close(MAPPING_MUTATION *mutation)
     mutation->space=NULL;mutation->process=NULL;
 }
 #endif
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 BOOL kproc_has_aspace_peer(const KPROC *source)
 {
     KPROC *p;
@@ -519,7 +519,7 @@ BOOL kproc_create(PD *pd)
      * mistaken for state. */
     memcpy(kproc->uft, pd->p_uft, sizeof kproc->uft);
     memcpy(kproc->curdir, pd->p_curdir, sizeof kproc->curdir);
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (!process_files_init(&kproc->files,kproc,kproc->uft)) {
         KPROC_FREE(kproc);return FALSE;
     }
@@ -2746,7 +2746,7 @@ void kproc_destroy(PD *pd)
             /* Keep the PID reserved even if cleanup re-enters allocation. */
             kproc->next = retired_processes;
             retired_processes = kproc;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             /* Close callbacks can destroy this or a preceding PROCESS. The
              * live cursor is detached and lookup ownership still pins self. */
             process_files_retire(&kproc->files);
@@ -2974,7 +2974,7 @@ BOOL kproc_file_references_allowed(PD *pd)
     KPROC *p=file_admission_owner(pd);
     return !p || !p->file_cleanup_started;
 }
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 PROCESS_FILES *kproc_files(PD *pd)
 {
     KPROC *p=file_admission_owner(pd);
@@ -3030,7 +3030,7 @@ void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred)
         p->cleanup_transferred++;
     }
 }
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 void kproc_note_file_owner_cleanup(KPROC *p,LONG error,BOOL transferred)
 {
     if (!p) return;
@@ -3052,7 +3052,7 @@ void kproc_standard_file_invalidate(WORD handle)
     KPROC *p;
     WORD i;
     for (p=kproc_list;p;p=p->next)
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         process_files_invalidate(&p->files,handle,sft[handle-NUMSTD].f_incarnation);
 #else
         for (i=0;i<NUMSTD;i++)
@@ -3071,7 +3071,7 @@ void kproc_standard_file_refs(ULONG *references)
 
     bzero(references,OPNFILES*sizeof(*references));
     for (kproc = kproc_list; kproc; kproc = kproc->next)
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         {
             for (i=0;i<NUMHANDLES;i++) {
                 PROCESS_FILE_BINDING *binding=&kproc->files.binding[i];
@@ -3244,7 +3244,7 @@ BOOL kproc_discard(PD *pd)
 void kproc_set_dta(PD *pd, DTAINFO *dta)
 {
     KPROC *kproc = kproc_find(pd);
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
 #endif
 
@@ -3257,7 +3257,7 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
         return;
 #endif
     }
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(process_files_search_begin(pd,&operation)) return;
 #endif
     kproc->dta = dta;
@@ -3273,14 +3273,14 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
             back_user_range(kproc,basepage+offsetof(PD,p_xdta),sizeof(mirror),TRUE,NULL)==E_OK)
             (void)aspace_copy_to_user(kproc->aspace,basepage+offsetof(PD,p_xdta),&mirror,sizeof(mirror));
         if (basepage!=(VADDR)(uintptr_t)pd) pd->p_xdta=mirror;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         process_files_operation_end(&operation);
 #endif
         return;
     }
 #endif
     pd->p_xdta = PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     process_files_operation_end(&operation);
 #endif
 }
@@ -3685,7 +3685,7 @@ BOOL kproc_prepare_user(PD *pd, PD *parent)
  * has not searched with for a while: the table is small) has none, and the
  * search is over.
  */
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 struct kproc_search_snapshot {
     KPROC *source,*target; /* borrowed from the enclosing PROCESS snapshot */
     UQUAD ticket;
@@ -3878,17 +3878,17 @@ BOOL kproc_dta_restore_to(PD *pd,const DTAINFO *address,DTAINFO *dta)
     VADDR va=(VADDR)(uintptr_t)address;
     WORD i;
     BOOL found=FALSE;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
 #endif
     if(!process || !process->aspace) return TRUE;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(process_files_cache_begin(pd,&operation)) return FALSE;
 #endif
     for(i=0;i<KPROC_DTAS;i++) if(process->dtas[i].va==va) {
         memcpy(dta,process->dtas[i].state,sizeof(process->dtas[i].state));found=TRUE;break;
     }
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     process_files_operation_end(&operation);
 #endif
     return found;
@@ -3897,21 +3897,21 @@ void kproc_dta_forget(PD *pd,const DTAINFO *dta)
 {
     KPROC *process=kproc_find(pd);
     WORD i;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
 #endif
     if(!process || !process->aspace) return;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(process_files_cache_begin(pd,&operation)) return;
 #endif
     for(i=0;i<KPROC_DTAS;i++) if(process->dtas[i].va==(VADDR)(uintptr_t)dta) {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         dta_entry_close(process,&process->dtas[i]);
 #else
         process->dtas[i].va=0;
 #endif
     }
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     process_files_operation_end(&operation);
 #endif
 }
@@ -3920,14 +3920,14 @@ void kproc_dta_save_from(PD *pd,const DTAINFO *address,const DTAINFO *dta)
     KPROC *process=kproc_find(pd);
     PROCESS_DTA_ENTRY *entry;
     UBYTE state[offsetof(DTAINFO,dt_fattr)];
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     PROCESS_FILE_OPERATION operation=PROCESS_FILE_OPERATION_INIT;
 #else
     WORD i,oldest=0;
 #endif
     if(!process || !process->aspace) return;
     memcpy(state,dta,sizeof(state)); /* before an eviction can invoke a callback */
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if(process_files_cache_begin(pd,&operation)) return;
     entry=dta_entry(process,(VADDR)(uintptr_t)address);
     if(!entry) {
@@ -3947,7 +3947,7 @@ void kproc_dta_save_from(PD *pd,const DTAINFO *address,const DTAINFO *dta)
     entry=&process->dtas[i==KPROC_DTAS?oldest:i];entry->va=(VADDR)(uintptr_t)address;
 #endif
     entry->stamp=++process->dta_clock;memcpy(entry->state,state,sizeof(entry->state));
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     process_files_operation_end(&operation);
 #endif
 }

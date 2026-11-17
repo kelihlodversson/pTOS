@@ -15,30 +15,7 @@
 #endif
 
 #if defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)
-static long pclone_trap(const void *args, unsigned long size)
-{
-#if defined(__mc68000__)
-    register long result __asm__("d0");
-    __asm__ volatile (
-        "move.l %2,-(%%sp)\n\t"
-        "move.l %1,-(%%sp)\n\t"
-        "move.w #0x190,-(%%sp)\n\t"
-        "trap #1\n\t"
-        "lea 10(%%sp),%%sp"
-        : "=d"(result) : "r"(args), "r"(size)
-        : "d1", "d2", "a0", "a1", "a2", "memory", "cc");
-    return result;
-#elif defined(__arm__)
-    register long r0 __asm__("r0") = GEMDOS_PCLONE;
-    register const void *r1 __asm__("r1") = args;
-    register unsigned long r2 __asm__("r2") = size;
-    __asm__ volatile ("svc 1" : "+r"(r0) : "r"(r1), "r"(r2)
-                      : "r3", "r12", "lr", "memory", "cc");
-    return r0;
-#else
-    return trap_1_wll(GEMDOS_PCLONE,(long)args,(long)size);
-#endif
-}
+#include "trap.h"
 #if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST) || defined(TEST_WITH_MMAP)
 static long clone_test_sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
@@ -108,6 +85,75 @@ static unsigned char private_copyout[32] __attribute__((aligned(4096)));
 static struct { int32_t pid, tid; } private_outputs __attribute__((aligned(4096)));
 static void private_shared_entry(void *argument) { (void)argument; (void)Pterm(75); }
 static long private_query(unsigned slot) { return pclone_trap(0,0xc8920100UL+slot); }
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+
+static void test_private_continuation(void)
+{
+    volatile unsigned long local=0x13572468UL;
+    long pid,status,parent=Pgetpid(),tid=private_query(3),root=private_query(0);
+    int cycle,stage,bad;
+    for(stage=1;stage<=7;stage++)
+        ptest_assert_msg(pclone_trap(0,0x895f8000UL+stage)==-39L,
+                         "private saved-return preparation failure rolls back before publication");
+    for(cycle=0;cycle<8;cycle++) {
+        private_probe.cell=0x11223344UL;private_probe.heap[17]=0x31;
+        private_probe.heap[4096+31]=0x42;local=0x13572468UL;
+        if(private_probe.mapping)private_probe.mapping[5]=0x21;
+        if(private_probe.filemap)private_probe.filemap[11]=0x35;
+        pid=pclone_trap(0,0x895f8000UL);
+        if(pid==0) {
+            bad=Pgetpid()==parent || Pgetppid()!=parent || private_query(0)==root || private_query(3)==tid;
+            if(local!=0x13572468UL || private_probe.cell!=0x11223344UL ||
+               private_probe.heap[17]!=0x31 || private_probe.heap[4096+31]!=0x42 ||
+               private_probe.heap[8192+45]!=0)bad=1;
+            if(private_probe.mapping && (private_probe.mapping[5]!=0x21 || private_probe.mapping[4096+7]))bad=1;
+            if(private_probe.filemap && (private_probe.filemap[11]!=0x35 || private_probe.filemap[4096+13]!=0x46))bad=1;
+            local=0x24681357UL;private_probe.cell=0x66778899UL;
+            private_probe.heap[17]=0x71;private_probe.heap[8192+45]=0x91;
+            if(private_probe.mapping)private_probe.mapping[5]=0x41;
+            if(private_probe.filemap)private_probe.filemap[11]=0x55;
+            /* Nested original-stack fork and canonical late wait. */
+            if(cycle==0) {
+                long nested=pclone_trap(0,0x895f8000UL);
+                if(nested==0) { local=0;private_probe.heap[17]=0xff;Pterm(75); }
+                if(nested<=0)bad=1;
+                else {
+                    long waited=Pwaitpid(nested,0,0);
+                    if((waited>>16)!=nested || (waited&65535)!=75 || local!=0x24681357UL ||
+                       private_probe.heap[17]!=0x71 || Pwaitpid(nested,1,0)>=0)bad=1;
+                }
+            }
+            Pterm(bad?74:73);
+            for(;;) { }
+        }
+        ptest_assert_msg(pid>0 && pid!=parent,"private saved-return parent receives distinct PID");
+        if(pid>0) {
+            /* No dispatch is possible between constructor publication and
+             * this nonblocking check. A completion-only vfork would fail. */
+            ptest_assert_msg(Pwaitpid(pid,1,0)==0,"private parent returns before child completion");
+            if(cycle&1) (void)Syield(); /* child writes first */
+            else { /* parent writes first */
+                local=0xaabbccddUL;private_probe.cell=0xaabbccddUL;private_probe.heap[17]=0x61;
+                if(private_probe.filemap)private_probe.filemap[11]=0x75;
+            }
+            status=Pwaitpid(pid,0,0);
+            ptest_assert_msg((status>>16)==pid && (status&65535)==73,
+                             "child resumes original C trap/stack, private root/data/lazy/file/COW and nested fork");
+            ptest_assert_msg(Pwaitpid(pid,1,0)<0,"private saved-return PROCESS reaped exactly once");
+            ptest_assert_msg(local==((cycle&1)?0x13572468UL:0xaabbccddUL) &&
+                             private_probe.cell==((cycle&1)?0x11223344UL:0xaabbccddUL) &&
+                             private_probe.heap[17]==((cycle&1)?0x31:0x61) && !private_probe.heap[8192+45],
+                             "independent original stack/global/heap writes in both orders");
+            if(private_probe.mapping)ptest_assert_msg(private_probe.mapping[5]==0x21 && !private_probe.mapping[4096+7],
+                             "private saved-return anonymous mapping isolation");
+            if(private_probe.filemap)ptest_assert_msg(private_probe.filemap[11]==((cycle&1)?0x35:0x75),
+                             "private saved-return file backing and COW isolation");
+        }
+    }
+    if(!ptest_failures())conws("native private-VM original-stack syscall-return COW (not Pfork): PASS\r\n");
+}
+#endif
+
 #if defined(TEST_WITH_PRIVATE_SNAPSHOT)
 #include "../../include/private_snapshot_test.h"
 static volatile struct {
@@ -154,6 +200,29 @@ static void captured_surviving_peer(void *unused)
         page=(volatile unsigned char *)captured_probe.address;
         captured_probe.parent=Pgetpid();captured_probe.root=private_query(0);captured_probe.tid=private_query(3);
         if(captured_query(captured_probe.address)!=expected) bad=2;
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+        {
+            /* A saved-return private fork (what Pfork/Pvfork use) of this
+             * source, which holds a captured lazy reservation: the child
+             * inherits that authority as its own and backs the page itself. */
+            long forked=pclone_trap(0,0x895f8000UL);
+            if(forked==0) {
+                int lazy_bad=captured_query(captured_probe.address)!=expected;
+                if(page[0] || page[17]) lazy_bad=1;
+                page[0]=0x73;page[17]=0x74;
+                if(page[0]!=0x73 || page[17]!=0x74 ||
+                   !(captured_query(captured_probe.address)&PRIVATE_SNAPSHOT_PRESENT)) lazy_bad=1;
+                Pterm(lazy_bad?74:73);
+                for(;;) { }
+            }
+            if(forked<=0) bad=10;
+            else {
+                status=Pwaitpid(forked,0,0);
+                if((status>>16)!=forked || (status&65535)!=73 || Pwaitpid(forked,1,0)>=0) bad=11;
+                if(captured_query(captured_probe.address)!=expected) bad=12; /* parent still lazy */
+            }
+        }
+#endif
         args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
         args.entry=captured_private_child;args.stack_base=captured_probe.child_stack;args.stack_size=32768;
         for(stage=1;stage<=24;stage++) {
@@ -173,6 +242,7 @@ static void captured_surviving_peer(void *unused)
             captured_probe.environment[0]!=captured_probe.environment_byte) bad=6;
         page[0]=0x32;
     }
+    if(bad) printf("captured snapshot failure %d\r\n",bad);
     conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
                "native captured ancestor-stack private snapshot after source exit, both write orders: PASS\r\n");
     Pterm(bad?74:73);
@@ -322,6 +392,9 @@ static void test_private_aspace(void)
 #endif
     private_probe.filemap=filemap>0?(unsigned char *)filemap:0;
     if(private_probe.filemap)ptest_assert_msg(private_probe.filemap[11]==0x35,"clean file page before clone");
+#if defined(TEST_WITH_FORK_RETURN_TEST)
+    test_private_continuation();
+#endif
 #if defined(TEST_WITH_PRIVATE_SNAPSHOT)
     test_captured_snapshot();
 #endif
@@ -479,6 +552,22 @@ static void test_saved_return(void)
             ptest_assert_msg(Pwaitpid(pid, 1, 0) < 0,"saved-return child cannot be reaped twice");
         }
     }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    for (cycle = 0; cycle < 8; cycle++) {
+        fork_return_bad = fork_return_child_pid = 0;
+        pid = fork_return_native(stack + 4096, 0x8000);
+        ptest_assert_msg(pid > 0 && !fork_return_bad && !fork_return_child_pid,
+                         "private register continuation parent returns before child writes");
+        if (pid > 0) {
+            status = Pwaitpid(pid,0,0);
+            ptest_assert_msg((status >> 16) == pid && (status & 65535) == 73,
+                             "private same-trap child integer/condition/FPU register image preserved");
+            ptest_assert_msg(!fork_return_bad && !fork_return_child_pid,
+                             "private register child writes cannot change parent report");
+        }
+    }
+    if (!ptest_failures()) conws("native private-VM syscall-return registers (not Pfork): PASS\r\n");
+#endif
     Prusage(pages);
     ptest_assert_msg(pages[4] == baseline,"saved-return repeated rollback/exit restores mapped pages");
     free(stack);
@@ -1889,6 +1978,7 @@ void test_pclone(void)
     /* These no-argument calls must fail before creating a child or blocking
      * the parent until saved-context/private-VM/exec-detach support exists.
      * Exercise the actual native trap and signed error result repeatedly. */
+#if !defined(TEST_WITH_PFORK)
     {
         long pid = Pgetpid();
         int fork_cycle;
@@ -1898,6 +1988,7 @@ void test_pclone(void)
         }
         ptest_assert_msg(Pgetpid() == pid,"rejected fork preserves caller PID");
     }
+#endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     ptest_assert_msg(private_query(1)==0 && private_query(2)==0,"initial COW frame/reference baseline");
 #endif
@@ -1952,6 +2043,19 @@ void test_pclone(void)
                 conws("native CUIS retained stream ownership: PASS (parent verified)\r\n");
 #endif
         }
+#if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+        /* Keep the new fixture out of this self-reloading image: three
+         * classic PRG copies must fit the unchanged procmem window. */
+        ptest_log_flush();
+        child=Pexec(100,"FORKPAR.TOS","",0);
+        ptest_assert_msg(child>0,"COW parent-policy companion starts as a managed PROCESS");
+        if(child>0) {
+            status=Pwaitpid(child,0,0);
+            ptest_assert_msg((status>>16)==child && !(status&65535),
+                             "COW parent-policy companion completes all native controls");
+            ptest_assert_msg(Pwaitpid(child,1,0)<0,"COW parent-policy companion reaped exactly once");
+        }
+#endif
 #if defined(TEST_WITH_IMAGE_POLICY_TEST)
         ptest_log_flush();
         child=Pexec(100,"IMAGEPOL.TOS","",0);

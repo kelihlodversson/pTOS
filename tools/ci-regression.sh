@@ -132,6 +132,9 @@ if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
 if os.environ.get('PROCESS_FILES_TEST') == '1':
     config.syms['CONF_WITH_PROCESS_FILES_TEST'].set_value(2)
     assert config.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'y'
+    # Public Pfork/Pvfork over the PROCESS descriptor snapshot.
+    config.syms['CONF_WITH_PFORK'].set_value(2)
+    assert config.syms['CONF_WITH_PFORK'].str_value == 'y'
     backend = os.environ.get('PROCESS_FILES_FS', 'fat')
     assert backend in ('fat', 'pfs'), backend
     config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)

@@ -9,6 +9,9 @@
 #include "proc.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_FORK_CORE
+#include "fork_parent.h"
+#endif
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
@@ -44,6 +47,9 @@ struct kthread {
     BOOL identity_only;
     BOOL has_exit;
     UWORD exit_status;
+#if CONF_WITH_FORK_CORE
+    FORK_PARENT_DEPENDENCY *fork_parent;
+#endif
 #if CONF_WITH_PTHJOIN
     struct thread_completion *completion, *joining;
 #endif
@@ -90,6 +96,9 @@ static KTHREAD *create_thread(KPROC *process, KASPACE *space, BOOL identity_only
     thread->reclaim_execution = NULL;
     thread->state = THREAD_NEW;
     thread->has_exit = FALSE;
+#if CONF_WITH_FORK_CORE
+    thread->fork_parent=NULL;
+#endif
     thread->identity_only = identity_only;
     if (!kproc_thread_attach_space(process, space, thread, &thread->process,
                                    &thread->space, &thread->process_next, identity_only)) {
@@ -296,6 +305,10 @@ BOOL kthread_reap(KTHREAD *thread)
     thread->state = THREAD_REAPING;
     if (thread->reclaim_execution)
         thread->reclaim_execution(thread->execution);
+#if CONF_WITH_FORK_CORE
+    /* Root has unpublished the blocked predicate and stopped execution. */
+    fork_parent_retire(&thread->fork_parent);
+#endif
     kaspace_lease_release(&thread->stack_hold);
     process = thread->process;
     dispose = thread->attached &&
@@ -343,6 +356,20 @@ void kthread_destroy(KTHREAD *thread)
 ULONG kthread_tid(const KTHREAD *thread) { return thread ? thread->tid : 0; }
 KPROC *kthread_process(const KTHREAD *thread) { return thread ? thread->process : NULL; }
 KASPACE *kthread_aspace(const KTHREAD *thread) { return thread ? thread->space : NULL; }
+#if CONF_WITH_FORK_CORE
+BOOL kthread_fork_attach(KTHREAD *thread,FORK_PARENT_DEPENDENCY *dep)
+{
+    if (!thread || thread->state!=THREAD_EXECUTING || thread->fork_parent || !dep) return FALSE;
+    thread->fork_parent=dep;return TRUE;
+}
+BOOL kthread_fork_detach(KTHREAD *thread,const FORK_PARENT_DEPENDENCY *dep)
+{
+    if (!thread || !dep || thread->fork_parent!=dep) return FALSE;
+    thread->fork_parent=NULL;return TRUE;
+}
+FORK_PARENT_DEPENDENCY *kthread_fork_dependency(const KTHREAD *thread)
+{ return thread?thread->fork_parent:NULL; }
+#endif
 
 /* Used only to walk the process's non-owning membership list. */
 KTHREAD **kthread_next_link(KTHREAD *thread) { return &thread->process_next; }

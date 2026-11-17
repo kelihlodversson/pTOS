@@ -19,7 +19,7 @@ typedef struct {
     KTHREAD_STACK scheduler_stack;
     PADDR syscall_physical;
     uintptr_t syscall_top;
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
     BOOL saved_return;
 #endif
 } X32_THREAD_STARTUP_DRAFT;

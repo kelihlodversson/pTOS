@@ -22,7 +22,7 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 #if CONF_WITH_USER_ASPACE
@@ -81,6 +81,7 @@ static void ixterm( PD *r );
 static WORD envsize( char *env );
 static void init_pd_fields(PD *p, char *tail, long max, char *envptr);
 static LONG init_pd_files(PD *p);
+static void release_pd_cwd(PD *r);
 static char *alloc_env(ULONG flags, char *v);
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail);
 static void proc_go(PD *p, WORD entry_type);
@@ -420,7 +421,7 @@ static void release_pd_files(PD *r)
     /* Close admission before any callback can attach another reference to
      * this retiring table, including an already-visited standard index. */
     if (!kproc_begin_file_cleanup(r)) return;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(r)) {
         process_files_retire(kproc_files(r));
         goto directories;
@@ -460,24 +461,32 @@ static void release_pd_files(PD *r)
 #endif
         }
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 directories:
 #endif
-#if CONF_WITH_PLUGGABLE_FS
-    pfs_proc_exit(r);
-#else
-    /* Legacy PROCESS slots own only legacy dirtbl references. */
-    for (i = 0; i < NUMCURDIR; i++)
-    {
-        if ((h = PD_CURDIR(r)[i]) != 0) decr_curdir_usage(h);
-    }
-#endif
+    release_pd_cwd(r);
 #if CONF_WITH_USER_ASPACE
     /* Inherited aliases and service-owned residual references reserve their
      * exact SFT incarnation, never this retiring PD address. */
     for (i = 0; i < OPNFILES; i++)
         if (sft[i].f_own == r)
             sft[i].f_own = (PD *)&orphaned_sft_owner;
+#endif
+}
+
+/* The current-directory references of every drive, as init_pd_cwd_from()
+ * took them. */
+static void release_pd_cwd(PD *r)
+{
+#if CONF_WITH_PLUGGABLE_FS
+    pfs_proc_exit(r);
+#else
+    WORD i, h;
+    /* Legacy PROCESS slots own only legacy dirtbl references. */
+    for (i = 0; i < NUMCURDIR; i++)
+    {
+        if ((h = PD_CURDIR(r)[i]) != 0) decr_curdir_usage(h);
+    }
 #endif
 }
 
@@ -1163,14 +1172,19 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     *b++ = 0;
 }
 
-/* duplicate files */
-static LONG init_pd_standard_files_from(PD *p, PD *source)
+/* duplicate files: a Pexec child gets every descriptor of its parent
+ * (exec_all), the clone factory's COPY_STANDARD_HANDLES only handles 0..2.
+ * Without PROCESS-local files both share the legacy global table. */
+static LONG init_pd_standard_files_from(PD *p, PD *source, BOOL exec_all)
 {
     int i;
     LONG error = E_OK, rc;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(p))
-        return process_files_inherit_standard(p,source);
+        return process_files_inherit(p,source,
+            exec_all ? PROCESS_FILES_DESCRIPTORS : PROCESS_FILES_STANDARD);
+#else
+    (void)exec_all;
 #endif
 
     /* Preserve existing Pexec inheritance while allowing checked factory use. */
@@ -1221,8 +1235,23 @@ static LONG init_pd_files(PD *p)
 #else
     (void)init_pd_cwd_from(p, run);
 #endif
-    /* Preserve Pexec's existing standard-file inheritance policy. */
-    (void)init_pd_standard_files_from(p, run);
+    /* A PROCESS-local child must not start without its parent's descriptors
+     * (redirected standard handles included): its caller disposes the new
+     * PROCESS on failure. The legacy global table keeps its best effort. */
+#if CONF_WITH_PROCESS_FILES
+    if (process_files_managed(p)) {
+        rc = init_pd_standard_files_from(p, run, TRUE);
+        if (rc != E_OK) {
+            /* Its caller only disposes the PROCESS: give the directories back
+             * here, and leave no slot to release twice. */
+            WORD i;
+            release_pd_cwd(p);
+            for (i = 0; i < NUMCURDIR; i++) PD_CURDIR(p)[i] = 0;
+        }
+        return rc;
+    }
+#endif
+    (void)init_pd_standard_files_from(p, run, TRUE);
     return E_OK;
 }
 
@@ -1249,7 +1278,7 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
     KPROC *process;
 
     if (!result || *result || (resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     /* The factory alone cannot admit full inheritance through publication. */
     if (resources&PROC_CLONE_COPY_FILES) return EINVAL;
 #endif
@@ -1273,7 +1302,7 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
     if (clone_factory_injected(3)) goto record_failed;
     if (!kproc_clone_inherit_identity(process, source)) { error = EACCDN; goto record_failed; }
     if (resources & PROC_CLONE_COPY_STANDARD_HANDLES) {
-        error = init_pd_standard_files_from(p, parent);
+        error = init_pd_standard_files_from(p, parent, FALSE);
         if (error != E_OK) goto record_failed;
     }
     error = ENSMEM;

@@ -65,7 +65,7 @@ DTAINFO *kproc_get_dta(PD *pd);
 typedef struct kproc KPROC;
 struct _dnd;
 struct dta_info;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 typedef struct kproc_search_snapshot KPROC_SEARCH_SNAPSHOT;
 LONG kproc_search_snapshot_prepare(KPROC *,KPROC *,UQUAD,KPROC_SEARCH_SNAPSHOT **);
 BOOL kproc_search_snapshot_valid(const KPROC_SEARCH_SNAPSHOT *);
@@ -165,7 +165,7 @@ void kproc_standard_file_invalidate(WORD handle);
 BOOL kproc_begin_file_cleanup(PD *pd);
 BOOL kproc_file_references_allowed(PD *pd);
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 void kproc_note_file_owner_cleanup(KPROC *,LONG error,BOOL transferred);
 #endif
 LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
@@ -205,7 +205,7 @@ BOOL kproc_group_status(const KPROC *process, UWORD *status);
 #endif
 BOOL kproc_thread_start_allowed(const KPROC *process);
 BOOL kproc_thread_is_sole(KPROC *process, struct kthread *thread);
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 BOOL kproc_has_aspace_peer(const KPROC *process);
 #endif
 /* Caller already holds the identity; only live resources may be acquired. */

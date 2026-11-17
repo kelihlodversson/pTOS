@@ -164,8 +164,30 @@ jobs:
           /tmp/elf-shared-venv/bin/python tools/test-private-snapshot.py
           HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-private-snapshot.py
           ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-private-snapshot.py
+      - name: Reproduce Phase6 production prerequisite contracts
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-phase6.py
+          /tmp/elf-shared-venv/bin/python tools/test-fork-parent.py
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-fork-parent.py
+          HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-fork-parent.py
+          PATH=/tmp/elf-shared-venv/bin:$PATH HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" sh tools/test-kaspace.sh
+          PATH=/tmp/elf-shared-venv/bin:$PATH HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-kaspace.sh
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-phase6.py
+          HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-phase6.py
+          for capability in fs; do
+            status=0
+            /tmp/elf-shared-venv/bin/python tools/test-phase6.py --require "$capability" || status=$?
+            test "$status" = 1 || { echo "expected verified prerequisite failure: $capability (got $status)"; exit 1; }
+          done
+          # Captured lazy authority in private clones is implemented (#971).
+          /tmp/elf-shared-venv/bin/python tools/test-phase6.py --require lazy
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
+      - name: Build public Pfork/Pvfork without test transports
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/check-pfork-build.sh
       - name: Build the enabled freestanding x32 core
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH

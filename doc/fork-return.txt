@@ -1,8 +1,79 @@
 Saved syscall-return startup (#895 F1)
 =====================================
 
+COW parent continuation policy increment
+----------------------------------------
+The binding #895 policy is PRIVATE_VM/COW for BOTH Pfork and Pvfork. The private
+saved-return constructor is shared;0x895fc000 (private test transport) additionally
+prepares an exact-child THREAD-owned parent suspension before publication. The
+older0x895f0000 SHARE_VM probe is a separate historical startup experiment and
+must never be used as Pvfork.0x895f8000 remains the immediate private probe.
+
+Pvfork private user-stack/global/heap writes are not visible in parent memory.
+Native tests require the existing scheduler to report the calling parent's
+actual TASK_BLOCKED predicate/argument/execution while the exact child runs.
+They check failed mode200, nested unrelated/private children, final-THREAD
+completion, faults/group exit and exactly-once dependency retirement/public reap.
+Public Pexec(200) (#970, #999), including from a private-VM child (#1003), now
+advances the committed-exec generation, and a native test proves that a Pvfork
+child's committed Pexec(200) releases its parent. Hosted epoch models test
+readiness ownership only. Public Pfork/Pvfork are implemented behind
+CONF_WITH_PFORK; see the public Pfork/Pvfork section of phase6-acceptance.txt.
+
+The parent-policy cases run in the small FORKPAR.TOS companion after the
+existing managed self-test, preserving the classic two-MiB procmem limit and
+the original self-Pexec ABI controls. Both canonical child status and its
+required marker gate acceptance. The checked capture window is the least the
+continuation needs, so callers at the exclusive stack top or near their lower
+stack guard are admitted. On x32/A32 it ends at SP rounded up to 16 bytes, since
+SYSCALL and SVC need no user-stack bytes above SP; it is 144 bytes on x32
+(covering the 128-byte red zone) and 16 bytes on A32, which has none. On m68k it
+is the 16 bytes ending exactly after the TRAP #1 argument words (two bytes for
+Pfork/Pvfork, ten for the Pclone probe). Native
+stack-top (SP==TOP-8 and SP==TOP) and underflow controls exercise that
+boundary; resident mapping, rights and lease checks still apply. Before startup validation the child's return-PC page is
+materialized (USER|EXEC), so a trap that ends at a page boundary can resume on
+an untouched demand-paged text page.
+
+Phase6 private continuation increment
+------------------------------------
+Pclone(NULL,0x895f8000|stage) requires FORK_RETURN_TEST and PRIVATE_CLONE_TEST.
+Stage0 creates PRIVATE_VM; stages1..7 fail after the same acquisition boundaries
+as the shared probe. The original shared selector and admission are unchanged.
+The private parent returns PID before any child dispatch, without a wait.
+Child returns zero at the same actual trap, using a copied user-only image,
+constructor-selected root, cloned trusted bridge and fresh kernel stacks.
+The selected child's initial stack window is backed before startup validation.
+An authenticated cloned-return draft may retain resident private stack leaves
+outside heap/mmap (original top stack); this creates no lazy reservation or
+permission grant. Full top-stack lifetime remains KPROC clone_top_stack and
+selected KASPACE ownership. The ordinary/shared stack policy is unchanged.
+
+Native fixtures test actual original C frames, not a new entry function or
+synthetic fork stack. They test both write orders, DATA/BSS/heap/stack,
+anonymous/lazy/file-backed COW, nested continuation and canonical public reap.
+The existing assembly register probe also runs with a private root, reporting
+child integer/condition/FPU checks through PROCESS status rather than shared
+diagnostic globals. A nonblocking wait immediately after construction proves
+parent independence. Architecture admission remains unchanged (040 only on
+m68k; no new 030/060/FPIAR proof is implied).
+
+A source holding captured LAZY receipts is admitted: kaspace_clone copies
+their authority into the child's own canonical records (#971, #1000), and the
+child backs such a page from its own record (tests/pclone/pclone.c, captured
+snapshot run). Moved image nheap and other
+existing private-runtime restrictions remain. The probe itself (resources=0)
+claims no descriptor, basepage, environment, DTA/search or signal inheritance;
+public Pfork/Pvfork (CONF_WITH_PFORK) request the descriptors, directories and
+DTA/search state through the PROCESS file snapshot (#969, #984).
+Final source evidence/limits live in phase6-acceptance.txt and its Draft PR.
+
+Historical shared proof contract follows
+---------------------------------------
+
 This is a tightly gated, shared-VM native continuation proof, NOT Pfork or
-Pvfork. Public opcodes 0x11b and 0x113 still return EINVFN. The independent
+Pvfork. (When written, public opcodes 0x11b and 0x113 returned EINVFN; they are
+now implemented behind CONF_WITH_PFORK.) The independent
 COW prerequisite is integrated separately; this saved-return probe remains
 shared-VM only. Complete fork inheritance, a vfork dependency object and
 Pexec(200) detach are not implemented.
@@ -85,8 +156,8 @@ The test supplies an allocated, resident user stack and switches to its middle
 in assembly before the originating trap. Both contexts execute the instruction
 after that SAME trap. The child never returns through a shared C frame: it
 checks user state, records its PID/TID/SP, then calls raw Pterm. The parent is
-blocked in the kernel throughout. The bounded 512-byte mapping window covers
-this assembly-only stack use and red zone; it is not a general fork stack
+blocked in the kernel throughout. The bounded capture window pins the pages under
+this assembly-only stack use (and the x32 red zone); it is not a general fork stack
 reservation or a safe arbitrary-C shared-stack API.
 
 All three native probes check result branches, distinct PID/TID, original SP,

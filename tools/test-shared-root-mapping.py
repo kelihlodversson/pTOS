@@ -15,6 +15,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-root-') as directory:
     work = Path(directory)
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/pc-x86_64_defconfig')
+    config.load_config('tools/hosted-legacy-profile.config', replace=False)
     for name in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_ELF_SHARED',
                  'CONF_WITH_CUIS', 'CONF_WITH_X32_VDI', 'CONF_WITH_USER_CALLBACKS'):
         config.syms[name].set_value(0)

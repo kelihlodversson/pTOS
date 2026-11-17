@@ -1724,6 +1724,9 @@ static void test_residual_alias_retirement(void)
     if (failures==initial_failures) kprintf("native exhausted ordinary aliases with retained SFT owner: PASS\r\n");
 }
 
+/* Legacy (non-PROCESS-local) descriptor table contract: see
+ * test_proc_clone_factory(). Not built with CONF_WITH_PROCESS_FILES. */
+#if !CONF_WITH_PROCESS_FILES
 static void test_residual_file_ownership(void)
 {
     SNAP s;
@@ -1778,9 +1781,13 @@ static void test_residual_file_ownership(void)
     kproc_release(identity);
     same(&s,"residual file recovery returns exact resource baseline");
 }
+#endif
 
 /* Native production media invalidation/PD cleanup with a test-owned FAT OFD.
  * No mounted drive is changed; the synthetic medium owns only this OFD. */
+/* Legacy (non-PROCESS-local) descriptor table contract: see
+ * test_proc_clone_factory(). Not built with CONF_WITH_PROCESS_FILES. */
+#if !CONF_WITH_PROCESS_FILES
 static void test_invalidated_standard_aliases(void)
 {
     SNAP before;
@@ -1825,6 +1832,7 @@ static void test_invalidated_standard_aliases(void)
     kproc_release(identity);
     same(&before,"media invalidation, slot reuse and PD disposal return resource baseline");
 }
+#endif
 
 static void test_kthread_live_disposal(void)
 {
@@ -2456,6 +2464,12 @@ static void test_proc_clone_invalidation(void)
 
 /* Real low-memory allocations, PID identity, standard-handle/CWD inheritance
  * and generic disposal. The factory does not build an execution context. */
+/* The legacy (non-PROCESS-local) descriptor contract of the resource
+ * factory: it edits PD_UFT slots and counts SFT references directly. With
+ * CONF_WITH_PROCESS_FILES a PROCESS owns a local descriptor namespace and
+ * clones inherit it through the files snapshot instead; that path is tested
+ * by tools/test-process-files.py and the native PROCESS descriptor runs. */
+#if !CONF_WITH_PROCESS_FILES
 static void test_proc_clone_factory(void)
 {
     SNAP baseline, acquired;
@@ -2606,6 +2620,7 @@ static void test_proc_clone_factory(void)
     same(&baseline, "factory source-first cleanup and final owned-result release");
     kcprintf("x86-64 clone PROCESS factory: %s\n", failures == before ? "PASS" : "FAIL");
 }
+#endif
 
 #if CONF_WITH_NATIVE_SCHED
 /* These identity-only startup drafts never enter user code or backend stacks.
@@ -2803,6 +2818,9 @@ static struct {
  * syscall is enabled. Loader/observer ownership is production, not a model. */
 /* Minimal #933 integration: ordinary loader/admission and actual FAT aliases.
  * Recovery owns only exact SFT transfer tickets, never launch rights or PDs. */
+/* Legacy (non-PROCESS-local) descriptor table contract: see
+ * test_proc_clone_factory(). Not built with CONF_WITH_PROCESS_FILES. */
+#if !CONF_WITH_PROCESS_FILES
 static LONG test_restore_file_alias(WORD file, WORD saved)
 {
     LONG error=kdos_fclose(file); /* Drop the extra alias, not the explicit file. */
@@ -2875,6 +2893,7 @@ static void test_exec_sft_failures(KPROC *owner)
         process_observer_release(&observer); process_observer_release(&next);
     }
 }
+#endif
 static void test_native_exec_request(KPROC *owner)
 {
     VADDR data, request_address, lazy_environment;
@@ -2882,7 +2901,9 @@ static void test_native_exec_request(KPROC *owner)
     PROCESS_EXEC_REQUEST request;
     PROCESS_COMPLETION completion;
     static const char path[]="C:\\X32HELLO.TOS", tail[]={2,'O','n',0}, environment[]={0,0};
+#if !CONF_WITH_PROCESS_FILES
     test_exec_sft_failures(owner);
+#endif
     data=kproc_mmap(run,0,2*PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     if ((LONG)data>0) {
         UBYTE byte=1;
@@ -5345,6 +5366,14 @@ static void test_file_mmap(void)
     int i, before = failures;
 
     snap(&snapshot);
+    /* Create the mapping processes before the fixture is open: a basepage
+     * child inherits its parent's open descriptors (Pexec semantics), and
+     * these must hold the file only through their mappings. */
+    a = new_basepage(); b = new_basepage(); c = new_basepage();
+    if (!a || !b || !c || !kproc_prepare_user(a, run) ||
+        !kproc_prepare_user(b, run) || !kproc_prepare_user(c, run)) {
+        CHECK(FALSE, "prepare file mapping address spaces"); goto done;
+    }
     fd = DISK_CALL(xcreat(path, 0));
     CHECK(fd >= NUMSTD, "create file mapping fixture");
     if (fd < NUMSTD) goto done;
@@ -5354,11 +5383,6 @@ static void test_file_mmap(void)
     }
     CHECK(i == 257, "write patterned file mapping fixture");
     media = getofd(fd)->o_dmd; head = getofd(fd)->o_dfd->o_strtcl;
-    a = new_basepage(); b = new_basepage(); c = new_basepage();
-    if (!a || !b || !c || !kproc_prepare_user(a, run) ||
-        !kproc_prepare_user(b, run) || !kproc_prepare_user(c, run)) {
-        CHECK(FALSE, "prepare file mapping address spaces"); goto done;
-    }
     as = kproc_user_aspace(a); bs = kproc_user_aspace(b); cs = kproc_user_aspace(c);
     CHECK(kproc_mmap(a, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE &&
           kproc_mmap(b, 0, 5 * PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0) == PTOS_MMAP_BASE,
@@ -7000,7 +7024,9 @@ void x86_64_memtest_run(void)
     test_kthread_relationships();
     test_proc_clone();
     test_proc_clone_invalidation();
+#if !CONF_WITH_PROCESS_FILES
     test_proc_clone_factory();
+#endif
 #if CONF_WITH_NATIVE_SCHED
     test_proc_clone_startup();
     test_return_bridge();
@@ -7008,10 +7034,14 @@ void x86_64_memtest_run(void)
     test_clone_execution();
 #endif
 #endif
+#if !CONF_WITH_PROCESS_FILES
     test_residual_file_ownership();
+#endif
     test_checked_file_references();
     test_residual_alias_retirement();
+#if !CONF_WITH_PROCESS_FILES
     test_invalidated_standard_aliases();
+#endif
     test_kthread_live_disposal();
     test_kthread_completion();
     test_kproc_pending_ownership();

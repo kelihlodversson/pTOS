@@ -1,3 +1,368 @@
+Phase 6 (#895): private continuation increment and acceptance ledger
+==================================================================
+
+Integration update (epic merge, 2026-11-17)
+-------------------------------------------
+This branch now includes the current epic head. The prerequisites described
+below as separate Drafts are merged into the epic: #969 descriptors (#975),
+#971 private snapshots (#974, #1000), #970 public same-PROCESS Pexec(200)
+(#973, #999), Pexec(200) from private-VM clones #1003 (#1007) and the
+immutable image policy #977. The KPROC committed-exec generation therefore
+has its producer: a successful Pexec(200), including one by a private-VM
+child, and a private clone inherits captured lazy reservation authority, so
+the lazy control (tools/test-phase6.py --require lazy) now passes. #984
+trusted DTA/search snapshots (PR #1001) is merged too. A real Pvfork child's
+Pexec(200) through its saved-return continuation releasing the parent is now
+tested natively (FORKPAR, "native COW Pvfork parent released at committed
+Pexec(200)"); the public calls are described at the end of this file.
+
+Current binding decision: COW Pfork AND COW Pvfork
+-------------------------------------------------
+Both calls use proc_clone(NEW_PROCESS,PRIVATE_VM). One saved-return constructor,
+one resource/snapshot/THREAD/publication/rollback path. Only parent continuation
+policy differs: immediate Pfork or exact-child suspended Pvfork. This is an
+accepted deliberate FreeMiNT memory-sharing deviation: ordinary private child
+writes do not change parent memory; the child has its own logical user stack.
+No shared parent/child KASPACE, shared writable stack or parent-root detach
+requirement applies. Explicitly shared mappings retain their semantics, but
+pTOS public MAP_SHARED remains unsupported. Non-MMU fork stays outside Phase6.
+
+Accepted prior checkpoint: PR9722042d866802bfb0cea6e23fb148d0c53eca9d088,
+with the reported25/28/29/27/28 native suites and5shutdown each, four CI SUCCESS
+and four scoped independent assessments. That evidence belongs to that SHA;
+it is not acceptance of the new parent dependency or public syscalls.
+
+New parent-dependency increment (native acceptance in progress):
+- Exact child KPROC observer; parent retained KPROC number + calling KTHREAD/TID
+  and non-recycled scheduler execution identity. One THREAD-owned dependency,
+  PREPARED before child publication; PUBLISHED within its no-fail guard before
+  TASK_NEW. Existing scheduler owns the blocked parent continuation/stacks.
+- Cancellable block/recheck on canonical final PROCESS completion/delivery order
+  or exact child committed-exec generation. Cancellation wins over readiness.
+  Normal cleanup detaches/releases before checkpoint; quiescent THREAD reap
+  cancels any abandoned dependency after predicate/backend unpublication.
+- KPROC exec-generation query: its producer is #970's authenticated
+  replacement commit (public Pexec(200), #999), now merged. Host modeled epoch
+  events are NOT native exec; the native exec-release test is. Public
+  Pfork/Pvfork are implemented behind CONF_WITH_PFORK (see the end of this
+  file).
+- #969 and #971 are developed as isolated epic-based prerequisite Drafts.
+  #970 is same-PROCESS replacement only; no COW-vfork parent VM detach is needed.
+  None of these unaccepted branches may be integrated without separate user
+  authorization after independent acceptance. Main PR972 does not import them.
+
+The new private trap selector0x895fc000 changes only the parent continuation
+policy of0x895f8000; it is not public opcode0x113. Both use the same PRIVATE_VM
+transaction. A SHARE_VM+suspend request is rejected before resource acquisition.
+Eight preparation prefixes and final publication cancellation are exercised.
+Native tests check a genuinely blocked parent, nested suspension, unrelated
+completion, failed Pexec200, leader-only THREAD exit followed by final completion,
+Ptermgrp and fault completion, private stack/global/heap isolation and independent
+public reap. A child also cancels its exact blocked parent through existing group
+exit, survives as an orphan in its own VM and completes independently. That case
+restores seven exact PROCESS/THREAD/root/stack/identity-reference counters and
+the dependency count, without resetting counters or destroying the source root.
+Hosted production-owner tests cover early/late completion, missing delivery order,
+false wakes, exact modeled exec epochs, acquisition rollback and quiescent reap.
+These are scoped controls, not the complete Phase6 resource-conservation matrix.
+
+The native parent-policy controls live in the small FORKPAR.TOS companion,
+launched by existing Pexec100 after the large managed self-test has completed.
+Its canonical status and independently required log marker both gate acceptance.
+An earlier inlined fixture grew the classic self-loading RUNTTESTS image beyond
+the third copy's remaining TPA: the production allocator reported622592 bytes
+free for a554602-byte image, before the CRT's65536-byte stack and8192-byte
+minimum free area. The CRT returned65535 before main. Keeping the new controls
+in a companion preserves the two-MiB window and all existing self-Pexec tests,
+stack requirements, memory bounds and deadlines. The failing native control is
+retained as evidence; no libcmini or allocator limit was changed.
+
+The companion also exposed an x32/A32 saved-return capture defect: the old symmetric
+512-byte window required256 bytes above live RSP, so shallow valid C frames
+failed preparation with EIMBA. The checked512-byte window now starts at
+(RSP-496)&~15 and ends1..16 bytes above RSP, preserving the128-byte red zone.
+Subtraction underflow rejects before construction. Native controls include an
+actual syscall at SP=0x7ffffff8 and an underflow attempt, without test padding.
+The full selected-root resident/range/rights/lease checks remain. This is still
+the restricted saved-return admission, not arbitrary stack/lazy-source coverage.
+
+Separate prerequisite candidates (not imported here):
+- #969 / Draft975: independently owned descriptor bindings and coherent snapshot
+  admission, scoped source873a43936d430cbd01d8a05639de72523b6983dd.
+- #971 / Draft974: captured lazy authority and shared controller ownership,
+  scoped source5798b91c600ac35d7125e0d0123c4fdee8402b03. Moved image/basepage/
+  environment/DTA ownership remains a separate unresolved part of #971.
+- #970 / Draft973: authenticated reversible same-PROCESS loader staging.
+  Initial source44a3 required a review fix for prepared THREAD/mapping-member
+  associations; the corrected candidate and exact-head validation are tracked
+  on that PR. No safe-stack
+  NORETURN commit or committed-exec notification is implemented by that increment.
+Candidate tests and owner-role assessments do not authorize their integration.
+
+Current exact-source progress, tests and reviews remain on #895 and Draft972.
+The historical matrix below records the accepted2042 checkpoint, not current
+completion percentages for new work. Its earlier shared-stack design is
+superseded by this binding COW decision.
+
+Historical accepted-checkpoint audit
+------------------------------------
+Audit base (remote refreshed before work):
+  00292ebe60ef3ff31f15d56659c5c85938b57a00
+Accepted Phase5 source f9b9e00005eccb7048cff6d11073b47d2075faec has
+an identical tree. No newer epic integration was present. Feature branch:
+feature/895-fork-vfork. No public experimental activation is authorized.
+This file records the dependency matrix BEFORE production modifications.
+Final-source tests, reviews, blockers and scope follow below as available.
+
+Milestone A: actual production capability matrix
+------------------------------------------------
+IMPLEMENTED AND ACCEPTED:
+- GEMDOS no-argument Pfork0x11b/Pvfork0x113 decoding and signed EINVFN;
+  positive WORD PID allocator. mintproc_call(), kproc PID owner.
+- Trusted proc_clone transaction, KPROC/KTHREAD/KASPACE identity retention,
+  two child-owned kernel stacks, prepared/no-fail scheduler publication,
+  cooperative block/wake, final PROCESS completion and canonical public reap.
+  proc_clone.c; thread_startup.c; kthread.c; native_sched.c; kproc.c.
+- Checked exact SFT incarnation references, staged/ordinary/cleanup/transfer
+  rights and bounded close retry. fsclose.c/fsopnclo.c/fsmain.c (#933/#943).
+- Exact reservation/backing authority (#958), nested exit handoff (#966),
+  canonical shared mapping memberships/attachments (#968), Phase5 loader
+  convergence. These are retained prerequisites, not reopened phases.
+
+IMPLEMENTED BUT TEST-GATED:
+- Actual user trap saved-return capture/restore (#932): x32 default segment
+  and FS/GS state, ARMv7 A32 with enabled/non-pending VFP, 040 format0 and
+  null/idle admitted FPU images. syscall_return.h, trap.c, uspace.c,
+  thread_startup{32,_x32}.c, uspaceasm.S. Parent blocked in shared proof.
+- Independent KASPACE/COW (#934): kaspace_clone(), aspace_clone(), existing
+  architecture backends. x32, A7, virt040, private_runtime eligibility only.
+  File-backed private pages, anonymous COW, reservations, logical rights,
+  fresh births/backing references are existing owners, not wrapper algorithms.
+- Shared Pexec4/104 (#894): new PROCESS launch, not same-PROCESS replacement.
+
+IMPLEMENTED BUT INCOMPLETE:
+- Saved-return + independent VM: source/selected-space equality checks in
+  proc_clone_prepare_saved_return and thread_startup_prepare_saved_return
+  prevent combination. Existing cloned-bridge path can supply this safely.
+  x32 already preserves constructor CR3 when copying captured registers.
+- PROCESS inheritance: factory proc_create_clone_process creates an empty
+  environment and selected standard handles/CWD. clone_inherit_identity
+  copies parent/priority/limits but not full fork resources. Process groups
+  remain the existing single-PROCESS model, not inherited group membership.
+- Ordinary loaded-source private eligibility: kproc_clone_private_runtime
+  rejects nheap/pending/giveback/lender/lost sources and live ASPACE peers.
+  Generic managed source used by existing native private tests is admitted.
+  This is not arbitrary PE_LOAD/GO image/ledger clone support.
+- Architecture coverage: saved return and private clone restrictions below;
+  accepted legacy 030/060 boot is not native fork continuation proof.
+
+MISSING:
+- Public Pfork implementation and complete fork-specific resource policy.
+- Authoritative all-descriptor PROCESS namespace, binding generations and
+  reversible source snapshot admission. Global explicit SFT-number resolution
+  in getofd/getpfsslot/xclose cannot represent independent child bindings.
+- Signal mask/disposition API (absent in current KPROC/KTHREAD); there is no
+  implemented supported signal state to copy. Do not claim such semantics.
+- Pvfork exact-child committed-detach dependency and full cancellation policy.
+- Pexec200 executable replacement, currently exec_common() default EINVFN.
+
+ARCHITECTURALLY BLOCKED (within public Phase6 consumer):
+- Full descriptor inheritance on the current resolver requires coherent
+  namespace migration across all managed consumers, not a fork-only registry.
+- Pvfork compatibility requires same-PROCESS replacement/root and continuation
+  handoff. Existing clone_target_ready/clone_adopt_space only admit new empty
+  PROCESSes; thread_attach_space rejects roots differing from active_space.
+  Final THREAD exit handoff completes PROCESS and cannot be reused unchanged.
+  Precise reproducible controls and follow-up interfaces appear below.
+
+Seven essential answers
+-----------------------
+1. Same trap instruction: yes only within saved-return admission above;
+   no claim for Thumb, 030/6888x, 060, fastcall, arbitrary TLS/segments or
+   pending/other FPU/exception frames. Native proof required for new path.
+2. Selected child root: backend already supports it; common equality guards
+   and cloned bridge must be extended, authenticating captured source identity.
+3. All PROCESS resources: no. Checked refs do not create descriptor bindings.
+   Environment/basepage and raw image metadata need explicit fork policy too.
+4. Parent blocking without kernel-stack sharing: existing bounded shared probe
+   does this via ksched_wait_ready(non-consuming exact KPROC snapshot), fresh
+   child stacks. Arbitrary shared-stack C use is not an accepted vfork API.
+5. Executable replacement preserving PROCESS/PID: no accepted transaction.
+6. Exact child release: final completion observation already exact/non-consuming;
+   committed replacement release is missing. Pexec4/104 launch is insufficient.
+7. Cooperative scheduler: sufficient for restricted private construction and
+   independent dispatch. No preemption/SMP, public PROCESS dispatch, public
+   Pexec4/104 or GUI dependency is needed for this increment.
+
+Initial policy
+--------------
+Reject non-sole THREAD and other live same-root PROCESS callers before resources.
+Do not copy C stacks, jmp_buf, scheduler continuations, borrowed parent PD or
+return-frame pointers. Copy only user state into child-owned startup. Public
+Pfork/Pvfork are CONF_WITH_PFORK (on by default in the native process profile)
+and return EINVFN without it.
+The test-only private continuation has no descriptor inheritance claim. Neither an exit-only
+Pvfork approximation nor a passing prerequisite completes public fork.
+
+Implemented scope (Draft PR972)
+-------------------------------
+The private saved-return adapter authenticates saved.space against the retained
+transaction source_space, while preparing in selected tx.space. It reuses
+thread_startup's cloned bridge path. x32 constructor CR3 is preserved; ARM/m68k
+launchers select the KTHREAD root through their existing entry owners. Only the
+child syscall result changes. Neither parent kernel stack nor capture pointer
+is copied. The private test parent returns PID immediately; the shared proof
+retains its old final-completion wait. All fallible work precedes the existing
+spawn publication, with abort releasing acquired owners and collapsing source
+COW after failed private construction. Both existing native test gates must
+be selected; no shipped preset changes.
+
+Original C-stack support uses a separate resident private-copy stack hold,
+selected ONLY for authenticated cloned-return startup. Ordinary/shared entries
+still require heap/mmap stack metadata. The new hold checks resident USER|WRITE
+and backend private ownership, retains the selected root, and grants no lazy
+reservation or permission. KPROC private_runtime remains the full copied top-
+stack owner. Hosted controls reject absent/readonly/nonprivate/invalidated stack
+leaves, wrong/equal source/selected roots and fail every constructor allocation.
+
+New real user trap fixtures check original C frames/stack, distinct PID/TID/root,
+DATA/BSS/heap/stack and anonymous/lazy/file private COW, both write orders,
+nested private saved-return, early parent independence and once-only public
+wait. Existing assembly probes now also run private and report integer/condition/
+FPU checks through child status, without shared diagnostics. Seven preparation
+prefixes are injected; original backend failure sweeps remain. These are not
+exhaustive native allocation/TLB/publication fault injection or full resource
+inheritance tests. No public Pfork/Pvfork support is counted from them.
+
+The new allocation sweep under ASan/UBSan exposed an existing cloned-bridge
+uninitialized lease pointer in thread_return.c. The copied bridge now initializes
+hold=NULL before fallible acquisition. Old-source control fails at
+kaspace_lease_release with poisoned0xbebe pointer; fixed source passes with
+leak checking. It is a correction within the existing bridge owner, not a new
+lifetime mechanism. CI runs the startup sweep normally, fortified and sanitized.
+
+Verified blockers and closure contracts
+---------------------------------------
+P6-FD / #969 (both calls; filesystem/PROCESS resource owner, #933/#943):
+  Production path: proc_create_clone_process -> selected standard handles/CWD;
+  getofd/getpfsslot -> raw global SFT number; xclose -> ordinary reference consume.
+  fs_reference_acquire retains exact incarnation as STAGED, not child binding.
+  Control: python3 tools/test-phase6.py --require fs exits1. Child raw close=0,
+  parent accessible=0 while staged owner=1. Canonical close of staging restores
+  refs0. Actual disk and PROCESS lookup are modeled; resolver/close is production.
+  Invariant: same-number independent PROCESS bindings, exact SFT incarnation,
+  shared OFD cursor, independent close. No snapshot can accept recycled identity.
+  Missing mechanism: authoritative all-managed descriptor namespace/generations
+  and opaque snapshot begin/validate/end; exact source operation ticket/table
+  generation, short mutation admission, no locks across allocation/I/O/callback.
+  Source close/rebind may reject EACCDN while admitted; media invalidation must
+  revoke and invalidate. Publish exact acquired refs into independent bindings
+  at no-fail boundary; release on rollback. Preserve callback replacement,
+  retained-close and transfer/cleanup/service rights and shutdown behavior.
+  A fork-only table would be a second registry and is not an acceptable fix.
+  Closure: all handles and aliases, both close/reuse orders, source mutation
+  between acquire/publish, stale incarnation, media teardown, reentrant callback
+  replacement, every acquisition-prefix rollback and exact counts. Define DTA/
+  directory-search inheritance explicitly; copying user cookie bytes is no owner.
+  Safe parallel work: private continuation, COW/source ownership and exec handoff.
+
+P6-EXEC / #970 (Pvfork; loader #894 / execution #713):
+  Production path: exec_common rejects200; kproc_thread_attach_space rejects a
+  distinct construction root for live PROCESS; clone_target_ready/adopt_space
+  accept only unstarted empty PROCESS; nested_prepare rejects enclosing PROCESS.
+  Control: python3 tools/test-phase6.py --require exec exits1. Same-root attach
+  succeeds, alternate root rejects without any acquisition or active-root change.
+  This is production KPROC/KTHREAD/KASPACE policy with a modeled MMU backend.
+  Invariant: SAME PROCESS/PID continues in committed independent image/root;
+  old user/syscall continuation cannot resume and active stacks cannot be freed.
+  Missing mechanism: opaque reversible loader prepare/revalidate/seal/abort;
+  exact sole current THREAD/execution generation; NORETURN commit via existing
+  safe-stack launcher/scheduler owner, atomic image/root/startup replacement,
+  off-stack old bundle reclamation without PROCESS completion; then exact once
+  committed-detach notification. Explicit TID policy, preferably retained TID.
+  Existing exit handoff completes final PROCESS; new-PROCESS launch changes PID.
+  Neither is a replacement primitive; relaxing association checks is unsafe.
+  Closure: native same-PID exec/new VM/continued execution, old return impossible,
+  preserved appropriate descriptors/limits/parent; fail every preparation step
+  leaves old execution retryable; stale/competing generation rejection; exact
+  old/new roots/stacks/image/mapping/backing counts. Pvfork parent stays blocked
+  through failed exec and wakes only at committed detach or exact final PROCESS
+  completion; unrelated launch/reap/THREAD exit must not release it. Public reap
+  remains independently once-only after child's later completion.
+  Pfork can continue independently. No exit-only public Pvfork is implemented.
+
+P6-SNAPSHOT / #971 (general Pfork AND Pvfork sources; #891/#892/#958/#894):
+  Production path: kaspace_clone copies heap/mmap, not captured reservation
+  leases; shared_dependencies_prepare may retain ancestor lazy stack via R2;
+  private_runtime copies clone_top_stack only for its original top-stack owner.
+  Control: python3 tools/test-phase6.py --require lazy exits1: source retained
+  lazy=1, child retained lazy=0. Production KASPACE, modeled empty MMU leaves;
+  exact capture hold is released canonically. No source permission is widened.
+  Invariant: independently surviving child can materialize all logical source
+  memory, including absent captured-only pages, with immutable rights/backing.
+  Missing mechanism: transactional KASPACE/KPROC private snapshot of authenticated
+  captured lazy authority into fresh child births/owners, not borrowed leases.
+  Separate moved-image UH_IMAGE/nheap ownership and original basepage/environment/
+  DTA representation must be defined before removing private_runtime's guard.
+  The adapter rejected ANY captured lazy receipt before clone; since the epic
+  merge (#1000) it admits them, and the saved-return child backs the page itself.
+  Closure: actual surviving shared descendant -> private child, absent ancestor
+  stack, permissions/PROT_NONE, heap/mmap/file backing, both write orders, creator/
+  parent-first exit, stale captures, each failure prefix and final counters.
+  Scoped independent source continuation tests can proceed without this extension.
+
+P6-ARCH / #895 (public architecture acceptance gate):
+  x32 default segments/FS/GS, A32 enabled/nonpending VFP, virt040 format0 and
+  admitted null/idle FPU remain the only combined path candidates. 030/6888x,
+  060, native fastcall, Thumb, arbitrary TLS/segments and exception/FPU restart
+  states have no combined saved-return/COW native proof. Atari/Amiga ROM-window
+  private backends are not established by QEMU040. Legacy pinned 030/060 boot
+  and strict FPIAR scheduling compatibility must be reported separately.
+  Either extend/audit those backends with direct native execution or obtain an
+  explicit narrowed acceptance-scope decision. No such decision is assumed.
+
+Resource inheritance policy and outstanding acceptance
+-------------------------------------------------------
+The test-only private probe requests resources=0. Scalar parent/priority/CORE/
+DATA/stack-cap inheritance follows the existing factory. Existing CWD/drive and
+selected standard-handle policy is independent, not blindly activated here.
+All-descriptor namespace and DTA/search ownership are now inherited by the
+public calls through the PROCESS file snapshot (#969, #984); the probe still
+requests none. UID/GID are fixed0; groups remain the existing
+single-process model; signal masks/dispositions are unsupported, not silently
+claimed. Fault/completion identity stays the child's exact PROCESS/THREAD.
+
+Public Pfork/Pvfork (CONF_WITH_PFORK, on by default with the native process
+profile on MMU kernels with demand paging): implemented over the same
+saved-return private constructor with PROC_CLONE_COPY_STANDARD_HANDLES|COPY_CWD|
+COPY_FILES (descriptors, directories, DTA/search state through the PROCESS
+file snapshot, #969/#984). Pvfork's parent resumes at the exact child's
+final completion or committed Pexec(200) (#970/#1003). Architecture scope is
+narrowed at the trap capture: x86-64, ARMv7 with idle VFP, 68040 format-0
+frame with idle FPU; other CPUs/states return EINVFN (P6-ARCH). The fork core
+and descriptor machinery are now production options (CONF_WITH_FORK_CORE,
+CONF_WITH_SAVED_RETURN, CONF_WITH_PROCESS_FILES); the _TEST options add only
+their transports.
+
+Preliminary cba92cad3 source: x32 ordinary and shared-Pexec-gated native25/0,
+five shutdown checks; private register and original-stack markers PASS. Hosted
+production contracts and startup/COW pass; sanitizer bridge finding supersedes
+that preliminary candidate. Final exact-source SHA/results are maintained on
+Draft PR972 and #895 so evidence can be updated without changing tested source.
+Four initial cba92 reviews accepted the narrow scope; the sanitizer finding
+requires renewed exact-fixed-source reviews and final validation.
+
+Final ledger must separate continuation, VM, resources, public Pfork, Pvfork,
+Pexec200, architecture, native tests, compatibility/CI and independent verdicts.
+Full45-counter before/during/child-exit/parent-resume/reap accounting, all native
+fault boundaries, parent-first/orphan/PID reuse/pressure/performance and all
+public mandatory cases are NOT claimed by the small new probe. Parent may
+retain legitimate exclusive COW metadata after child exit; teardown must not
+reset counters or force source-root destruction to invent equality. Existing
+COW/lifetime regressions remain required compatibility evidence, not complete
+fork conservation. Full native matrix, pinned compatibility and four exact-head
+CI SUCCESS results are separately required; pending results are not passes.
+
 #970 executable replacement acceptance checkpoint
 =================================================
 
@@ -9,7 +374,7 @@ Its private diagnostic handoff count is NOT a KPROC committed-exec generation.
 Public Pexec(200) is implemented and on by default (CONF_WITH_PEXEC200): a different-root ELF or classic PRG commit on a new
 basepage (FreeMiNT overlay semantics) for anchors at the
 scheduler root and for nested children through their launcher frame, with one
-KPROC committed-exec generation per commit. Pfork and Pvfork remain EINVFN.
+KPROC committed-exec generation per commit. Pfork and Pvfork are CONF_WITH_PFORK.
 
 Both eventual fork calls construct independent PRIVATE_VM/COW children; Pvfork
 additionally suspends the exact parent THREAD. No shared-parent VM/user-stack

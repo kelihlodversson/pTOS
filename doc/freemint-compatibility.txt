@@ -1,0 +1,42 @@
+pTOS MMU fork compatibility
+===========================
+
+The planned Pfork and Pvfork APIs use private copy-on-write memory on MMU pTOS.
+After either call, parent and child have separate process identities and logically
+independent address spaces and user stacks. Each initially observes the memory
+contents at the call; later writes to ordinary private memory are isolated.
+
+Pvfork additionally suspends the calling parent thread until that exact child
+exits or successfully replaces its executable with Pexec(200), keeping its PID.
+A failed exec does not resume the parent. The child receives0 and the resumed
+parent receives the child PID. Pfork lets the parent continue immediately.
+
+This is a deliberate difference from FreeMiNT Pvfork, where child memory writes
+are shared with the parent. Programs relying on that sharing are not compatible
+with pTOS's MMU Pvfork policy. Explicitly shared mappings retain their own
+semantics; pTOS's public MAP_SHARED is currently unsupported. Non-MMU fork is
+outside this initial implementation.
+
+Public Pfork/Pvfork are available with CONF_WITH_PFORK, which is built in by
+default on MMU kernels with demand paging (x32, ARMv7, m68k without fastcall),
+together with the native scheduling, Pclone, Pthjoin, private clone,
+PROCESS-local files and public Pexec(200) it needs. Elsewhere both calls return
+EINVFN, and so do they at run time on a CPU whose return image is not admitted
+(below): on m68k only a 68040 forks, so a 68030 running the falcon-aspace
+build gets EINVFN. The child
+inherits every descriptor with its shared file position, the current
+directories, the DTA and directory searches, the environment and limits.
+Pvfork's parent resumes at the child's final completion or committed
+Pexec(200). The release follows the kernel's committed-exec event, not the
+syscall: when #1008 replaces public Pexec on ARM/x32 with Pexecve(200), that
+same-PID replacement releases the parent the same way. A multi-THREAD or
+shared-root caller gets EACCDN. Only an anchor execution
+(started with Pexec(100), Pexec(104) where it is public (m68k only), or a
+clone) may fork; a program running nested
+in its launcher's Pexec(0) gets EINVFN, as for Pclone. The return image is admitted
+on x86-64 with the default segment registers and no FS/GS base (no TLS), on
+ARMv7 (A32) with an idle VFP and on a 68040 format-0 trap frame with an idle
+FPU; on any other CPU or state (68030/6888x, 68060, fastcall, Thumb)
+both calls return EINVFN. No general signals/TLS/preemption support is
+implied. See fork.txt and
+phase6-acceptance.txt for the current supported configuration and evidence.

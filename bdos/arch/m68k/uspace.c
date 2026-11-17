@@ -47,7 +47,7 @@
 #include "uaccess.h"
 #include "arch/m68k/userentry.h"
 #include "syscall_return.h"
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 extern LONG mcpu;
 extern void m68k_enter_saved_user(const void *, ULONG) NORETURN;
 extern LONG m68k_fpu_save_complete(void *);
@@ -122,8 +122,15 @@ void m68k_gemdos_dispatch(struct uframe *f)
         f->d[0] = (ULONG)ERANGE;
         return;
     }
+#if CONF_WITH_SAVED_RETURN
+    if (
 #if CONF_WITH_FORK_RETURN_TEST
-    if (pw[0] == 0x190 && !pw[1] && !pw[2] && (UWORD)pw[3] == 0x895f) {
+        (pw[0] == 0x190 && !pw[1] && !pw[2] && (UWORD)pw[3] == 0x895f) ||
+#endif
+#if CONF_WITH_PFORK
+        pw[0] == GEMDOS_PFORK || pw[0] == GEMDOS_PVFORK ||
+#endif
+        FALSE) {
         SYSCALL_RETURN saved;
         /* Only a hardware TRAP #1 format-0 frame, not an abbreviated uframe.
          * QEMU040 idle/null FPU state is the first admitted model. */
@@ -142,9 +149,25 @@ void m68k_gemdos_dispatch(struct uframe *f)
                 saved.user.fpu[1]) { f->d[0] = EINVFN; return; }
         }
         saved.mappings.entry = saved.user.frame.pc;
-        saved.mappings.stack_base = (f->usp - 256) & ~15UL;
-        saved.mappings.stack_size = 512;
+        /* The checked resident window is the least the continuation needs:
+         * the 16 bytes ending exactly after the trap's argument words (the
+         * function word for Pfork/Pvfork, five words for the Pclone probe),
+         * so a shallow caller or one near its lower stack limit forks too. */
+        {
+            ULONG end = f->usp + (pw[0] == 0x190 ? 10 : 2);
+            if (end < 16) { f->d[0] = EINVFN; return; }
+            saved.mappings.stack_base = end - 16;
+            saved.mappings.stack_size = 16;
+        }
+#if CONF_WITH_PFORK
+        if (pw[0] != 0x190) {
+            f->d[0] = proc_clone_fork(&saved, pw[0] == GEMDOS_PVFORK);
+            return;
+        }
+#endif
+#if CONF_WITH_FORK_RETURN_TEST
         f->d[0] = proc_clone_return_probe(&saved, (UWORD)pw[4]);
+#endif
         return;
     }
 #endif
@@ -400,7 +423,7 @@ relaunch:
 #endif
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) thread_startup_entering(startup);
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
         if (prepared && prepared->saved_return) m68k_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
 #endif
 #endif

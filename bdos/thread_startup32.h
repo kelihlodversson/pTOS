@@ -9,7 +9,7 @@ typedef struct {
     volatile UWORD *frame_aliases[4];
     KTHREAD_STACK scheduler_stack;
     THREAD_STARTUP_STACK syscall;
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
     void *saved_return;
 #endif
 } THREAD_STARTUP32;

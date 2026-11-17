@@ -7,6 +7,7 @@ CONFIG_= python3 - "$work/config" <<'PY'
 import kconfiglib,sys
 k=kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/pc-x86_64_defconfig')
+k.load_config('tools/hosted-legacy-profile.config', replace=False)
 k.syms['CONF_WITH_MMAP'].set_value(0)
 k.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
 assert k.syms['CONF_WITH_PRIVATE_CLONE'].str_value=='y'

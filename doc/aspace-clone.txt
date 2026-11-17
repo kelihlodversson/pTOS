@@ -3,10 +3,12 @@ Independent KASPACE clone prerequisite (#892 / #895)
 
 Status
 ------
-CONF_WITH_PRIVATE_CLONE is experimental and defaults off. It implements the
+CONF_WITH_PRIVATE_CLONE is on by default in the native process profile (MMU
+kernels with demand paging: x32, ARMv7, m68k without fastcall; the m68k backend
+is validated on the 68040 only). It implements the
 PRIVATE_VM construction policy in the existing proc_clone transaction. It does
-not implement Pfork, Pvfork, complete fork inheritance or exec detach. Public
-Pfork/Pvfork and ordinary Pclone without CLONE_VM still return EINVFN.
+is the construction public Pfork/Pvfork (CONF_WITH_PFORK, fork.txt) use.
+Ordinary Pclone without CLONE_VM still returns EINVFN.
 
 Native backend evidence: x32 QEMU, ARM A32 Cortex-A7 QEMU and m68k 68040 QEMU.
 The test-only explicit-entry probe is not a fork-return test. Saved-return

@@ -26,7 +26,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "fs.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 #include "bdosstub.h"
@@ -60,7 +60,7 @@ long kdos_fclose_error(long h, DISK_ERROR *error)
     long result;
 
     memset(&report, 0, sizeof(report));
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (h>=0 && process_files_managed(run)) result=process_files_close(run,(WORD)h,FALSE,&report);
     else
 #endif

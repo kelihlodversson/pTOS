@@ -140,7 +140,7 @@ int main(void)
         PD boot;PROCESS_FILES imported;
         memset(&boot,0,sizeof(boot));for(order=0;order<NUMSTD;order++)boot.p_uft[order]=-1;
         open_file();sft[0].f_own=&boot;run=&boot;boot.p_uft[0]=NUMSTD;sft[0].f_use++;
-        CHECK(process_files_inherit_standard(&child_pd,&boot)==E_OK && sft[0].f_use==3);
+        CHECK(process_files_inherit(&child_pd,&boot,PROCESS_FILES_DESCRIPTORS)==E_OK && sft[0].f_use==3);
         CHECK(xclose(0)==E_OK && xclose(NUMSTD)==E_OK && sft[0].f_use==1);
         run=&child_pd;CHECK(getofd(0)==&file && xclose(0)==E_OK && !sft[0].f_use);
         run=&owner;open_file();owner.p_uft[0]=owner.p_uft[1]=NUMSTD;

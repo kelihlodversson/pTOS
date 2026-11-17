@@ -9,7 +9,7 @@
 #include "console.h"
 #include "kproc.h"
 #include "string.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 
@@ -208,7 +208,7 @@ static LONG reference_acquire(PD *pd,WORD descriptor,UQUAD expected,FS_FILE_REFE
     if (!out || out->owned || out->closing || !expected) return EINVAL;
     if (!pd || pd!=run || !kproc_file_references_allowed(pd)) return EACCDN;
     if (descriptor<0) return EIHNDL;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(pd)) {
         UQUAD incarnation;
         LONG error=process_files_resolve(pd,descriptor,&handle,&incarnation);
@@ -227,14 +227,14 @@ static LONG reference_acquire(PD *pd,WORD descriptor,UQUAD expected,FS_FILE_REFE
 #endif
         )) return EIHNDL;
     if (descriptor>=NUMSTD
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         && !process_files_managed(pd)
 #endif
     ) {
         /* f_own alone can survive the original explicit close. Do not mint
          * from someone else's standard alias, quarantine or staged owner. */
         kproc_standard_file_refs(aliases);
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         if (!process_files_managed(pd)) {
             WORD i;
             for (i=0;i<NUMSTD;i++) {
@@ -258,7 +258,7 @@ LONG fs_reference_acquire(KPROC *source,WORD descriptor,UQUAD expected,FS_FILE_R
     if (!pd) return EACCDN;
     return reference_acquire(pd,descriptor,expected,out);
 }
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 /* Trusted pre-KPROC boot handoff only. A normal PROCESS must authenticate its
  * canonical identity and binding; numeric SFT membership alone grants nothing. */
 LONG fs_reference_acquire_boot(PD *source,WORD descriptor,UQUAD expected,FS_FILE_REFERENCE *out)
@@ -267,7 +267,7 @@ LONG fs_reference_acquire_boot(PD *source,WORD descriptor,UQUAD expected,FS_FILE
     return reference_acquire(source,descriptor,expected,out);
 }
 #endif
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 BOOL fs_reference_publishable(const FS_FILE_REFERENCE *reference)
 {
     FTAB *f;
@@ -383,7 +383,7 @@ long xclose(WORD h)
 {
     FS_CLOSE_REPORT result;
     LONG error=
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         h>=0 && process_files_managed(run)?process_files_close(run,h,FALSE,&result):
 #endif
         fs_close_once(h,FALSE,&result);

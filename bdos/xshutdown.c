@@ -16,7 +16,7 @@
 
 #include "emutos.h"
 #include "fs.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 #include "gemerror.h"
@@ -48,7 +48,7 @@ static void close_files(void)
     volatile int k;
 
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     kproc_files_shutdown();
 #endif
     for (i=0;i<OPNFILES;i++) {

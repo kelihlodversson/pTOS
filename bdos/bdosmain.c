@@ -31,7 +31,7 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
 #if CONF_WITH_PLUGGABLE_FS
@@ -707,7 +707,7 @@ long osif(short *pw)
     DMD *dmd;
     DND *dn;
     int typ, h, i, fn;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     BOOL redirected;
 #endif
     int isptr;
@@ -953,7 +953,7 @@ restrt:
             /* first, out with the old stuff */
             dmd = drvtbl[errdrv];
             dn = dmd->m_dtl;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
             kproc_search_invalidate_drive(errdrv);
 #endif
 #if CONF_WITH_PLUGGABLE_FS
@@ -1004,7 +1004,7 @@ restrt:
     if (typ && fn && ((fn<12) || ((fn>=16) && (fn<=19)))) /* std funcs */
     {
         h = PD_UFT(run)[typ & 0x7f];
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         redirected=h>0;
         if (process_files_managed(run)) {
             WORD backend;
@@ -1014,7 +1014,7 @@ restrt:
             h=redirected?(typ&0x7f):backend;
         }
 #endif
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         if (redirected)
 #else
         if (h > 0)
@@ -1116,7 +1116,7 @@ restrt:
             h = pw[1];
 #endif
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         if (h>=0 && process_files_managed(run)) {
             WORD backend;
             LONG error=process_files_resolve(run,(WORD)h,&backend,NULL);

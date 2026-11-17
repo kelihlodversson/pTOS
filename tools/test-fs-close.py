@@ -14,6 +14,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
     work=Path(directory)
     config=kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/virt-arm-aspace_defconfig')
+    config.load_config('tools/hosted-legacy-profile.config', replace=False)
     config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),

@@ -50,7 +50,7 @@
 #include "portab.h"
 #include "endian.h"
 #include "fs.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #include "biosext.h"
 #endif
@@ -99,7 +99,7 @@ long xcreat(char *name, UBYTE attr)
     int a = attr & ~FA_SUBDIR;
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(run)) return EACCDN;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     {
         LONG admission=process_files_change_admission(run);
         if (admission<0) return admission;
@@ -129,7 +129,7 @@ long xopen(char *name, WORD mod)
     int m = mod & VALID_FOPEN_BITS;
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(run)) return EACCDN;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     {
         LONG admission=process_files_change_admission(run);
         if (admission<0) return admission;
@@ -243,7 +243,7 @@ long opnfil(FCB *f, DND *dn, int mod)
     sft[i].f_own = run;
     sft[i].f_use = 1;
     h = i + NUMSTD;
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     if (process_files_managed(run)) {
         LONG descriptor=process_files_open_begin(run,(WORD)h);
         if (descriptor<0) {

@@ -25,7 +25,9 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     config.syms["CONF_WITH_ELF_SHARED"].set_value(0)
     assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
-    assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "n"
+    # Without CUIS, native scheduling stays on only through the default
+    # native process profile of the MMU presets (BUILD_FORK_PROFILE).
+    assert (config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y") == available
 
 # Native scheduling is selectable without either AES on all MMU targets.
 for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
@@ -71,18 +73,23 @@ for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
 for name in ("CONF_WITH_AES", "CONF_WITH_X86_64_MEMTEST"):
     assert config.syms[name].str_value == "n", name
 
-# Pclone dispatch is opt-in, including on the address-space architectures.
+# Pclone dispatch is on by default in the native process profile of the
+# address-space presets, and still independently switchable.
 for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/" + preset + "_defconfig")
-    assert config.syms["CONF_WITH_PCLONE"].str_value == "n", preset
-    config.syms["CONF_WITH_PCLONE"].set_value(2)
     assert config.syms["CONF_WITH_PCLONE"].str_value == "y", preset
+    config.syms["CONF_WITH_PCLONE"].set_value(0)
+    assert config.syms["CONF_WITH_PCLONE"].str_value == "n", preset
 
 # Joining depends on managed native execution, not either GUI implementation.
+# It is on in the default native process profile; start from that profile
+# off to check its dependencies.
 for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/" + preset + "_defconfig")
+    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "y"
+    config.load_config("tools/hosted-legacy-profile.config", replace=False)
     assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
     config.syms["CONF_WITH_PTERMGRP"].set_value(2)
     assert config.syms["CONF_WITH_PTERMGRP"].str_value == "n"
@@ -118,8 +125,10 @@ for preset in ("virt-arm", "virt-m68k"):
 
 with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     work = Path(temp)
+    (work / "legacy.config").write_text(Path("configs/pc-x86_64_defconfig").read_text() +
+                                        Path("tools/hosted-legacy-profile.config").read_text())
     subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig",
-                    "--config", "configs/pc-x86_64_defconfig", "--header",
+                    "--config", str(work / "legacy.config"), "--header",
                     str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")],
                    check=True)
     bindings = work / "gemlib" / "libgem.a"
@@ -185,6 +194,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     rollback.mkdir()
     native = kconfiglib.Kconfig(warn_to_stderr=False)
     native.load_config("configs/pc-x86_64_defconfig")
+    native.load_config("tools/hosted-legacy-profile.config", replace=False)
     native.syms["CONF_WITH_ELF_SHARED"].set_value(2)
     native.syms["CONF_WITH_LIBAES"].set_value(2)
     # These fixtures mock physical stacks; real stack-address assertions run
@@ -228,6 +238,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     noncuis.mkdir()
     plain = kconfiglib.Kconfig(warn_to_stderr=False)
     plain.load_config("configs/pc-x86_64_defconfig")
+    plain.load_config("tools/hosted-legacy-profile.config", replace=False)
     assert plain.syms["CONF_WITH_PROCMEM"].str_value == "y"
     assert plain.syms["CONF_WITH_CUIS"].str_value == "n"
     plain.write_config(str(noncuis / "config"))

@@ -30,7 +30,7 @@ typedef enum { PROC_CLONE_SHARE_VM, PROC_CLONE_PRIVATE_VM,
              } PROC_CLONE_VM_POLICY;
 #define PROC_CLONE_COPY_STANDARD_HANDLES 1U
 #define PROC_CLONE_COPY_CWD              2U
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #define PROC_CLONE_COPY_FILES            4U /* all local bindings, final-boundary snapshot */
 #define PROC_CLONE_RESOURCE_MASK         7U
 #else

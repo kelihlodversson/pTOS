@@ -136,7 +136,7 @@
 #include "fatfs.h"
 #include "kproc.h"
 #include "bdosstub.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #include "kaspace.h"
 #if CONF_WITH_NATIVE_SCHED
@@ -257,7 +257,7 @@ long ixsfirst_to(char *name, WORD att, DTAINFO *addr,DTAINFO *owner)
     if (!dn)
         return EPTHNF;
 
-#if CONF_WITH_PROCESS_FILES_TEST && !CONF_WITH_PLUGGABLE_FS
+#if CONF_WITH_PROCESS_FILES && !CONF_WITH_PLUGGABLE_FS
     if(addr) {
         LONG held=kproc_search_fat_attach(run,owner,dn);
         if(held) return held;
@@ -304,7 +304,7 @@ long ixsfirst(char *name,WORD att,DTAINFO *addr)
 { return ixsfirst_to(name,att,addr,addr); }
 
 
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 /* A search and its trusted header mutations are one admitted operation.
  * Settle the canonical token before a FAT disk-error continuation escapes. */
 static LONG search_body(PD *process,PROCESS_FILES *table,char *name,WORD attr,
@@ -379,7 +379,7 @@ static LONG admitted_search(char *name,WORD attr,DTAINFO *dta,BOOL first,BOOL he
  */
 long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
 {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     return admitted_search(name,att,dta,TRUE,dta==RUN_XDTA());
 #elif CONF_WITH_PLUGGABLE_FS
     return pfs_do_sfirst_at(name, att, dta);
@@ -394,7 +394,7 @@ long xfsfirst_at(char *name, WORD att, DTAINFO *dta)
  */
 long xsfirst(char *name, int att)
 {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     return admitted_search(name,(WORD)att,RUN_XDTA(),TRUE,TRUE);
 #else
     DTAINFO *dta = RUN_XDTA();
@@ -523,7 +523,7 @@ FCB *ixsnext(DTAINFO *dt)
  */
 long xfsnext_at(DTAINFO *dta)
 {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     return admitted_search(NULL,0,dta,FALSE,dta==RUN_XDTA());
 #elif CONF_WITH_PLUGGABLE_FS
     return pfs_do_snext_at(dta);
@@ -538,7 +538,7 @@ long xfsnext_at(DTAINFO *dta)
  */
 long xsnext(void)
 {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
     return admitted_search(NULL,0,RUN_XDTA(),FALSE,TRUE);
 #else
     DTAINFO *dta = RUN_XDTA();
@@ -1216,7 +1216,7 @@ DND *makdnd(DND *p, FCB *b)
         {
             /* do not scavenge if it's locked */
             if ((p1->d_flag & DND_LOCKED)
-#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES
                 || p1->d_cookie_refs
 #endif
                )
@@ -1259,7 +1259,7 @@ DND *makdnd(DND *p, FCB *b)
 
     /* complete the initialization */
 
-#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES
     p1->d_cookie_refs = 0;
 #endif
     p1->d_ofd = (OFD *) 0;
@@ -1585,7 +1585,7 @@ static void process_dnd_tree(DND *dndstart)
          * no children - but are there open files?
          */
         if (dnd->d_files
-#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES
             || dnd->d_cookie_refs
 #endif
            ) {     /* open files in this directory, can't free DND */

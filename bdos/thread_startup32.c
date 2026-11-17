@@ -52,7 +52,7 @@ void thread_startup_arch_abort(void *image)
 {
     THREAD_STARTUP32 *draft = image;
     if (!draft) return;
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
     kfree(draft->saved_return);
 #endif
     if (draft->syscall.physical) kstack_free(draft->syscall.physical);
@@ -152,7 +152,7 @@ LONG thread_startup_arch_public_return(void *image, const void *bridge)
     draft->return_pc = address;
     return E_OK;
 }
-#if CONF_WITH_FORK_RETURN_TEST
+#if CONF_WITH_SAVED_RETURN
 LONG thread_startup_arch_saved_return(void *image, const SYSCALL_RETURN *saved)
 {
     THREAD_STARTUP32 *draft = image;

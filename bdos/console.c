@@ -24,7 +24,7 @@
 #include "biosbind.h"
 #include "bdosstub.h"
 #include "string.h"
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #include "gemerror.h"
 #include "biosext.h"
@@ -117,7 +117,7 @@ void stdhdl_init(void)
     bzero(sft, OPNFILES * sizeof(FTAB));
 
     for (i = 0; i < NUMSTD; i++) {
-#if CONF_WITH_PROCESS_FILES_TEST
+#if CONF_WITH_PROCESS_FILES
         if (process_files_managed(run)) {
             if (process_files_bind_bios(run,i,default_handle[i])!=E_OK)
                 panic("initial descriptor binding failed");
