@@ -272,6 +272,18 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
     if [ -n "${system_font:-}" ] && [ -f "$disk/GEMSYS/FONTS/$system_font" ]; then
         printf 'SYSTEMFONT=%s\r\n' "$system_font" >"$disk/GEMSYS/PTOS.INF"
     fi
+    # PROCESS-local descriptors and searches drive directory updates that
+    # QEMU's vvfat writer cannot model (it asserts in
+    # check_directory_consistency): use real sectors there, as the x86 boot
+    # does. REGRESSION_RAW_DISK=0/1 overrides.
+    raw_disk=${REGRESSION_RAW_DISK:-}
+    if [ -z "$raw_disk" ]; then
+        if grep -q '^#define CONF_WITH_PROCESS_FILES 1' "$top/obj/autoconf.h"; then
+            raw_disk=1
+        else
+            raw_disk=0
+        fi
+    fi
     case $machine in
     virt-arm | virt-m68k | virt-m68k-mmu | virt-m68k-aspace)
         if [ "$machine" = virt-arm ]; then
@@ -296,8 +308,9 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         rm -f "$work/in"
         mkfifo "$work/in"
         exec 3<>"$work/in"
-        # Raw sectors are useful where vvfat's /var/tmp backing is unavailable.
-        if [ "${REGRESSION_RAW_DISK:-0}" = 1 ]; then
+        # Raw sectors are useful where vvfat's /var/tmp backing is unavailable,
+        # and wherever PROCESS-local files are on (raw_disk, above).
+        if [ "$raw_disk" = 1 ]; then
             disk_image=$work/disk-$label.img
             "$tools/mkhdisk.sh" "$disk_image" 33554432 "$disk"/* >"$work/image-$label.log" 2>&1 ||
                 die "cannot create regression disk" "disk creation failed"
@@ -325,8 +338,17 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         rm -f "$work/in"
         mkfifo "$work/in"
         exec 3<>"$work/in"
+        if [ "$raw_disk" = 1 ]; then
+            # 32 MiB: an SD card has to be a power of two in size
+            disk_image=$work/disk-$label.img
+            "$tools/mkhdisk.sh" "$disk_image" 33554432 "$disk"/* >"$work/image-$label.log" 2>&1 ||
+                die "cannot create regression disk" "disk creation failed"
+            sd="if=sd,format=raw,file=$disk_image"
+        else
+            sd="if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir=$disk,file.rw=on"
+        fi
         qemu-system-arm -M raspi2b -bios "$top/kernel7.img" \
-            -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir="$disk",file.rw=on \
+            -drive "$sd" \
             -d guest_errors -serial stdio -display none -monitor none \
             <"$work/in" >"$log" 2>"${log%.log}.qemu" &
         qemu_pid=$!
