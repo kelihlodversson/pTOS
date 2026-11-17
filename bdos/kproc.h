@@ -98,7 +98,7 @@ BOOL kproc_ref_completion(const KPROC *process, PROCESS_COMPLETION *out);
 /* Delivery readiness is later than snapshot availability. Caller retains the
  * identity; publish only after teardown and scheduler/public-wait publication. */
 BOOL kproc_ref_terminal(const KPROC *process);
-/* Exact retained identity, initially0. Only a successful same-PROCESS exec
+/* Exact retained identity, initially 0. Only a successful same-PROCESS exec
  * commit may advance it; loader preparation/failure and other children cannot. */
 UQUAD kproc_ref_exec_generation(const KPROC *process);
 void kproc_publish_observers(KPROC *process);
@@ -150,6 +150,9 @@ void kproc_standard_file_invalidate(WORD handle);
 BOOL kproc_begin_file_cleanup(PD *pd);
 BOOL kproc_file_references_allowed(PD *pd);
 void kproc_note_file_cleanup(PD *pd, LONG error, BOOL transferred);
+#if CONF_WITH_PROCESS_FILES_TEST
+void kproc_note_file_owner_cleanup(KPROC *,LONG error,BOOL transferred);
+#endif
 LONG kproc_ref_file_cleanup(const KPROC *process, ULONG *transferred);
 #endif
 WORD kproc_parent_pid(PD *pd);          /* 0: launched by the kernel, or no record */
@@ -198,6 +201,13 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source);
 /* Sole-thread/exclusive-VM source, no pending loader ledger. NULL target is
  * preflight only; runtime bounds are copied without changing Pexec defaults. */
 BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source);
+LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source);
+/* Logical original user VAs; no PD allocation or search iterator authority.
+ * The trusted numerical DTA follows Fsetdta and generic shared lineage;
+ * #984 owns search-cache and iterator inheritance. Fsetdta updates a writable
+ * original basepage mirror through the selected root without widening rights. */
+VADDR kproc_private_environment(PD *);
+BOOL kproc_private_image_addresses(const KPROC *,VADDR *,VADDR *,VADDR *);
 #endif
 void proc_dispose_process(KPROC *process);
 struct kaspace *kproc_active_space(const KPROC *process); /* borrowed */
@@ -373,7 +383,7 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
  * Ring-3 PE_GO is currently rejected. The legacy give-back path remains for
  * compatible internal callers.
  */
-VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes);
+VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes, VADDR preferred);
 void kproc_load_release(PD *caller, VADDR va);
 BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages);
 /* Legacy PE_GO give-back: call before kproc_prepare_user(). */

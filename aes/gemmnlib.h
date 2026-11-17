@@ -6,7 +6,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #ifndef GEMMNLIB_H
 #define GEMMNLIB_H
 
@@ -19,7 +19,7 @@ extern AESPD    *gl_mnppd;
 extern WORD     gl_dafirst;
 
 
-BOOL do_chg(OBJECT *tree, WORD iitem, UWORD chgvalue,
+BOOL do_chg(AES_MENU_PARAM OBJECT *tree, WORD iitem, UWORD chgvalue,
              WORD dochg, WORD dodraw, WORD chkdisabled);
 
 #if CONF_WITH_MENU_EXTENSION

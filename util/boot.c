@@ -13,7 +13,7 @@
 
 #include "config.h"
 #include "portab.h"
-#include <osbind.h>
+#include <mint/osbind.h>
 #include <stdlib.h>
 
 #ifndef GENERATING_DEPENDENCIES

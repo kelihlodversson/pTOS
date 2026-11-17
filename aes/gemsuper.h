@@ -9,10 +9,11 @@
 
 #ifndef GEMSUPER_H
 #define GEMSUPER_H
+#include "aesglobal.h"
 
 typedef struct aespb {
     WORD *control;
-    WORD *global;
+    AESGLOBAL *global;
     WORD *intin;
     WORD *intout;
     intptr_t *addrin;

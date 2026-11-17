@@ -78,7 +78,7 @@ static LONG shared_interp_prepare(KPROC *source,KPROC *target,struct shared_exec
         bytes=(UQUAD)program->size+interp->size+program->align-1+interp->align-1;
         bytes=(bytes+USER_PAGE_SIZE-1)&~(UQUAD)(USER_PAGE_SIZE-1);
         if(bytes>USER_HEAP_LIMIT-USER_HEAP_BASE || bytes>(ULONG)~0UL) return ENSMEM;
-        va=heap_alloc(source,(ULONG)bytes,UH_LOADED,target->pd,TRUE);
+        va=heap_alloc(source,(ULONG)bytes,UH_LOADED,target->pd,TRUE,0);
         if(!va) return ENSMEM;
         bias=((UQUAD)va-program->base+program->align-1)&~(UQUAD)(program->align-1);
     } else {

@@ -1,6 +1,7 @@
 /* Native GEM menu state changes, shared with caller-local libaes.
  * Copyright 1999, Caldera Thin Clients, Inc.
  * Copyright 2002-2026 The EmuTOS development team. GPL version 2 or later. */
+#include "aescontext.h"
 #include "emutos.h"
 #include "obdefs.h"
 #ifdef AES_MENU_BINDINGS
@@ -21,7 +22,7 @@
  *  parameter is set.  The object will be drawn with its new state only
  *  if the dodraw parameter is set.
  */
-BOOL do_chg(OBJECT *tree, WORD iitem, UWORD chgvalue,
+BOOL do_chg(AES_MENU_PARAM OBJECT *tree, WORD iitem, UWORD chgvalue,
              WORD dochg, WORD dodraw, WORD chkdisabled)
 /* tree:         tree that holds item */
 /* iitem:        item to affect       */

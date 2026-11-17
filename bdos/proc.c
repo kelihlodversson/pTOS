@@ -22,10 +22,17 @@
 #include "mem.h"
 #include "proc.h"
 #include "kproc.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #if CONF_WITH_USER_ASPACE
 #include "proc_clone.h"
 #include "process_observer.h"
 #include "process_exec.h"
+#include "exec_replace.h"
+#if CONF_WITH_EXEC_REPLACE
+#include "exec_handoff.h"
+#endif
 #endif
 #include "gemerror.h"
 #include "biosbind.h"
@@ -413,6 +420,12 @@ static void release_pd_files(PD *r)
     /* Close admission before any callback can attach another reference to
      * this retiring table, including an already-visited standard index. */
     if (!kproc_begin_file_cleanup(r)) return;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(r)) {
+        process_files_retire(kproc_files(r));
+        goto directories;
+    }
+#endif
     /* Snapshot before removing aliases. Residual kernel references are not
      * a retiring PROCESS's explicit handle, nor another live alias. */
     kproc_standard_file_refs(explicit_refs);
@@ -447,6 +460,9 @@ static void release_pd_files(PD *r)
 #endif
         }
 
+#if CONF_WITH_PROCESS_FILES_TEST
+directories:
+#endif
 #if CONF_WITH_PLUGGABLE_FS
     pfs_proc_exit(r);
 #else
@@ -540,42 +556,59 @@ static WORD envsize(char *env)
 
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared);
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL);
+#if CONF_WITH_PEXEC200
+    if (flag == PE_EXEC_REPLACE) return proc_exec_replace(path, tail, env);
+#endif
+    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)
 {
     if (!out || *out) return EINVAL;
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out,NULL,NULL));
 }
 long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG policy,
                        PROCESS_OBSERVER **out, void **prepared)
 {
     if (!out || *out || !prepared || *prepared || policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,
-                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared));
+                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL));
 }
 #endif
 #if CONF_WITH_CUIS
 long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL,NULL,NULL));
 }
 long xexec_deferred(char *path, char *tail, char *env, ULONG session)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL,NULL,NULL));
 }
 long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL,NULL));
+}
+#endif
+#if CONF_WITH_EXEC_REPLACE
+LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *replacement,
+                                char *path, char *tail, char *env)
+{
+    LONG result;
+    if (kproc_exec_replacement_validate(replacement) || !path || !tail)
+        return EACCDN;
+    result = DISK_CALL(exec_common(PE_LOAD,path,tail,env,0,0,FALSE,
+                                  NULL,NULL,NULL,replacement));
+    if (result < 0) return result;
+    return kproc_exec_replacement_image_ready(replacement) ? E_OK : EPLFMT;
 }
 #endif
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared)
+    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared,
+    void *replacement)
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -588,6 +621,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
     long needed;
     FH fh;
+#if CONF_WITH_BINFMT
+    BINFMT_LAUNCH interpreter;
+#endif
 #if CONF_WITH_USER_ASPACE
     PD *cur_p; /* assigned before setjmp, never changed across its return */
     FS_ERROR_SCOPE loader_error;
@@ -608,6 +644,12 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     UNUSED(directory);
 #endif
 
+#if CONF_WITH_EXEC_REPLACE
+    if (replacement && (flag != PE_LOAD ||
+                        kproc_exec_replacement_validate(replacement))) return EACCDN;
+#else
+    if (replacement) return EINVFN;
+#endif
     KDEBUG(("BDOS xexec: flag or mode = %d\n",flag));
 
 
@@ -783,14 +825,36 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return EFILNF;      /*  file not found      */
     }
 
-    /* load the header - if I/O error occurs now, the longjmp in rwabs will
-     * jump directly back to bdosmain.c, which is not a problem because
-     * we haven't allocated anything yet.
+    /* Load the header before allocating process memory. Interpreter probes
+     * guard disk I/O so their temporary buffers can be freed on failure;
+     * the ordinary loader may still return via bdosmain.c's disk longjmp
+     * when interpreter support is disabled.
      */
 #if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
-    elf_set_load_into_caller(flag == PE_LOAD);
+    elf_set_load_into_caller(flag == PE_LOAD && !replacement);
 #endif
+#if CONF_WITH_BINFMT
+    rc = binfmt_load_header(path, tail, env ? env : (char *)
+#if CONF_WITH_PRIVATE_CLONE
+        (uintptr_t)kproc_private_environment(run)
+#else
+        USERPTR_TO_PTR(run->p_env)
+#endif
+                           , &hdr, &fh, &interpreter,
+#if CONF_WITH_CUIS
+                           directory != NULL
+#else
+                           FALSE
+#endif
+                           );
+    if (!rc && interpreter.environment) {
+        path = interpreter.path;
+        tail = interpreter.tail;
+        env = interpreter.environment;
+    }
+#else
     rc = kpgmhdrld(path, &hdr, &fh);
+#endif
     if (rc) {
         KDEBUG(("BDOS xexec: kpgmhdrld returned %ld (0x%lx)\n",rc,rc));
         return rc;
@@ -799,10 +863,21 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     /* allocate the environment first, depending on memory policy */
     env_ptr = alloc_env(hdr.h01_flags, env);
     if (env_ptr == NULL) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         KDEBUG(("BDOS xexec: no memory for environment\n"));
         xclose(fh);
         return ENSMEM;
     }
+#if CONF_WITH_BINFMT
+    if (interpreter.environment) {
+        /* The final interpreter name is argv[0] in the generated environment.
+         * Use its owned child copy after freeing the temporary argument arena. */
+        path = env_ptr + (interpreter.path - interpreter.environment);
+        binfmt_release_environment(&interpreter);
+    }
+#endif
 
     /* allocate the basepage depending on memory policy */
     needed = hdr.h01_tlen + hdr.h01_dlen + hdr.h01_blen + sizeof(PD);
@@ -828,6 +903,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 
     /* if failed, free env_ptr and return */
     if (p == NULL) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         KDEBUG(("BDOS xexec: no memory for TPA\n"));
         xexec_free(env_ptr);
         xclose(fh);
@@ -837,7 +915,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     /* memory ownership - the owner is either the new process being created,
      * or the parent
      */
-    owner = (flag == PE_LOADGO
+    owner = (replacement || flag == PE_LOADGO
 #if CONF_WITH_NATIVE_SCHED
              || flag == PE_ASYNC_LOADGO
 #endif
@@ -847,6 +925,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
+#if CONF_WITH_BINFMT
+    binfmt_release(&interpreter);       /* tail is now part of the basepage */
+#endif
     if (!kproc_create(p)) {
         xexec_free(env_ptr);
         xexec_free(p);
@@ -861,6 +942,20 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         kproc_mark_legacy(p);
 #endif
 
+#if CONF_WITH_EXEC_REPLACE
+    if (replacement) {
+        KPROC *image = kproc_retain(p);
+        rc = kproc_exec_replacement_load_begin(replacement,image);
+        kproc_release(image);
+        if (rc != E_OK) {
+            kproc_destroy(p);
+            xexec_free(env_ptr);
+            xexec_free(p);
+            xclose(fh);
+            return rc;
+        }
+    }
+#endif
     /* The loaded image and enclosing target belong to this invocation. */
     cur_p = p;
 
@@ -950,9 +1045,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     ksched_cleanup_begin(&scope);
 #endif
 #if CONF_WITH_NATIVE_SCHED && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
-    rc = flag == PE_LOADGO && ksched_test_nested_injected(6) ? ENSMEM : init_pd_files(cur_p);
+    rc = replacement ? E_OK : (flag == PE_LOADGO && ksched_test_nested_injected(6) ? ENSMEM : init_pd_files(cur_p));
 #else
-    rc = init_pd_files(cur_p);
+    rc = replacement ? E_OK : init_pd_files(cur_p);
 #endif
     if (rc != E_OK) {
 #if CONF_WITH_NATIVE_SCHED
@@ -973,10 +1068,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 #endif
 #else
-    (void)init_pd_files(cur_p);
+    if (!replacement) (void)init_pd_files(cur_p);
 #endif
 #if CONF_WITH_USER_ASPACE
-    if (flag == PE_LOAD)
+    if (flag == PE_LOAD && !replacement)
         hand_over(cur_p);
 #endif
 
@@ -1073,6 +1168,10 @@ static LONG init_pd_standard_files_from(PD *p, PD *source)
 {
     int i;
     LONG error = E_OK, rc;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(p))
+        return process_files_inherit_standard(p,source);
+#endif
 
     /* Preserve existing Pexec inheritance while allowing checked factory use. */
     for (i = 0; i < NUMSTD; i++) {
@@ -1128,7 +1227,7 @@ static LONG init_pd_files(PD *p)
 }
 
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
 static UWORD clone_factory_fail_stage;
 void proc_clone_factory_test_fail_after(UWORD stage) { clone_factory_fail_stage = stage; }
 static BOOL clone_factory_injected(UWORD stage)
@@ -1150,6 +1249,10 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
     KPROC *process;
 
     if (!result || *result || (resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
+#if CONF_WITH_PROCESS_FILES_TEST
+    /* The factory alone cannot admit full inheritance through publication. */
+    if (resources&PROC_CLONE_COPY_FILES) return EINVAL;
+#endif
     parent = kproc_live_pd(source);
     if (!parent) return EACCDN;
     /* Existing allocation helpers map their temporary construction buffers in
@@ -1204,7 +1307,11 @@ static char *alloc_env(ULONG flags, char *env)
 
     /* determine the env size */
     if (env == NULL)
+#if CONF_WITH_PRIVATE_CLONE
+        env = (char *)(uintptr_t)kproc_private_environment(run);
+#else
         env = (char *)USERPTR_TO_PTR(run->p_env);
+#endif
     size = (envsize(env) + 1) & ~1;  /* must be even */
 
     /* allocate it */
@@ -1447,7 +1554,11 @@ LONG proc_prepare_scheduled(PD *p)
 }
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
 {
-    if (ksched_sibling_launch(p)) {
+    if (ksched_sibling_launch(p)
+#if CONF_WITH_EXEC_REPLACE
+        || ksched_exec_handoff_launch(p)
+#endif
+       ) {
         /* Existing PROCESS: do not reset parent, loader state or start time.
          * The existing launcher consumes this task's independent startup. */
         run = p;

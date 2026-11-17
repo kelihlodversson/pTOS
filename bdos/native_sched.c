@@ -24,6 +24,12 @@
 #include "kprint.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_EXEC_REPLACE
+#include "exec_handoff.h"
+#include "exec_replace.h"
+#include "exec_handoff_test.h"
+#include "kaspace.h"
+#endif
 #if CONF_WITH_X86_64_MEMTEST
 #include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
@@ -37,6 +43,9 @@ extern PD *run;
 
 typedef enum { TASK_UNUSED, TASK_RESERVED, TASK_RETIRING, TASK_NEW, TASK_RUNNING, TASK_BLOCKED, TASK_DRAINING, TASK_DONE, TASK_ZOMBIE
     , TASK_DEFERRED
+#if CONF_WITH_EXEC_REPLACE
+    , TASK_REPLACING
+#endif
 } TASK_STATE;
 struct ksched_nested;
 typedef struct kernel_task {
@@ -69,6 +78,12 @@ typedef struct kernel_task {
     WORD pid, signal;
     BOOL asynchronous, take_ownership, exited;
     THREAD_STARTUP_DRAFT *startup;
+#if CONF_WITH_EXEC_REPLACE
+    KSCHED_EXEC_HANDOFF *replacement; /* private owning preparation */
+    ULONG test_handoffs; /* transport evidence only, never a committed-exec epoch */
+    ULONG exec_launches; /* committed Pexec(200) relaunches of this anchor */
+    KSCHED_EXEC_HANDOFF *exec_retired; /* committed, awaiting off-root retirement */
+#endif
     KTHREAD_CONTEXT execution;
     TASK_STATE state;
     BOOL (*ready)(void *);
@@ -114,6 +129,9 @@ typedef struct ksched_nested {
     UQUAD cleanup_serial, cleanup_ticket;
     ULONG cleanup_depth;          /* enclosing cleanup scopes stay with their owner */
     NESTED_STATE state;
+#if CONF_WITH_EXEC_REPLACE
+    struct nested_exec *exec_preparing; /* this frame's Pexec(200), until its boundary */
+#endif
 } KSCHED_NESTED;
 /* Shared queue/policy. Execution state is owned by the selected CPU below. */
 static struct {
@@ -147,6 +165,10 @@ typedef struct {
     KSCHED_ADMISSION waiter; /* scoped consumer; independent producers own cells */
     PROC_CLONE_TRANSACTION *pending_clone;
     void *pending_slot;
+#if CONF_WITH_EXEC_REPLACE
+    KSCHED_EXEC_HANDOFF *pending_exec;
+    struct nested_exec *nested_exec; /* committed Pexec(200) relaunch, masked to retire */
+#endif
     ULONG stack[ROOT_STACK_BYTES/sizeof(ULONG)] __attribute__((aligned(16)));
 } NATIVE_SCHED_CPU;
 static NATIVE_SCHED_CPU boot_cpu;
@@ -524,6 +546,510 @@ void ksched_wake_sequence(KSCHED_WAIT_SEQUENCE *source)
     native_sched_irq_restore(flags);
 }
 static UQUAD next_identity;
+#if CONF_WITH_EXEC_REPLACE
+typedef enum { HANDOFF_PREPARING, HANDOFF_PREPARED, HANDOFF_SEALED,
+               HANDOFF_TRANSFERRED, HANDOFF_QUIESCENT, HANDOFF_INSTALLED } HANDOFF_STATE;
+struct ksched_exec_handoff {
+    KERNEL_TASK *task;
+    KPROC *process;
+    KTHREAD *thread;
+    PD *pd;
+    KASPACE *space;
+    ASPACE_ROOT root;
+    UQUAD number, execution, next_execution;
+    ULONG tid;
+    WORD pid;
+    void *launcher;
+    PADDR old_syscall;
+    THREAD_STARTUP_DRAFT *startup, *retired_startup;
+    KASPACE_LEASE *hold, *retired_hold;
+    KTHREAD_STACK retired_stack;
+    KSCHED_CLEANUP_SCOPE cleanup;
+    HANDOFF_STATE state;
+    uintptr_t irq_flags;
+    /* Pexec(200) only: the image bundle and the root it commits */
+    KPROC_EXEC_REPLACEMENT *receipt;
+    KPROC_EXEC_IMAGE *bundle;
+    KASPACE *target, *old_thread_space;
+    BOOL rebound, committed;
+};
+
+static BOOL exec_handoff_matches(const KSCHED_EXEC_HANDOFF *tx)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    void *launcher = NULL;
+    PADDR syscall = 0;
+    return tx && task && tx->task == task && task->replacement == tx &&
+        !scheduler.stopping && task->state == TASK_RUNNING &&
+        task == execution_cpu.inflight && task->execution.on_cpu &&
+        task->execution.owner_cpu == execution_cpu.number &&
+        !task->nested && !task->nested_prepared && !task->completion_owner && !task->dependents &&
+        !task->ready && !task->argument && !task->observation.source &&
+        !task->synchronous_waiter && !task->synchronous_wait_process &&
+        !task->process_completed && !task->result_published && !task->exited &&
+        !task->execution.syscall_stack.physical &&
+        tx->process == task->process && tx->pd == run && task->program == run &&
+        kproc_live_pd(tx->process) == run && kproc_ref_number(tx->process) == tx->number &&
+        kproc_ref_pid(tx->process) == tx->pid && task->pid == tx->pid &&
+        task->thread == tx->thread && kthread_tid(tx->thread) == tx->tid &&
+        kthread_exec_handoff_ready(tx->thread, &task->execution) &&
+        tx->execution == task->execution.identity &&
+        tx->space == kthread_aspace(tx->thread) &&
+        tx->root == kproc_user_root(run) &&
+        kproc_exec_handoff_allowed(tx->process, tx->thread, tx->receipt != NULL) &&
+        !ksched_cancellation_pending() && tx->cleanup.active &&
+        task->cleanup_depth == (tx->receipt ? 2UL : 1UL) &&
+        tx->cleanup.depth == (tx->receipt ? 2UL : 1UL) &&
+        (!tx->receipt || (!kproc_exec_replacement_validate(tx->receipt) &&
+                          kproc_exec_image_sealable(tx->bundle) &&
+                          kproc_exec_replacement_selected(tx->receipt) == tx->target)) &&
+        task->cleanup_ticket == tx->cleanup.ticket &&
+        proc_exec_stack_snapshot(&launcher, &syscall) &&
+        launcher == tx->launcher && syscall == tx->old_syscall;
+}
+
+static void exec_handoff_abort(KSCHED_EXEC_HANDOFF **handle)
+{
+    KSCHED_EXEC_HANDOFF *tx = *handle;
+    if (!tx) return;
+    if (tx->state >= HANDOFF_TRANSFERRED || !execution_cpu.current ||
+        execution_cpu.current != tx->task || tx->task->replacement != tx ||
+        ksched_context_id() != tx->execution) panic("exec handoff: foreign abort");
+    *handle = NULL;
+    thread_startup_abort(&tx->startup);
+    kaspace_lease_release(&tx->hold);
+    kaspace_put(tx->target);
+    kaspace_put(tx->space);
+    kproc_release(tx->process);
+    tx->task->replacement = NULL;
+    ksched_cleanup_end(&tx->cleanup);
+    kfree(tx);
+}
+
+/* Only this exact CPU-root transaction can replace an executing THREAD's
+ * durable stack hold. The THREAD stays attached and executing throughout. */
+BOOL ksched_exec_handoff_quiescent(const KSCHED_EXEC_HANDOFF *tx,
+                                  const KTHREAD *thread, const void *execution)
+{
+    return tx && execution_cpu.pending_exec == tx && tx->state == HANDOFF_QUIESCENT &&
+        !execution_cpu.current && !execution_cpu.inflight && !tx->task->execution.on_cpu &&
+        tx->task->replacement == tx && tx->task->state == TASK_REPLACING &&
+        tx->thread == thread && tx->task->thread == thread &&
+        execution == &tx->task->execution && tx->task->process == tx->process &&
+        tx->task->execution.identity == tx->execution &&
+        kproc_ref_number(tx->process) == tx->number &&
+        kproc_live_pd(tx->process) == tx->pd && kproc_ref_pid(tx->process) == tx->pid &&
+        kthread_tid(thread) == tx->tid &&
+        kthread_aspace(thread) == (tx->rebound ? tx->target : tx->space) &&
+        kproc_active_space(tx->process) == (tx->committed ? tx->target : tx->space);
+}
+BOOL ksched_exec_handoff_replacing(const KSCHED_EXEC_HANDOFF *tx)
+{
+    return tx && tx->bundle && execution_cpu.pending_exec == tx;
+}
+BOOL ksched_exec_handoff_retiring(const THREAD_STARTUP_DRAFT *startup)
+{
+    KSCHED_EXEC_HANDOFF *tx = execution_cpu.pending_exec;
+    return tx && tx->state == HANDOFF_INSTALLED && startup == tx->retired_startup &&
+        !execution_cpu.current && !execution_cpu.inflight && !tx->task->execution.on_cpu &&
+        tx->task->replacement == tx && tx->task->state == TASK_REPLACING;
+}
+BOOL ksched_exec_handoff_launch(PD *pd)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    return task && task->program == pd && (task->test_handoffs || task->exec_launches) && task->startup &&
+        task->state == TASK_RUNNING && task->execution.on_cpu &&
+        !task->replacement && !task->completion_owner && kthread_is_executing(task->thread);
+}
+
+LONG ksched_exec_handoff_query(VADDR output)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    EXEC_HANDOFF_TEST_STATE result;
+    UQUAD number, root;
+    if (!ksched_spawn_allowed() || task->nested || task->program != run) return EACCDN;
+    if (output >= USER_VA_LIMIT) return EIMBA;
+    number = kproc_ref_number(task->process); root = kproc_user_root(run);
+    result.process[0] = (ULONG)number; result.process[1] = (ULONG)(number >> 32);
+    result.execution[0] = (ULONG)task->execution.identity;
+    result.execution[1] = (ULONG)(task->execution.identity >> 32);
+    result.root[0] = (ULONG)root; result.root[1] = (ULONG)(root >> 32);
+    result.pid = task->pid; result.tid = kthread_tid(task->thread);
+    result.handoffs = task->test_handoffs;
+    return kproc_copy_to_user_resident(output, &result, sizeof(result)) ? E_OK : EIMBA;
+}
+
+LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *args, UWORD failure)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_EXEC_HANDOFF *tx = NULL;
+    LONG error = EACCDN;
+    void *launcher = NULL;
+    PADDR syscall = 0;
+    UQUAD test_identity = 0;
+    BOOL identity_injected = FALSE;
+    if (!args || failure > EXEC_HANDOFF_FAILURES) return EINVAL;
+    if (execution_cpu.leaf_held || execution_cpu.legacy_irq_held) return EACCDN;
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame) return EACCDN;
+#endif
+#if CONF_WITH_PTERMGRP
+    if (task && task->cancel_delivering) return EACCDN;
+#endif
+    if (!ksched_spawn_allowed() || task->nested || task->nested_prepared ||
+        task->replacement || task->cleanup_depth || task->completion_owner || task->dependents ||
+        execution_cpu.pending_exec || !kproc_exec_handoff_allowed(task->process, task->thread, FALSE) ||
+        !proc_exec_stack_snapshot(&launcher, &syscall)) return EACCDN;
+    if (next_identity == ~(UQUAD)0 || task->test_handoffs == ~(ULONG)0) return EAGAIN;
+    if (failure == 1) return ENSMEM;
+    tx = kalloc(sizeof(*tx));
+    if (!tx) return ENSMEM;
+    memset(tx, 0, sizeof(*tx));
+    tx->task = task; tx->thread = task->thread; tx->pd = run;
+    tx->process = kproc_retain_live(task->process);
+    tx->space = kaspace_share(kthread_aspace(task->thread));
+    tx->number = kproc_ref_number(task->process); tx->pid = task->pid;
+    tx->tid = kthread_tid(task->thread); tx->execution = task->execution.identity;
+    tx->root = kproc_user_root(run); tx->launcher = launcher; tx->old_syscall = syscall;
+    task->replacement = tx;
+    ksched_cleanup_begin(&tx->cleanup);
+    if (!tx->process || !tx->space || failure == 2) { error = ENSMEM; goto failed; }
+    if (!exec_handoff_matches(tx)) goto failed;
+    if (failure == 3) { error = ENSMEM; goto failed; }
+    error = thread_startup_prepare_handoff(tx->space, args, &tx->startup);
+    if (error) goto failed;
+    if (failure == 4) { error = ENSMEM; goto failed; }
+    error = thread_startup_retain_stack(tx->startup, &tx->hold);
+    if (error) goto failed;
+    if (failure == 5) { error = ENSMEM; goto failed; }
+    error = thread_startup_run_preflight(tx->startup);
+    if (error) goto failed;
+    tx->state = HANDOFF_PREPARED;
+    if (failure == 6) { error = ENSMEM; goto failed; }
+    /* A stale identity must fail the real matcher, not a modeled producer. */
+    if (failure == 7) {
+        tx->execution++;
+        if (exec_handoff_matches(tx)) panic("exec handoff: stale execution admitted");
+        tx->execution--; error = EACCDN; goto failed;
+    }
+    if (failure == 8) {
+        if (ksched_exec_handoff_test(args, 0) != EACCDN)
+            panic("exec handoff: competing preparation admitted");
+        error = EACCDN; goto failed;
+    }
+    /* Preparation protects cancellation but not mapping revocation. Check
+     * ownership again after a genuine cooperative continuation handoff. */
+    ksched_yield();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto failed; }
+    if (failure == 9) { error = ENSMEM; goto failed; }
+    tx->irq_flags = native_sched_irq_save();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto unmask_failed; }
+    if (failure == 11) {
+        test_identity = next_identity; next_identity = ~(UQUAD)0; identity_injected = TRUE;
+    }
+    /* Another task can reserve the final identity while preparation yields.
+     * Capacity must be rechecked in this final no-yield publication window. */
+    if (next_identity == ~(UQUAD)0) { error = EAGAIN; goto unmask_failed; }
+    error = thread_startup_seal(tx->startup);
+    if (error) goto unmask_failed;
+    tx->state = HANDOFF_SEALED;
+    if (failure == 10) { error = ENSMEM; goto unmask_failed; }
+    tx->next_execution = ++next_identity;
+    /* No-fail boundary: transfer the launcher's retirement right, close only
+     * our exact cleanup scope, and abandon both old C continuations. */
+    proc_exec_stack_take(tx->launcher, tx->old_syscall);
+    ksched_cleanup_end(&tx->cleanup);
+    tx->state = HANDOFF_TRANSFERRED;
+    execution_cpu.pending_exec = tx;
+    task->state = TASK_REPLACING;
+    native_sched_save(&task->execution.cpu);
+    longjmp(execution_cpu.resume, 1);
+unmask_failed:
+    if (identity_injected) next_identity = test_identity;
+    native_sched_irq_restore(tx->irq_flags);
+failed:
+    exec_handoff_abort(&tx);
+    return error;
+}
+
+#if CONF_WITH_EXEC_REPLACEMENT_TEST
+static UWORD replace_fail_stage;
+void ksched_exec_replace_test_fail_after(UWORD stage) { replace_fail_stage = stage; }
+static BOOL replace_injected(UWORD stage)
+{
+    if (replace_fail_stage != stage) return FALSE;
+    replace_fail_stage = 0; return TRUE;
+}
+#else
+#define replace_injected(stage) FALSE
+#endif
+
+static LONG exec_replace_nested(KERNEL_TASK *, KPROC_EXEC_REPLACEMENT **, KPROC_EXEC_IMAGE **);
+/* Public Pexec(200) commit through the #988 transport. The caller owns the
+ * reversible receipt (whose cleanup scope is this execution's only one) and a
+ * prepared bundle. Every error leaves both with the caller, which aborts them
+ * and still runs the unchanged original program; success never returns. */
+LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bundle)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_EXEC_HANDOFF *tx = NULL;
+    LONG error = EACCDN;
+    void *launcher = NULL;
+    PADDR syscall = 0;
+    UQUAD saved_identity = 0;
+    BOOL identity_injected = FALSE;
+    if (!receipt || !*receipt || !bundle || !*bundle) return EINVAL;
+    if (execution_cpu.leaf_held || execution_cpu.legacy_irq_held) return EACCDN;
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame) return EACCDN;
+#endif
+    /* A synchronous nested PROCESS has no continuation of its own: it is
+     * relaunched through its launcher frame instead (exec_replace_nested). */
+    if (task && task->nested && scheduler.active) return exec_replace_nested(task, receipt, bundle);
+#if CONF_WITH_PTERMGRP
+    if (task && task->cancel_delivering) return EACCDN;
+#endif
+    if (!ksched_spawn_allowed() || task->nested || task->nested_prepared ||
+        task->replacement || task->exec_retired || task->cleanup_depth != 1 ||
+        task->completion_owner || task->dependents || execution_cpu.pending_exec ||
+        !kproc_exec_handoff_allowed(task->process, task->thread, TRUE) ||
+        kproc_exec_replacement_validate(*receipt) || !kproc_exec_image_sealable(*bundle) ||
+        !proc_exec_stack_snapshot(&launcher, &syscall)) return EACCDN;
+    if (next_identity == ~(UQUAD)0 || task->exec_launches == ~(ULONG)0) return EAGAIN;
+    if (replace_injected(1)) return ENSMEM;
+    tx = kalloc(sizeof(*tx));
+    if (!tx) return ENSMEM;
+    memset(tx, 0, sizeof(*tx));
+    tx->task = task; tx->thread = task->thread; tx->pd = run;
+    tx->process = kproc_retain_live(task->process);
+    tx->space = kaspace_share(kthread_aspace(task->thread));
+    tx->target = kaspace_share(kproc_exec_replacement_selected(*receipt));
+    tx->number = kproc_ref_number(task->process); tx->pid = task->pid;
+    tx->tid = kthread_tid(task->thread); tx->execution = task->execution.identity;
+    tx->root = kproc_user_root(run); tx->launcher = launcher; tx->old_syscall = syscall;
+    tx->receipt = *receipt; tx->bundle = *bundle;
+    task->replacement = tx;
+    ksched_cleanup_begin(&tx->cleanup);
+    if (!tx->process || !tx->space || !tx->target || replace_injected(2)) { error = ENSMEM; goto failed; }
+    if (!exec_handoff_matches(tx)) goto failed;
+    tx->startup = kproc_exec_image_take_startup(tx->bundle);
+    if (!tx->startup) goto failed;
+    if (replace_injected(3)) { error = ENSMEM; goto failed; }
+    /* No durable stack hold: like any launched program, the new image runs
+     * on its PROCESS's own private stack, not a user heap reservation. The
+     * draft's startup lease covers its resident top until user entry. */
+    if (replace_injected(4)) { error = ENSMEM; goto failed; }
+    error = thread_startup_run_preflight(tx->startup);
+    if (error) goto failed;
+    tx->state = HANDOFF_PREPARED;
+    if (replace_injected(5)) { error = ENSMEM; goto failed; }
+    if (replace_injected(6)) {
+        /* A stale identity must fail the real matcher. */
+        tx->execution++;
+        if (exec_handoff_matches(tx)) panic("exec replace: stale execution admitted");
+        tx->execution--; error = EACCDN; goto failed;
+    }
+    if (replace_injected(7)) {
+        if (ksched_exec_replace(receipt, bundle) != EACCDN)
+            panic("exec replace: competing commit admitted");
+        error = EACCDN; goto failed;
+    }
+    /* Preparation defers cancellation, not revocation: revalidate after a
+     * genuine cooperative handoff. */
+    ksched_yield();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto failed; }
+    if (replace_injected(8)) { error = ENSMEM; goto failed; }
+    tx->irq_flags = native_sched_irq_save();
+    if (!exec_handoff_matches(tx)) { error = EACCDN; goto unmask_failed; }
+    if (replace_injected(9)) {
+        saved_identity = next_identity; next_identity = ~(UQUAD)0; identity_injected = TRUE;
+    }
+    if (next_identity == ~(UQUAD)0) { error = EAGAIN; goto unmask_failed; }
+    error = thread_startup_seal(tx->startup);
+    if (error) goto unmask_failed;
+    tx->state = HANDOFF_SEALED;
+    if (replace_injected(10)) { error = ENSMEM; goto unmask_failed; }
+    tx->next_execution = ++next_identity;
+    /* No-fail boundary: the handles now belong to this transaction. */
+    *receipt = NULL; *bundle = NULL;
+    proc_exec_stack_take(tx->launcher, tx->old_syscall);
+    ksched_cleanup_end(&tx->cleanup);
+    kproc_exec_replacement_transfer(tx->receipt);
+    tx->state = HANDOFF_TRANSFERRED;
+    execution_cpu.pending_exec = tx;
+    task->state = TASK_REPLACING;
+    native_sched_save(&task->execution.cpu);
+    longjmp(execution_cpu.resume, 1);
+unmask_failed:
+    if (identity_injected) next_identity = saved_identity;
+    native_sched_irq_restore(tx->irq_flags);
+failed:
+    exec_handoff_abort(&tx);
+    return error;
+}
+
+/* Pexec(200) gives the PROCESS the new program's basepage: every scheduler
+ * reference to the old one moves with it. No allocation or callback. */
+static void exec_rekey_scheduler(PD *old, PD *new)
+{
+    KERNEL_TASK *task;
+    struct ksched_nested *frame;
+    if (run == old) run = new;
+    if (execution_cpu.pending_exec && execution_cpu.pending_exec->pd == old)
+        execution_cpu.pending_exec->pd = new;
+    for (task = scheduler.tasks; task; task = task->next_task) {
+        if (task->program == old) task->program = new;
+        if (task->parent == old) task->parent = new;
+        if (task->execution.cpu.pd == old) task->execution.cpu.pd = new;
+        for (frame = task->nested; frame; frame = frame->outer) {
+            if (frame->program == old) frame->program = new;
+            if (frame->enclosing == old) frame->enclosing = new;
+        }
+        if (task->nested_prepared) {
+            if (task->nested_prepared->program == old) task->nested_prepared->program = new;
+            if (task->nested_prepared->enclosing == old) task->nested_prepared->enclosing = new;
+        }
+    }
+}
+
+/* Called only AFTER cpu_acknowledge_handoff(), on the permanent root stack.
+ * No callbacks, allocations, user copies or image policy are used to install
+ * the fresh context. All destruction follows installation outside the leaf. */
+static void exec_handoff_on_root(void)
+{
+    uintptr_t marker;
+    KSCHED_EXEC_HANDOFF *tx = execution_cpu.pending_exec;
+    THREAD_STARTUP_STACK_OWNERS stacks = { {0,0}, {0,0} };
+    KERNEL_TASK *task;
+    if (!tx) return;
+    check_root_stack();
+    task = tx->task;
+    if (tx->state != HANDOFF_TRANSFERRED || execution_cpu.current || execution_cpu.inflight ||
+        task->execution.on_cpu || task->replacement != tx || task->state != TASK_REPLACING ||
+        task->cleanup_depth || task->cleanup_ticket || execution_cpu.loaded_launcher)
+        panic("exec handoff: missing root acknowledgment");
+    tx->state = HANDOFF_QUIESCENT;
+    if (!thread_startup_take_stacks(tx->startup, &stacks) ||
+        stacks.syscall.physical == tx->old_syscall ||
+        stacks.scheduler.physical == tx->old_syscall ||
+        stacks.syscall.physical == task->execution.stack.physical ||
+        stacks.scheduler.physical == task->execution.stack.physical ||
+        stacks.syscall.physical == stacks.scheduler.physical)
+        panic("exec handoff: fresh stack ownership changed");
+    if (tx->bundle) {
+        /* Pexec(200) commit: the same THREAD and PROCESS adopt the sealed
+         * bundle's root and image. No allocation, callback or failure. */
+        KASPACE *space = kaspace_share(tx->target);
+        if (!space) panic("exec handoff: committed root reference lost");
+        kthread_exec_rebind(tx->thread, tx, &space);
+        tx->old_thread_space = space;
+        tx->rebound = TRUE;
+        {
+            PD *old = tx->pd;
+            kproc_exec_image_commit(tx->bundle);
+            exec_rekey_scheduler(old, kproc_live_pd(tx->process));
+        }
+        tx->committed = TRUE;
+        kproc_exec_replacement_commit(tx->receipt);
+    }
+    kthread_exec_handoff_stack(tx->thread, tx, &tx->hold, &tx->retired_hold);
+    tx->retired_startup = task->startup;
+    tx->retired_stack = kthread_stack_detach(&task->execution.stack);
+    /* Never copy a jmp_buf, C continuation or old CPU return image. */
+    memset(&task->execution, 0, sizeof(task->execution));
+    task->execution.identity = tx->next_execution;
+    task->execution.stack.physical = stacks.scheduler.physical;
+    task->execution.stack.top = stacks.scheduler.top;
+    task->execution.syscall_stack.physical = stacks.syscall.physical;
+    task->execution.syscall_stack.top = stacks.syscall.top;
+    task->startup = tx->startup; tx->startup = NULL;
+    thread_startup_commit_stores(task->startup, tx->pid, tx->tid);
+    thread_startup_publish(task->startup);
+    task->ready = NULL; task->argument = NULL;
+    memset(&task->observation, 0, sizeof(task->observation));
+    tx->state = HANDOFF_INSTALLED;
+    native_sched_irq_restore(tx->irq_flags);
+    ksched_waiter_retire(tx->process, tx->tid, tx->execution);
+    if (kstack_contains(tx->old_syscall, (uintptr_t)&marker) ||
+        kstack_contains(tx->retired_stack.physical, (uintptr_t)&marker))
+        panic("exec handoff: retiring an active kernel stack");
+    kstack_free(tx->old_syscall); tx->old_syscall = 0;
+    kthread_stack_release(&tx->retired_stack);
+    thread_startup_reclaim(&tx->retired_startup);
+    kaspace_lease_release(&tx->retired_hold);
+    task->replacement = NULL;
+    execution_cpu.pending_exec = NULL;
+    if (tx->bundle) {
+        /* Exactly one committed-exec generation per commit, then one generic
+         * readiness publication. Waiters whose predicates did not change go
+         * back to sleep; nothing completes, reaps or reports a status. */
+        uintptr_t flags = native_sched_irq_save();
+        kproc_exec_generation_advance(tx->process);
+        ksched_wake_publish(&execution_cpu.wake);
+        native_sched_irq_restore(flags);
+        task->exec_launches++;
+        /* The old root, image container and environment are retired by the
+         * relaunched execution on its own fresh stack (exec_replace_retire). */
+        task->exec_retired = tx;
+    } else {
+        kaspace_put(tx->space); tx->space = NULL;
+        kproc_release(tx->process); tx->process = NULL;
+        task->test_handoffs++;
+        kfree(tx);
+        /* Deliberately no KPROC exec epoch or readiness publication: this
+         * token owns same-image transport only, not an image bundle. */
+    }
+    native_sched_irq_disable();
+    task->state = TASK_NEW;
+}
+
+/* Shared off-stack retirement of a committed Pexec(200): the old root and
+ * memberships, then the container, which now holds the old program's
+ * basepage: its disposal frees the old basepage, TPA, environment and every
+ * other block that basepage owns, releases the old program's directory
+ * searches and GUI clients, and closes nothing the PROCESS kept (its files
+ * moved to the new basepage at commit). A procmem block still pinned by a
+ * dying root is reclaimed on its last unpin, so the order of the two
+ * retirements is not load-bearing.
+ * Cleanup callbacks may yield but must not unwind: an escaping disk error
+ * would land in an abandoned syscall frame, so it is fatal, as in
+ * proc_finalize_exit(). */
+static void exec_retire_common(KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bundle,
+                               KASPACE **old_thread_space, KASPACE **old_space)
+{
+    KSCHED_CLEANUP_SCOPE scope;
+    FS_ERROR_STATE saved_error = *fs_error_current();
+    if (setjmp(errbuf)) {
+        *fs_error_current() = saved_error;
+        panic("exec replace: retirement cleanup escaped");
+    }
+    memset(&scope, 0, sizeof(scope));
+    ksched_cleanup_begin(&scope);
+    kproc_exec_image_retire(bundle);
+    kproc_exec_replacement_retire(receipt);
+    kaspace_put(*old_thread_space); *old_thread_space = NULL;
+    kaspace_put(*old_space); *old_space = NULL;
+    ksched_cleanup_end(&scope);
+    *fs_error_current() = saved_error;
+}
+
+/* First action of a relaunched Pexec(200) execution, on its fresh scheduler
+ * stack before user entry: nothing here runs on a retired stack or root. */
+static void exec_replace_retire(KERNEL_TASK *task)
+{
+    KSCHED_EXEC_HANDOFF *tx = task->exec_retired;
+    if (!tx) return;
+    if (!tx->committed || tx->task != task || task->replacement || !task->startup ||
+        task->program != tx->pd || kproc_active_space(tx->process) != tx->target)
+        panic("exec replace: foreign retirement");
+    task->exec_retired = NULL;
+    run = tx->pd;
+    exec_retire_common(&tx->receipt, &tx->bundle, &tx->old_thread_space, &tx->space);
+    kaspace_put(tx->target);
+    kproc_release(tx->process);
+    kfree(tx);
+}
+#endif
 static KSCHED_WAIT_RESULT wait_observed(BOOL (*ready)(void *), void *argument,
                                         const KSCHED_WAIT_OBSERVATION *observation);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
@@ -680,7 +1206,12 @@ BOOL ksched_take_syscall_stack(PD *pd, THREAD_STARTUP_STACK *owner)
 {
     KERNEL_TASK *task = execution_cpu.current;
     KTHREAD_STACK stack;
-    if (!owner || owner->physical || owner->top || !ksched_sibling_launch(pd)) return FALSE;
+    if (!owner || owner->physical || owner->top ||
+        (!ksched_sibling_launch(pd)
+#if CONF_WITH_EXEC_REPLACE
+         && !ksched_exec_handoff_launch(pd)
+#endif
+        )) return FALSE;
     stack = kthread_stack_detach(&task->execution.syscall_stack);
     owner->physical = stack.physical;
     owner->top = stack.top;
@@ -1183,6 +1714,157 @@ BOOL ksched_nested_leave(KPROC *process)
     return TRUE;
 }
 
+#if CONF_WITH_EXEC_REPLACE
+/* Pexec(200) of a synchronous nested PROCESS (#713). Its user image runs on
+ * its own syscall stack, entered from a launcher frame on the enclosing
+ * execution's kernel stack. After the fallible preparation below, the no-fail
+ * boundary abandons the old syscall continuation by jumping back into that
+ * launcher, which commits the image off the old stack, switches to the new
+ * root, retires the old one and enters the new program with a fresh stack. */
+typedef struct nested_exec {
+    KSCHED_NESTED *frame;
+    KPROC_EXEC_REPLACEMENT *receipt;
+    KPROC_EXEC_IMAGE *bundle;
+    KASPACE *target, *old_thread_space;
+    PADDR kstack_phys, old_kstack;
+    uintptr_t kstack_top;
+    uintptr_t irq_flags;
+    UQUAD carrier_execution;
+    BOOL committed;
+} NESTED_EXEC;
+
+static BOOL nested_exec_matches(KERNEL_TASK *task, const NESTED_EXEC *nx,
+                                const KPROC_EXEC_REPLACEMENT *receipt, const KPROC_EXEC_IMAGE *bundle)
+{
+    KSCHED_NESTED *frame = nx->frame;
+    return scheduler.active && !scheduler.stopping && task == execution_cpu.current &&
+        task == execution_cpu.inflight && task->state == TASK_RUNNING && task->execution.on_cpu &&
+        task->execution.identity == nx->carrier_execution &&
+        task->nested == frame && !task->nested_prepared && frame->carrier == task &&
+        frame->carrier_execution == task->execution.identity && frame->state == NESTED_ACTIVE &&
+        frame->program == run && kproc_live_pd(frame->process) == run &&
+        ksched_exit_thread(run) == frame->thread && kthread_process(frame->thread) == frame->process &&
+        kthread_is_executing(frame->thread) && !frame->cancel_delivering &&
+        frame->cleanup_depth == 1 && !ksched_cancellation_pending() &&
+        !kproc_exec_replacement_validate(receipt) && kproc_exec_image_sealable(bundle) &&
+        kproc_exec_replacement_selected(receipt) == nx->target &&
+        kproc_exec_handoff_allowed(frame->process, frame->thread, TRUE) &&
+        proc_exec_relaunch_ready(run);
+}
+
+static LONG exec_replace_nested(KERNEL_TASK *task, KPROC_EXEC_REPLACEMENT **receipt,
+                                KPROC_EXEC_IMAGE **bundle)
+{
+    NESTED_EXEC *nx;
+    THREAD_STARTUP_DRAFT *startup;
+    LONG error = EACCDN;
+    BOOL masked = FALSE;
+    if (execution_cpu.nested_exec || execution_cpu.pending_exec ||
+        task->nested->exec_preparing || kproc_exec_replacement_validate(*receipt))
+        return EACCDN;
+    if (replace_injected(1)) return ENSMEM;
+    nx = kalloc(sizeof(*nx));
+    if (!nx) return ENSMEM;
+    memset(nx, 0, sizeof(*nx));
+    nx->frame = task->nested;
+    nx->carrier_execution = task->execution.identity;
+    nx->target = kaspace_share(kproc_exec_replacement_selected(*receipt));
+    nx->frame->exec_preparing = nx;
+    if (!nx->target || replace_injected(2)) { error = ENSMEM; goto failed; }
+    if (!nested_exec_matches(task, nx, *receipt, *bundle)) goto failed;
+    /* The launcher, not the scheduler, enters the new image: it needs only
+     * a fresh syscall stack, so the anchor's startup draft is not used. */
+    nx->kstack_phys = kstack_alloc(&nx->kstack_top);
+    if (!nx->kstack_phys || replace_injected(3)) { error = ENSMEM; goto failed; }
+    startup = kproc_exec_image_take_startup(*bundle);
+    thread_startup_abort(&startup);
+    if (replace_injected(4) || replace_injected(5)) { error = ENSMEM; goto failed; }
+    if (replace_injected(6)) {
+        nx->carrier_execution++;
+        if (nested_exec_matches(task, nx, *receipt, *bundle)) panic("exec replace: stale nested execution admitted");
+        nx->carrier_execution--; error = EACCDN; goto failed;
+    }
+    if (replace_injected(7)) {
+        if (ksched_exec_replace(receipt, bundle) != EACCDN) panic("exec replace: competing nested commit admitted");
+        error = EACCDN; goto failed;
+    }
+    ksched_yield();
+    if (!nested_exec_matches(task, nx, *receipt, *bundle)) { error = EACCDN; goto failed; }
+    if (replace_injected(8)) { error = ENSMEM; goto failed; }
+    nx->irq_flags = native_sched_irq_save(); masked = TRUE;
+    if (!nested_exec_matches(task, nx, *receipt, *bundle)) { error = EACCDN; goto failed; }
+    if (replace_injected(9)) { error = EAGAIN; goto failed; }
+    if (replace_injected(10)) { error = ENSMEM; goto failed; }
+    /* No-fail boundary: the handles belong to the relaunch from here on. */
+    nx->receipt = *receipt; nx->bundle = *bundle;
+    *receipt = NULL; *bundle = NULL;
+    kproc_exec_replacement_transfer(nx->receipt);
+    nx->frame->exec_preparing = NULL;
+    execution_cpu.nested_exec = nx;
+    proc_exec_relaunch(run);
+failed:
+    if (masked) native_sched_irq_restore(nx->irq_flags);
+    nx->frame->exec_preparing = NULL;
+    if (nx->kstack_phys) kstack_free(nx->kstack_phys);
+    kaspace_put(nx->target);
+    kfree(nx);
+    return error;
+}
+
+BOOL ksched_exec_nested_committing(const KTHREAD *thread)
+{
+    NESTED_EXEC *nx = execution_cpu.nested_exec;
+    KERNEL_TASK *task = execution_cpu.current;
+    return nx && !nx->committed && task && task->nested == nx->frame &&
+        nx->frame->thread == thread && task->execution.identity == nx->carrier_execution;
+}
+
+/* Called by the launcher after its relaunch longjmp, on its own stack with
+ * interrupts still masked: the no-fail commit, then the fresh stack. */
+void ksched_exec_relaunch_commit(PD *pd, PADDR *kstack_phys, uintptr_t *kstack_top)
+{
+    NESTED_EXEC *nx = execution_cpu.nested_exec;
+    KERNEL_TASK *task = execution_cpu.current;
+    KSCHED_NESTED *frame;
+    KASPACE *space;
+    uintptr_t marker;
+    if (!nx || nx->committed || !task || task->nested != nx->frame || pd != run ||
+        nx->frame->program != pd || nx->frame->state != NESTED_ACTIVE ||
+        task->execution.identity != nx->carrier_execution || !kstack_phys || !kstack_top ||
+        kstack_contains(*kstack_phys, (uintptr_t)&marker))
+        panic("exec replace: unauthenticated nested relaunch");
+    frame = nx->frame;
+    space = kaspace_share(nx->target);
+    if (!space) panic("exec replace: committed root reference lost");
+    kthread_exec_rebind_nested(frame->thread, &space);
+    nx->old_thread_space = space;
+    kproc_exec_image_commit(nx->bundle);
+    exec_rekey_scheduler(pd, kproc_live_pd(frame->process));
+    kproc_exec_replacement_commit(nx->receipt);
+    nx->committed = TRUE;
+    kproc_exec_generation_advance(frame->process);
+    ksched_wake_publish(&execution_cpu.wake);
+    nx->old_kstack = *kstack_phys;
+    *kstack_phys = nx->kstack_phys; *kstack_top = nx->kstack_top;
+    nx->kstack_phys = 0;
+}
+
+/* After the launcher switched to the committed root: interrupts back on,
+ * then the old syscall stack, root, memberships and container retire. */
+void ksched_exec_relaunch_retire(void)
+{
+    NESTED_EXEC *nx = execution_cpu.nested_exec;
+    uintptr_t marker;
+    if (!nx || !nx->committed || kstack_contains(nx->old_kstack, (uintptr_t)&marker))
+        panic("exec replace: nested retirement without commit");
+    execution_cpu.nested_exec = NULL;
+    native_sched_irq_restore(nx->irq_flags);
+    kstack_free(nx->old_kstack);
+    exec_retire_common(&nx->receipt, &nx->bundle, &nx->old_thread_space, &nx->target);
+    kfree(nx);
+}
+#endif
+
 BOOL ksched_finalizing_process(const KPROC *process)
 {
     KERNEL_TASK *task=execution_cpu.current;
@@ -1517,6 +2199,9 @@ static void task_entry(void)
     KERNEL_TASK *task = execution_cpu.current;
     BOOL refused;
     check_task_thread(task, 2);
+#if CONF_WITH_EXEC_REPLACE
+    exec_replace_retire(task);
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
     lifetime_probe_begin(task);
 #endif
@@ -2298,6 +2983,9 @@ static void scheduler_root_entry(void)
         wake_observed=execution_cpu.wake.sequence;
         check_root_stack();
         cpu_acknowledge_handoff();
+#if CONF_WITH_EXEC_REPLACE
+        exec_handoff_on_root();
+#endif
         if (scheduler.stopping) panic("scheduler: dispatch during shutdown");
         runqueue_unlocked(); /* predicates and notifications are outside leaf exclusion */
         check_root_stack();
@@ -2515,6 +3203,22 @@ BOOL ksched_clone_context(KPROC *source, PD **controller)
         execution_cpu.current->program != run || kproc_live_pd(source) != run) return FALSE;
     *controller = ksched_controller_pd(); return *controller!=NULL;
 }
+#if CONF_WITH_EXEC_REPLACE
+/* Executable replacement creates no dependent, so unlike Pclone it is open
+ * to the innermost nested owner as well as to an anchor execution. */
+BOOL ksched_exec_context(KPROC *source)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    if (!ksched_spawn_allowed() || !source || kproc_live_pd(source) != run) return FALSE;
+#if CONF_WITH_PTERMGRP
+    if (kproc_group_status(source, NULL)) return FALSE;
+#endif
+    if (task->nested)
+        return !task->nested_prepared && task->nested->process == source &&
+            task->nested->program == run && task->nested->state == NESTED_ACTIVE;
+    return task->process == source && task->program == run;
+}
+#endif
 BOOL ksched_loaded_clone_context(KPROC *source,PD **controller)
 {
     KTHREAD *owner;

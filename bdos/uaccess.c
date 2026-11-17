@@ -320,6 +320,9 @@ static long pexec_ok(const long *pw)
 #if CONF_WITH_NATIVE_SCHED
         || mode == PE_ASYNC_LOADGO
 #endif
+#if CONF_WITH_PEXEC200
+        || mode == PE_EXEC_REPLACE      /* path, tail and environment as mode 0 */
+#endif
     ) {
         rc = str_ok(pw[2], UA_PATH_MAX);
         if (rc)
@@ -340,7 +343,11 @@ static long pexec_ok(const long *pw)
 #if CONF_WITH_USER_ASPACE
     /* no environment given: alloc_env() inherits the caller's own, through the
      * p_env field of its basepage, which the caller can have rewritten */
+#if CONF_WITH_PRIVATE_CLONE
+    return env_ok((long)kproc_private_environment(run));
+#else
     return env_ok((long)run->p_env);
+#endif
 #else
     /* ... and without an address space there is still a null to refuse */
     return run->p_env ? E_OK : EIMBA;

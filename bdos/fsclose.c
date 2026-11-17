@@ -9,6 +9,9 @@
 #include "console.h"
 #include "kproc.h"
 #include "string.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 
 static UQUAD last_incarnation;
 #if CONF_WITH_X86_64_MEMTEST
@@ -103,6 +106,7 @@ static LONG close_once(volatile WORD h, BOOL cleanup, BOOL staged, FS_CLOSE_REPO
     if (setjmp(errbuf)) {
         if (consumed) panic("filesystem: consuming close finalizer escaped");
         error=errcode; out->disk_error=TRUE; out->drive=errdrv; out->rw=rwerr;
+        out->first_disk_error=TRUE; out->first_drive=errdrv; out->first_rw=rwerr;
     } else {
 #if CONF_WITH_X86_64_MEMTEST
         if (h==test_exhaust_handle) {
@@ -160,14 +164,21 @@ static LONG bounded_close(WORD h, BOOL cleanup, BOOL staged, BOOL dispose, FS_CL
 {
     FS_CLOSE_REPORT step;
     LONG first=0;
+    BOOL first_disk=FALSE;
+    int first_drive=0;
+    LONG first_rw=0;
     UWORD tries;
     for (tries=0;tries<=BLKDEVNUM;tries++) {
         close_once(h,cleanup,staged,&step);
-        if (!tries) first=step.error;
+        if (!tries) {
+            first=step.error;
+            first_disk=step.disk_error;first_drive=step.drive;first_rw=step.rw;
+        }
         if (step.disk_error) mark_bcbs_invalid(step.drive);
         if (step.disposition==FS_CLOSE_CONSUMED || !step.disk_error) break;
     }
     *out=step; out->error=first;
+    out->first_disk_error=first_disk; out->first_drive=first_drive; out->first_rw=first_rw;
     if (dispose && out->disposition==FS_CLOSE_RETAINED) {
         FTAB *f=&sft[out->token.handle-NUMSTD];
         /* Retained EACCDN from a recursive numeric close is not an independent
@@ -189,17 +200,22 @@ LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
  * resolution for ALL managed descriptors, not just inherited child tables.
  * Caller holds source identity and reversible descriptor admission; this
  * check/count publication is non-yielding under today's single-CPU contract. */
-LONG fs_reference_acquire(KPROC *source, WORD descriptor, UQUAD expected,
-                          FS_FILE_REFERENCE *out)
+static LONG reference_acquire(PD *pd,WORD descriptor,UQUAD expected,FS_FILE_REFERENCE *out)
 {
-    PD *pd;
     WORD handle=descriptor;
     FTAB *f;
     ULONG aliases[OPNFILES];
     if (!out || out->owned || out->closing || !expected) return EINVAL;
-    pd=kproc_live_pd(source);
     if (!pd || pd!=run || !kproc_file_references_allowed(pd)) return EACCDN;
     if (descriptor<0) return EIHNDL;
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (process_files_managed(pd)) {
+        UQUAD incarnation;
+        LONG error=process_files_resolve(pd,descriptor,&handle,&incarnation);
+        if (error) return error;
+        if (incarnation!=expected) return EIHNDL;
+    } else
+#endif
     if (descriptor<NUMSTD) handle=PD_UFT(pd)[descriptor];
     if (handle<NUMSTD || !valid_slot(handle-NUMSTD)) return EIHNDL;
     f=&sft[handle-NUMSTD];
@@ -210,10 +226,23 @@ LONG fs_reference_acquire(KPROC *source, WORD descriptor, UQUAD expected,
         && !f->f_pfs.fs
 #endif
         )) return EIHNDL;
-    if (descriptor>=NUMSTD) {
+    if (descriptor>=NUMSTD
+#if CONF_WITH_PROCESS_FILES_TEST
+        && !process_files_managed(pd)
+#endif
+    ) {
         /* f_own alone can survive the original explicit close. Do not mint
          * from someone else's standard alias, quarantine or staged owner. */
         kproc_standard_file_refs(aliases);
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (!process_files_managed(pd)) {
+            WORD i;
+            for (i=0;i<NUMSTD;i++) {
+                WORD alias=PD_UFT(pd)[i];
+                if (alias>=NUMSTD && valid_slot(alias-NUMSTD)) aliases[alias-NUMSTD]++;
+            }
+        }
+#endif
         if (f->f_own!=pd || (ULONG)f->f_use<=aliases[handle-NUMSTD]+
                 f->f_cleanup_refs+f->f_staged_refs) return EACCDN;
     }
@@ -223,6 +252,67 @@ LONG fs_reference_acquire(KPROC *source, WORD descriptor, UQUAD expected,
     out->handle=handle; out->incarnation=expected; out->owned=TRUE;
     return E_OK;
 }
+LONG fs_reference_acquire(KPROC *source,WORD descriptor,UQUAD expected,FS_FILE_REFERENCE *out)
+{
+    PD *pd=kproc_live_pd(source);
+    if (!pd) return EACCDN;
+    return reference_acquire(pd,descriptor,expected,out);
+}
+#if CONF_WITH_PROCESS_FILES_TEST
+/* Trusted pre-KPROC boot handoff only. A normal PROCESS must authenticate its
+ * canonical identity and binding; numeric SFT membership alone grants nothing. */
+LONG fs_reference_acquire_boot(PD *source,WORD descriptor,UQUAD expected,FS_FILE_REFERENCE *out)
+{
+    if (!source || source!=run || process_files_managed(source)) return EACCDN;
+    return reference_acquire(source,descriptor,expected,out);
+}
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST
+BOOL fs_reference_publishable(const FS_FILE_REFERENCE *reference)
+{
+    FTAB *f;
+    if (!reference || !reference->owned || reference->closing || !valid_slot(reference->handle-NUMSTD)) return FALSE;
+    f=&sft[reference->handle-NUMSTD];
+    return f->f_incarnation==reference->incarnation && f->f_own && f->f_use>0 &&
+        f->f_staged_refs && (ULONG)f->f_use>=f->f_staged_refs+f->f_cleanup_refs &&
+        f->f_cleanup_state!=FS_CLEANUP_INVALIDATED;
+}
+void fs_reference_publish(FS_FILE_REFERENCE *reference)
+{
+    if (!fs_reference_publishable(reference)) panic("publishing invalid staged descriptor reference");
+    sft[reference->handle-NUMSTD].f_staged_refs--;
+    reference->owned=FALSE;
+}
+LONG fs_reference_unpublish(WORD backend,UQUAD incarnation,FS_FILE_REFERENCE *out)
+{
+    FTAB *f;
+    ULONG ordinary,active;
+    if (!out || out->owned || out->closing || !valid_slot(backend-NUMSTD)) return EINVAL;
+    f=&sft[backend-NUMSTD];
+    if (f->f_incarnation!=incarnation) return EIHNDL;
+    if (f->f_cleanup_state==FS_CLEANUP_INVALIDATED) return E_CHNG;
+    if (!f->f_own || f->f_use<=0 || (ULONG)f->f_use<f->f_staged_refs+f->f_cleanup_refs)
+        panic("descriptor exact ordinary reference lost");
+    ordinary=(ULONG)f->f_use-f->f_staged_refs-f->f_cleanup_refs;
+    active=f->f_close_busy && !f->f_close_cleanup && !f->f_close_staged;
+    if (ordinary<=active) return EACCDN;
+    if (f->f_staged_refs==~(ULONG)0) return EAGAIN;
+    f->f_staged_refs++;
+    out->handle=backend;out->incarnation=incarnation;out->owned=TRUE;
+    return E_OK;
+}
+LONG fs_reference_dispose(FS_FILE_REFERENCE *reference,FS_CLOSE_REPORT *report)
+{
+    FS_CLOSE_REPORT transferred=*report;
+    if (!fs_reference_publishable(reference)) return EIHNDL;
+    transferred.token.handle=reference->handle;transferred.token.incarnation=reference->incarnation;
+    if (!transfer_reference(&transferred,TRUE)) return EACCDN;
+    sft[reference->handle-NUMSTD].f_staged_refs--;
+    reference->owned=FALSE;*report=transferred;
+    unpublish_exhausted_aliases(reference->handle);
+    return E_OK;
+}
+#endif
 LONG fs_reference_close(FS_FILE_REFERENCE *reference, BOOL dispose, FS_CLOSE_REPORT *out)
 {
     FTAB *f;
@@ -292,7 +382,11 @@ LONG fs_cleanup_retry(const FS_CLEANUP_TOKEN *token, FS_CLOSE_REPORT *out)
 long xclose(WORD h)
 {
     FS_CLOSE_REPORT result;
-    LONG error=fs_close_once(h,FALSE,&result);
+    LONG error=
+#if CONF_WITH_PROCESS_FILES_TEST
+        h>=0 && process_files_managed(run)?process_files_close(run,h,FALSE,&result):
+#endif
+        fs_close_once(h,FALSE,&result);
     if (result.disk_error) {
         /* Preserve osif's existing media-change/error policy. The operation
          * has already unpublished its owner and restored the enclosing target. */

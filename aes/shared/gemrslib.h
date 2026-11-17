@@ -6,7 +6,7 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-
+#include "aescontext.h"
 #ifndef GEMRSLIB_H
 #define GEMRSLIB_H
 
@@ -14,19 +14,7 @@
 #include "obdefs.h"                 /* for OBJECT */
 #include "rsdefs.h"                 /* for RSHDR */
 
-typedef struct aesglobal {
-    WORD ap_version;                /* AES version */
-    WORD ap_count;                  /* max # of concurrent applications */
-    WORD ap_id;                     /* application id */
-    LONG ap_private;                /* for use by application */
-    OBJECT **ap_ptree;              /* pointer to array of tree addresses */
-                                /* the following are not advertised to applications */
-    RSHDR *ap_rscmem;               /* native materialized resource image */
-    UWORD ap_rsclen;                /* length of rsc file */
-    WORD ap_planes;                 /* # of colour planes on screen */
-    intptr_t ap_3resv;              /* ptr to AES global area D (struct THEGLO) */
-    LONG ap_4resv;                  /* reserved for use in AES 4.00 */
-} AESGLOBAL;
+#include "aesglobal.h"
 
 void rs_obfix(OBJECT *tree, WORD curob);
 char *rs_str(UWORD stnum);
@@ -40,7 +28,7 @@ WORD rs_load(AESGLOBAL *pglobal, BYTE *rsfname);
 void rs_cicon_pack(const WORD *data, void *pixels, WORD planes, WORD w, WORD h, WORD pixel_size);
 #endif
 #if !CONF_WITH_LEGACY_RSC_LOAD
-OBJECT *rs_loadmem(AESGLOBAL *pglobal, const void *rsmem, LONG size);
+OBJECT *rs_loadmem(AES_RESOURCE_PARAM AESGLOBAL *pglobal, const void *rsmem, LONG size);
 #endif
 
 #endif

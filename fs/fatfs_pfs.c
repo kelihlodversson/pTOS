@@ -25,6 +25,9 @@
 #include "endian.h"
 #include "time.h"
 #include "../bdos/bdosstub.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "../bdos/process_files.h"
+#endif
 
 #define ROOT_PSEUDO_CLUSTER 1
 
@@ -193,6 +196,9 @@ static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *
     char n[2], a[11];                       /*  M01.01.03   */
     int i, f2;                              /*  M01.01.03   */
     LONG pos, rc;
+#if CONF_WITH_PROCESS_FILES_TEST
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
 
     n[0] = (char)ERASE_MARKER; n[1] = 0;
 
@@ -568,6 +574,9 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     LONG fileln, rc;
     PFSCOOKIE newfc;
     BOOL was_locked, destination_locked;
+#if CONF_WITH_PROCESS_FILES_TEST
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
 
     posp = 0L;
     was_locked = dn1->d_flag & DND_LOCKED;
@@ -694,13 +703,23 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
         }
         dfd->o_flag |= O_DIRTY;
         if (att&FA_SUBDIR) {
+#if CONF_WITH_PROCESS_FILES_TEST
+            WORD backend=(WORD)hnew;
+            if (process_files_managed(run) && process_files_resolve(run,(WORD)hnew,&backend,NULL)!=E_OK)
+                panic("directory temporary descriptor lost");
+#endif
             ixclose(fd2,CL_DIR|CL_FULL);
             xmfreblk(fd2);
+#if CONF_WITH_PROCESS_FILES_TEST
+            fs_sft_invalidated(backend-NUMSTD);
+            sft[backend-NUMSTD].f_own=0;sft[backend-NUMSTD].f_use=0;sft[backend-NUMSTD].f_ofd=0;
+#else
             sft[hnew-NUMSTD].f_own = 0;
 #if CONF_WITH_USER_ASPACE
             sft[hnew-NUMSTD].f_use = 0;
 #endif
             sft[hnew-NUMSTD].f_ofd = 0;
+#endif
         } else xclose(hnew);
         ixclose(fdparent,CL_DIR);
     }

@@ -16,7 +16,7 @@
 #   virt-m68k-aspace  virt-m68k-aspace_defconfig  virt-m68k.elf  qemu-system-m68k -cpu m68040
 #                (the same, every process in an address space of its own)
 #   pc-x86_64    pc-x86_64-desktop_defconfig  pc-x86_64.efi   qemu-system-x86_64 + OVMF
-#   raspi2b      rpi2-test_defconfig          kernel7.img     qemu-system-arm
+#   raspi2b      rpi2_defconfig               kernel7.img     qemu-system-arm
 #   raspi2b-aspace  rpi2-aspace_defconfig           kernel7.img     qemu-system-arm -M raspi2b
 #                (EmuCON on the UART, every process in an address space of its own; the
 #                suite only: QEMU's raspi2b does not switch off)
@@ -87,6 +87,12 @@ trap cleanup EXIT
 if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ] &&
    ! grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1$' "$top/obj/autoconf.h"; then
     echo "$0: requested positive shared-Pexec but the effective gate is disabled" >&2
+    exit 2
+fi
+
+if [ "${PROCESS_FILES_TEST:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested PROCESS descriptor ownership but the effective gate is disabled" >&2
     exit 2
 fi
 
@@ -330,7 +336,7 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         sleep 2
         ;;
     raspi2b)
-        # the desktop, with the console on the UART too (rpi2-test_defconfig);
+        # the desktop, with the console on the UART too (rpi2_defconfig);
         # emudesk.inf's autorun line starts runtests.tos, whose output is the log.
         # The SD card has to be a power of two in size: vvfat gets a window of 256M
         qemu-system-arm -M raspi2b -bios "$top/kernel7.img" \
@@ -587,6 +593,10 @@ fi
 
 # A positive shared-Pexec build must execute every configured consumer fixture.
 # The ordinary gate-off jobs remain independent compatibility evidence.
+if grep -q '^#define CONF_WITH_IMAGE_POLICY_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native immutable image policy capture/activation/rollback and exact resource conservation: PASS' "$suite_log"; then
+    record "native immutable image policy" FAIL "configured capture/activation/rollback assertions did not execute"
+fi
 if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h"; then
     for marker in \
         'native shared-VM Pexec4/104 execution and canonical reap: tested' \
@@ -715,6 +725,12 @@ if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
     record "native independent VM/COW" FAIL "configured private clone probe did not pass"
 fi
 
+# A configured snapshot must fault its genuinely absent inherited stack.
+if grep -q '^#define CONF_WITH_PRIVATE_SNAPSHOT_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native captured ancestor-stack private snapshot after source exit, both write orders: PASS' "$suite_log"; then
+    record "native captured private snapshot" FAIL "configured captured snapshot did not execute"
+fi
+
 # A configured rollback injection must actually have reached a user exit.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'exit handoff: injected preparation rollback' "$suite_log"; then
@@ -789,6 +805,11 @@ case "$machine" in
         ;;
 esac
 
+if grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native PROCESS descriptor inheritance/ownership: PASS' "$suite_log"; then
+    record "native PROCESS descriptor inheritance" FAIL "real local-descriptor/rollback/ownership cases did not pass"
+fi
+
 # Native initial-entry marker: independent of the older machine-case matrix.
 case $machine in
 virt-arm|virt-m68k-aspace|virt-m68k-mmu|raspi2b-aspace)
@@ -848,6 +869,36 @@ if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
             record "native private saved syscall return" FAIL "missing $marker"
         fi
     done
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native same-PROCESS/TID NORETURN fresh-stack transport (not Pexec200): PASS' "$suite_log"; then
+    record "native executable handoff transport" FAIL "configured same-image transport did not execute"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native reversible executable staging ownership (not Pexec200): PASS' "$suite_log"; then
+    record "native executable staging ownership" FAIL "configured replacement preparation did not execute"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) same-PROCESS executable/root replacement: PASS' "$suite_log"; then
+    record "native Pexec(200)" FAIL "configured public Pexec(200) did not replace the subject"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native nested Pexec(200) launcher relaunch: PASS' "$suite_log"; then
+    record "native nested Pexec(200)" FAIL "a synchronously nested child was not replaced"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) from a private-VM clone: PASS' "$suite_log"; then
+    record "native Pexec(200) from a clone" FAIL "a private-VM (fork) clone was not replaced"
 fi
 
 if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&

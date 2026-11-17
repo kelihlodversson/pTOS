@@ -2,6 +2,7 @@
 #include "test.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
+#include "../../include/shared_pexec_test.h"
 #include "../../include/mman.h"
 #include <mint/osbind.h>
 #include <stdio.h>
@@ -9,6 +10,9 @@
 #include <string.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+#include "exec200_probe.h"
+#endif
 
 #if defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)
 #include "trap.h"
@@ -150,6 +154,122 @@ static void test_private_continuation(void)
 }
 #endif
 
+#if defined(TEST_WITH_PRIVATE_SNAPSHOT)
+#include "../../include/private_snapshot_test.h"
+static volatile struct {
+    unsigned char *peer_stack,*child_stack;
+    unsigned long address;
+    long creator,parent,root,tid;
+    unsigned char *dta,*environment;unsigned char dta_byte,environment_byte;
+    int32_t peer_pid;
+} captured_probe;
+static long captured_query(unsigned long address)
+{ return pclone_trap((void *)address,PRIVATE_SNAPSHOT_QUERY); }
+static void captured_private_child(void *unused)
+{
+    volatile unsigned char *page=(volatile unsigned char *)captured_probe.address;
+    long expected=PRIVATE_SNAPSHOT_LAZY|PRIVATE_SNAPSHOT_WRITE|PRIVATE_SNAPSHOT_USER;
+    int bad=0;
+    (void)unused;
+    if(Pgetpid()==captured_probe.parent || Pgetppid()!=captured_probe.parent ||
+       private_query(0)==captured_probe.root || private_query(3)==captured_probe.tid ||
+       captured_query(captured_probe.address)!=expected ||
+       (void *)Fgetdta()!=(void *)captured_probe.dta || captured_probe.dta[0]!=captured_probe.dta_byte) bad=1;
+    if(captured_probe.environment[0]!=captured_probe.environment_byte ||
+        Pexec(0,"C:\\GLOBALCH.TOS","\1w",0)!=23) bad=8;
+    captured_probe.environment[0]^=0x33; /* private bytes, not the source env */
+    captured_probe.dta[0]^=0x5a; /* private DTA bytes, no search iterator */
+    /* This page was demonstrably absent at the fork boundary. The original
+     * stack-owning PROCESS has already retired. No source cleanup ticket is
+     * valid backing authority for this child's first read/write fault. */
+    if(page[0]) bad=2;
+    page[0]=0x71;page[17]=0x72;
+    Pterm(bad?74:73);
+}
+static void captured_surviving_peer(void *unused)
+{
+    long expected=PRIVATE_SNAPSHOT_LAZY|PRIVATE_SNAPSHOT_WRITE|PRIVATE_SNAPSHOT_USER;
+    int bad=0,cycle,stage;
+    (void)unused;
+    if(Pgetppid()==captured_probe.creator) bad=1;
+    for(cycle=0;cycle<2;cycle++) {
+        struct ptos_clone_args args={0};
+        volatile unsigned char *page;
+        long child,status;
+        captured_probe.address=0x7fff1000UL-(unsigned long)cycle*4096UL;
+        page=(volatile unsigned char *)captured_probe.address;
+        captured_probe.parent=Pgetpid();captured_probe.root=private_query(0);captured_probe.tid=private_query(3);
+        if(captured_query(captured_probe.address)!=expected) bad=2;
+        args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
+        args.entry=captured_private_child;args.stack_base=captured_probe.child_stack;args.stack_size=32768;
+        for(stage=1;stage<=24;stage++) {
+            (void)pclone_trap(0,0xc8920200UL+(unsigned long)stage);
+            child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+            (void)pclone_trap(0,0xc8920200UL);
+            if(child!=-39L || captured_query(captured_probe.address)!=expected) bad=7;
+        }
+        child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+        if(child<=0) {bad=3;break;}
+        if(cycle) page[0]=0x31; /* source writes before child dispatch */
+        status=Pwaitpid(child,0,0);
+        if((status>>16)!=child || (status&65535)!=73 || Pwaitpid(child,1,0)>=0) bad=4;
+        if(captured_query(captured_probe.address)!=(expected|(cycle?PRIVATE_SNAPSHOT_PRESENT:0))) bad=5;
+        if(page[0]!=(cycle?0x31:0) || page[17] ||
+            (void *)Fgetdta()!=(void *)captured_probe.dta || captured_probe.dta[0]!=captured_probe.dta_byte ||
+            captured_probe.environment[0]!=captured_probe.environment_byte) bad=6;
+        page[0]=0x32;
+    }
+    conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
+               "native captured ancestor-stack private snapshot after source exit, both write orders: PASS\r\n");
+    Pterm(bad?74:73);
+}
+static void captured_creator(void *unused)
+{
+    struct ptos_clone_args args={0};
+    long tid;
+    (void)unused;
+    if(Psetlimit(0x100,-1)<65536 || captured_query(0x7fff0000UL)&PRIVATE_SNAPSHOT_PRESENT ||
+       captured_query(0x7fff1000UL)&PRIVATE_SNAPSHOT_PRESENT) Pterm(74);
+    captured_probe.creator=Pgetpid();captured_probe.peer_pid=0;
+    captured_probe.dta=(unsigned char *)Fgetdta();captured_probe.dta_byte=captured_probe.dta[0];
+    captured_probe.environment=(unsigned char *)_base->p_env;
+    captured_probe.environment_byte=captured_probe.environment[0];
+    args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;
+    args.entry=captured_surviving_peer;args.stack_base=captured_probe.peer_stack;args.stack_size=32768;
+    args.child_pid=&captured_probe.peer_pid;
+    tid=pclone_trap(&args,sizeof(args));
+    Pterm(tid>0 && captured_probe.peer_pid>0?73:74);
+}
+static void test_captured_snapshot(void)
+{
+    struct ptos_clone_args args={0};
+    long first=Malloc(32768),second=Malloc(32768),third=Malloc(32768),child,status;
+    unsigned char *stack=first>0?(unsigned char *)first:NULL;
+    captured_probe.peer_stack=second>0?(unsigned char *)second:NULL;
+    captured_probe.child_stack=third>0?(unsigned char *)third:NULL;
+    ptest_assert_msg(stack && captured_probe.peer_stack && captured_probe.child_stack,
+                     "captured ancestor-stack snapshot fixture stacks");
+    if(!stack || !captured_probe.peer_stack || !captured_probe.child_stack) {
+        if(stack) (void)Mfree(stack);
+        if(captured_probe.peer_stack) (void)Mfree(captured_probe.peer_stack);
+        if(captured_probe.child_stack) (void)Mfree(captured_probe.child_stack);
+        return;
+    }
+    memset(stack,0,32768);memset(captured_probe.peer_stack,0,32768);memset(captured_probe.child_stack,0,32768);
+    args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;args.entry=captured_creator;
+    args.stack_base=stack;args.stack_size=32768;
+    child=pclone_trap(&args,0xc8920000UL|sizeof(args));
+    ptest_assert_msg(child>0,"independent captured-stack source publishes");
+    if(child>0) {
+        status=Pwaitpid(child,0,0);
+        ptest_assert_msg((status>>16)==child && (status&65535)==73,
+                         "original stack owner exits before the surviving source clones");
+        (void)Syield();
+    }
+    ptest_assert_msg(!Mfree(stack) && !Mfree(captured_probe.peer_stack) && !Mfree(captured_probe.child_stack),
+                     "original caller can release independent fixture stack copies");
+}
+#endif
 static void private_entry(void *argument)
 {
     volatile unsigned long local=0x5a5aa5a5UL;
@@ -250,6 +370,9 @@ static void test_private_aspace(void)
     if(private_probe.filemap)ptest_assert_msg(private_probe.filemap[11]==0x35,"clean file page before clone");
 #if defined(TEST_WITH_FORK_RETURN_TEST)
     test_private_continuation();
+#endif
+#if defined(TEST_WITH_PRIVATE_SNAPSHOT)
+    test_captured_snapshot();
 #endif
     for(stage=1;stage<=24;stage++) {
         ptest_assert_msg(pclone_trap(0,0xc8920200UL+stage)==0,"arm private clone allocation failure");
@@ -1529,6 +1652,7 @@ static void test_group_exit(void)
 #endif
 #include "public_contract.h"
 #include "mapping_lifetime.h"
+#include "process_files.h"
 
 static void test_runnable(void)
 {
@@ -1699,61 +1823,7 @@ static void test_runnable(void)
 void pclone_run_unmanaged_tests(void);
 void pclone_run_staged_tests(void);
 void pclone_run_staged_tests(void)
-{
-    struct ptos_clone_args args = {0};
-    struct phase1_policy_report report;
-    int32_t pid = -1, tid = -1;
-    long stack = Malloc(RUNNABLE_STACK_SIZE), result, status, file;
-    volatile unsigned char touch;
-    ptest_begin("Pclone from staged executable text");
-    ptest_assert_msg(Dsetpath("C:\\TESTS") == 0 &&
-                     Dgetpath(phase1_policy_cwd,3) == 0 &&
-                     (!strcmp(phase1_policy_cwd,"TESTS") || !strcmp(phase1_policy_cwd,"\\TESTS")),
-                     "staged owner selects inheritable non-root CWD");
-    phase1_policy_stack = (unsigned char *)Malloc(RUNNABLE_STACK_SIZE);
-    /* Loader-owned slack is resident data, but outside executable segments. */
-    if (_base->p_tbase == (void *)(_base + 1)) {
-        /* Classic p_hitpa is intentionally stale after CRT Mshrink. Use a
-         * resident TPA stack page, not the retired original allocation end. */
-        phase1_policy_hole = (void *)((unsigned long)&touch & ~4095UL);
-        phase1_policy_file = PHASE1_POLICY_PRG;
-        phase1_policy_writable_text = 1;
-    } else {
-        phase1_policy_hole = (void *)(((unsigned long)_base->p_bbase + _base->p_blen + 8191UL) & ~4095UL);
-        phase1_policy_file = PHASE1_POLICY_ELF;
-        phase1_policy_writable_text = 0;
-    }
-    touch = *(volatile unsigned char *)phase1_policy_hole;
-    (void)touch;
-    ptest_assert_msg(stack > 0 && phase1_policy_stack,"staged-image entry stacks");
-    if (stack > 0 && phase1_policy_stack) {
-        ptest_assert_msg(phase1_policy_checks() == 0,"staged owner enforces text/data/BSS/image-hole policy");
-        args.flags = CLONE_VM | CLONE_COPY_CWD; args.entry = phase1_policy_child;
-        args.stack_base = (void *)stack; args.stack_size = RUNNABLE_STACK_SIZE;
-        args.child_pid = &pid; args.child_tid = &tid;
-        phase1_resources = 0; phase1_resource_error = 0;
-        result = pclone_trap(&args,32);
-        ptest_assert_msg(result > 0 && result == tid,"staged CLONE_VM PROCESS child admitted");
-        if (result > 0) {
-            status = Pwaitpid(pid,0,0);
-            ptest_assert_msg((status >> 16) == pid && !(status & 65535) && !phase1_resource_error,
-                             "nested shared child enforces original staged image policy");
-        }
-        /* Do not free the orphan's active stack or its nested-child stack.
-         * Their containing KASPACE owns all pages until its final reference. */
-        args.argument = (void *)1;
-        result = pclone_trap(&args,32);
-        ptest_assert_msg(result > 0 && result == tid,"orphan staged-policy child admitted");
-        ptest_assert_msg(Dsetpath("C:\\") == 0,
-                         "parent changes CWD before orphan continues independently");
-        file = Fopen(phase1_policy_file,2);
-        memset(&report,0,sizeof(report)); report.magic=0x50434c4eL;
-        report.creator=Pgetpid(); report.worker=pid;
-        ptest_assert_msg(file >= 6 && Fwrite(file,sizeof(report),&report) == sizeof(report) && Fclose(file)==0,
-                         "publish orphan identity before staged owner exits");
-    }
-    ptest_pass();
-}
+{ phase1_run_staged(); }
 void pclone_run_unmanaged_tests(void)
 {
     struct ptos_clone_args args = {0};
@@ -1778,6 +1848,55 @@ void pclone_run_unmanaged_tests(void)
 void pclone_run_managed_tests(void);
 void pclone_run_managed_tests(void)
 {
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+    {
+        int stage,cycle;
+        long parent=Pgetpid();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        MAPPING_LIFETIME_SNAPSHOT before,after;
+        memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+#endif
+        ptest_begin("same-PROCESS replacement staging (not Pexec200)");
+        /* Public mode200 is enabled with this test configuration: a missing
+         * image fails before any commit and leaves this runner in place. */
+        ptest_assert_msg(Pexec(200,"C:\\NO970.TOS","",0)==-33L,
+                         "public mode200 fails before commit and keeps the caller");
+        ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,"warm executable staging owners");
+        ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,"warm real private ELF staging and disposal");
+        for(stage=0x103;stage<=0x105;stage++)
+            ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-36L,
+                             "warm canonical foreign construction rejection and cleanup");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        ptest_assert_msg(mlt_snapshot(&before)==0,"snapshot before replacement staging");
+#endif
+        for(cycle=0;cycle<8;cycle++) {
+            for(stage=1;stage<=4;stage++)
+                ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-39L,
+                                 "replacement staging rollback after each owner acquisition");
+            ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,
+                             "private staging receipt validates across cooperative yield and abort");
+            ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,
+                             "existing loader stages ELF in selected private root and aborts");
+            ptest_assert_msg(pclone_trap(0,0xc9700101UL)==-33L,
+                             "missing executable leaves old execution runnable");
+            ptest_assert_msg(pclone_trap(0,0xc9700102UL)<0,
+                             "truncated executable rolls back staged image resources");
+            for(stage=0x103;stage<=0x105;stage++)
+                ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-36L,
+                                 "prepared THREAD/member associations reject selected and shared source roots");
+            ptest_assert_msg(Pgetpid()==parent,"replacement staging never substitutes a new PID");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+            ptest_assert_msg(mlt_snapshot(&after)==0,"snapshot after replacement staging rollback");
+            mlt_equal(&before,&after);
+#endif
+        }
+        ptest_pass();
+        if(!ptest_failures())conws("native reversible executable staging ownership (not Pexec200): PASS\r\n");
+    }
+#endif
+#if defined(TEST_WITH_PROCESS_FILES)
+    test_process_files();
+#endif
 #if defined(TEST_WITH_FORK_RETURN_TEST)
     test_saved_return();
 #endif
@@ -1907,6 +2026,93 @@ void test_pclone(void)
                              "COW parent-policy companion completes all native controls");
             ptest_assert_msg(Pwaitpid(child,1,0)<0,"COW parent-policy companion reaped exactly once");
         }
+#endif
+#if defined(TEST_WITH_IMAGE_POLICY_TEST)
+        ptest_log_flush();
+        child=Pexec(100,"IMAGEPOL.TOS","",0);
+        ptest_assert_msg(child>0,"immutable image-policy companion starts managed");
+        if(child>0) {
+            status=Pwaitpid(child,0,0);
+            ptest_assert_msg((status>>16)==child && !(status&65535),"immutable image-policy companion passes");
+            ptest_assert_msg(Pwaitpid(child,1,0)<0,"immutable image-policy companion reaped once");
+        }
+        /* Measure the entire moved source/child lifetime: a live source may
+         * retain exclusive COW metadata until its next write or retirement. */
+        {
+            SHARED_PEXEC_SNAPSHOT before,after;
+            long loaded;
+            int cycle,index,conserved=1;
+            for(cycle=0;cycle<3;cycle++) {
+                ptest_log_flush();memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
+                if(pclone_trap(&before,SHARED_PEXEC_SNAPSHOT_QUERY)!=0) conserved=0;
+                loaded=Pexec(3,"IMAGEPOL.TOS","",0);
+                ptest_assert_msg(loaded>0,"load moved private-image companion");
+                if(loaded>0) {
+                    child=Pexec(106,0,(void *)loaded,0);
+                    ptest_assert_msg(child>0,"start independently owned moved image");
+                    if(child>0) {
+                        status=Pwaitpid(child,0,0);
+                        ptest_assert_msg((status>>16)==child && !(status&65535),"moved image private clone execution passes");
+                    } else {
+                        (void)Mfree(((BASEPAGE *)loaded)->p_env);(void)Mfree((void *)loaded);
+                    }
+                }
+                if(pclone_trap(&after,SHARED_PEXEC_SNAPSHOT_QUERY)!=0) conserved=0;
+                if(cycle>=1) for(index=0;index<SP_COUNT;index++)
+                    if(before.count[index]!=after.count[index]) {
+                        printf("moved image lifetime counter %d: %lu -> %lu\r\n",index,
+                            (unsigned long)before.count[index],(unsigned long)after.count[index]);conserved=0;
+                    }
+            }
+            ptest_assert_msg(conserved,"moved source/child complete lifetimes conserve every resource counter");
+        }
+#endif
+#if defined(TEST_WITH_EXEC_HANDOFF_TEST)
+        ptest_log_flush();
+        child = Pexec(100,"EXECHAND.TOS","",0);
+        ptest_assert_msg(child > 0,"managed execution transport companion starts");
+        if (child > 0) {
+            status = Pwaitpid(child,0,0);
+            ptest_assert_msg((status >> 16) == child && !(status & 65535),
+                             "same-PROCESS transport later completes once");
+            ptest_assert_msg(Pwaitpid(child,1,0) < 0,"transport companion reaped once");
+        }
+#endif
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
+        ptest_log_flush();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        /* Every success path, not only the injected failures, must retire
+         * the old roots, containers, environments and stacks exactly. */
+        ptest_assert_msg(mlt_snapshot(&mlt_before)==0,"snapshot before Pexec(200) runs");
+#endif
+        child = Pexec(100,"EXEC200.TOS","",0);
+        ptest_assert_msg(child > 0,"Pexec(200) subject starts as a managed PROCESS");
+        if (child > 0) {
+            long event = exec200_probe((const void *)(long)child, EXEC_REPLACE_WAIT + 0);
+            long go;
+            /* One committed generation, observed while the PROCESS is live. */
+            ptest_assert_msg((event & 0x1ff) == 1,"committed-exec generation 1 observed, not completion");
+            ptest_assert_msg(Pwaitpid(child,1,0) == 0,"exec neither completes nor publishes the PROCESS for reaping");
+            go = Fcreate("GO970.TMP",0);
+            ptest_assert_msg(go >= 0,"release the replaced image");
+            if (go >= 0) Fclose((short)go);
+            status = Pwaitpid(child,0,0);
+            ptest_assert_msg((status >> 16) == child && (status & 65535) == 70,
+                             "replaced PROCESS later completes once, from its final image");
+            ptest_assert_msg(Pwaitpid(child,1,0) < 0,"replaced PROCESS reaped once");
+            ptest_assert_msg(Fdelete("GO970.TMP") == 0 && Fdelete("EXEC200.TMP") == 0,
+                             "Pexec(200) test files");
+        }
+        /* The same subject as a synchronously nested child: replaced through
+         * its launcher frame, and this Pexec(0) returns its final status. */
+        ptest_log_flush();
+        ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001N",0) == 70,
+                         "nested Pexec(200) relaunch completes once through the launcher");
+        ptest_assert_msg(Fdelete("EXEC200.TMP") == 0,"nested Pexec(200) test file");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        ptest_assert_msg(mlt_snapshot(&mlt_after)==0,"snapshot after Pexec(200) runs");
+        mlt_equal(&mlt_before,&mlt_after);
+#endif
 #endif
     }
 #endif

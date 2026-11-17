@@ -1,4 +1,5 @@
 /*      GEMOBED.C       05/29/84 - 06/20/85             Gregg Morris    */
+#include "aescontext.h"
 /*      merge High C vers. w. 2.2               8/21/87         mdf     */
 
 /*
@@ -136,12 +137,12 @@ static WORD find_pos(char *str, WORD pos)
 }
 
 
-static void pxl_rect(OBJECT *tree, WORD obj, WORD ch_pos, GRECT *pt)
+static void pxl_rect(AES_RENDER_PARAM OBJECT *tree, WORD obj, WORD ch_pos, GRECT *pt)
 {
     GRECT   o;
 
-    ob_actxywh(tree, obj, &o);
-    gr_just(edblk.te_just, edblk.te_font, edblk.te_ptmplt,
+    ob_actxywh(AES_RENDER_ARG tree, obj, &o);
+    gr_just(AES_RENDER_ARG edblk.te_just, edblk.te_font, edblk.te_ptmplt,
                 o.g_w, o.g_h, &o);
 
     pt->g_x = o.g_x + (ch_pos * gl_wchar);
@@ -154,32 +155,32 @@ static void pxl_rect(OBJECT *tree, WORD obj, WORD ch_pos, GRECT *pt)
 /*
  *  Routine to redraw the cursor or the field being edited
  */
-static void curfld(OBJECT *tree, WORD obj, WORD new_pos, WORD dist)
+static void curfld(AES_RENDER_PARAM OBJECT *tree, WORD obj, WORD new_pos, WORD dist)
 {
     GRECT   oc, t;
 
-    pxl_rect(tree, obj, new_pos, &t);
+    pxl_rect(AES_RENDER_ARG tree, obj, new_pos, &t);
     if (dist)
         t.g_w += (dist - 1) * gl_wchar;
     else
     {
-        gsx_attr(FALSE, MD_XOR, BLACK);
+        gsx_attr(AES_RENDER_ARG FALSE, MD_XOR, BLACK);
         t.g_y -= 3;
         t.g_h += 6;
     }
 
     /* set the new clip rect*/
-    gsx_gclip(&oc);
-    gsx_sclip(&t);
+    gsx_gclip(AES_RENDER_ARG &oc);
+    gsx_sclip(AES_RENDER_ARG &t);
 
     /* redraw the field */
     if (dist)
-        ob_draw(tree, obj, 0);
+        ob_draw(AES_RENDER_ARG tree, obj, 0);
     else
-        gsx_cline(t.g_x, t.g_y, t.g_x, t.g_y+t.g_h-1);
+        gsx_cline(AES_RENDER_ARG t.g_x, t.g_y, t.g_x, t.g_y+t.g_h-1);
 
     /* turn on cursor in new position */
-    gsx_sclip(&oc);
+    gsx_sclip(AES_RENDER_ARG &oc);
 }
 
 
@@ -276,14 +277,14 @@ static WORD check(char *in_char, char valchar)
  *  Find STart and FiNish of a raw string relative to the template
  *  string.  The start is determined by the InDeX position given.
  */
-static void ob_stfn(WORD idx, WORD *pstart, WORD *pfinish)
+static void ob_stfn(AES_RENDER_PARAM WORD idx, WORD *pstart, WORD *pfinish)
 {
     *pstart = find_pos(D.g_tmpstr, idx);
     *pfinish = find_pos(D.g_tmpstr, strlen(D.g_rawstr));
 }
 
 
-static WORD ob_delit(WORD idx)
+static WORD ob_delit(AES_RENDER_PARAM WORD idx)
 {
     if (D.g_rawstr[idx])
     {
@@ -295,7 +296,7 @@ static WORD ob_delit(WORD idx)
 }
 
 
-WORD ob_edit(OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
+WORD ob_edit(AES_RENDER_PARAM OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
 {
     WORD    pos, len;
     WORD    ii, no_redraw, start, finish, nstart, nfinish;
@@ -335,9 +336,9 @@ WORD ob_edit(OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
         no_redraw = TRUE;
 
         /* find cursor & turn it off */
-        ob_stfn(*idx, &start, &finish);
+        ob_stfn(AES_RENDER_ARG *idx, &start, &finish);
         cur_pos = start;
-        curfld(tree, obj, cur_pos, 0);
+        curfld(AES_RENDER_ARG tree, obj, cur_pos, 0);
 
         switch(in_char)
         {
@@ -345,7 +346,7 @@ WORD ob_edit(OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
             if (*idx > 0)
             {
                 *idx -= 1;
-                no_redraw = ob_delit(*idx);
+                no_redraw = ob_delit(AES_RENDER_ARG *idx);
             }
             break;
         case ESCAPE:
@@ -355,7 +356,7 @@ WORD ob_edit(OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
             break;
         case DELETE:
             if (*idx <= (edblk.te_txtlen - 2))
-                no_redraw = ob_delit(*idx);
+                no_redraw = ob_delit(AES_RENDER_ARG *idx);
             break;
         case ARROW_LEFT:
             if (*idx > 0)
@@ -408,11 +409,11 @@ WORD ob_edit(OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
         if (!no_redraw)
         {
             ob_format(edblk.te_just, D.g_rawstr, D.g_tmpstr, D.g_fmtstr);
-            ob_stfn(*idx, &nstart, &nfinish);
+            ob_stfn(AES_RENDER_ARG *idx, &nstart, &nfinish);
             start = min(start, nstart);
             dist = max(finish, nfinish) - start;
             if (dist)
-                curfld(tree, obj, start, dist);
+                curfld(AES_RENDER_ARG tree, obj, start, dist);
         }
         break;
     case EDEND:
@@ -421,6 +422,6 @@ WORD ob_edit(OBJECT *tree, WORD obj, WORD in_char, WORD *idx, WORD kind)
 
     /* draw/erase the cursor */
     cur_pos = find_pos(D.g_tmpstr, *idx);
-    curfld(tree, obj, cur_pos, 0);
+    curfld(AES_RENDER_ARG tree, obj, cur_pos, 0);
     return TRUE;
 }

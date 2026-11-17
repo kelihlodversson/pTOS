@@ -38,6 +38,7 @@
 /po/messages.pot
 /tests/run_tests.c
 /runtests.tos
+/EXECHAND.TOS
 /pieprobe.tos
 /poweroff.tos
 /reboot.tos
@@ -45,6 +46,7 @@
 /halt.tos
 /LOADFAIL.TOS
 /ISOPROBE.TOS
+/HIIMAGE.TOS
 /relocprobe-unpacked.tos
 /PTRELOC.TOS
 /relocprobe2-unpacked.tos

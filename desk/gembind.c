@@ -62,7 +62,7 @@
 typedef struct gemblkstr
 {
         UWORD           *gb_pcontrol;
-        UWORD           *gb_pglobal;
+        AESGLOBAL       *gb_pglobal;
         UWORD           *gb_pintin;
         UWORD           *gb_pintout;
         intptr_t        *gb_padrin;
@@ -72,7 +72,7 @@ typedef struct gemblkstr
 static GEMBLK           gb;
 
 static UWORD            control[C_SIZE];
-GLOBAL UWORD            global[G_SIZE];
+GLOBAL AESGLOBAL        global;
 static UWORD            int_in[I_SIZE];
 static UWORD            int_out[O_SIZE];
 static intptr_t         addr_in[AI_SIZE];
@@ -170,7 +170,7 @@ static WORD gem_if(UWORD ctrlcode)
 WORD appl_init(void)
 {
     gb.gb_pcontrol = control;
-    gb.gb_pglobal = global;
+    gb.gb_pglobal = &global;
     gb.gb_pintin = int_in;
     gb.gb_pintout = int_out;
     gb.gb_padrin = addr_in;

@@ -19,7 +19,9 @@ class DeclarationGuard(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
         for name in ("doc/libaes-compatibility.md", "lib/aes/exports.map",
-                     "include/gem.h", "include/rectfunc.h", "aes/gemsuper.c"):
+                     "include/libaes.h", "include/rectfunc.h", "aes/gemsuper.c",
+                     "lib/gemlib/ptos/gem.h",
+                     *[str(path.relative_to(ROOT)) for path in (ROOT / "lib/gemlib/ptos").glob("*.c")]):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes((ROOT / name).read_bytes())
@@ -42,7 +44,22 @@ class DeclarationGuard(unittest.TestCase):
     def test_private_native_export(self):
         path = self.root / "lib/aes/exports.map"
         path.write_text(path.read_text().replace("global:", "global: aes_session_open;", 1))
-        with self.assertRaisesRegex(AssertionError, "private CUIS exports: aes_session_open"):
+        with self.assertRaisesRegex(AssertionError, "non-mt libaes exports: aes_session_open"):
+            self.check()
+
+    def test_classic_binding_exports_are_rejected(self):
+        path = self.root / "lib/aes/exports.map"
+        original = path.read_text()
+        for name in ("appl_init", "aes_global", "inside"):
+            with self.subTest(name=name):
+                path.write_text(original.replace("global:", "global: " + name + ";", 1))
+                with self.assertRaisesRegex(AssertionError, "non-mt libaes exports: " + name):
+                    self.check()
+
+    def test_missing_gemlib_implementation(self):
+        path = self.root / "lib/gemlib/ptos/a_appl_init.c"
+        path.write_text("/* appl_init(...) { return mt_appl_init(...); } */\n")
+        with self.assertRaisesRegex(AssertionError, "missing GEMlib definition: appl_init"):
             self.check()
 
     def test_commented_exports(self):
@@ -52,7 +69,6 @@ class DeclarationGuard(unittest.TestCase):
         path.write_text(re.sub(bindings, lambda match: "/* " + match[0] + " */", original))
         with self.assertRaisesRegex(AssertionError, "missing_exports") as failure:
             self.check()
-        self.assertIn("'appl_init'", str(failure.exception))
         self.assertIn("'mt_appl_init'", str(failure.exception))
 
     def test_export_comment_labels(self):
@@ -81,7 +97,7 @@ const char *example = "case NEW_OPERATION:";
         self.check()
 
     def test_commented_prototypes(self):
-        for header, binding in (("include/gem.h", "mt_appl_init"),
+        for header, binding in (("include/libaes.h", "mt_appl_init"),
                                 ("include/rectfunc.h", "inside")):
             path = self.root / header
             original = path.read_text()
@@ -97,12 +113,12 @@ const char *example = "case NEW_OPERATION:";
             path.write_text(original)
 
     def test_comment_markers_in_literals(self):
-        path = self.root / "include/gem.h"
+        path = self.root / "include/libaes.h"
         path.write_text('const char *examples[] = {"/*", "//", "\\\"*/"};\n' + path.read_text())
         self.check()
 
     def test_comment_between_name_and_arguments(self):
-        path = self.root / "include/gem.h"
+        path = self.root / "include/libaes.h"
         path.write_text(path.read_text().replace("mt_appl_init(", "mt_appl_init /* note */ ("))
         self.check()
 

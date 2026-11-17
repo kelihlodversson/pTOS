@@ -1,0 +1,146 @@
+Immutable executable policy prerequisite (#971 / #970 / #895)
+============================================================
+
+This focused increment was written against accepted epic
+00292ebe60ef3ff31f15d56659c5c85938b57a00 and later reconciled with the epic
+after the captured-reservation (#974), PROCESS descriptor (#975) and
+executable-replacement staging (#973) prerequisites were merged. It changes
+none of their ownership rules. Policy capture refuses a #973 replacement
+staging container, which is owned by its exact replacement ticket and is not a
+pending launch image. Descriptor snapshots and policy preparation are
+independent transaction members with separate release paths.
+
+Both planned MMU Pfork and Pvfork use the existing PRIVATE_VM/COW constructor.
+Pvfork additionally suspends its calling parent THREAD until exact-child final
+completion or committed same-PROCESS Pexec(200). Its private writes are not
+visible in the parent's private memory: that deliberate FreeMiNT deviation is
+independent of this metadata prerequisite. Neither public fork is activated.
+
+Value contract
+--------------
+
+kproc_image_policy_capture() reads an exact retained live KPROC, either a
+running image or an unstarted pending loader image. It projects trusted image
+metadata into KPROC_IMAGE_POLICY by value. The output changes only on success.
+Program and interpreter segment addresses, lengths and ELF policy flags,
+entry points, image presence, trusted legacy text policy, standard-entry policy
+and interpreter byte accounting are validated without touching a user PD,
+reading an executable file, probing PTEs, allocating, invoking a callback or
+yielding. The loader's separate interpreter entry/accounting is normalized
+into the value; a source interpreter recipe is not retained.
+
+Classic PRG launch intentionally leaves the generic KPROC entry field zero.
+Its text entry is therefore recorded beside the trusted text length at the
+existing kproc_record_legacy_text() loader boundary. Later policy capture reads
+that immutable value; edits to the public basepage cannot change it. Neither
+the text entry nor its projection conveys backing or permission authority.
+
+The value has no pointers. In particular it excludes source bytes/filesz,
+source PROCESS/PD identities, environment/DTA, initial user SP, stack/THREAD/
+TID/root ownership, cleanup receipts, mapping births, loader recipes and file
+resources. Segment shape, permission flags, executable entry, overflow, page
+overlap and interpreter accounting are checked before admission. This is an
+immutable policy projection, not a loader image or backing authority.
+
+Preparation and activation
+--------------------------
+
+proc_clone_prepare_image_policy() accepts only an owned NEW_PROCESS transaction
+with an already prepared startup and retained initial stack. SAME_PROCESS,
+PREPARED_PROCESS and LOADED_PROCESS cannot use this adapter. The KPROC owner
+requires an empty unpublished target, its sole THREAD_NEW initial identity,
+the exact TID/root association and its canonical prepared mapping membership.
+Existing live executable, image policy, initial SP, loader, legacy, stack and
+execution ownership is not replaced or bypassed.
+
+The opaque preparation owns one target identity reference and a copied value.
+The target holds only a borrowed marker, without a self-reference cycle. All
+allocation and retention is complete before publication. Validation never
+follows a borrowed prepared-member alias during MAPPING_ABORTING callbacks.
+Abort clears the marker before releasing references. Target destruction
+cancels the marker before callbacks and payload retirement; a cancelled external
+receipt thereafter owns only the immutable identity prefix.
+
+Existing proc_clone publication first commits mapping owners, then calls its
+existing kproc_clone_commit_run() activation. Only that internal boundary
+installs the policy, after final readiness checks. Installation performs only
+bounded copies and stores, without allocation, callbacks, releases or failure.
+has_image remains false throughout preparation. The existing THREAD/startup,
+kernel/scheduler stack, root adoption, observer and scheduler publication paths
+remain the owners of execution. No live-PROCESS adoption API is introduced.
+The consumed preparation is released after publication exclusion ends.
+
+Policy is not memory authority
+------------------------------
+
+Installed projections are marked image_policy_only. Such metadata may report
+the executable policy and contribute image byte accounting, but cannot mint a
+captured image reservation or use the standard-image Mprot path. Readable or
+executable PTEs do not change that restriction. Ordinary heap/mmap ownership,
+exact existing captured reservations and all original mapping permission,
+backing and lifetime checks remain authoritative.
+
+A future owned-image bundle must prepare and authenticate the actual new image
+and mapping/reservation ownership separately. This interface does not grant a
+right to remove the marker, copy an old cleanup ticket, expand permissions,
+adopt a borrowed PD or mutate a started PROCESS. Same-PROCESS executable commit
+still requires the separate typed scheduler/loader execution handoff in #970
+and #713. The pure policy cannot implement that handoff.
+
+Validation and gates
+--------------------
+
+CONF_WITH_IMAGE_POLICY and CONF_WITH_IMAGE_POLICY_TEST default off. Normal
+presets select neither. The latter uses private Pclone size selectors
+(include/image_policy_test.h, disjoint from the #974 PRIVATE_SNAPSHOT_QUERY
+value, which shares a regression configuration with it) and the
+existing SHARE_VM constructor only to prove value capture, prepared activation,
+correct PID/TID distinction, child policy, rollback and resource conservation.
+It is not private image ownership, saved fork return or a public API.
+
+tools/test-image-policy.py uses actual KPROC, KTHREAD, KASPACE, proc_clone and
+observer code with the existing counted hosted MMU provider. Normal and
+ELF_SHARED variants cover live/pending capture, unchanged error outputs,
+interpreter normalization, malformed/overlapping policy, empty-target/stack
+admission, allocation failure, competing preparation, poisoned transaction
+early-abort paths, value independence, consumed/cancelled tokens, exact final
+identity/root/allocation conservation and retirement while an observer root
+survives. Projected policy plus resident executable leaves cannot create a
+captured image hold or change image permissions. Sanitizer/leak and fortified
+modes exercise the same production owners.
+
+The small IMAGEPOL.TOS user-mode companion preserves the classic self-reload
+test image's existing memory budget. Its native fixture repeats activation ten times, checks both
+new preparation-failure prefixes plus cancelled publication before each of the
+eight measured retries, captures all existing resource counters before/during/
+after execution and canonical wait, and requires exact final baselines without
+resetting counters or destroying the root. Its required marker is enforced by
+the regression driver. Full suite and five shutdown probes remain mandatory.
+
+Current scope and remaining ownership
+-------------------------------------
+
+This policy increment does not resolve #971. In particular it does not make
+UH_IMAGE, moved source images, original basepage/environment/DTA representations
+or absent captured ancestor pages independently owned in another private root.
+The captured-reservation slice from PR #974 is now present in the epic but is
+not used by this metadata policy. No nheap, pending, lender, give-back, multi-THREAD or source-sharing
+admission restriction is removed here. The verified moved-image negative
+control and missing complete owned-image contract remain recorded on #971.
+
+The committed tools/test-private-image-admission.py control runs actual
+kproc_load_alloc(), kproc_set_moved_image(), move_loaded_image(), MMU transfer
+and protection before checking private-runtime admission. An empty sole source
+is admitted and value-policy capture of the independently owned UH_IMAGE
+succeeds, but its private-snapshot admission still rejects. The normal driver
+requires that known rejection and exact cleanup; --require instead exits1 for
+the still-missing capability. This reproduces the blocker from the committed
+candidate without local evidence files. It is separate from the successful
+immutable-policy tests, not a native/public fork test or permission to remove
+the guard.
+
+It also does not implement Pexec(200), publish an exec-commit event, resolve
+descriptor inheritance or complete either public fork. A fresh pending-image
+bundle may consume the copied value after separate acceptance/integration;
+same-PID replacement needs its own exact execution handoff and delayed old
+stack/root retirement. No second process, memory or completion manager exists.

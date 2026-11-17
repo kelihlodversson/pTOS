@@ -1,0 +1,9 @@
+/* Private regression transport; no production GEMDOS ABI assignment. */
+#ifndef PRIVATE_SNAPSHOT_TEST_H
+#define PRIVATE_SNAPSHOT_TEST_H
+#define PRIVATE_SNAPSHOT_QUERY 0xc9710000UL
+#define PRIVATE_SNAPSHOT_PRESENT 1U
+#define PRIVATE_SNAPSHOT_LAZY 2U
+#define PRIVATE_SNAPSHOT_WRITE 4U
+#define PRIVATE_SNAPSHOT_USER 8U
+#endif

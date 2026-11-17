@@ -283,7 +283,12 @@ C_SYM(termuser):
         .bss
         .even
 
+#if CONF_WITH_BINFMT
+        /* Match the native interpreter-launch stack budget on ARM. */
+        .ds.b   8192
+#else
         .ds.w   1000
+#endif
 fstrt:
         .ds.l   1
 

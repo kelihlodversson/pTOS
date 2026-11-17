@@ -2694,6 +2694,9 @@ static LONG active_clone_construct(UWORD index)
     UQUAD frame = 0x1122334455667788ULL, after;
     PD *controller = kproc_get_parent(run);
     LONG pins_before = procmem_pins(controller);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    ULONG map_pins_before;
+#endif
     UQUAD entry_flags, exit_flags;
     __asm__ volatile ("pushfq; popq %0" : "=r"(entry_flags));
     CHECK((entry_flags & 0x200) && !ksched_test_clone_masked(), "active construction starts outside IRQ exclusion");
@@ -2739,6 +2742,9 @@ static LONG active_clone_construct(UWORD index)
     if (active_clone.scenario == 5) CHECK(kproc_mprot(run,data,PAGE,PROT_READ) == E_OK, "revoke active publication output");
     if (active_clone.scenario == 6) proc_clone_test_cancel_publication();
     if (active_clone.scenario == 7) kproc_test_fail_clone_controller();
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    map_pins_before=aspace_test_pin_count(as,FALSE);
+#endif
     error = proc_clone_spawn(&tx,&active_clone.ids[index]);
     __asm__ volatile ("pushfq; popq %0" : "=r"(exit_flags));
     CHECK((entry_flags & 0x200) == (exit_flags & 0x200) && !ksched_test_clone_masked(),
@@ -2748,7 +2754,16 @@ static LONG active_clone_construct(UWORD index)
         CHECK(!tx && active_clone.ids[index].pid && active_clone.ids[index].tid,
               "active publication consumes transaction and returns distinct ids without waiting");
         active_clone.successes++;
+#if CONF_WITH_PRIVATE_CLONE
+        CHECK(procmem_pins(controller)==pins_before+2,
+              "published child owns independent controller allocation and backend references");
+#if CONF_WITH_PRIVATE_CLONE_TEST
+        CHECK(aspace_test_pin_count(as,FALSE)==map_pins_before+3,
+              "published child owns exact controller and two compatibility backend borrows");
+#endif
+#else
         CHECK(procmem_pins(controller) == pins_before + 1, "published child owns an independent controller allocation pin");
+#endif
         CHECK(proc_clone_observer_state(active_clone.observers[index]) == PROC_CLONE_OBSERVER_PUBLISHED,
               "published child cannot run before creator yields");
         CHECK(!proc_clone_observer_result(active_clone.observers[index], &(PROC_CLONE_COMPLETION){0,0,0}),
@@ -2763,7 +2778,11 @@ static LONG active_clone_construct(UWORD index)
               "active output rollback before first publication store");
         CHECK(active_clone.scenario == 6 ? !tx : tx != NULL, "explicit cancellation consumes; preflight failure preserves transaction");
         proc_clone_abort(&tx);
-        CHECK(procmem_pins(controller) == pins_before && aspace_copy_from_user(as,&after,stack+2*PAGE-8,sizeof(after)) && after == frame,
+        CHECK(procmem_pins(controller) == pins_before &&
+#if CONF_WITH_PRIVATE_CLONE_TEST
+              aspace_test_pin_count(as,FALSE)==map_pins_before &&
+#endif
+              aspace_copy_from_user(as,&after,stack+2*PAGE-8,sizeof(after)) && after == frame,
               "failed/cancelled publication releases its controller ownership and preserves return slot");
         if (active_clone.observers[index]) CHECK(proc_clone_observer_state(active_clone.observers[index]) == PROC_CLONE_OBSERVER_CANCELLED,
               "cancelled observer has no fabricated process completion");
@@ -5258,13 +5277,14 @@ static void test_mmap(void)
         CHECK(aspace_private_pages(as) == private_a,
               "unmap frees only pages that were backed");
         CHECK(kproc_mmap(a, 0, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == PTOS_MMAP_BASE &&
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == USER_SYSTEM_LIMIT &&
               aspace_private_pages(as) == private_a,
-              "full mapping window is reserved without physical pages");
-        CHECK(kproc_demand_page(a, PTOS_MMAP_LIMIT - PAGE, ASPACE_PROT_WRITE) == 1 &&
+              "large mapping skips the system window without physical pages");
+        CHECK(kproc_demand_page(a, USER_SYSTEM_LIMIT + PTOS_MMAP_LIMIT - PTOS_MMAP_BASE - PAGE,
+                                ASPACE_PROT_WRITE) == 1 &&
               aspace_private_pages(as) == private_a + 1,
               "sparse reservation backs only its last page on touch");
-        CHECK(kproc_munmap(a, PTOS_MMAP_BASE, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE) == 0 &&
+        CHECK(kproc_munmap(a, USER_SYSTEM_LIMIT, PTOS_MMAP_LIMIT - PTOS_MMAP_BASE) == 0 &&
               aspace_private_pages(as) == private_a,
               "sparse unmap skips untouched pages");
     } else {
@@ -6904,8 +6924,9 @@ static void test_x32image(void)
             mutated(good, 24, 4, (ULONG)layout.seg[segment].vaddr,
                     "entry point in a non-executable segment refused");
     }
-    mutated(good, 52 + 8, 4, 0x100000, "segment below the image window refused");
-    mutated(good, 52 + 8, 4, 0x7ff000, "segment running past the image window refused");
+    mutated(good, 52 + 8, 4, 0, "segment in the low guard refused");
+    mutated(good, 52 + 8, 4, USER_SYSTEM_BASE, "segment in the system window refused");
+    mutated(good, 52 + 8, 4, 0x7ffff000, "segment in the stack refused");
     mutated(good, 52 + 24, 4, 7, "a writable and executable segment refused");
     mutated(good, 52 + 16, 4, 0x7fffffff, "file size beyond the file refused");
     mutated(good, 52 + 20, 4, 0, "empty segment refused");

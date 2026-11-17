@@ -40,6 +40,8 @@ BOOL kaspace_mutation_reentrant(const KASPACE *space);
  * mmap subranges are split before publication; heap claims cover one complete
  * allocation. Tokens authenticate birth and canonical PROCESS identity. */
 typedef struct { UQUAD ticket; } KASPACE_ATTACHMENT;
+/* Private-source admission checks canonical associations, not root refcounts. */
+BOOL kaspace_private_source_owned(const KASPACE *,UQUAD,const void *);
 BOOL kaspace_mapping_owned(KASPACE *,UQUAD,void *,UQUAD,VADDR,VADDR);
 LONG kaspace_attachment_acquire(KASPACE *,UQUAD,VADDR,VADDR,UQUAD,void *,
                                 UQUAD,void *,KASPACE_ATTACHMENT *);
@@ -231,8 +233,11 @@ struct aspace *kaspace_backend(const KASPACE *space);
 /* Drop one owning reference. The final drop destroys the backend, then
  * releases mapping metadata and its backing references. */
 void kaspace_put(KASPACE *space);
-/* Independent cloning uses the test-gated architecture backend. Captured
- * lazy reservation receipts are not copied; fork consumers must reject them. */
+/* Test-gated independent backend. Copies ordinary metadata and live captured
+ * reservation authority into child-owned canonical records with fresh births.
+ * Captured cleanup tickets/fences and borrowed physical aliases are not copied.
+ * The constructor must call kaspace_member_claim_private before publication;
+ * canonical records retire at final mapping-member loss, independently of reap. */
 LONG kaspace_clone(const KASPACE *source, KASPACE **result);
 #if CONF_WITH_PRIVATE_CLONE
 BOOL kaspace_has_captured_lazy(const KASPACE *source);

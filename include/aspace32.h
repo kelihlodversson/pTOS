@@ -19,8 +19,8 @@
 
 /* The process window of include/procmem.h: where procmem blocks (basepage,
  * environment and TPA) are, in every address space that maps them. */
-#define PROCMEM_WINDOW_BASE     VADDR_C(0x00200000)
-#define PROCMEM_WINDOW_BYTES    VADDR_C(0x00200000)
+#define PROCMEM_WINDOW_BASE     USER_PROCMEM_BASE
+#define PROCMEM_WINDOW_BYTES    USER_PROCMEM_SIZE
 
 /* what the page-table backend keeps beside the hardware bits of a leaf */
 #define ASPACE_LEAF_OWNED   0x1     /* a private page: freed with the address space */

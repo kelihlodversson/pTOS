@@ -26,6 +26,9 @@
 #include "emutos.h"
 #include "string.h"
 #include "fs.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #include "bdosstub.h"
 
 long kdos_fopen(long name, long mode)
@@ -43,13 +46,32 @@ long kdos_fopen(long name, long mode)
  * FAT close error can also retain the reference, whereas a PFS close error
  * can consume it. The first error is returned even if a later attempt frees
  * the reference. This wrapper never transfers caller ownership. Classic
- * kernels keep their historical bounded interrupted-close behavior.
+ * kernels keep their historical bounded interrupted-close behavior (only an
+ * interrupted close is repeated: one that returned, even with an error, has
+ * given up its reference already).
+ * A caller providing an error record also retains the original failing
+ * drive/error (the first hard error, on every kernel) for rethrowing after
+ * its other resources have been released.
  */
-long kdos_fclose(long h)
+long kdos_fclose_error(long h, DISK_ERROR *error)
 {
 #if CONF_WITH_USER_ASPACE
     FS_CLOSE_REPORT report;
-    return fs_close_bounded((WORD)h,FALSE,&report);
+    long result;
+
+    memset(&report, 0, sizeof(report));
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (h>=0 && process_files_managed(run)) result=process_files_close(run,(WORD)h,FALSE,&report);
+    else
+#endif
+    result=fs_close_bounded((WORD)h,FALSE,&report);
+    if (error && !error->code && report.first_disk_error)
+    {
+        error->code = report.error;
+        error->drive = report.first_drive;
+        error->rw = report.first_rw;
+    }
+    return result;
 #else
     long rc = 0, r;
     volatile BOOL returned;
@@ -58,11 +80,11 @@ long kdos_fclose(long h)
     for (tries = 0; tries <= BLKDEVNUM; tries++)
     {
         returned = FALSE;
-        r = DISK_CALL(__extension__ ({
+        r = DISK_CALL_ERROR(__extension__ ({
             long closed = xclose((WORD)h);
             returned = TRUE;
             closed;
-        }));
+        }), error);
         if (!tries)
             rc = r;
         if (returned)
@@ -71,6 +93,11 @@ long kdos_fclose(long h)
 
     return rc;
 #endif
+}
+
+long kdos_fclose(long h)
+{
+    return kdos_fclose_error(h, NULL);
 }
 
 long kdos_fread(long h, long count, long buf)

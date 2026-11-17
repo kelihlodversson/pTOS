@@ -14,7 +14,8 @@
 #     that is not a configuration;
 #   - its group does not fit its architecture, or is not in the workflow;
 #   - .github/pr-skip-configs has a name that is not a configuration, or an
-#     x86 one (a pull request builds those whatever it says).
+#     x86 one that tools/ci-x86_64.sh boots or runs tests on (that is the only
+#     place those run on a pull request).
 
 list=.github/ci-configs
 skip=.github/pr-skip-configs
@@ -56,7 +57,12 @@ done
 for name in $(sed -e 's/#.*//' "$skip" | awk 'NF { print $1 }'); do
     [ -e "configs/${name}_defconfig" ] || fail "$skip has $name, which is not a configuration"
     case $(sed -e 's/#.*//' "$list" | awk -v n="$name" '$1 == n { print $2 }') in
-        x86-*) fail "$skip has $name, an x86 configuration, which a pull request builds anyway" ;;
+        x86-*)
+            case $name in
+                pc-x86_64|pc-x86_64-vdi|pc-x86_64-callbacks|pc-x86_64-eager|pc-x86_64-desktop-tests*)
+                    fail "$skip has $name, which tools/ci-x86_64.sh boots or tests: a pull request needs it" ;;
+            esac
+            ;;
     esac
 done
 
@@ -65,6 +71,9 @@ for group in $(sed -e 's/#.*//' "$list" | awk 'NF { print $2 }' | sort -u); do
     grep -qE "group: $group[,}]" "$workflow" ||
         fail "group $group of $list is not in the matrix of a job of $workflow"
 done
+
+# no two configurations build the same thing (#989)
+python3 tools/check-duplicate-configs.py || status=1
 
 [ $status -eq 0 ] && echo "Every configuration is built by CI."
 exit $status

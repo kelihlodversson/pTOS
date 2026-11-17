@@ -40,7 +40,7 @@ static int equal(const char *a, const char *b)
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
 }
-static short receive(short *message, unsigned long timeout, short *global)
+static short receive(short *message, unsigned long timeout, AESGLOBAL *global)
 {
     return mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
                         message,timeout,NULL,NULL,NULL,NULL,NULL,NULL,global);
@@ -55,7 +55,7 @@ int gem_chain_client(int argc, char **argv)
     role = argv[1][0]; parent = (short)decode(argv[1]+1);
     VERIFY(parent > 0 && me > 0);
     if (role == 'h') {
-        VERIFY(receive(message,5000,aes_global) & MU_MESAG);
+        VERIFY(receive(message,5000,&aes_global) & MU_MESAG);
         return 0;
     }
     if (role == 't' || role == 'u' || role == 'v' || role == 'w' || role == 'k') {
@@ -97,7 +97,7 @@ int gem_chain_client(int argc, char **argv)
     if (role == 'o' || role == 'q') VERIFY(call(1,0x3e,output,0,0,0) == 0);
     if (role == 'r') {
         target[1] = 't';
-        VERIFY(mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target,aes_global) == 1);
+        VERIFY(mt_shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target,&aes_global) == 1);
     }
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,"ABSENT.PRG",target));
     if (role == 'c') {
@@ -115,7 +115,7 @@ int gem_chain_client(int argc, char **argv)
     VERIFY(shel_get(state,4) == 1 && equal(state,"PEND"));
     message[1] = me; message[3] = role; message[4] = (short)call(1,0x10b,0,0,0,0);
     VERIFY(appl_write(parent,sizeof(message),message) == 1);
-    if (role != 'd') VERIFY(receive(message,5000,aes_global) & MU_MESAG);
+    if (role != 'd') VERIFY(receive(message,5000,&aes_global) & MU_MESAG);
     /* Replace the staged handoff while helpers occupy the initial arena.
      * The second snapshot uses the current WORK directory; restore its input
      * environment only for preparation, then mutate it again before exit. */
@@ -129,7 +129,7 @@ int gem_chain_client(int argc, char **argv)
     if (role == 'x') _Exit(41);
     return 37;
 }
-int gem_chain_checks(short *global)
+int gem_chain_checks(AESGLOBAL *global)
 {
     static const char roles[] = { 's','r','c','f','x','d','j','e','o','p','q','z','n' };
     static const char environment[] = "CHAIN_ENV=original\0\0";
@@ -138,7 +138,7 @@ int gem_chain_checks(short *global)
     unsigned i, j;
     int32_t status;
     for (i = 0; i < sizeof(roles); i++) {
-        tail[1] = roles[i]; encode(tail+2,(uint32_t)global[2]);
+        tail[1] = roles[i]; encode(tail+2,(uint32_t)global->ap_id);
         encode(tail+10,0); /* expected logical PPID after creator retirement */
         status = call(1,0x4b,roles[i] == 'd' ? 0 : 100,(uintptr_t)"APPS\\CHAIN.PRG",
                       (uintptr_t)tail,(uintptr_t)environment);
@@ -162,7 +162,7 @@ int gem_chain_checks(short *global)
                     VERIFY(status > 0); helpers[j] = (short)status;
                 }
             }
-            message[0] = 0x7d11; message[1] = global[2];
+            message[0] = 0x7d11; message[1] = global->ap_id;
             VERIFY(appl_write(source_client,sizeof(message),message) == 1);
             status = call(1,0x13a,source,0,0,0);
             VERIFY(status == (int32_t)(((uint32_t)source << 16) | (roles[i] == 'f' ? 0x0400 : roles[i] == 'x' ? 41 : 37)));
@@ -175,7 +175,7 @@ int gem_chain_checks(short *global)
         if (roles[i] == 'e') {
             VERIFY(evnt_timer(20) == 1);
             for (j = 0; j < 5; j++) {
-                message[0] = 0x7d11; message[1] = global[2];
+                message[0] = 0x7d11; message[1] = global->ap_id;
                 helper_client = appl_find((const char *)(uintptr_t)(0xffff0000UL | (unsigned short)helpers[j]));
                 VERIFY(helper_client > 0 && appl_write(helper_client,sizeof(message),message) == 1);
                 VERIFY(call(1,0x13a,helpers[j],0,0,0) == (int32_t)((uint32_t)helpers[j] << 16));

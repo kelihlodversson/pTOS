@@ -1,8 +1,12 @@
 # External libaes compatibility and cutover
 
 This is the current **x32 `CONF_WITH_LIBAES`** source API inventory for #661.
-Applications use normal GEMlib headers and `libaes.so`, without CUIS setup or
-a userspace AES server. The earlier typed x32 kernel AES service and its
+Native applications use GEMlib's pTOS `gem.h` backend and `libaes.so`, without
+CUIS setup or a userspace AES server. The native `mt_*` interface takes
+`AESGLOBAL *`. Initialize submodules before building; pTOS builds the static
+`obj/gemlib/libgem.a` bindings automatically. External clients link that archive
+before `-laes`. `include/gem.h` forwards to GEMlib; `include/libaes.h` declares
+only the implementation API. The traditional trap backend remains separate. The earlier typed x32 kernel AES service and its
 client ABI have been retired; classic kernel AES remains for single-address-
 space systems.
 
@@ -10,8 +14,8 @@ space systems.
 documented resource/queue limits. `partial` identifies selectors or extensions
 that are still missing. `unavailable` means there is no library entry point:
 an application using it cannot currently link; this is **not** a runtime stub
-returning GEM failure. Every available/partial GEM binding below also exports
-its standard `mt_*` form. `helper` rows have no `mt_*` form.
+returning GEM failure. Every available/partial operation below has an `mt_*` export in libaes
+and a classic binding in GEMlib. libaes exports only `mt_*` functions. `helper` rows have no `mt_*` form.
 
 The check in `tools/check-libaes-compatibility.py` compares this inventory with
 the export map, public declarations and legacy AES opcode inventory. It also
@@ -63,9 +67,144 @@ Entry points | Status | Semantics and outstanding extensions | Evidence
 Native `aes_*` transport/session/window/message helpers are library-private
 and declared only in `lib/aes/native_bindings.h`. Applications use the standard
 GEM exports and `gem.h`/GEMlib; `aes_global`, `gl_apid` and `gl_ap_version` are
-standard binding state, not CUIS session handles. Raw ownership/fault/scheduling
+caller-owned GEMlib binding state, not libaes exports or CUIS session handles. Raw ownership/fault/scheduling
 probes use `tests/cuis/native_probe.h` with direct syscalls, while ordinary GEM
 clients import only standard bindings. The API inventory rejects private exports.
+
+## Typed global state and binding ownership (#953)
+
+`include/aesglobal.h` is the canonical public definition, independent of kernel
+headers. Native `aes_global` is an `AESGLOBAL` object; pass `&aes_global` or the
+address of another `AESGLOBAL` to `mt_*`. Use named fields instead of word
+indices, pointer-word copies, or casts between global representations.
+`appl_init()` and successful `appl_exit()` update GEMlib's `gl_apid` and
+`gl_ap_version`. Direct `mt_*` calls operate only on the supplied public global;
+they do not discover or synchronize GEMlib's default state or another array.
+Binding data and classic wrappers are linked into the caller, including callers
+that supply some bindings themselves, such as EmuDesk.
+`ap_private` belongs to the caller, including across `mt_appl_init` and
+`mt_appl_exit`. Resource selectors `ap_ptree`, `ap_rscmem` and `ap_rsclen` are
+authoritative for the supplied global. Resource ownership records retain image
+metadata, without a shadow `AESGLOBAL`. EmuDesk passes its own typed global to
+libaes directly.
+
+m68k keeps the classic big-endian, 15-WORD/30-byte layout and two-byte alignment.
+ARM and x32 use their native byte order, pointer representation and alignment:
+32 bytes for 32-bit pointers; the 64-bit kernel/host representation is 56 bytes.
+The header asserts each member offset, field width, total size and alignment.
+This changes the private native libaes ABI: rebuild clients with the library.
+A 15-WORD buffer is only the m68k binding representation.
+
+Classic wrappers, binding globals and public rectangle helpers belong to GEMlib.
+Internal rectangle routines remain private to libaes.
+`tools/check-libaes-elf.py` checks actual ELF exports/imports and the archive,
+including caller-owned x32 global storage. `make libaes-elf-check` runs it.
+Kernel AES retains its historical area-D use of `ap_3resv`.
+No dependency on #903, new CUIS identity API, or 68k AESPB emulation is introduced.
+
+## Explicit application context lifetime (#953)
+
+For userspace libaes, `mt_appl_init` allocates an opaque `AES_APP_CONTEXT` when
+the supplied global's `ap_3resv` is null. It publishes the pointer only after
+session setup succeeds and rolls back normal allocation/registration failures.
+A non-null slot reuses exactly that context without opening another session,
+allocating another context, or finding a context by PID/TID. Reinitialization
+preserves that global's resource selectors; no other global's public fields
+are copied or synchronized. `ap_private` remains untouched.
+
+To share explicitly, initialize one global, assign its live `ap_3resv` to a
+second zero-initialized global, then call `mt_appl_init` on the second global.
+`mt_appl_exit` closes the session, cleans up, frees the context once and clears
+the supplied global's slot. All other aliases become invalid; the caller must
+stop using them. Reset a retired alias's slot to null before starting a new
+context. A failed close retains the context for retry. If freeing the
+context fails after close, retrying exit retries the free without closing or
+resetting the window/menu/desktop/graphics adapters twice. Failed resource
+releases or file closes also retain the context; each exit retry attempts its
+remaining resource cleanup before freeing the context. No other operations are valid after that partial exit.
+
+Except for initialization with a null slot, passing an uninitialized, invalid,
+mismatched, closed or freed context is undefined behavior. There is no magic,
+generation counter, registry, reference counting, TLS or stale-pointer check.
+Kernel process exit remains authoritative cleanup for faults, `_Exit` and
+omitted `appl_exit`; libaes has no cached-session destructor.
+
+The context now owns these retained state groups:
+
+- Application session, enumeration cursor and shutdown/cohort state.
+- Window metadata, visible-region iterators, pending frame/control work and
+  modal overlay/dialog counters.
+- Window-zero desktop tree, background region iterator and screen buffer.
+- Menu tree/index, metrics, busy/pending state and deferred GEM messages.
+  Private readiness/flush/dispatch/reset helpers select the supplied context.
+- Shell command/tail, application directory, environment pointer/length and
+  startup readiness. Fresh contexts consume the loader's saved launch record;
+  aliases reuse that state without reinitializing it. If registration runs
+  before libptos auxiliary-vector initialization, capture remains pending and
+  completes on the first shell/resource lookup after it becomes available.
+  Early shell queries fail without committing outputs. Command/tail/directory
+  are copied; the process environment remains borrowed caller/loader storage.
+  There is no libaes `DT_INIT` startup cache. Shell lookup work buffers and
+  saved-DTA state are stack-local. Context-owned
+  DTA slots have stable addresses for the kernel search cache; nested calls
+  use separate reusable slots, including through aliases. Extra slots are
+  freed at context exit, with failed frees queued for normal resource retry.
+- Cached graphics workstation/metrics, cursor forms and visibility depth,
+  and 3D style preferences. Each stack painter borrows the supplied context's
+  style state, including during nested USERDEF calls using another global.
+- Resource ownership lists, retired resource records, failed temporary frees
+  and pending resource-file closes. The supplied public `ap_ptree`, `ap_rscmem`
+  and `ap_rsclen` fields remain authoritative selectors within that context.
+  An alias shares ownership without synchronizing its public selectors.
+  Each temporary allocation records its cleanup owner before publication,
+  including buffers used by drawing, dialogs, menus, windows and shell calls.
+  Resetting one context never retries another context's deferred cleanup.
+
+Private retained-state helpers receive the caller's global explicitly. Window,
+desktop, graphics and menu resets clean up only that context's retained state;
+explicit aliases share it. The native `wind_new` operation still resets the kernel session's
+windows, whose identity boundary remains unchanged.
+
+The native loader captures launch metadata before executable preinitializers.
+Consequently a first `mt_appl_init` after cwd/basepage changes still sees the
+original command/tail/directory. Without an optional launch record, resource
+lookup derives a best-effort directory from `AT_EXECFN` and the cwd at context
+initialization; `shel_read` cannot supply missing launch metadata.
+
+The painter/tracker, modal/button form, alert/error, file selector, resource,
+shell and menu helper chains now receive explicit call pointers. These are
+parameters or automatic variables, with no shared active-context pointer,
+TLS, global lookup or save/restore publication. Object walking carries an
+explicit callback cookie; nested USERDEF calls retain their own painter and
+error state. Form-bound failures update only their own call, never an outer
+painter. Classic builds expand the optional parameters in `aescontext.h` away
+and retain their existing internal signatures.
+
+The native ELF check rejects allocated writable sections outside GNU_RELRO
+and all TLS sections. Const pointer tables are allowed inside RELRO; libaes
+has no `.bss` or library-owned mutable globals. FSEL resource offset bases are
+read-only templates generated by erd; each selector rebases its own writable
+copy. sprintf uses an automatic cursor and a context-aware formatter sink;
+the existing kernel doprintf callback interface remains available unchanged.
+Host tests cover nested sinks and reject actual ELF data/BSS/TLS fixtures.
+
+This completes the userspace state migration, with independent native AES
+identity still gated on the separate CUIS/kernel work. CUIS
+still returns one session per process: two fresh globals allocate distinct
+userspace contexts, but currently receive the same native session. Ending it
+through either context invalidates the other context's kernel session. Tests
+of independent enumeration/cohort state use distinct mocked session handles.
+Window/desktop/graphics/resource/menu/shell tests also verify private state
+isolation and alias sharing while retaining the current shared-session constraint. Independent
+native sessions require the separate CUIS identity work
+coordinated with #896/#907/#915.
+
+The native GEM regression also creates two fresh contexts in one real process,
+checks explicit aliasing and per-array fields, and verifies that closing the
+shared kernel session retires it for both. It never calls AES with the other
+context after that retirement. The process then exits to reclaim the remaining
+allocation. [The acceptance map](libaes-context-acceptance.md) distinguishes this
+integration test from host fixtures that supply distinct mock sessions.
 
 ## Boot/configuration audit
 
@@ -78,7 +217,7 @@ Configuration | Current path | Validation
 --- | --- | ---
 x32, AES=n, LIBAES=n | Native CLI; no GUI library | `configs/pc-x86_64_defconfig`, x86 boot CI
 x32, AES=n, LIBAES=y, EXTERNAL_DESK=n | Shared GEM applications over CUIS | `tests/cuis/gem.c`, combined boot CI
-x32, AES=n, LIBAES=y, EXTERNAL_DESK=y | Resident shared desktop, no kernel AES | `configs/pc-x86_64-libaes-desktop_defconfig`, `tests/x32_desktop/run.py`
+x32, AES=n, LIBAES=y, EXTERNAL_DESK=y | Resident shared desktop, no kernel AES | `configs/pc-x86_64-desktop_defconfig`, `tests/x32_desktop/run.py`
 ARM/m68k, USER_ASPACE=n | Traditional kernel AES/trap/desktop | Native builds and ARM/m68k regression CI
 ARM/m68k, USER_ASPACE=y | Kernel AES unavailable; external libaes is not yet ported | Architecture follow-ups and CLI configuration checks
 

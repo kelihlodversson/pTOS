@@ -12,6 +12,9 @@
 #if CONF_WITH_FORK_CORE
 #include "fork_parent.h"
 #endif
+#if CONF_WITH_EXEC_REPLACE
+#include "exec_handoff.h"
+#endif
 
 #if CONF_WITH_PTHJOIN
 struct thread_completion {
@@ -204,6 +207,58 @@ BOOL kthread_is_executing(const KTHREAD *thread)
 {
     return thread && thread->state == THREAD_EXECUTING;
 }
+
+#if CONF_WITH_EXEC_REPLACE
+BOOL kthread_exec_handoff_ready(const KTHREAD *thread, const void *execution)
+{
+    return thread && kthread_is_executing(thread) && thread->attached &&
+        !thread->identity_only && thread->execution == execution && thread->reclaim_execution
+#if CONF_WITH_PTHJOIN
+        && !thread->joining
+#endif
+        ;
+}
+void kthread_exec_handoff_stack(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *handoff,
+                               KASPACE_LEASE **hold, KASPACE_LEASE **old)
+{
+    if (!thread || !kthread_exec_handoff_ready(thread, thread->execution) ||
+        !ksched_exec_handoff_quiescent(handoff, thread, thread->execution) ||
+        !hold || (*hold ? kaspace_stack_hold_space(*hold) != thread->space
+                        : !ksched_exec_handoff_replacing(handoff)) || !old || *old)
+        panic("exec handoff: unauthenticated stack transfer");
+    /* Only Pexec(200) installs an empty hold: the new image's stack is its PROCESS's. */
+    *old = thread->stack_hold;
+    thread->stack_hold = *hold;
+    *hold = NULL;
+    /* Membership, state, root, backend, TID and join completion stay intact. */
+}
+/* Pexec(200) of a nested PROCESS: the same rebind under the launcher's
+ * relaunch token instead of the scheduler-root handoff token. */
+void kthread_exec_rebind_nested(KTHREAD *thread, KASPACE **space)
+{
+    KASPACE *old;
+    if (!thread || !space || !*space || *space == thread->space ||
+        !kthread_is_executing(thread) || !thread->attached || thread->identity_only ||
+        !ksched_exec_nested_committing(thread))
+        panic("exec relaunch: unauthenticated THREAD rebind");
+    old = thread->space;
+    thread->space = *space;
+    *space = old;
+}
+/* Pexec(200) only: the same executing THREAD adopts the committed root. The
+ * caller's owning reference is exchanged for the old one; nothing is freed. */
+void kthread_exec_rebind(KTHREAD *thread, const KSCHED_EXEC_HANDOFF *handoff, KASPACE **space)
+{
+    KASPACE *old;
+    if (!thread || !space || !*space || *space == thread->space ||
+        !kthread_exec_handoff_ready(thread, thread->execution) ||
+        !ksched_exec_handoff_quiescent(handoff, thread, thread->execution))
+        panic("exec handoff: unauthenticated THREAD rebind");
+    old = thread->space;
+    thread->space = *space;
+    *space = old;
+}
+#endif
 
 BOOL kthread_exit_status(const KTHREAD *thread, UWORD *status)
 {

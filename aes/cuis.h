@@ -50,6 +50,9 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
                        UQUAD observers, UQUAD count);
 LONG cuis_state_service(UQUAD handle, UQUAD x, UQUAD y, UQUAD buttons, UQUAD modifiers);
 void cuis_process_exit(PD *owner);
+#if CONF_WITH_EXEC_REPLACE
+void cuis_exec_rekey(PD *old, PD *new); /* Pexec(200) commit */
+#endif
 LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c);
 void cuis_child_completed(PD *parent, WORD pid, UWORD status);
 void cuis_child_fault(PD *parent, WORD pid, WORD signal);

@@ -9,6 +9,85 @@
 
 menu "GEMDOS (BDOS)"
 
+config CONF_WITH_IMAGE_POLICY
+    bool "Experimental immutable executable-policy preparation"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+    default n
+    help
+      Capture validated executable metadata by value and prepare it for the
+      existing unpublished NEW_PROCESS activation. This conveys no mapping,
+      loader, basepage, stack or cleanup ownership and cannot replace a live
+      executable. No public fork or Pexec(200) is enabled.
+
+config CONF_WITH_IMAGE_POLICY_TEST
+    bool "Native immutable executable-policy tests (test transport only)"
+    depends on CONF_WITH_IMAGE_POLICY && CONF_WITH_PRIVATE_CLONE_TEST
+    depends on CONF_WITH_SHARED_VM_PEXEC_TEST
+    default n
+    help
+      Test policy capture and its existing trusted NEW_PROCESS publication
+      using the ordinary shared-VM clone. This is not private image ownership,
+      public fork or same-PROCESS executable replacement.
+config CONF_WITH_EXEC_REPLACE
+    bool "Same-PROCESS executable replacement core for Pexec(200)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    default y
+    help
+      Build the kernel-only replacement transaction for Pexec(200): exact
+      PROCESS/THREAD admission, private ELF staging, the sealed image bundle
+      and the NORETURN commit, at the scheduler root for an anchor and
+      through the launcher frame for a nested child, with old-image
+      retirement off-stack and the committed-exec generation
+      (see doc/exec-replacement.txt).
+
+config CONF_WITH_PEXEC200
+    bool "Public Pexec(200): replace the program in the same process"
+    depends on CONF_WITH_EXEC_REPLACE
+    default y
+    help
+      Enable GEMDOS Pexec(200, path, tail, env), as in FreeMiNT: load an
+      ELF or classic PRG program into a new basepage and replace the calling
+      program with it, keeping the PROCESS, PID, open files, current
+      directories, parent and children, and freeing the old program's
+      basepage, environment and memory.
+      Success does not return; failure returns an error to the unchanged
+      original program. An asynchronously started PROCESS is replaced
+      through the scheduler-root handoff, a synchronously nested child
+      through its launcher frame (doc/exec-replacement.txt).
+
+config CONF_WITH_EXEC_REPLACEMENT_TEST
+    bool "Private executable image staging (test only)"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
+    select CONF_WITH_EXEC_REPLACE
+    select CONF_WITH_PEXEC200
+    default n
+    help
+      Build the Pexec(200) regression probes: private ELF staging and
+      reversible admission, injected failures at every receipt, image-bundle
+      and commit stage, an identity/root/generation query and a committed-exec
+      generation waiter, plus the EXEC200 native test programs. Enables
+      public Pexec(200) in the test kernel. No shipped preset selects it.
+
+config CONF_WITH_EXEC_HANDOFF_TEST
+    bool "Same-image NORETURN execution transport (test only)"
+    depends on CONF_WITH_EXEC_REPLACEMENT_TEST && CONF_WITH_PCLONE
+    default n
+    help
+      Exercise the permanent scheduler root's same-PROCESS/TID handoff to
+      fresh user startup and kernel stacks. Keeps the same image and root;
+      this is not executable replacement or a committed-exec producer.
+      Pexec(200) remains EINVFN. No shipped preset enables this experiment.
+
+config CONF_WITH_PROCESS_FILES_TEST
+    bool "TEST ONLY: PROCESS-local descriptor ownership"
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_FAT_FILE_LIFETIMES
+    default n
+    help
+      Migrate every managed PROCESS in this validation kernel to one local
+      descriptor namespace with exact SFT incarnation bindings and reversible
+      snapshot admission. Nonmanaged boot callers retain legacy handles.
+      This is a prerequisite for fork inheritance, not public fork activation.
+
 config CONF_WITH_PRIVATE_CLONE
     bool "Experimental independent MMU address-space clone"
     depends on CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING
@@ -25,6 +104,15 @@ config CONF_WITH_PRIVATE_CLONE_TEST
     help
       Enable private Pclone size tags for native COW construction tests.
       Children start at an explicit entry: this is not fork-return or Pfork.
+
+config CONF_WITH_PRIVATE_SNAPSHOT_TEST
+    bool "Native captured private-snapshot ownership tests (test only)"
+    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_SHARED_VM_PEXEC_TEST
+    default n
+    help
+      Verify a surviving shared descendant privately clones an absent captured
+      ancestor stack, after the original stack owner has exited. This uses the
+      existing trusted clone and mapping lifetime machinery, not public fork.
 
 config CONF_WITH_PCLONE
     bool "Experimental Pclone"
@@ -317,7 +405,7 @@ config CONF_WITH_MMAP
 	default n
 	help
 	  Provide Mmap, Munmap and Mprot for private anonymous and native FAT
-	  file pages in a separate per-process window. File pages are shared
+	  file pages in allocatable per-process address ranges. File pages are shared
 	  read-only until a private write fault; anonymous pages stay lazy zero.
 	  Enforce W^X, lifetime and memory limits. MAP_SHARED and replacing
 	  MAP_FIXED are not supported.  Needs isolated MMU address spaces
@@ -428,5 +516,17 @@ config CONF_WITH_PRG_LOADER
 	  targets - a non-m68k machine must not go looking for, and jumping
 	  into, code in a foreign instruction set. Non-m68k targets rely on
 	  CONF_WITH_ELF_LOADER instead.
+
+config CONF_WITH_BINFMT
+	bool "Boot-configured executable interpreters and shebang scripts"
+	default n if TARGET_192 || TARGET_256 || TARGET_CART
+	default n if TARGET_AMIGA_ROM && !CONF_AMIGA_ROM_512K
+	default y
+	help
+	  Read PTOS.INI once from the boot drive before starting applications.
+	  Register general magic/mask executable handlers and support #! scripts
+	  through the same bounded interpreter path. Native formats take
+	  precedence. No proc filesystem or runtime registration API is needed.
+	  See doc/binfmt.txt for the INI syntax and implementation limits.
 
 endmenu

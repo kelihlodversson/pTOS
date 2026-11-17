@@ -3,7 +3,9 @@
 
 Default asserts current blockers and balanced ownership. --require fs|exec|lazy
 runs a positive capability control, expected to exit 1 until its prerequisite
-is implemented. This does not execute a user trap or implement public fork.
+is implemented. The lazy one is: a private clone inherits captured lazy
+reservation authority (#971, #974/#1000), so its control passes in both modes.
+This does not execute a user trap or implement public fork.
 """
 import argparse
 import os

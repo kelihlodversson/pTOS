@@ -29,8 +29,11 @@
  * conveys ownership only: permissions and exact backing checks are unchanged. */
 #define MAP_PTOS_RUNTIME    0x200000
 
+/* Preferred automatic placement; explicit mappings use the broader user
+ * ranges of include/procmem.h, avoiding images and other reservations. */
 #define PTOS_MMAP_BASE  0x01000000UL
 #define PTOS_MMAP_LIMIT 0x0f000000UL
+#define PTOS_MMAP_MIN   0x00010000UL
 
 /* Native x32 calls, all scalar arguments in syscall slots:
  * Mmap(address, length, protection, flags, fd, offset) -> address or error

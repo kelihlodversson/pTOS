@@ -12,6 +12,7 @@ struct kthread;
 typedef struct proc_clone_transaction PROC_CLONE_TRANSACTION;
 typedef struct proc_clone_observer PROC_CLONE_OBSERVER;
 struct syscall_return;
+struct kproc_image_policy;
 typedef struct { WORD pid; ULONG tid; } PROC_CLONE_IDENTITIES;
 typedef struct { WORD pid; ULONG tid; LONG status; } PROC_CLONE_COMPLETION;
 typedef enum { PROC_CLONE_OBSERVER_PREPARED, PROC_CLONE_OBSERVER_PUBLISHED,
@@ -29,7 +30,12 @@ typedef enum { PROC_CLONE_SHARE_VM, PROC_CLONE_PRIVATE_VM,
              } PROC_CLONE_VM_POLICY;
 #define PROC_CLONE_COPY_STANDARD_HANDLES 1U
 #define PROC_CLONE_COPY_CWD              2U
+#if CONF_WITH_PROCESS_FILES_TEST
+#define PROC_CLONE_COPY_FILES            4U /* all local bindings, final-boundary snapshot */
+#define PROC_CLONE_RESOURCE_MASK         7U
+#else
 #define PROC_CLONE_RESOURCE_MASK         3U
+#endif
 
 typedef struct {
     /* Borrowed live identities; caller retains them throughout prepare.
@@ -43,7 +49,8 @@ typedef struct {
     PROC_CLONE_PROCESS_POLICY process_policy;
     PROC_CLONE_VM_POLICY vm_policy;
     /* Must be zero except for NEW_PROCESS. Independently select Pexec-style standard-handle and
-     * CWD inheritance. Explicit/nonstandard SFT handles are not duplicated.
+     * CWD inheritance. The test-only COPY_FILES policy supersedes standard
+     * inheritance with every PROCESS binding and a final publication check.
      * Environment is initially empty; loader/image/startup remain separate. */
     UWORD resources;
     /* LOADED_PROCESS/PREPARED_VM only. source is the loader-created target,
@@ -115,6 +122,12 @@ LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *transaction,
                                  const THREAD_STARTUP_OBSERVER *observer, void *context);
 LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *transaction);
 LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
+#if CONF_WITH_IMAGE_POLICY
+/* Value-only policy for an empty NEW_PROCESS target. Requires prepared startup
+ * and its retained initial user stack. Existing no-fail activation installs it;
+ * this never adopts a live executable or conveys image ownership. */
+LONG proc_clone_prepare_image_policy(PROC_CLONE_TRANSACTION *,const struct kproc_image_policy *);
+#endif
 #if CONF_WITH_NATIVE_SCHED
 /* Kernel-only first execution: NEW_PROCESS/SHARE_VM, root group only. Failure
  * before publication preserves transaction and outputs; success consumes it
@@ -124,6 +137,9 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_COMPLETION
  * asynchronous observer, returns positive signed TID or an error, and retains
  * no caller-stack data after return. Requires the current managed task. */
 LONG proc_clone_start_public(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *, VADDR pid, VADDR tid);
+#if CONF_WITH_IMAGE_POLICY_TEST
+LONG proc_clone_start_image_policy_test(const PROC_CLONE_ARGS *,const THREAD_STARTUP_ARGS *);
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 LONG proc_clone_start_private_test(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *);
 LONG proc_clone_start_scoped_test(const PROC_CLONE_ARGS *, const THREAD_STARTUP_ARGS *,VADDR,VADDR);
@@ -152,7 +168,7 @@ void proc_clone_release(PROC_CLONE_RESULT *result);
  * retained identity plus disposal obligation. Unknown policies fail EINVAL. */
 LONG proc_create_clone_process(struct kproc *source, UWORD resources, struct kproc **result);
 
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
 /* Inject failure after source, target, VM, THREAD, or owned-observer identity acquisition (1..5). */
 /* Function-entry transaction stages; loader allocation faults use allocator hooks. */
 void proc_clone_test_fail_after(UWORD stage);

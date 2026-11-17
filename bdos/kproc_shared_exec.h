@@ -187,8 +187,26 @@ LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
     DEPENDENCY(shared_raw(set,source,source->env_start,source->env_gen));
     DEPENDENCY(shared_compat_logical(set,source,source->user_start,source->tpa_gen,&source->reservation_birth[0]));
     DEPENDENCY(shared_compat_logical(set,source,source->env_start,source->env_gen,&source->reservation_birth[1]));
+#if CONF_WITH_PRIVATE_CLONE
+    /* Private snapshots own original compatibility pages as private frames,
+     * separately from their kernel PD/env allocations. Keep their logical
+     * authority across shared descendants and source retirement. */
+    if(source->private_image && source->private_image->committed) {
+        if(source->logical_bp_bytes)
+            DEPENDENCY(shared_logical(set,source,source->logical_basepage,source->logical_bp_bytes,ASPACE_PROT_USER));
+        if(source->logical_env_bytes)
+            DEPENDENCY(shared_logical(set,source,source->logical_environment,source->logical_env_bytes,ASPACE_PROT_USER));
+    }
+#endif
     if(!inherited) {
-        if(!source->legacy && owns_top_stack(source))
+        /* A private PRG snapshot preserves legacy image policy as well as
+         * its independently owned lazy top-stack authority. Image format
+         * must not discard that authority on a subsequent shared clone. */
+        if(owns_top_stack(source) && (!source->legacy
+#if CONF_WITH_PRIVATE_CLONE
+            || (source->private_image && source->private_image->committed)
+#endif
+            ))
             DEPENDENCY(shared_logical(set,source,USER_STACK_TOP-stack_bytes(source),stack_bytes(source),ASPACE_PROT_USER));
         DEPENDENCY(shared_source_images(set,source));
     }

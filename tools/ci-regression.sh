@@ -20,6 +20,7 @@ machine=$1
 
 script_machine=$machine
 traditional_fat=false
+pmmu_check=false
 make_args=
 case $machine in
     virt-arm)
@@ -35,9 +36,10 @@ case $machine in
     raspi2b)
         # a Raspberry Pi 2 with the desktop: the AES, the chunky 16 bit
         # screen of the Pi's framebuffer.  The desktop starts the suite and
-        # the console is on the UART as well (rpi2-test_defconfig), where the
-        # script reads the verdict; no shutdown checks, which type into EmuCON
-        config=rpi2-test
+        # the console is on the UART as well (CONF_SERIAL_CONSOLE, the
+        # default on the Pi), where the script reads the verdict; no shutdown
+        # checks, which type into EmuCON
+        config=rpi2
         ;;
     virt-m68k)
         config=virt-m68k-cli-elf
@@ -50,8 +52,11 @@ case $machine in
         script_machine=virt-m68k
         ;;
     virt-m68k-mmu)
-        # the higher-half kernel with the 68040 MMU on (#569)
+        # the higher-half kernel with the 68040 MMU on (#569); the same image
+        # is booted on CPUs without a PMMU as well, which it has to refuse
+        # (#564, tools/test-pmmu-check.sh)
         config=virt-m68k-mmu
+        pmmu_check=true
         ;;
     virt-m68k-aspace)
         # every process in an address space of its own, user mode and page
@@ -68,7 +73,6 @@ case $machine in
         ;;
     pc-x86_64)
         config=pc-x86_64-desktop
-        make_args=CROSS_COMPILE=     # native gcc, as in the x86_64 job
         ;;
     *)
         echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, raspi2b-aspace, pc-x86_64)" >&2
@@ -103,13 +107,32 @@ if config.syms['ARCH_X86_64'].str_value != 'y':
     config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'
+if os.environ.get('EXEC_REPLACEMENT_TEST') == '1':
+    config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == 'y'
+if os.environ.get('EXEC_HANDOFF_TEST') == '1':
+    for required in ('CONF_WITH_EXEC_REPLACEMENT_TEST', 'CONF_WITH_EXEC_HANDOFF_TEST'):
+        config.syms[required].set_value(2)
+        assert config.syms[required].str_value == 'y', required
 if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
     config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'
+    for required in ('CONF_WITH_IMAGE_POLICY', 'CONF_WITH_IMAGE_POLICY_TEST'):
+        config.syms[required].set_value(2)
+        assert config.syms[required].str_value == 'y', required
+    config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].str_value == 'y'
     for required in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_MMAP'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
     backend = os.environ.get('SHARED_VM_PEXEC_FS', 'fat')
+    assert backend in ('fat', 'pfs'), backend
+    config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
+    assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
+if os.environ.get('PROCESS_FILES_TEST') == '1':
+    config.syms['CONF_WITH_PROCESS_FILES_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'y'
+    backend = os.environ.get('PROCESS_FILES_FS', 'fat')
     assert backend in ('fat', 'pfs'), backend
     config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
     assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
@@ -135,3 +158,10 @@ fi
 make $make_args test-dir
 
 tools/run-regression-tests.sh "$script_machine"
+
+if [ "$pmmu_check" = true ]; then
+    if ! tools/test-pmmu-check.sh virt-m68k.elf; then
+        echo "::error title=PMMU startup check::the virt-m68k-mmu image did not refuse a CPU without a PMMU, or did not boot on the 68040"
+        exit 1
+    fi
+fi

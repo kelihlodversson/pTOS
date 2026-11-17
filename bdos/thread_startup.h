@@ -31,6 +31,16 @@ LONG thread_startup_prepare_elf(struct kaspace *,const THREAD_STARTUP_ARGS *,
  * C entries and unpublished drafts; this does not grant execution authority. */
 VADDR thread_startup_elf_initial_sp(const THREAD_STARTUP_DRAFT *);
 #endif
+#if CONF_WITH_EXEC_REPLACE
+/* Trusted Pexec(200) relaunch only. The draft owns fresh scheduler/syscall
+ * stacks plus leases on the new image's entry and resident stack, but the
+ * launcher enters through the ordinary program entry of doc/process-entry.txt
+ * from the committed KPROC record: never a C frame, return PC or argument. */
+LONG thread_startup_prepare_program(struct kaspace *, const THREAD_STARTUP_ARGS *,
+                                   THREAD_STARTUP_DRAFT **);
+/* TRUE only for a published program-entry draft. No execution authority. */
+BOOL thread_startup_program_entry(const THREAD_STARTUP_DRAFT *);
+#endif
 /* Public void entry returns through the kernel-selected zero-status stub. */
 LONG thread_startup_prepare_public(struct kaspace *, const THREAD_STARTUP_ARGS *, THREAD_STARTUP_DRAFT **);
 #if CONF_WITH_PRIVATE_CLONE

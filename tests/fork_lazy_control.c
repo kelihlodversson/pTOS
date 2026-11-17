@@ -1,4 +1,6 @@
-/* Production KASPACE, empty modeled MMU roots: missing captured lazy clone. */
+/* Production KASPACE, empty modeled MMU roots: a private clone inherits the
+ * source's captured lazy reservation authority as its own record (#971,
+ * #974/#1000), which survives the source's own release. */
 #include <stdio.h>
 #include <stdlib.h>
 #include "emutos.h"
@@ -27,16 +29,17 @@ int main(int argc,char **argv) {
     KASPACE *source=kaspace_adopt(&source_backend),*child=NULL;
     KASPACE_RESERVATION_INFO captured={0x20000,4096,0,ASPACE_PROT_USER|ASPACE_PROT_WRITE,KASPACE_RESERVATION_LAZY};
     KASPACE_RESERVATION_HOLD hold={0};int identity;void *released=NULL;UWORD source_rights=0,child_rights=0;
-    (void)argv;
+    (void)argc;(void)argv;
     captured.identity=kaspace_reservation_next();
     if(kaspace_reservation_hold_captured(source,&captured,0x20000,4096,captured.rights,7,&identity,&hold)!=E_OK)abort();
     if(!kaspace_has_captured_lazy(source))abort();
     if(kaspace_clone(source,&child)!=E_OK)abort();
-    printf("source retained lazy=%d, child retained lazy=%d\n",kaspace_retained_lazy_protection(source,0x20000,&source_rights),kaspace_retained_lazy_protection(child,0x20000,&child_rights));
     if(!kaspace_retained_lazy_protection(source,0x20000,&source_rights) ||
-       kaspace_retained_lazy_protection(child,0x20000,&child_rights) ||
-       kaspace_has_captured_lazy(child))abort();
-    if(!kaspace_reservation_release(&hold,&released) || released!=&identity || kaspace_has_captured_lazy(source))abort();
+       !kaspace_retained_lazy_protection(child,0x20000,&child_rights) ||
+       child_rights!=source_rights || !kaspace_has_captured_lazy(child))abort();
+    if(!kaspace_reservation_release(&hold,&released) || released!=&identity ||
+       kaspace_has_captured_lazy(source) || !kaspace_has_captured_lazy(child))abort();
+    printf("source and child retained lazy authority; child record survives source release\n");
     kaspace_put(child);kaspace_put(source);
-    return argc>1?1:0;
+    return 0;
 }

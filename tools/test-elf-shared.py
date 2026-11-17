@@ -18,7 +18,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 CC = shlex.split(os.environ.get("CC_HOST", "cc"))
-X32_CC = shlex.split(os.environ.get("X32_CC", "gcc"))
+X32_CC = shlex.split(os.environ.get("X32_CC", "x86_64-unknown-ptos-elfx32-gcc"))
 
 
 def run(args):
@@ -785,7 +785,7 @@ class Metadata(unittest.TestCase):
 
     def test_image_dynamic_and_relro_admission(self):
         for ph, field, value in ((3, 0, 0), (3, 4, 0x2008), (3, 8, 0x3200),
-                (3, 16, 47), (3, 20, 0), (3, 20, 56), (5, 8, 0x1000), (5, 20, 0x2000), (5, 4, 0x2008), (5, 16, 0x2000)):
+                (3, 16, 47), (3, 20, 0), (3, 20, 56), (5, 8, 0x1000), (5, 20, 0x2001), (5, 4, 0x2008), (5, 16, 0x2000)):
             with self.subTest(ph=ph, field=field, value=value):
                 data = image_fixture()
                 struct.pack_into("<I", data, 52 + ph * 32 + field, value)
@@ -804,6 +804,31 @@ class Metadata(unittest.TestCase):
         data = image_fixture()
         struct.pack_into("<I", data, 52 + 4 * 32 + 24, 7)
         self.assertEqual(self.image_read(data)[0], -2)
+
+    def test_relro_load_tail_without_bss(self):
+        data = image_fixture()
+        # GNU ld can finish a DSO at RELRO, without adding mutable BSS.
+        struct.pack_into("<I", data, 52 + 2 * 32 + 20, 0x200)
+        struct.pack_into("<I", data, 0x250 + 4, 0x3100)
+        rc, plan, raw = self.image_read(data)
+        self.assertEqual(rc, 0)
+        self.assertEqual((plan.size, plan.relro, plan.relro_size), (0x4000, 0x3000, 0x1000))
+        self.assertEqual(self.image_copy(plan, raw)[0], 0)
+        # Mapping padding is not admitted as data or a relocation target.
+        self.assertEqual(self.lib.dl_image_range(C.byref(plan), 0x3200, 1, 6), 0)
+        self.assertEqual(self.lib.dl_image_file_range(C.byref(plan), 0x3200, 1, 4), 0)
+        for size in (0x1001, 0x2000):
+            bad = bytearray(data)
+            struct.pack_into("<I", bad, 52 + 5 * 32 + 20, size)
+            self.assertEqual(self.image_read(bad)[0], -1)
+        # An all-padding start or a nonwritable LOAD remains invalid.
+        bad = bytearray(data)
+        struct.pack_into("<III", bad, 52 + 5 * 32 + 16, 0, 0x100, 4)
+        struct.pack_into("<I", bad, 52 + 5 * 32 + 8, 0x3200)
+        self.assertEqual(self.image_read(bad)[0], -1)
+        bad = bytearray(data)
+        struct.pack_into("<I", bad, 52 + 2 * 32 + 24, 4)
+        self.assertEqual(self.image_read(bad)[0], -1)
 
     def test_image_roles_interpreter_entry_and_program_headers(self):
         data = image_fixture(executable=True)
@@ -1056,7 +1081,10 @@ class Metadata(unittest.TestCase):
                     interp = next(h for h in headers if h[0] == 3)
                     self.assertEqual(raw[interp[1]:interp[1] + interp[4]], b"/GEMSYS/LIB/X32/LD.SO\0")
                     self.assertEqual(self.lib.dl_string(C.byref(obj), obj.needed[0]), b"libtest.so")
-                    self.assertTrue(tags[30] & 8)  # DF_BIND_NOW.
+                    # GNU linkers encode eager binding with DT_FLAGS,
+                    # DT_FLAGS_1, or the original DT_BIND_NOW marker.
+                    self.assertTrue(tags.get(30, 0) & 8 or
+                                    tags.get(0x6ffffffb, 0) & 1 or 24 in tags)
 
         # Resolve and apply the actual compiler-produced data/GOT/PLT and
         # constructor-pointer relocations, with distinct target load biases.
@@ -1151,7 +1179,7 @@ class Metadata(unittest.TestCase):
         backend = Backend.in_dll(so, "dl_reloc_backend")
         abi = ImageAbi.in_dll(so, "dl_image_abi")
         self.assertEqual((backend.rel, abi.machine, abi.endian, abi.eflags_required, abi.eflags_allowed),
-                         (0, 4, 2, 0, 0))
+                         (0, 4, 2, 0, 0x01000000))
         kind = C.CFUNCTYPE(C.c_int, C.c_uint32, C.POINTER(C.c_uint32 * 2))(backend.kind)
         value = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_uint32, C.c_uint32, C.c_int32, C.c_uint32,
                             C.POINTER(C.c_uint64))(backend.value)
@@ -1178,7 +1206,30 @@ class Metadata(unittest.TestCase):
         self.assertEqual(info[0], 4)
         self.assertEqual(kind(8, C.byref(info)), -2)
 
-    @unittest.skipUnless(shutil.which("arm-none-eabi-gcc"), "needs an ARM cross compiler")
+    @unittest.skipUnless(shutil.which("m68k-unknown-ptos-prgelf-gcc"), "needs the pTOS m68k SDK")
+    def test_real_m68k_sdk_flags(self):
+        """Admit the SDK's classic-family marker while rejecting unknown flags."""
+        library = self.path / "m68k-abi.so"
+        run(CC + ["-std=c90", "-Wall", "-Wextra", "-Werror", "-O2", "-fPIC", "-shared",
+                  "-I" + str(ROOT / "lib/ldso"), str(ROOT / "lib/ldso/arch/m68k/image_abi.c"),
+                  "-o", str(library)])
+        abi = ImageAbi.in_dll(C.CDLL(str(library)), "dl_image_abi")
+        source = self.path / "m68k-sdk.c"
+        source.write_text("int value = 7; int probe(void) { return value; }\n")
+        output = self.path / "m68k-sdk.so"
+        run(["m68k-unknown-ptos-prgelf-gcc", "-m68020", "-fPIC",
+             "-ffreestanding", "-nostdlib", "-shared", "-Wl,--hash-style=sysv,-z,max-page-size=4096",
+             str(source), "-o", str(output)])
+        raw = bytearray(output.read_bytes())
+        self.assertEqual(struct.unpack_from(">I", raw, 36)[0], 0x01000000)
+        for flags in (0, 0x01000000):
+            struct.pack_into(">I", raw, 36, flags)
+            self.assertEqual(self.image_read(raw, abi=abi)[0], 0, hex(flags))
+        for flags in (1, 0x00800000, 0x02000000, 0x01000001):
+            struct.pack_into(">I", raw, 36, flags)
+            self.assertEqual(self.image_read(raw, abi=abi)[0], -1, hex(flags))
+
+    @unittest.skipUnless(shutil.which("arm-unknown-ptos-elf-gcc"), "needs an ARM cross compiler")
     def test_real_arm_objects(self):
         """DT_REL tables of the ARM linker (#693): implicit addends, the ARM formulas."""
         armlib = self.path / "arm-backend.so"
@@ -1190,7 +1241,7 @@ class Metadata(unittest.TestCase):
         abi = ImageAbi.in_dll(arm, "dl_image_abi")
         self.assertEqual((backend.rel, abi.machine, abi.eflags_required), (1, 40, 0x05000400))
 
-        arm_cc = ["arm-none-eabi-gcc", "-march=armv6k", "-marm", "-mfpu=vfp", "-mfloat-abi=hard",
+        arm_cc = ["arm-unknown-ptos-elf-gcc", "-march=armv6k", "-marm", "-mfpu=vfp", "-mfloat-abi=hard",
                   "-ffreestanding", "-fno-stack-protector", "-nostdlib", "-fPIC"]
         armdir = self.path / "arm"
         armdir.mkdir()

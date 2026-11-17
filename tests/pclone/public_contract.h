@@ -217,111 +217,13 @@ static void phase1_mapping_matrix(struct ptos_clone_args good, unsigned char *st
 }
 #endif
 
-/* The same staged image is checked by its loader PROCESS, a CLONE_VM child,
- * and an orphan after that image owner's retirement. No PID-based policy. */
-static volatile unsigned long phase1_policy_data[1024] __attribute__((aligned(4096))) = {1};
-static volatile unsigned long phase1_policy_bss[1024] __attribute__((aligned(4096)));
-static unsigned char *phase1_policy_stack;
-static void *phase1_policy_hole;
-static int phase1_policy_writable_text;
-struct phase1_policy_report { long magic, creator, worker, gate, done, error; };
-#define PHASE1_POLICY_ELF "C:\\PCLPOL.TMP"
-#define PHASE1_POLICY_PRG "C:\\PRGPOL.TMP"
-static const char *phase1_policy_file = PHASE1_POLICY_ELF;
-
-static char phase1_policy_cwd[128];
-static volatile int phase1_policy_cwd_error;
-static void phase1_policy_cwd_leaf(void *argument)
-{
-    char path[128], cwd[128];
-    if (Dgetpath(path,3) || strcmp(path,phase1_policy_cwd) ||
-        Dgetcwd(cwd,3,sizeof(cwd)) || strcmp(path,cwd) || Dsetpath("C:\\"))
-        phase1_policy_cwd_error=1;
-    phase1_entry(argument);
-}
-
-static long phase1_policy_checks(void)
-{
-    struct ptos_clone_args args = {0};
-    int32_t pid, tid;
-    long result, status, error = 0;
-    unsigned i;
-    unsigned char sentinel[16], *frame = phase1_policy_stack + RUNNABLE_STACK_SIZE - 16;
-    void *bad[3];
-    char cwd[128], path[128];
-    if (Dgetpath(path,3) || strcmp(path,phase1_policy_cwd) ||
-        Dgetcwd(cwd,3,sizeof(cwd)) || strcmp(path,cwd)) error |= 2048;
-    args.flags = CLONE_VM | CLONE_COPY_CWD; args.stack_base = phase1_policy_stack;
-    args.stack_size = RUNNABLE_STACK_SIZE; args.child_pid = &pid; args.child_tid = &tid;
-    bad[0] = (void *)&phase1_policy_data[1023]; bad[1] = (void *)&phase1_policy_bss[1023]; bad[2] = phase1_policy_hole;
-    for (i = 0; i < 3; i++) {
-        pid = 0x12345678; tid = 0x23456789;
-        memset(sentinel,0x96,sizeof(sentinel)); memcpy(frame,sentinel,sizeof(sentinel));
-        args.entry = (void (*)(void *))bad[i];
-        result = pclone_trap(&args,32);
-        if (result != -40L) error |= 1L << i;
-        if (pid != 0x12345678 || tid != 0x23456789 || memcmp(frame,sentinel,sizeof(sentinel))) error |= 8;
-        if (result > 0) return error | 16; /* Never execute an unexpected data entry. */
-        (void)Syield(); (void)Syield();
-        if (Pwaitpid(-1,1,0) != -33L) error |= 32;
-    }
-    /* Also execute the writable-PRG / readonly-ELF error contract from the
-     * actual staged image, including after its original PROCESS is gone. */
-    {
-        unsigned char before[4];
-        void *output = (void *)((unsigned long)phase1_entry & ~3UL);
-        memcpy(before,output,sizeof(before));
-        memcpy(frame,sentinel,sizeof(sentinel));
-        args.entry=phase1_entry; args.child_tid=output;
-        pid=0x12345678; tid=0x23456789;
-        result=pclone_trap(&args,32);
-        if(result != (phase1_policy_writable_text ? -25L : -40L) ||
-           pid!=0x12345678 || tid!=0x23456789 ||
-           memcmp(before,output,sizeof(before)) || memcmp(frame,sentinel,sizeof(sentinel))) error|=1024;
-        if(result>0) return error;
-        (void)Syield(); (void)Syield();
-        if(Pwaitpid(-1,1,0)!=-33L) error|=32;
-    }
-    args.entry = phase1_policy_cwd_leaf; args.argument = 0; args.child_tid=&tid; phase1_entered = 0;
-    phase1_policy_cwd_error=0;
-    pid = tid = -99;
-    result = pclone_trap(&args,32);
-    if (result <= 0 || result != tid || pid <= 0 || pid == Pgetpid()) return error | 64;
-    status = Pwaitpid(pid,0,0);
-    if ((status >> 16) != pid || (status & 65535) || phase1_entered != 1 ||
-        phase1_argument || phase1_pid != pid || Pwaitpid(pid,1,0) != -33L) error |= 128;
-    if (phase1_policy_cwd_error || Dgetpath(path,3) || strcmp(path,phase1_policy_cwd)) error |= 4096;
-    return error;
-}
-
-static void phase1_policy_child(void *argument)
-{
-    if (!argument) {
-        phase1_resource_error = (int)phase1_policy_checks();
-    } else {
-        struct phase1_policy_report report;
-        long file = Fopen(phase1_policy_file,2), error;
-        unsigned i;
-        if (file < 0) return;
-        memset(&report,0,sizeof(report));
-        for (i = 0; i < 128; i++) {
-            if (Fseek(0,file,0) < 0 || Fread(file,sizeof(report),&report) != sizeof(report)) break;
-            if (report.gate) break;
-            (void)Syield();
-        }
-        error = phase1_policy_checks();
-        if (!report.gate || report.magic != 0x50434c4eL || report.worker != Pgetpid()) error |= 256;
-        report.done = 1; report.error = error;
-        if (Fseek(0,file,0) >= 0) (void)Fwrite(file,sizeof(report),&report);
-        (void)Fclose(file);
-    }
-}
+#include "staged_policy.h"
 
 static void phase1_policy_observe(long staged_pid)
 {
     struct phase1_policy_report report;
     static const char tail[] = "\1w";
-    long file;
+    long file,observed,seek_result=0,read_result=0;
     unsigned i;
     /* The tiny existing global-scheduler payload exits23 before its role
      * logic. Four real PROCESS/PD constructions fit while a PRG orphan pins
@@ -342,13 +244,20 @@ static void phase1_policy_observe(long staged_pid)
                      "release orphan only after image-owner retirement and PD churn");
     for (i = 0; i < 128 && !report.done; i++) {
         (void)Syield();
-        if (Fseek(0,file,0) < 0 || Fread(file,sizeof(report),&report) != sizeof(report)) break;
+        seek_result=Fseek(0,file,0);
+        if(seek_result<0) break;
+        read_result=Fread(file,sizeof(report),&report);
+        if(read_result!=sizeof(report)) break;
     }
     (void)Syield(); (void)Syield();
     if (report.error) {
         char message[96]; sprintf(message,"ABI orphan execute-policy error=%ld\r\n",report.error); conws(message);
     }
-    ptest_assert_msg(report.done && !report.error && Pwaitpid(report.worker,1,0) == -33L,
+    observed=Pwaitpid(report.worker,1,0);
+    if(!report.done || report.error || observed!=-33L)
+        printf("orphan policy done=%ld error=%ld worker=%ld reap=%ld polls=%u seek=%ld read=%ld\r\n",
+            report.done,report.error,report.worker,observed,i,seek_result,read_result);
+    ptest_assert_msg(report.done && !report.error && observed == -33L,
                      "orphan nested text accepted, data/BSS/hole rejected, no misdirected reap");
     ptest_assert_msg(Fclose(file) == 0 && Fdelete(phase1_policy_file) == 0,"orphan policy report cleanup");
 }
@@ -544,13 +453,21 @@ static void test_public_contract(unsigned char *stack)
     {
         static const char tail[] = "\017--abi-unmanaged";
         ptest_log_flush();
-        ptest_assert_msg(Pexec(0,"runtests.tos",tail,0) == 0,
-                         "nested synchronous launcher is not a managed THREAD");
+        /* Keep the unsupported-context probe small when the full optional
+         * staging/ownership suite occupies m68k's bounded classic window. */
+        ptest_assert_msg(Pexec(0,
+#if defined(TEST_WITH_IMAGE_POLICY_TEST)
+                         "IMAGEPOL.TOS",
+#else
+                         "runtests.tos",
+#endif
+                         tail,0) == 0,"nested synchronous launcher is not a managed THREAD");
     }
     phase1_account("nested",baseline);
     {
         static const char tail[] = "\14--abi-staged";
         long image, child, status, report;
+        struct phase1_policy_report unpublished;
         unsigned format;
         for (format = 0; format <
 #if defined(__mc68000__) && defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
@@ -565,10 +482,21 @@ static void test_public_contract(unsigned char *stack)
             phase1_policy_file = format ? PHASE1_POLICY_PRG : PHASE1_POLICY_ELF;
 #endif
             report = Fcreate(phase1_policy_file,0);
-            ptest_assert_msg(report >= 6 && Fclose(report) == 0,"prepare orphan policy report");
+            /* Every opener must see the full record size before the orphan
+             * can run; an early empty-file handle can otherwise close with a
+             * stale size while another handle publishes the source header. */
+            memset(&unpublished,0,sizeof(unpublished));
+            ptest_assert_msg(report >= 6 && Fwrite(report,sizeof(unpublished),&unpublished)==sizeof(unpublished) &&
+                             Fclose(report) == 0,"prepare full unpublished orphan policy report");
             ptest_log_flush();
 #if defined(__mc68000__) && defined(TEST_WITH_ELF_LOADER)
-            image = Pexec(3,format ? "C:\\RUNTESTS.TOS" : "C:\\CLNABI.TOS",tail,0);
+            image = Pexec(3,format ?
+#if defined(TEST_WITH_IMAGE_POLICY_TEST)
+                          "C:\\IMAGEPOL.TOS"
+#else
+                          "C:\\RUNTESTS.TOS"
+#endif
+                          : "C:\\CLNABI.TOS",tail,0);
 #else
             image = Pexec(3,"C:\\RUNTESTS.TOS",tail,0);
 #endif
@@ -578,6 +506,8 @@ static void test_public_contract(unsigned char *stack)
                 ptest_assert_msg(child > 0,"publish staged executable through existing async loader");
                 if (child > 0) {
                     status = Pwaitpid(child,0,0);
+                    if((status>>16)!=child || (status&65535))
+                        printf("staged policy format=%u pid=%ld status=%ld\r\n",format,child,status);
                     ptest_assert_msg((status >> 16) == child && !(status & 65535),
                                      "staged executable validates native Pclone text and zero return");
                     if ((status >> 16) == child && !(status & 65535)) phase1_policy_observe(child);

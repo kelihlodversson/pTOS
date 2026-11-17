@@ -5,6 +5,33 @@
 #undef main
 #include "../bdos/kproc.c"
 WORD bootdev=2;
+#if KPROC_LEGACY_PRG && CONF_WITH_IMAGE_POLICY
+static void legacy_image_policy(void)
+{
+    KPROC source={0};
+    static struct { PD pd;UBYTE text[TEST_PAGE]; } legacy;
+    PD *pd;
+    KPROC_IMAGE_POLICY first,second;
+    ULONG metadata=metadata_live,ram=physical_live;
+    pd=&legacy.pd;memset(&legacy,0,sizeof(legacy));
+    source.pd=pd;source.references=1;source.number=301;kproc_list=&source;
+    source.user_start=(UBYTE *)pd;source.user_end=(UBYTE *)(&legacy+1);kproc_mark_legacy(pd);
+    pd->p_tbase=PTR_TO_USERPTR_UNCHECKED((UBYTE *)(pd+1));pd->p_tlen=128;
+    CHECK(kproc_record_legacy_text(pd,128) && source.legacy_text_entry==(VADDR)(uintptr_t)(pd+1));
+    CHECK(!source.entry); /* Classic launcher enters the TPA directly. */
+    source.aspace=aspace_create();source.active_space=kaspace_adopt(source.aspace);source.started=TRUE;
+    CHECK(source.aspace && source.active_space && kproc_image_policy_capture(&source,&first)==E_OK);
+    CHECK(first.legacy && first.legacy_text_recorded && first.legacy_text_bytes==128 &&
+          first.entry==(VADDR)(uintptr_t)(pd+1) && !first.has_image && !first.program.nseg);
+    /* Writable public fields do not change the immutable loader snapshot. */
+    pd->p_tbase=0;pd->p_tlen=0;
+    CHECK(kproc_image_policy_capture(&source,&second)==E_OK && !memcmp(&first,&second,sizeof(first)));
+    CHECK(!kproc_record_legacy_text(pd,0) && source.legacy_text_entry==first.entry);
+    kproc_list=NULL;kaspace_put(source.active_space);
+    CHECK(metadata_live==metadata && physical_live==ram);
+    puts("Immutable PRG policy: authenticated loader entry/text, unchanged by writable basepage fields, exact cleanup: PASS");
+}
+#endif
 /* Scheduling is modeled here; native regression checks owner/ticket nesting. */
 void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(!scope->active);scope->active=TRUE; }
@@ -250,6 +277,9 @@ int main(void)
     ULONG i;LONG error;VADDR ordinary;static UBYTE environment[2]={0,0};
     PROG_LAYOUT original_layout={0};
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
+#if KPROC_LEGACY_PRG && CONF_WITH_IMAGE_POLICY
+    legacy_image_policy();
+#endif
     retiring_construction_borrows();
     supervisor_clone_metadata();
     runtime_mapping_policy();
@@ -403,7 +433,7 @@ int main(void)
         target.active_space=NULL;target.aspace=NULL;target.started=FALSE;
     }
     set.stack_bytes=DL_START_CAPACITY+64UL*1024UL;
-    ordinary=heap_alloc(&source,set.stack_bytes,UH_MALLOC,NULL,TRUE);CHECK(ordinary);
+    ordinary=heap_alloc(&source,set.stack_bytes,UH_MALLOC,NULL,TRUE,0);CHECK(ordinary);
     fail_metadata=allocation_call+1;CHECK(shared_interp_stack(&target,&set,ordinary)==ENSMEM);reset_failure();
     CHECK(shared_interp_stack(&target,&set,ordinary)==E_OK);
     {
@@ -442,7 +472,7 @@ int main(void)
     memset(&set,0,sizeof(set));set.space=source.active_space;set.parent=&source;
     CHECK(shared_interp_prepare(&source,&target,&set)==E_OK);
     CHECK(target.layout.entry==USER_IMAGE_BASE+16);
-    ordinary=heap_alloc(&source,TEST_PAGE,UH_MALLOC,NULL,TRUE);
+    ordinary=heap_alloc(&source,TEST_PAGE,UH_MALLOC,NULL,TRUE,0);
     CHECK(ordinary>=USER_HEAP_BASE);
     {
         KASPACE_HEAP *heap=kaspace_heap(source.active_space);

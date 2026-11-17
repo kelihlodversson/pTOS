@@ -56,7 +56,7 @@ static BOOL split(const char *text, ULONG length, char *args, ULONG capacity,
 }
 
 BOOL aes_shell_arguments(const char *path, const char *tail, BOOL parse,
-                         const char *environment, ULONG limit, SHELL_ARGUMENTS *out)
+                         const char *environment, ULONG limit, SHELL_ARGUMENTS *out, AESGLOBAL *global)
 {
     ULONG size, prefix, at, n, command, header, null_at, arg_at;
     SPLIT measured, written;
@@ -81,7 +81,7 @@ BOOL aes_shell_arguments(const char *path, const char *tail, BOOL parse,
     if (!parse) {
         if (n == 127 && (prefix == size-1 || !environment[prefix] ||
             !environment[prefix+strlen(environment+prefix)+1])) return FALSE;
-        staged = aes_temporary_alloc(size+1);
+        staged = aes_temporary_alloc(size+1,global);
         if (!staged) return FALSE;
         memcpy(staged,environment,size); staged[size] = 0;
         out->environment = staged; return TRUE;
@@ -94,7 +94,7 @@ BOOL aes_shell_arguments(const char *path, const char *tail, BOOL parse,
     header = measured.nulls ? 10+measured.nulls : 5;
     command = strlen(path)+1;
     if (prefix+header+1+command+measured.bytes+1 > ENV_LIMIT) return FALSE;
-    staged = aes_temporary_alloc(prefix+header+1+command+measured.bytes+2);
+    staged = aes_temporary_alloc(prefix+header+1+command+measured.bytes+2,global);
     if (!staged) return FALSE;
     memcpy(staged,environment,prefix);
     memcpy(staged+prefix,measured.nulls ? "ARGV=NULL:" : "ARGV=",measured.nulls ? 10 : 5);

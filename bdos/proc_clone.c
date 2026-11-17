@@ -13,6 +13,10 @@
 #if CONF_WITH_FORK_CORE
 #include "fork_parent.h"
 #endif
+#include "kproc_image_policy.h"
+#if CONF_WITH_PROCESS_FILES_TEST
+#include "process_files.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #include "ksched_lifetime.h"
@@ -46,9 +50,15 @@ struct proc_clone_transaction {
 #if CONF_WITH_FORK_CORE
     FORK_PARENT_DEPENDENCY *parent_dependency; /* borrowed from calling THREAD */
 #endif
+#if CONF_WITH_IMAGE_POLICY
+    KPROC_IMAGE_PREPARATION *image_policy;
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST
+    KPROC_FILE_SNAPSHOT *files; /* admitted source plus reversible exact owners */
+#endif
 };
 
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
 static UWORD fail_stage;
 static BOOL cancel_publication;
 void proc_clone_test_cancel_publication(void) { cancel_publication = TRUE; }
@@ -70,6 +80,12 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 #endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
     if (ksched_test_clone_masked()) panic("clone teardown in publication exclusion");
+#endif
+#if CONF_WITH_IMAGE_POLICY
+    kproc_image_policy_release(&tx->image_policy);
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST
+    kproc_files_snapshot_end(&tx->files);
 #endif
     thread_startup_abort(&tx->startup);
 #if CONF_WITH_NATIVE_SCHED
@@ -165,11 +181,17 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     tx->mapping_members = NULL;
     tx->thread = NULL;
     tx->startup = NULL;
+#if CONF_WITH_IMAGE_POLICY
+    tx->image_policy=NULL;
+#endif
     tx->observer = NULL; tx->asynchronous = FALSE;
     tx->policy = args->process_policy;
     tx->owns_process = FALSE;
     tx->loaded_shared=loaded_shared;
     tx->owns_shared_exec=FALSE;
+#if CONF_WITH_PROCESS_FILES_TEST
+    tx->files=NULL;
+#endif
     tx->owns_compat = FALSE;
 #if CONF_WITH_FORK_CORE
     tx->parent_dependency=NULL;
@@ -180,9 +202,23 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     if (!tx->source_space) goto failed;
     if ((args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(1))) goto failed;
     if (tx->policy == PROC_CLONE_NEW_PROCESS && !loaded_shared) {
-        error = proc_create_clone_process(tx->source, args->resources, &tx->process);
+        UWORD resources=args->resources;
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (resources&PROC_CLONE_COPY_FILES) {
+            error=kproc_files_snapshot_begin(tx->source,&tx->files);
+            if (error) goto failed;
+            resources&=~(PROC_CLONE_COPY_FILES|PROC_CLONE_COPY_STANDARD_HANDLES);
+        }
+#endif
+        error = proc_create_clone_process(tx->source, resources, &tx->process);
         if (error != E_OK) goto failed;
         tx->owns_process = TRUE;
+#if CONF_WITH_PROCESS_FILES_TEST
+        if (tx->files) {
+            error=kproc_files_snapshot_prepare(tx->files,tx->process,PROCESS_FILES_ALL);
+            if (error) goto failed;
+        }
+#endif
         error = ENSMEM;
     } else {
         tx->process = kproc_retain_live(target);
@@ -194,7 +230,8 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     else {
         error = kaspace_clone(space, &tx->space);
         if (error) goto failed;
-        if (!kproc_clone_private_runtime(tx->process, tx->source)) { error = EACCDN; goto failed; }
+        error=kproc_clone_prepare_private_image(tx->process,tx->source);
+        if (error) goto failed;
         error = ENSMEM;
     }
 #endif
@@ -262,15 +299,26 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
             tx->startup || kthread_process(tx->thread) != tx->process ||
             kthread_aspace(tx->thread) != tx->space) return EACCDN;
     } else if (kproc_active_space(tx->source) != tx->source_space) return EACCDN;
+#if CONF_WITH_PRIVATE_CLONE
+    if (tx->space != tx->source_space &&
+        !kproc_clone_private_runtime(NULL,tx->source)) return EACCDN;
+#endif
     /* Identity-only commit cannot publish a startup image. The controlled
      * root runner is a separate NEW_PROCESS-only transaction boundary. */
     if (tx->startup) return thread_startup_publication_check(tx->startup);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (tx->files && kproc_files_snapshot_seal(tx->files)) return EACCDN;
+#endif
+
     if (tx->policy != PROC_CLONE_SAME_PROCESS && tx->policy != PROC_CLONE_LOADED_PROCESS) {
         if (!kproc_clone_adopt_space(tx->process, tx->thread, tx->space))
             return EACCDN;
         kproc_clone_commit_mapping_owners(tx->process,tx->space,&tx->mapping_members);
         tx->space = NULL; /* moved, not another reference */
     }
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (tx->files) kproc_files_snapshot_commit(tx->files,tx->process);
+#endif
     ready.thread = tx->thread;
     ready.pid = kproc_ref_pid(tx->process);
     ready.tid = kthread_tid(tx->thread);
@@ -423,8 +471,17 @@ LONG proc_clone_prepare_startup_elf(PROC_CLONE_TRANSACTION *tx,const THREAD_STAR
 static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 {
     return tx && tx->startup &&
+#if CONF_WITH_IMAGE_POLICY
+        (!tx->image_policy || kproc_image_policy_validate(tx->image_policy)==E_OK) &&
+#endif
+#if CONF_WITH_PROCESS_FILES_TEST
+        (!tx->files || kproc_files_snapshot_validate(tx->files)) &&
+#endif
 #if CONF_WITH_PTERMGRP
         !kproc_group_status(tx->source, NULL) && !kproc_group_status(tx->process, NULL) &&
+#endif
+#if CONF_WITH_PRIVATE_CLONE
+        (tx->space == tx->source_space || kproc_clone_private_runtime(NULL,tx->source)) &&
 #endif
         kproc_active_space(tx->source) == tx->source_space &&
         (tx->policy == PROC_CLONE_SAME_PROCESS || kproc_clone_target_ready(tx->process, tx->thread));
@@ -463,6 +520,16 @@ LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *tx)
     }
     return E_OK;
 }
+
+#if CONF_WITH_IMAGE_POLICY
+LONG proc_clone_prepare_image_policy(PROC_CLONE_TRANSACTION *tx,const KPROC_IMAGE_POLICY *policy)
+{
+    if (!tx || tx->policy!=PROC_CLONE_NEW_PROCESS || !tx->owns_process ||
+        tx->loaded_shared || tx->image_policy) return EINVAL;
+    if (!startup_target_live(tx) || !kthread_clone_run_ready(tx->thread)) return EACCDN;
+    return kproc_image_policy_prepare(tx->process,tx->thread,policy,&tx->image_policy);
+}
+#endif
 
 const THREAD_STARTUP_DRAFT *proc_clone_startup(const PROC_CLONE_TRANSACTION *tx)
 {
@@ -654,7 +721,8 @@ done:
 #endif
 
 static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup,
-                             VADDR pid, VADDR tid, BOOL return_pid,BOOL scoped)
+                             VADDR pid, VADDR tid, BOOL return_pid,BOOL scoped,
+                             const struct kproc_image_policy *image_policy)
 {
     PROC_CLONE_TRANSACTION *tx = NULL;
     PROC_CLONE_OBSERVER *observer = NULL;
@@ -662,6 +730,9 @@ static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_
     PD *controller;
     ULONG identity;
     LONG error;
+#if !CONF_WITH_IMAGE_POLICY
+    if (image_policy) return EINVFN;
+#endif
     if (!args || !startup || (args->process_policy != PROC_CLONE_NEW_PROCESS &&
         args->process_policy != PROC_CLONE_SAME_PROCESS) ||
         (scoped ? (args->vm_policy!=PROC_CLONE_SCOPED_VM || args->process_policy!=PROC_CLONE_NEW_PROCESS || return_pid) :
@@ -683,6 +754,9 @@ static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_
 #endif
         thread_startup_prepare_public(tx->space,startup,&tx->startup);
     if (!error) error = proc_clone_retain_startup_stack(tx);
+#if CONF_WITH_IMAGE_POLICY
+    if (!error && image_policy) error=proc_clone_prepare_image_policy(tx,image_policy);
+#endif
     if (!error) error = proc_clone_prepare_outputs(tx,pid,tid);
     if (!error) error = proc_clone_observe_async(tx,&observer);
     if (!error) error = proc_clone_spawn(&tx,&created);
@@ -692,12 +766,23 @@ done:
     return error ? error : (return_pid ? (LONG)created.pid : (LONG)identity);
 }
 LONG proc_clone_start_public(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup, VADDR pid, VADDR tid)
-{ return clone_start_entry(args, startup, pid, tid, FALSE,FALSE); }
+{ return clone_start_entry(args, startup, pid, tid, FALSE,FALSE,NULL); }
+#if CONF_WITH_IMAGE_POLICY_TEST
+LONG proc_clone_start_image_policy_test(const PROC_CLONE_ARGS *args,const THREAD_STARTUP_ARGS *startup)
+{
+    KPROC_IMAGE_POLICY policy;
+    LONG error;
+    if (!args || args->process_policy!=PROC_CLONE_NEW_PROCESS || args->vm_policy!=PROC_CLONE_SHARE_VM)
+        return EINVAL;
+    error=kproc_image_policy_capture(args->source,&policy);
+    return error?error:clone_start_entry(args,startup,0,0,FALSE,FALSE,&policy);
+}
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 LONG proc_clone_start_private_test(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_ARGS *startup)
-{ return clone_start_entry(args, startup, 0, 0, TRUE,FALSE); }
+{ return clone_start_entry(args, startup, 0, 0, TRUE,FALSE,NULL); }
 LONG proc_clone_start_scoped_test(const PROC_CLONE_ARGS *args,const THREAD_STARTUP_ARGS *startup,VADDR pid,VADDR tid)
-{ return clone_start_entry(args,startup,pid,tid,FALSE,TRUE); }
+{ return clone_start_entry(args,startup,pid,tid,FALSE,TRUE,NULL); }
 #endif
 
 LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *created)
@@ -737,7 +822,7 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
     if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
           kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) :
           kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
-        kproc_active_space(tx->source) != tx->source_space) { error = EACCDN; goto failed; }
+        !startup_target_live(tx)) { error = EACCDN; goto failed; }
     /* Only no-allocation/no-callback revalidation, sealing and stores occur
      * under backend exclusion. Cleanup always restores the entry IRQ state. */
     {
@@ -746,8 +831,11 @@ LONG proc_clone_spawn(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_IDENTITIES *cr
         if (confirmed != controller) { ksched_clone_end(&guard); error = EACCDN; goto failed; }
     }
     error = thread_startup_seal(tx->startup);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (!error && tx->files) error=kproc_files_snapshot_seal(tx->files);
+#endif
     if (error) { ksched_clone_end(&guard); goto failed; }
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
     if (cancel_publication) {
         cancel_publication = FALSE;
         ksched_clone_end(&guard);
@@ -795,10 +883,13 @@ LONG proc_clone_exec(PROC_CLONE_TRANSACTION **handle, PROC_CLONE_COMPLETION *com
     if (!(tx->policy == PROC_CLONE_SAME_PROCESS ?
           kproc_clone_sibling_ready(tx->process, tx->thread, tx->space) :
           kproc_clone_run_ready(tx->process, tx->thread, tx->space)) ||
-        kproc_active_space(tx->source) != tx->source_space) { error = EACCDN; goto failed; }
+        !startup_target_live(tx)) { error = EACCDN; goto failed; }
     error = thread_startup_seal(startup);
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (!error && tx->files) error=kproc_files_snapshot_seal(tx->files);
+#endif
     if (error) goto failed;
-#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_PRIVATE_CLONE_TEST || CONF_WITH_PROCESS_FILES_TEST
     if (cancel_publication) {
         cancel_publication = FALSE;
         ksched_task_cancel(&slot);
@@ -831,6 +922,9 @@ void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)
     ULONG tid = kthread_tid(tx->thread);
     THREAD_STARTUP_DRAFT *startup = tx->startup;
     if (!thread_startup_take_stacks(startup, &owners)) panic("clone publication: missing prepared stacks");
+#if CONF_WITH_PROCESS_FILES_TEST
+    if (tx->files) kproc_files_snapshot_commit(tx->files,tx->process);
+#endif
 #if CONF_WITH_FORK_CORE
     if (tx->parent_dependency) {
         fork_parent_publish(tx->parent_dependency);

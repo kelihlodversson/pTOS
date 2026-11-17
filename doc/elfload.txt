@@ -46,28 +46,38 @@ its supported ELF features, build instructions and runtime installation.
 ET_DYN/static PIE support in the static loader does not itself enable shared
 libraries.
 
-(On x86-64 the image is not placed in the TPA at all: it is read, and relocated
-by this loader if it was not linked for the image window, straight into the
-pages the process will run from, in the process's own address space or, for a
-PE_LOAD by a ring-3 caller, in a block of the caller's heap, see
-doc/x86_64-address-space.txt.)
+With per-process address spaces the image is not placed in the TPA. It is
+read straight into private pages, preserving PT_LOAD virtual addresses when
+the whole image and its 128 KiB startup area fit an allocatable range.
+Allocatable addresses start at 0x00010000 and end below the stack guard;
+0x08000000..0x0fffffff is reserved for system mappings and process metadata.
+An ET_EXEC at 0x41000000 therefore runs there without relocations. The old
+4 MiB image base remains the fallback for images linked outside these ranges;
+it is no longer a 4 MiB size limit. A ring-3 PE_LOAD first tries the linked
+address in the caller's heap range; if occupied, it allocates another heap
+block. Moving an ET_EXEC requires usable relocation records and otherwise
+returns EPLFMT. Image gaps and startup space are reserved against Malloc and
+Mmap, including pending PE_LOAD images. See doc/x86_64-address-space.txt.
 
 The loader accepts a statically linked, native-endian ELF32 for the machine
 it was built for, in either of two forms:
 
-  1. A fixed base ET_EXEC linked with "ld --emit-relocs" (ld -q).  Normally
-     ld consumes and discards relocations at link time; -q keeps them in the
-     final binary so the loader can re-apply them at a different base.
+  1. A fixed base ET_EXEC. If it must run at a different address, link with
+     "ld --emit-relocs" (ld -q). Normally ld consumes and discards relocations
+     at link time; -q keeps them so the loader can re-apply them at another
+     base. With per-process address spaces, an ET_EXEC that stays at its
+     linked address needs neither relocation entries nor section headers.
 
   2. A position independent ET_DYN (PIE), linked with
      "ld -pie --no-dynamic-linker".  A PIE carries only the additive
      R_*_RELATIVE dynamic relocations it actually needs, and a program that
      stores no absolute pointer in its initialised data needs none at all.
 
-In both cases the relocation entries are read from the section headers, so
-the binary must keep them: do not strip it (no "strip", no "ld -s").  A
-binary that must be relocated but has no usable section header table is
-rejected.  Both ELF relocation encodings are applied: REL sections
+In the section-based relocation format the entries are read from section
+headers, so a binary that needs these relocations must keep them (no
+"strip", no "ld -s"). Missing usable relocation information when rebasing
+is required is rejected. The compact program-header format below is another
+way to retain it. Both ELF relocation encodings are applied: REL sections
 (SHT_REL), which ARM emits with the addend stored in the target word, and
 RELA sections (SHT_RELA), which m68k emits with an explicit addend field.
 
@@ -80,13 +90,13 @@ This works with a stock arm-none-eabi toolchain, no patched gcc or ld:
   # fixed base, --emit-relocs.  -mword-relocations keeps gcc from emitting
   # MOVW/MOVT split relocations, so every absolute slot is a plain 32-bit
   # R_ARM_ABS32 word that the loader can fix up directly.
-  arm-none-eabi-gcc -ffreestanding -nostdlib -fno-pic -mword-relocations \
+  arm-unknown-ptos-elf-gcc -ffreestanding -nostdlib -fno-pic -mword-relocations \
       -c prog.c -o prog.o
-  arm-none-eabi-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+  arm-unknown-ptos-elf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
 
   # or, position independent:
-  arm-none-eabi-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
-  arm-none-eabi-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
+  arm-unknown-ptos-elf-gcc -ffreestanding -nostdlib -fPIE -c prog.c -o prog.o
+  arm-unknown-ptos-elf-ld -pie --no-dynamic-linker -e _start prog.o -o prog.elf
 
 The result is an ordinary ELF that readelf, objdump and gdb understand.
 "readelf -r prog.elf" shows the relocations the loader will apply.
@@ -98,6 +108,8 @@ Building a compatible program (m68k)
 The same two recipes work with m68k ELF toolchains.  Besides a bare-metal
 m68k-elf- toolchain, Vincent Riviere's mintelf toolchain
 (m68k-atari-mintelf-) can produce ELF executables for the loader as well.
+The default pTOS m68k SDK (m68k-unknown-ptos-prgelf-) produces ordinary
+ELF directly; the MiNT recipes below are retained for legacy toolchains.
 The m68k psABI uses RELA relocations, so the retained entries are
 R_68K_32 / R_68K_RELATIVE in SHT_RELA sections; the loader handles those:
 
@@ -222,7 +234,7 @@ unchanged.
 Producing a packed binary is one extra step after the existing recipes
 above:
 
-    arm-none-eabi-ld -q -Ttext=0 -e _start prog.o -o prog.elf
+    arm-unknown-ptos-elf-ld -q -Ttext=0 -e _start prog.o -o prog.elf
     ptos-elf-pack prog.elf prog-packed.elf
 
 "readelf -l prog-packed.elf" shows the extra program header as an unknown

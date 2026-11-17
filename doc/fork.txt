@@ -14,16 +14,19 @@ This deliberately differs from FreeMiNT Pvfork's shared memory: ordinary private
 child writes are NOT visible in the parent's private memory. Explicitly shared
 mappings keep their mapping semantics; public MAP_SHARED is currently unsupported
 by pTOS and is not enabled here. No special shared user stack, shared parent-root
-attachment or VM detachment is required for COW Pvfork. Pexec200 still needs
-safe same-PROCESS executable replacement and committed-exec notification.
+attachment or VM detachment is required for COW Pvfork. Public Pexec(200)
+(#970, #999) replaces a private-VM child in its own PROCESS (#1003, #1007) and
+publishes the committed-exec generation the Pvfork release reads.
 
 Public opcodes0x11b/0x113 remain EINVFN until common resource/snapshot prerequisites
 and public native acceptance. The existing0x895f0000 shared-return experiment is
 historical CPU startup coverage ONLY, never the Pvfork implementation. New private
 selectors share one constructor;0x895fc000 adds exact-child parent suspension.
-See fork-return.txt and phase6-acceptance.txt for current source/test evidence,
-#969 descriptors, #971 private snapshots (BOTH calls), and #970 executable
-replacement (full Pvfork). See freemint-compatibility.txt for user-facing scope.
+See fork-return.txt and phase6-acceptance.txt for current source/test evidence.
+The prerequisites #969 descriptors, #971 private snapshots (BOTH calls; see
+private-snapshot.txt) and #970/#1003 executable replacement (full Pvfork) are
+merged; #984 trusted DTA/search snapshots remains. See
+freemint-compatibility.txt for user-facing scope.
 
 Historical audit and shared-stack proposal (superseded)
 -------------------------------------------------------
@@ -71,7 +74,7 @@ Transactional prepared/no-fail publication  yes      yes        yes
 Saved-return test startup (F1, gated)        yes      A32        040 only
 Independent-VM kaspace_clone                EINVFN   EINVFN     EINVFN
 Fork anonymous writable-page COW             absent   absent     absent
-Pexec(200) committed detach                  absent   absent     absent
+Pexec(200) committed-exec generation        yes      yes        yes
 Pfork / Pvfork enabled                      no       no         no
 
 m68k includes the 030/040/060 backends, not just QEMU040. Non-MMU fork and
@@ -120,7 +123,8 @@ Owner       Required increment                         #895 consumer
 #891/#892   Mapping/allocation ownership in two VMs     Retain child user stack
 #892/#895   Full process resource-copy policy           Fork policy adapter
 #893       Final PROCESS completion; THREAD exit       Exit release of vfork
-#894       Successful Pexec(200) independent-VM commit  Exec release of vfork
+#894/#970   Successful Pexec(200) independent-VM commit  Exec release of vfork:
+            (CONF_WITH_PEXEC200, kproc exec_generation)  read the generation
 #909       Authoritative PROCESS waits/reaping         Ordinary child wait ABI
 #928/#907   Retained non-consuming completion observer Reuse, no new registry
 

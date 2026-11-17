@@ -8,7 +8,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-#include <osbind.h>
+#include <mint/osbind.h>
 #include "nat_feat.h"
 
 #ifndef CHANNEL

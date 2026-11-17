@@ -4,7 +4,7 @@
 #include "gem_buffer.h"
 #define VERIFY(c) do { if (!(c)) return 0x8800 | __LINE__; } while (0)
 static char bytes[6001], expected[6000];
-int gem_buffer_after_child(short *global)
+int gem_buffer_after_child(AESGLOBAL *global)
 {
     int i;
     VERIFY(mt_shel_get(NULL,SHEL_BUFSIZE,global) == 6000);
@@ -13,7 +13,7 @@ int gem_buffer_after_child(short *global)
     for (i = 4; i < 6000; i++) VERIFY(bytes[i] == expected[i]);
     return 0;
 }
-int gem_buffer_checks(short *global, int child)
+int gem_buffer_checks(AESGLOBAL *global, int child)
 {
     short a, b, c, d;
     int i;

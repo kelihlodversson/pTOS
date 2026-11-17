@@ -9,12 +9,12 @@ static int equal(const char *a, const char *b)
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
 }
-static void parent_state(short *global)
+static void parent_state(AESGLOBAL *global)
 {
     mt_shel_wdef("DESKTOP.PRG","C:\\PARENT\\",global);
     mt_scrp_write("C:\\PARENT\\CLIP\\",global);
 }
-int gem_metadata_after_child(short *global)
+int gem_metadata_after_child(AESGLOBAL *global)
 {
     mt_shel_rdef(command,directory,global);
     VERIFY(equal(command,"CHILD.PRG") && equal(directory,"Z:\\MISSING"));
@@ -22,7 +22,7 @@ int gem_metadata_after_child(short *global)
     parent_state(global);
     return 0;
 }
-int gem_metadata_checks(short *global, int child)
+int gem_metadata_checks(AESGLOBAL *global, int child)
 {
     short a, b, c, d;
     VERIFY(appl_getinfo(AES_PCGEM,&a,&b,&c,&d) == 1 && !a && !b && !c && d == 1);

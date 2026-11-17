@@ -72,7 +72,7 @@ void wm_frame_init(WM_FRAME *frame)
     frame->tree[W_INFO].ob_spec.tedinfo = &frame->info;
 }
 #endif
-static char empty_name[] = "";
+static const char empty_name[] = "";
 static void frame_adjust(OBJECT *__restrict__ tree, WORD parent, WORD obj, WORD x, WORD y, WORD w, WORD h)
 {
     OBJECT *child = tree+obj, *owner = tree+parent;

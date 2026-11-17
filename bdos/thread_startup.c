@@ -23,6 +23,7 @@ struct thread_startup_draft {
     BOOL saved_return;
     BOOL cloned_return;
     BOOL elf_entry;
+    BOOL program_entry; /* ordinary process entry from the KPROC record */
     VADDR initial_sp;
     VADDR outputs[2]; /* exact destinations retained; never written yet */
     THREAD_STARTUP_OBSERVER observer;
@@ -56,6 +57,7 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->saved_return = saved != NULL;
         draft->cloned_return = saved != NULL && source != NULL;
         draft->elf_entry = initial_sp != 0;
+        draft->program_entry = FALSE;
         draft->initial_sp = initial_sp;
         draft->outputs[0] = draft->outputs[1] = 0;
         draft->observer.acquire = NULL;
@@ -103,6 +105,35 @@ LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *ar
 {
     return startup_prepare(space, args, out, TRUE, NULL, NULL, 0);
 }
+#if CONF_WITH_EXEC_REPLACE
+#include "exec_handoff.h"
+LONG thread_startup_prepare_handoff(KASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                    THREAD_STARTUP_DRAFT **out)
+{
+    LONG error = thread_startup_prepare_public(space, args, out);
+    /* The existing task retains its canonical completion admission. There is
+     * no new lifecycle observer to register for this same-image experiment. */
+    if (!error) (*out)->state = THREAD_STARTUP_OBSERVED;
+    return error;
+}
+LONG thread_startup_prepare_program(KASPACE *space, const THREAD_STARTUP_ARGS *args,
+                                   THREAD_STARTUP_DRAFT **out)
+{
+    LONG error;
+    if (!args || args->argument) return EINVAL;
+    error = startup_prepare(space, args, out, FALSE, NULL, NULL, 0);
+    if (error) return error;
+    /* The replaced PROCESS keeps its canonical completion admission, so no
+     * lifecycle observer is registered. No frame alias is ever committed. */
+    (*out)->program_entry = TRUE;
+    (*out)->state = THREAD_STARTUP_OBSERVED;
+    return E_OK;
+}
+BOOL thread_startup_program_entry(const THREAD_STARTUP_DRAFT *draft)
+{
+    return draft && draft->program_entry && draft->state == THREAD_STARTUP_RUNNABLE;
+}
+#endif
 #if CONF_WITH_SHARED_VM_PEXEC_TEST
 LONG thread_startup_prepare_elf(KASPACE *space,const THREAD_STARTUP_ARGS *args,
                                VADDR initial_sp,THREAD_STARTUP_DRAFT **out)
@@ -330,7 +361,7 @@ LONG thread_startup_run_preflight(THREAD_STARTUP_DRAFT *draft)
     if (!draft || draft->state != THREAD_STARTUP_OBSERVED) return EINVAL;
     error = thread_startup_validate(draft);
     if (error) return error;
-    if (!draft->saved_return && !draft->elf_entry) {
+    if (!draft->saved_return && !draft->elf_entry && !draft->program_entry) {
         draft->frame_alias = thread_startup_arch_frame_alias(kaspace_backend(draft->space), draft->image);
         if (!draft->frame_alias) return EIMBA;
     }
@@ -352,7 +383,8 @@ void thread_startup_commit_stores(THREAD_STARTUP_DRAFT *draft, WORD pid, ULONG t
 {
     UWORD i;
     ULONG values[2];
-    if (!draft->saved_return && !draft->elf_entry) thread_startup_arch_commit_frame(draft->image, draft->frame_alias);
+    if (!draft->saved_return && !draft->elf_entry && !draft->program_entry)
+        thread_startup_arch_commit_frame(draft->image, draft->frame_alias);
     values[0] = (LONG)pid; values[1] = tid;
     for (i = 0; i < 2; i++) if (draft->output_aliases[i]) {
         if (draft->output_tails[i]) {
@@ -386,7 +418,12 @@ void thread_startup_reclaim(THREAD_STARTUP_DRAFT **handle)
 {
     FS_ERROR_STATE saved_error;
     if (!handle || !*handle) return;
-    if ((*handle)->state != THREAD_STARTUP_RUNNABLE || !ksched_startup_reclaimable(*handle))
+    if ((*handle)->state != THREAD_STARTUP_RUNNABLE ||
+        (!ksched_startup_reclaimable(*handle)
+#if CONF_WITH_EXEC_REPLACE
+         && !ksched_exec_handoff_retiring(*handle)
+#endif
+        ))
         panic("startup reclaim outside stopped scheduler root");
     saved_error = *fs_error_current();
     if (setjmp(errbuf)) {

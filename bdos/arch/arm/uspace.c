@@ -38,6 +38,9 @@
 #include "native_sched_backend.h"
 #include "arch/arm/irqframe.h"
 #include "thread_startup32.h"
+#if CONF_WITH_EXEC_REPLACE
+#include "exec_handoff.h"
+#endif
 #include "string.h"
 #include "fs.h"
 #endif
@@ -162,6 +165,9 @@ struct uspace_launch {
     volatile BOOL exit_resident;
     volatile ULONG exit_resident_len;
     volatile BOOL exit_final;
+#if CONF_WITH_EXEC_REPLACE
+    volatile BOOL relaunch; /* Pexec(200): enter the committed image again */
+#endif
 };
 #if CONF_WITH_NATIVE_SCHED
 static struct uspace_launch *get_uspace_launch(void) { return ksched_loaded_launcher(); }
@@ -216,6 +222,34 @@ void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 #endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
 static BOOL injected_exit_failure;
+#endif
+
+#if CONF_WITH_EXEC_REPLACE
+BOOL proc_exec_stack_snapshot(void **owner, PADDR *physical)
+{
+    struct uspace_launch *launch = get_uspace_launch();
+    if (!launch || launch->pd != run || launch->previous || !launch->stack_phys ||
+        launch->exit_process || launch->fallback_observer ||
+        aspace_hw_current() != kproc_user_root(run) ||
+        !kstack_contains(launch->stack_phys, (uintptr_t)&launch)) return FALSE;
+#if FPU_ALL_BYTES
+    {
+        ULONG fpexc;
+        __asm__ volatile ("vmrs %0,fpexc" : "=r"(fpexc));
+        if ((fpexc & 0xc0000000UL) != 0x40000000UL) return FALSE;
+    }
+#endif
+    *owner = launch; *physical = launch->stack_phys;
+    return TRUE;
+}
+void proc_exec_stack_take(void *owner, PADDR physical)
+{
+    void *actual = NULL;
+    PADDR stack = 0;
+    if (!proc_exec_stack_snapshot(&actual, &stack) || actual != owner || stack != physical)
+        panic("exec handoff: launcher syscall ownership changed");
+    ((struct uspace_launch *)owner)->stack_phys = 0;
+}
 #endif
 
 /* Retain only canonical completion identity through refused exit handoff.
@@ -285,6 +319,9 @@ void gouser(void)
 #if CONF_WITH_NATIVE_SCHED
     THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
     const THREAD_STARTUP32 *prepared = startup ? thread_startup_image(startup) : NULL;
+#if CONF_WITH_EXEC_REPLACE
+    BOOL program = thread_startup_program_entry(startup);
+#endif
     THREAD_STARTUP_STACK syscall_owner = { 0, 0 };
     if (ksched_take_syscall_stack(p, &syscall_owner)) {
         kstack_phys = syscall_owner.physical;
@@ -292,6 +329,10 @@ void gouser(void)
     } else
 #endif
         kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
+#if CONF_WITH_EXEC_REPLACE
+    /* Pexec(200): fresh stacks from the draft, ordinary entry from the record */
+    if (program) prepared = NULL;
+#endif
 #if CONF_WITH_NATIVE_SCHED
     if (prepared) { entry = prepared->entry; user_sp = prepared->sp; }
 #endif
@@ -315,8 +356,14 @@ void gouser(void)
     launch.stack_top = kstack_top;
     launch.exit_process = NULL;
     launch.fallback_observer = NULL;
+#if CONF_WITH_EXEC_REPLACE
+    launch.relaunch = FALSE;
+#endif
     set_uspace_launch(&launch);
     __asm__ volatile ("mrs %0, cpsr" : "=r" (launcher_status));
+#if CONF_WITH_EXEC_REPLACE
+relaunch:
+#endif
     if (setjmp(launch.resume) == 0) {
         aspace_hw_switch(root);
         /* the code of an ELF image was written through the data side (the loader reads the
@@ -331,9 +378,42 @@ void gouser(void)
             arm_enter_prepared_user(prepared, (ULONG)kstack_top);
         }
 #endif
+#if CONF_WITH_EXEC_REPLACE
+        if (program) thread_startup_entering(startup);
+#endif
         arm_enter_user(entry, user_sp, kproc_standard_entry(p)?0:(ULONG)(uintptr_t)p,
                        (ULONG)kstack_top);
     }
+#if CONF_WITH_EXEC_REPLACE
+    if (launch.relaunch) {
+        /* Pexec(200) of this PROCESS: back on the launcher's own stack, off
+         * the replaced program's syscall stack. Commit, switch to the
+         * committed root, retire the old one, and enter the new program
+         * exactly like a freshly launched one. */
+        launch.relaunch = FALSE;
+        *fs_error_current() = launch.error;
+        /* The commit reads the staging container's basepage, which only
+         * the kernel root maps once the bundle dropped its loader borrows. */
+        aspace_hw_switch(aspace_kernel_root());
+        ksched_exec_relaunch_commit(p, &kstack_phys, &kstack_top);
+        /* The PROCESS now runs on the new program's basepage. */
+        p = run;
+        launch.pd = p;
+        launch.stack_phys = kstack_phys;
+        launch.stack_top = kstack_top;
+        root = kproc_user_root(p);
+        entry = (ULONG)kproc_user_entry(p);
+        user_sp = (ULONG)kproc_user_stack(p);
+        prepared = NULL; startup = NULL; program = FALSE;
+        if (!root || !entry || !user_sp)
+            panic("exec relaunch without an address space, entry or stack\n");
+        /* Retire on the kernel root: it maps the old basepage, TPA and
+         * environment the disposal frees; the new root does not. */
+        ksched_exec_relaunch_retire();
+        aspace_hw_switch(root);
+        goto relaunch;
+    }
+#endif
     set_uspace_launch(launch.previous);
     *fs_error_current() = launch.error;
     {
@@ -367,6 +447,21 @@ void gouser(void)
     }
     __asm__ volatile ("msr cpsr_c, %0" :: "r" (launcher_status) : "memory", "cc");
 }
+
+#if CONF_WITH_EXEC_REPLACE
+BOOL proc_exec_relaunch_ready(PD *pd)
+{
+    struct uspace_launch *launch = get_uspace_launch();
+    return launch && launch->pd == pd && !launch->exit_process && !launch->relaunch;
+}
+void proc_exec_relaunch(PD *pd)
+{
+    struct uspace_launch *launch = get_uspace_launch();
+    if (!proc_exec_relaunch_ready(pd)) panic("exec relaunch: no launch of this process");
+    launch->relaunch = TRUE;
+    longjmp(launch->resume, 1);
+}
+#endif
 
 void termuser(void)
 {

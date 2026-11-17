@@ -1,0 +1,166 @@
+Same-PROCESS execution transport prerequisite (#970)
+===================================================
+
+Base: accepted epic 57617dbf20e5234c2b80b38b69dfcc13cf3c542f, including
+merged #973, #974, #975 and #977. No #972, unfinished #971 or #984 import.
+This implements the independently testable scheduler/launcher portion of
+https://github.com/kelihlodversson/pTOS/issues/970#issuecomment-6892560984 .
+
+Scope and capability
+--------------------
+CONF_WITH_EXEC_HANDOFF_TEST defaults off and requires the existing replacement
+test gate and Pclone. No shipped configuration selects it. Private Pclone tags
+in exec_handoff_test.h exercise a same-image, SAME-ROOT transport. This test
+transport publishes no committed-exec generation: its token conveys no
+executable-image adoption right. Public Pexec(200) (CONF_WITH_PEXEC200, on by
+default) reuses
+the same phases with an image bundle; see doc/exec-replacement.txt.
+
+Ownership and sequence
+----------------------
+The opaque KSCHED_EXEC_HANDOFF is owned by the existing KERNEL_TASK, not a
+second task, PROCESS, PID table, observer or reaper. It binds exact retained
+KPROC/PROCESS number, PID/PD, sole executing KTHREAD/TID, execution number,
+retained KASPACE/backend root, launcher and syscall-stack retirement right.
+It owns fresh startup leases, durable user-stack hold and fresh syscall and
+scheduler stacks through the existing thread_startup backends. It never owns
+the source descriptor table, CWD, parent relationship or public completion.
+
+PREPARING: admit only the current task-owned sole THREAD. Reject nested or
+prepared nested launches, completion dependents/workers, source-root peers
+(including unpublished THREAD/mapping members), pending image/mapping/clone
+ownership, existing replacement admission, cancellation, callbacks, legacy IRQ
+scopes and cleanup scopes. Snapshot the exact launcher that owns this syscall
+stack. Allocate/retain/validate all new startup resources reversibly. No new
+THREAD or root association is constructed.
+
+PREPARED: user mappings remain leased; all startup frames are preflighted but
+unwritten. Yield through the ordinary scheduler, then reauthenticate the exact
+execution, PROCESS/TID, root, launcher, cleanup ticket and cancellation. This
+deliberately tests real suspension while holding reversible preparation.
+
+SEALED: mask IRQs for final authentication and seal every startup lease. Check
+execution-number capacity before commitment; reserve a non-recycled execution
+number. The private test counter is bounded too. Aborting even here releases
+the seal and every newly acquired owner without changing the old return frame.
+
+TRANSFERRED: the launcher transfers only its authenticated syscall-stack close
+right. Close only the transaction's exact cleanup scope. Set TASK_REPLACING,
+save CPU mechanics using native_sched_save, and longjmp to the already-existing
+permanent CPU root. The old task resume jmp_buf is never entered again. No
+THREAD stop, Pterm, group/fault exit or PROCESS completion occurs.
+
+QUIESCENT: scheduler_root_entry restores kernel root/launcher/error/CPU state,
+checks its permanent stack and calls cpu_acknowledge_handoff FIRST. Only then
+may exec_handoff_on_root consume the pending token. Both current and inflight
+must be NULL, on_cpu false and interrupted-user validity cleared. The old
+pending-clone hook is unchanged and is not used as the commit point.
+
+INSTALLED: the existing KTHREAD authenticates that exact root token before
+swapping its durable stack hold. It stays attached and EXECUTING with the same
+PROCESS, TID, root, backend resource pointer and join completion. The scheduler
+moves the old startup/stacks into retirement, zeroes the entire old execution
+context (including jmp_buf), and installs fresh stacks, startup and execution
+number. No C continuation or saved user return is copied. Resident startup
+stores and publication have no failure return under the sealed preconditions.
+
+RETIREMENT: outside the runqueue leaf and after restoring the preparation's
+IRQ mask, retire waiter tickets for the old exact execution; verify the current
+SP is outside BOTH old kernel stacks; release old syscall/scheduler stacks,
+startup, stack hold and retained roots/identity. Old-startup reclamation accepts
+only this exact scheduler-owned quiescent token, not a general live-task bypass.
+The task remains non-runnable until destruction finishes. Reenter TASK_NEW and
+the ordinary dispatcher, then the existing launcher with prepared startup.
+Do not reset PROCESS parent/start/ownership metadata. A later independent exit
+uses the existing canonical completion and wait mechanism once.
+
+There are no recoverable operations after TRANSFERRED: no allocation, loader
+work, user access validation, reference acquisition or callback-based install.
+Destruction uses existing no-unwind owner contracts and permanent-root errbuf;
+an owner-contract violation is fatal, never a return to the abandoned syscall.
+Preemption and SMP remain disabled; IRQ masking is not claimed as an SMP lock.
+
+Architecture boundary
+----------------------
+x32: authenticate loaded CR3 and syscall/TSS IRQ stack binding; use the existing
+save/restore to normalize syscall/GS and restore the permanent root. The normal
+prepared launcher installs fresh syscall/TSS stacks, CR3, GPRs, selectors/bases,
+user SP and clean FXSAVE state. No TLS/preemption facility is introduced.
+A32: authenticate hardware root and launcher SVC-stack owner; reject pending
+VFP restart (FPEXC). Existing root restore resets user banked SP/LR and FPSCR;
+prepared entry uses a fresh SVC stack, A32 user SPSR, GPRs and clean VFP state.
+040: authenticate hardware root and supervisor-stack owner; restrict this
+experiment to detected mcpu40. Existing root/USP/FPU restoration and prepared
+RTE entry are reused. 030/060, non-MMU and unproven exception/FPU classes are
+not accepted as transport proof. Nothing restores an old interrupted frame.
+
+Native test
+------------
+EXECHAND.TOS is launched as an ordinary managed PROCESS through Pexec(100).
+It records exact PROCESS number, PID/TID, root and scheduler execution identity.
+It keeps a descriptor open, alternates two resident user stacks and enters a
+new C entry via private GEMDOS Pclone transport twelve times. Each success must
+retain PROCESS/PID/TID/root/parent, change execution identity and stack, keep
+the old post-call sentinel unexecuted and preserve descriptor use. The active
+stack rejects Mfree; after the next transfer the retired stack is releasable.
+Eleven failure selectors cover acquisition prefixes, real stale execution and
+competing admission rejection, preseal rollback, sealed rollback and execution
+number exhaustion after the preparation yield. Every
+failure returns to the original program and permits retry. With private-clone
+instrumentation, ALL45 counters match after every failure and each steady-state
+successful handoff (two cache/startup warmup transitions are explicit).
+The parent independently waits for final status, then rejects a second reap.
+The native runner requires the transport marker whenever the gate is enabled.
+
+Reproduce with the repository's installed toolchains/QEMU/fonts:
+  EXEC_REPLACEMENT_TEST=1 EXEC_HANDOFF_TEST=1 SHARED_VM_PEXEC_TEST=1 \
+    SHARED_VM_PEXEC_FS=fat tools/ci-regression.sh pc-x86_64
+  Substitute virt-arm-aspace or virt-m68k-aspace; repeat those with FS=pfs.
+  tools/run-regression-tests.sh also performs its five shutdown checks.
+  Run a separate #975 matrix with EXEC_REPLACEMENT_TEST=1 EXEC_HANDOFF_TEST=1
+  PROCESS_FILES_TEST=1 PROCESS_FILES_FS=fat (or pfs), REGRESSION_RAW_DISK=1 and
+  without SHARED_VM_PEXEC_TEST. CI exercises both five-configuration matrices.
+  The all-gates combination also reproduces an accepted-base m68k full-suite
+  self-reload failure before transport: the third large classic PRG cannot
+  satisfy libc startup's TPA reserve and exits65535 before main. This is not
+  a handoff failure or an excuse to omit the separate descriptor matrix.
+
+Remaining concrete owner contract (NOT implemented)
+---------------------------------------------------
+The existing kproc_exec_replacement_prepare/stage receipt remains the exclusive
+different-root admission owner. Its completed pending ELF container has no
+prepared execution grant. kproc_prepare_user_thread still maps env/TPA and
+ancestors, allocates kernel stack and memberships, selects interpreter/stack
+and adopts pending_space by modifying that container's KPROC fields. Its new
+THREAD constructor rejects a different root on the live source. Reusing the
+container as the public PROCESS would change PID/PD/resource/completion owners.
+
+#977's KPROC_IMAGE_POLICY is accepted but explicitly value-only: its header
+excludes backing, initial SP, recipe, cleanup receipt, root and resource owners.
+kproc_image_policy_prepare admits an empty unstarted target only. It is NOT
+the missing ownership contract and must not be treated as one. No unaccepted
+implementation is copied to substitute for it.
+
+The next #894/#970 loader-owner implementation must extract a typed, owning,
+sealed image bundle from the existing staging receipt, retaining source PD
+identity. It must prepare the new env/arguments/initial stack/interpreter and
+mapping memberships with exact source ownership, and name every old image,
+runtime/malloc/search/borrowed mapping retirement obligation. It must define
+how source PD compatibility fields and old env/TPA allocations survive identity
+preservation without transplanting staging descriptor/CWD/parent/completion.
+PRG moved-TPA/give-back rights require separate proof; ELF staging must retain
+its existing capability restriction. None of this is a fork resource snapshot.
+
+Only after that bundle exists may the execution token consume its sealed image
+right at this acknowledged root boundary, atomically change BOTH KPROC/KTHREAD
+root authorities and initial state, and retire old image/root off-stack. Keep
+all ordinary association checks; this experiment changes no KASPACE association.
+Then, and only then, add the retained KPROC's nonwrapping, exactly-once committed
+exec generation and canonical ksched readiness hint. Failed staging, ordinary
+launch and this same-image transport must not advance it. A future reconciled
+#972 consumer may observe that generation without consuming final completion.
+No #972 parent-suspension policy is implemented or imported here.
+
+The bundle/root commit and the real Pexec(200) execution and event tests are in
+exec-replacement.txt and tests/pclone/exec200_*.c. Passing this transport or the
+staging tests alone is still not evidence of Pexec(200) or of completed Pvfork.

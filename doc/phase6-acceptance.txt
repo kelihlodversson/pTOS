@@ -1,6 +1,21 @@
 Phase 6 (#895): private continuation increment and acceptance ledger
 ==================================================================
 
+Integration update (epic merge, 2026-11-17)
+-------------------------------------------
+This branch now includes the current epic head. The prerequisites described
+below as separate Drafts are merged into the epic: #969 descriptors (#975),
+#971 private snapshots (#974, #1000), #970 public same-PROCESS Pexec(200)
+(#973, #999), Pexec(200) from private-VM clones #1003 (#1007) and the
+immutable image policy #977. The KPROC committed-exec generation therefore
+has its producer: a successful Pexec(200), including one by a private-VM
+child, and a private clone inherits captured lazy reservation authority, so
+the lazy control (tools/test-phase6.py --require lazy) now passes. #984
+trusted DTA/search snapshots (PR #1001) remains open. The
+evidence below predates this merge and must be renewed at the merged head;
+in particular a real Pvfork child's Pexec(200) through its saved-return
+continuation releasing the parent is still to be tested here.
+
 Current binding decision: COW Pfork AND COW Pvfork
 -------------------------------------------------
 Both calls use proc_clone(NEW_PROCESS,PRIVATE_VM). One saved-return constructor,
@@ -336,3 +351,40 @@ reset counters or force source-root destruction to invent equality. Existing
 COW/lifetime regressions remain required compatibility evidence, not complete
 fork conservation. Full native matrix, pinned compatibility and four exact-head
 CI SUCCESS results are separately required; pending results are not passes.
+
+#970 executable replacement acceptance checkpoint
+=================================================
+
+Implementation scope and reproducible owner blockers: exec-handoff.txt.
+Accepted base includes merged #973/#974/#975/#977; no #972 import.
+
+The default-off same-image scheduler transport is independently native-testable.
+Its private diagnostic handoff count is NOT a KPROC committed-exec generation.
+Public Pexec(200) is implemented and on by default (CONF_WITH_PEXEC200): a different-root ELF or classic PRG commit on a new
+basepage (FreeMiNT overlay semantics) for anchors at the
+scheduler root and for nested children through their launcher frame, with one
+KPROC committed-exec generation per commit. Pfork and Pvfork remain EINVFN.
+
+Both eventual fork calls construct independent PRIVATE_VM/COW children; Pvfork
+additionally suspends the exact parent THREAD. No shared-parent VM/user-stack
+detach is needed. Only the exact child's genuine committed-exec generation or
+its later canonical final PROCESS completion may release that dependency.
+Ordinary launch, staging, failure or the same-image transport cannot release it.
+
+Full #970 native acceptance requires a DIFFERENT executable/root through the
+real GEMDOS Pexec(200), retaining PROCESS/PID/initial TID on a new basepage, no old return,
+exactly-once authenticated committed-exec publication and independent later
+completion/reaping. Require x32 FAT, A7 FAT/PFS and 040 FAT/PFS, all resource and
+rollback controls and five shutdown checks each. Do not infer it from this
+prerequisite's tests, synthetic prepared entries or a modeled event.
+
+EXEC200.TOS (tests/pclone/exec200_native.c, exec200_image.c) is that test. It
+runs in both the "private ELF staging" and "PROCESS descriptors" CI jobs of the
+matrix above, which require these markers:
+- "native Pexec(200) same-PROCESS executable/root replacement: PASS" (anchor);
+- "native nested Pexec(200) launcher relaunch: PASS" (nested Pexec(0) child).
+
+Exact source revisions, test transcripts, CI workflow results and independent
+read-only owner assessments belong in the #970 Draft PR evidence ledger.
+Neither partial tests nor historical prerequisite CI close #970 or authorize
+production activation, integration merge or issue closure.
