@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mint/basepage.h>
 #include "trap.h"
 
 static volatile struct {
@@ -190,20 +191,64 @@ static void test_cow_vfork_continuation(void)
 #endif
 }
 
+#if defined(TEST_WITH_PEXEC200)
+/* A Pvfork child that replaces itself with Pexec(200) releases its parent
+ * at the commit, while it still runs its new image (this program, tail "W",
+ * which waits for C:\FORKGO.TMP). The child has no inherited directory. */
+static void test_cow_vfork_exec_release(void)
+{
+    long dependencies=pclone_trap(0,0x895ffffcUL),pid,status,go;
+    (void)Fdelete("C:\\FORKGO.TMP");
+    pid=pclone_trap(0,0x895fc000UL);
+    if(pid==0) {
+        if(pclone_trap(0,0x895ffffdUL)!=1)Pterm(74); /* parent still blocked */
+        (void)Pexec(200,"C:\\FORKPAR.TOS","\001W",0);
+        Pterm(75); /* the exec failed */
+        for(;;) { }
+    }
+    ptest_assert_msg(pid>0,"COW Pvfork child for a committed exec");
+    if(pid<=0) return;
+    ptest_assert_msg(Pwaitpid(pid,1,0)==0,
+                     "COW Pvfork parent released at the child's Pexec(200) commit, before its completion");
+    ptest_assert_msg(pclone_trap(0,0x895ffffcUL)==dependencies,
+                     "COW parent dependency released exactly once at the exec commit");
+    go=Fcreate("C:\\FORKGO.TMP",0);
+    ptest_assert_msg(go>=0,"release the replaced Pvfork child");
+    if(go>=0) (void)Fclose((short)go);
+    status=Pwaitpid(pid,0,0);
+    ptest_assert_msg((status>>16)==pid && (status&65535)==76,
+                     "replaced Pvfork child completes once, from its new image");
+    ptest_assert_msg(Pwaitpid(pid,1,0)<0,"replaced Pvfork child reaped once");
+    ptest_assert_msg(Fdelete("C:\\FORKGO.TMP")==0,"Pvfork exec release test file");
+}
+#endif
 int main(void)
 {
     int failures;
+#if defined(TEST_WITH_PEXEC200)
+    if((unsigned char)_base->p_cmdlin[0]>=1 && _base->p_cmdlin[1]=='W') {
+        /* The image a Pvfork child replaced itself with. */
+        while(Fsfirst("C:\\FORKGO.TMP",0)) (void)Syield();
+        Pterm(76);
+    }
+#endif
     ptest_log_append();
     ptest_begin("COW suspended parent dependency (test-only)");
     private_probe.heap=(unsigned char *)Malloc(12288);
     ptest_assert_msg(private_probe.heap!=NULL,"COW parent-policy private heap reservation");
     if(private_probe.heap) {
         test_cow_vfork_continuation();
+#if defined(TEST_WITH_PEXEC200)
+        test_cow_vfork_exec_release();
+#endif
         ptest_assert_msg(Mfree(private_probe.heap)==0,"COW parent-policy heap released after final child reap");
     }
     ptest_pass();
     failures=ptest_failures();
     if(!failures)conws("native COW Pvfork parent dependency (test-only, no exec commit): PASS\r\n");
+#if defined(TEST_WITH_PEXEC200)
+    if(!failures)conws("native COW Pvfork parent released at committed Pexec(200): PASS\r\n");
+#endif
     ptest_log_flush();
     Pterm(failures);
     return failures;

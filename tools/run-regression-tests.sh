@@ -861,6 +861,12 @@ if grep -q '^#define CONF_WITH_FORK_CORE 1' "$top/obj/autoconf.h" &&
     record "native COW parent dependency" FAIL "configured suspended-parent probe did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_FORK_CORE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PEXEC200 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native COW Pvfork parent released at committed Pexec(200): PASS' "$suite_log"; then
+    record "native Pvfork exec release" FAIL "a Pvfork child's committed Pexec(200) did not release its parent"
+fi
+
 if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
     for marker in 'native private-VM syscall-return registers (not Pfork): PASS' \
