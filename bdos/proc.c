@@ -81,6 +81,7 @@ static void ixterm( PD *r );
 static WORD envsize( char *env );
 static void init_pd_fields(PD *p, char *tail, long max, char *envptr);
 static LONG init_pd_files(PD *p);
+static void release_pd_cwd(PD *r);
 static char *alloc_env(ULONG flags, char *v);
 static UBYTE *alloc_tpa(ULONG flags,LONG needed,LONG *avail);
 static void proc_go(PD *p, WORD entry_type);
@@ -463,21 +464,29 @@ static void release_pd_files(PD *r)
 #if CONF_WITH_PROCESS_FILES
 directories:
 #endif
-#if CONF_WITH_PLUGGABLE_FS
-    pfs_proc_exit(r);
-#else
-    /* Legacy PROCESS slots own only legacy dirtbl references. */
-    for (i = 0; i < NUMCURDIR; i++)
-    {
-        if ((h = PD_CURDIR(r)[i]) != 0) decr_curdir_usage(h);
-    }
-#endif
+    release_pd_cwd(r);
 #if CONF_WITH_USER_ASPACE
     /* Inherited aliases and service-owned residual references reserve their
      * exact SFT incarnation, never this retiring PD address. */
     for (i = 0; i < OPNFILES; i++)
         if (sft[i].f_own == r)
             sft[i].f_own = (PD *)&orphaned_sft_owner;
+#endif
+}
+
+/* The current-directory references of every drive, as init_pd_cwd_from()
+ * took them. */
+static void release_pd_cwd(PD *r)
+{
+#if CONF_WITH_PLUGGABLE_FS
+    pfs_proc_exit(r);
+#else
+    WORD i, h;
+    /* Legacy PROCESS slots own only legacy dirtbl references. */
+    for (i = 0; i < NUMCURDIR; i++)
+    {
+        if ((h = PD_CURDIR(r)[i]) != 0) decr_curdir_usage(h);
+    }
 #endif
 }
 
@@ -1226,7 +1235,22 @@ static LONG init_pd_files(PD *p)
 #else
     (void)init_pd_cwd_from(p, run);
 #endif
-    /* Preserve Pexec's existing standard-file inheritance policy. */
+    /* A PROCESS-local child must not start without its parent's descriptors
+     * (redirected standard handles included): its caller disposes the new
+     * PROCESS on failure. The legacy global table keeps its best effort. */
+#if CONF_WITH_PROCESS_FILES
+    if (process_files_managed(p)) {
+        rc = init_pd_standard_files_from(p, run, TRUE);
+        if (rc != E_OK) {
+            /* Its caller only disposes the PROCESS: give the directories back
+             * here, and leave no slot to release twice. */
+            WORD i;
+            release_pd_cwd(p);
+            for (i = 0; i < NUMCURDIR; i++) PD_CURDIR(p)[i] = 0;
+        }
+        return rc;
+    }
+#endif
     (void)init_pd_standard_files_from(p, run, TRUE);
     return E_OK;
 }
