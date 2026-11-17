@@ -571,6 +571,20 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #if CONF_WITH_PEXEC200
     if (flag == PE_EXEC_REPLACE) return proc_exec_replace(path, tail, env);
 #endif
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    /* #1015: a managed caller's Pexec(0) child is an anchor, launched as by
+     * Pexec(100) (it owns its basepage and environment, and can own
+     * dependents), and the calling THREAD waits for exactly that child, as
+     * FreeMiNT's mode 0 does. The result is the child's 16-bit exit code, as
+     * from the nested carrier. */
+    if (flag == PE_LOADGO && ksched_anchor_launch_allowed()) {
+        LONG pid = exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
+        LONG result, error;
+        if (pid <= 0) return pid ? pid : EINTRN;
+        error = ksched_wait_exact((WORD)pid, &result);
+        return error < 0 ? error : result;
+    }
+#endif
     return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED

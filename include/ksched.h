@@ -216,6 +216,9 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
  * No observer, registry, output pointer retained beyond the call. */
 #include "process_completion.h"
 LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion);
+/* #1015: an anchored synchronous Pexec(0) waits for exactly its child. */
+LONG ksched_wait_exact(WORD pid,LONG *result);
+BOOL ksched_anchor_launch_allowed(void);
 BOOL ksched_pid_reserved(WORD pid);
 void ksched_exiting(PD *pd, UWORD status);
 /* Generic successor activation after complete teardown; identity is retained. */

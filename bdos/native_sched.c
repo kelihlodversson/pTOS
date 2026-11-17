@@ -1411,6 +1411,7 @@ static struct {
     uintptr_t last_pd;
     UWORD fail_stage;
     BOOL untracked_next, reported;
+    BOOL nest_synchronous; /* keep synchronous Pexec on the nested carrier (#1015) */
 #if CONF_WITH_EXIT_HANDOFF_TEST
     BOOL handoff_subject;
 #endif
@@ -1473,6 +1474,8 @@ LONG ksched_test_nested(UWORD selector)
     case 15: return (LONG)nested_probe.completed;
     case 0x21: return (LONG)nested_probe.cancel_reaped;
     case 0x20: nested_probe.untracked_next = TRUE; return E_OK;
+    case 0x22: nested_probe.nest_synchronous = TRUE; return E_OK;
+    case 0x23: nested_probe.nest_synchronous = FALSE; return E_OK;
     default:
         if (selector >= 0x10 && selector <= 0x16) {
             nested_probe.fail_stage = selector - 0x10; return E_OK;
@@ -1543,6 +1546,31 @@ static void release_nested_frame(KSCHED_NESTED *frame)
     kproc_release(frame->process);
     kproc_release(frame->enclosing_process);
     kfree(frame);
+}
+/* A synchronous Pexec(0) from an authentic managed THREAD with an address
+ * space of its own runs its child as an anchor (#1015), as FreeMiNT does:
+ * the loader launches it like Pexec(100), as an independent PROCESS with its
+ * own scheduler task that can own dependents (Pclone, Pthjoin, Ptermgrp,
+ * Pfork/Pvfork), and the calling THREAD waits for that exact child
+ * (ksched_wait_exact). Every other launch keeps the nested carrier below or
+ * the THREAD-less one: the kernel/ROM, user callbacks, untracked launches. */
+BOOL ksched_anchor_launch_allowed(void)
+{
+    KERNEL_TASK *task = execution_cpu.current;
+    if (scheduler.stopping || !scheduler.active || !task || task->state != TASK_RUNNING)
+        return FALSE;
+#if CONF_WITH_USER_CALLBACKS
+    if (execution_cpu.callback.frame) return FALSE;
+#endif
+    if (!ksched_exit_thread(run) || !kproc_user_aspace(run)) return FALSE;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    /* The nested-carrier suites and their untracked/handoff subjects. */
+    if (nested_probe.nest_synchronous || nested_probe.untracked_next) return FALSE;
+#if CONF_WITH_EXIT_HANDOFF_TEST
+    if (!nested_probe.handoff_subject) return FALSE;
+#endif
+#endif
+    return ksched_async_allowed();
 }
 /* E_OK: `pd` now has a private prepared association, consumed by
  * ksched_nested_enter() or ksched_nested_cancel(). KSCHED_NESTED_UNMANAGED:
@@ -2740,7 +2768,7 @@ static BOOL child_ready(void *argument)
     return !found;
 }
 
-static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETION *completion)
+static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETION *completion,LONG *raw)
 {
     CHILD_WAIT wait;
     uintptr_t flags;
@@ -2749,14 +2777,15 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
     KPROC *wait_owner=kproc_retain(run);
     UQUAD wait_number=kproc_ref_number(wait_owner);
     kproc_release(wait_owner);
+    BOOL exact=completion || raw;
     if (scheduler.stopping) return EACCDN;
     if (options & ~3) return EINVAL;
     /* No process-group or stopped-process model is implemented yet. */
     if (!pid || pid < -1) return EINVFN;
     if (!scheduler.active) return EFILNF;
-    if(completion && (!wait_number || pid<1)) return EINVFN;
+    if(exact && (!wait_number || pid<1)) return EINVFN;
 #if CONF_WITH_PTERMGRP
-    if(completion) ksched_cancel_point(); /* caller owns no uncommitted launch resources */
+    if(exact) ksched_cancel_point(); /* caller owns no uncommitted launch resources */
 #endif
     wait.parent = run; wait.pid = pid; wait.owner=wait_number;wait.tid=waiter;
     flags = native_sched_irq_save();
@@ -2771,7 +2800,7 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
                 continue; /* wait-any can still consume an unrelated child */
             }
             found=TRUE;
-            if(completion) { task->synchronous_wait_process=wait_number;task->synchronous_waiter=waiter; }
+            if(exact) { task->synchronous_wait_process=wait_number;task->synchronous_waiter=waiter; }
             if (task->state != TASK_ZOMBIE || task->dependents) continue;
             /* Back/copy output outside IRQ exclusion. This path never yields,
              * so the zombie remains owned and cannot change under the copy. */
@@ -2784,6 +2813,7 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
                 completion->state!=PROCESS_COMPLETED)) panic("zombie without canonical PROCESS result");
 #endif
             task->synchronous_waiter=0;task->synchronous_wait_process=0;
+            if(raw) *raw=task->result; /* the child's own exit code, all 16 bits */
             status = ((ULONG)(UWORD)task->pid << 16) |
                      (task->signal ? ((ULONG)task->signal << 8) : (task->result & 255));
             task->parent = NULL;
@@ -2803,13 +2833,13 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
             LONG error;
             native_sched_irq_restore(flags);
             error=enter_root(FALSE,child_ready,&wait);
-            if(error) { if(completion) process_wait_release_claim(&wait);return error; }
+            if(error) { if(exact) process_wait_release_claim(&wait);return error; }
         } else {
             cancellation_wait(child_ready, &wait);
             native_sched_irq_restore(flags);
         }
 #if CONF_WITH_PTERMGRP
-        if(completion && ksched_cancellation_pending() && !ksched_cleanup_active())
+        if(exact && ksched_cancellation_pending() && !ksched_cleanup_active())
             process_wait_release_claim(&wait);
         ksched_cancel_point();
 #endif
@@ -2817,12 +2847,23 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
     }
 }
 LONG ksched_wait(WORD pid,WORD options,UQUAD address)
-{ return wait_process(pid,options,address,NULL); }
+{ return wait_process(pid,options,address,NULL,NULL); }
+/* Reap exactly `pid`, a child this THREAD has just published, claiming it
+ * first so that no other THREAD's Pwait() and no wait-any can take it; the
+ * claim is released if this THREAD is cancelled, and the child then lives on
+ * as an orphan, as in FreeMiNT. *result is its 16-bit exit code. */
+LONG ksched_wait_exact(WORD pid,LONG *result)
+{
+    LONG error;
+    if(!result) return EINVAL;
+    error=wait_process(pid,0,0,NULL,result);
+    return error<0 ? error : E_OK;
+}
 LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion)
 {
 #if CONF_WITH_SHARED_VM_PEXEC_TEST
     if(!completion) return EINVAL;
-    return wait_process(pid,0,0,completion);
+    return wait_process(pid,0,0,completion,NULL);
 #else
     UNUSED(pid);UNUSED(completion);return EINVFN;
 #endif
