@@ -13,6 +13,12 @@ static FCB entry;
 static int scans, deleted, released;
 UWORD current_time, current_date;
 
+#if CONF_WITH_PROCESS_FILES
+/* PROCESS-local files are on by default: FAT creates first ask the caller's
+ * descriptor snapshot to admit the change. No snapshot is open here. */
+PD *run;
+LONG process_files_change_admission(PD *pd) { (void)pd; return E_OK; }
+#endif
 BOOL contains_illegal_characters(const char *name) { (void)name; return FALSE; }
 void *scan(DND *dn, const char *name, WORD attr, LONG *pos)
 {
