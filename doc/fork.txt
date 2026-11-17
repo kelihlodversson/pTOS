@@ -24,8 +24,8 @@ historical CPU startup coverage ONLY, never the Pvfork implementation. New priva
 selectors share one constructor;0x895fc000 adds exact-child parent suspension.
 See fork-return.txt and phase6-acceptance.txt for current source/test evidence.
 The prerequisites #969 descriptors, #971 private snapshots (BOTH calls; see
-private-snapshot.txt) and #970/#1003 executable replacement (full Pvfork) are
-merged; #984 trusted DTA/search snapshots remains. See
+private-snapshot.txt), #970/#1003 executable replacement (full Pvfork) and
+#984 trusted DTA/search snapshots (#1001) are all merged. See
 freemint-compatibility.txt for user-facing scope.
 
 Historical audit and shared-stack proposal (superseded)

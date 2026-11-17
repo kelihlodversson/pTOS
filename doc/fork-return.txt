@@ -14,9 +14,11 @@ Native tests require the existing scheduler to report the calling parent's
 actual TASK_BLOCKED predicate/argument/execution while the exact child runs.
 They check failed mode200, nested unrelated/private children, final-THREAD
 completion, faults/group exit and exactly-once dependency retirement/public reap.
-The exec-generation observation query exists but no native replacement event is
-published until #970 implements reviewed same-PROCESS/PID commit. Hosted epoch
-models test readiness ownership only. Public opcodes remain unsupported.
+Public Pexec(200) (#970, #999), including from a private-VM child (#1003), now
+advances the committed-exec generation, and a native test proves that a Pvfork
+child's committed Pexec(200) releases its parent. Hosted epoch models test
+readiness ownership only. Public Pfork/Pvfork are implemented behind
+CONF_WITH_PFORK; see the public Pfork/Pvfork section of phase6-acceptance.txt.
 
 The parent-policy cases run in the small FORKPAR.TOS companion after the
 existing managed self-test, preserving the classic two-MiB procmem limit and
@@ -60,16 +62,18 @@ A source holding captured LAZY receipts is admitted: kaspace_clone copies
 their authority into the child's own canonical records (#971, #1000), and the
 child backs such a page from its own record (tests/pclone/pclone.c, captured
 snapshot run). Moved image nheap and other
-existing private-runtime restrictions remain. No complete descriptor, basepage,
-environment, DTA/search or signal inheritance is claimed (#969). No public
-Pfork/Pvfork activation or Pexec200 replacement (#970) follows from this probe.
+existing private-runtime restrictions remain. The probe itself (resources=0)
+claims no descriptor, basepage, environment, DTA/search or signal inheritance;
+public Pfork/Pvfork (CONF_WITH_PFORK) request the descriptors, directories and
+DTA/search state through the PROCESS file snapshot (#969, #984).
 Final source evidence/limits live in phase6-acceptance.txt and its Draft PR.
 
 Historical shared proof contract follows
 ---------------------------------------
 
 This is a tightly gated, shared-VM native continuation proof, NOT Pfork or
-Pvfork. Public opcodes 0x11b and 0x113 still return EINVFN. The independent
+Pvfork. (When written, public opcodes 0x11b and 0x113 returned EINVFN; they are
+now implemented behind CONF_WITH_PFORK.) The independent
 COW prerequisite is integrated separately; this saved-return probe remains
 shared-VM only. Complete fork inheritance, a vfork dependency object and
 Pexec(200) detach are not implemented.

@@ -11,10 +11,10 @@ immutable image policy #977. The KPROC committed-exec generation therefore
 has its producer: a successful Pexec(200), including one by a private-VM
 child, and a private clone inherits captured lazy reservation authority, so
 the lazy control (tools/test-phase6.py --require lazy) now passes. #984
-trusted DTA/search snapshots (PR #1001) remains open. The
-evidence below predates this merge and must be renewed at the merged head;
-in particular a real Pvfork child's Pexec(200) through its saved-return
-continuation releasing the parent is still to be tested here.
+trusted DTA/search snapshots (PR #1001) is merged too. A real Pvfork child's
+Pexec(200) through its saved-return continuation releasing the parent is now
+tested natively (FORKPAR, "native COW Pvfork parent released at committed
+Pexec(200)"); the public calls are described at the end of this file.
 
 Current binding decision: COW Pfork AND COW Pvfork
 -------------------------------------------------
@@ -41,10 +41,11 @@ New parent-dependency increment (native acceptance in progress):
   or exact child committed-exec generation. Cancellation wins over readiness.
   Normal cleanup detaches/releases before checkpoint; quiescent THREAD reap
   cancels any abandoned dependency after predicate/backend unpublication.
-- KPROC exec-generation query is inert until #970's authenticated replacement
-  commit supplies its producer. Host modeled epoch events are NOT native exec.
-  Native exit/fault/group/final-THREAD tests are incremental exit-only coverage,
-  never full Pvfork acceptance. Public Pfork/Pvfork still return EINVFN.
+- KPROC exec-generation query: its producer is #970's authenticated
+  replacement commit (public Pexec(200), #999), now merged. Host modeled epoch
+  events are NOT native exec; the native exec-release test is. Public
+  Pfork/Pvfork are implemented behind CONF_WITH_PFORK (see the end of this
+  file).
 - #969 and #971 are developed as isolated epic-based prerequisite Drafts.
   #970 is same-PROCESS replacement only; no COW-vfork parent VM detach is needed.
   None of these unaccepted branches may be integrated without separate user
@@ -198,8 +199,8 @@ Initial policy
 Reject non-sole THREAD and other live same-root PROCESS callers before resources.
 Do not copy C stacks, jmp_buf, scheduler continuations, borrowed parent PD or
 return-frame pointers. Copy only user state into child-owned startup. Public
-Pfork/Pvfork remain EINVFN until resource/architecture acceptance. Test-only
-private continuation has no descriptor inheritance claim. Neither an exit-only
+Pfork/Pvfork are CONF_WITH_PFORK (experimental) and return EINVFN without it.
+The test-only private continuation has no descriptor inheritance claim. Neither an exit-only
 Pvfork approximation nor a passing prerequisite completes public fork.
 
 Implemented scope (Draft PR972)
@@ -324,8 +325,9 @@ Resource inheritance policy and outstanding acceptance
 The test-only private probe requests resources=0. Scalar parent/priority/CORE/
 DATA/stack-cap inheritance follows the existing factory. Existing CWD/drive and
 selected standard-handle policy is independent, not blindly activated here.
-All-descriptor namespace, DTA/search ownership and original basepage/environment
-policy remain prerequisites. UID/GID are fixed0; groups remain the existing
+All-descriptor namespace and DTA/search ownership are now inherited by the
+public calls through the PROCESS file snapshot (#969, #984); the probe still
+requests none. UID/GID are fixed0; groups remain the existing
 single-process model; signal masks/dispositions are unsupported, not silently
 claimed. Fault/completion identity stays the child's exact PROCESS/THREAD.
 
