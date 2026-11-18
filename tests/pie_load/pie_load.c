@@ -242,8 +242,10 @@ static void shared_vm_status(void)
             ptest_assert_msg(rc>0,"shared104 status: PID");
             if(rc>0) {
                 long waited;
-                ptest_assert_msg(Pwaitpid(rc,0,(long *)bp->p_tbase)==-40,
-                    "shared104: read-only usage copyout does not consume completion");
+                /* A PRG's text is writable (TOS programs may patch it):
+                 * use supervisor-only low memory as the unwritable target. */
+                ptest_assert_msg(Pwaitpid(rc,0,(long *)0x10)==-40,
+                    "shared104: refused usage copyout does not consume completion");
                 waited=Pwaitpid(rc,0,0);
                 expected=kind?0x0400:0x00ff;
                 ptest_assert_msg((waited>>16)==rc && (waited&65535)==expected,
