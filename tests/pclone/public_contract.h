@@ -224,6 +224,11 @@ static void phase1_policy_observe(long staged_pid)
     struct phase1_policy_report report;
     static const char tail[] = "\1w";
     long file,observed,seek_result=0,read_result=0;
+    /* GCC 16 m68k can coalesce the short zero mode and long zero offset,
+     * emitting CLR.W then pushing all of that register (stale upper word).
+     * Reload an explicit full-width zero so this fixture actually seeks to
+     * zero. Keep the I/O, orphan completion and exact-reaping assertions. */
+    volatile long seek_zero=0;
     unsigned i;
     /* The tiny existing global-scheduler payload exits23 before its role
      * logic. Four real PROCESS/PD constructions fit while a PRG orphan pins
@@ -244,7 +249,7 @@ static void phase1_policy_observe(long staged_pid)
                      "release orphan only after image-owner retirement and PD churn");
     for (i = 0; i < 128 && !report.done; i++) {
         (void)Syield();
-        seek_result=Fseek(0,file,0);
+        seek_result=Fseek(seek_zero,file,0);
         if(seek_result<0) break;
         read_result=Fread(file,sizeof(report),&report);
         if(read_result!=sizeof(report)) break;
