@@ -236,7 +236,7 @@ int main(void)
     }
 #endif
     kaspace_member_release(&source.mapping_members);
-    kaspace_put(source.active_space);kfree(source.heap);
+    kaspace_put(source.active_space);
     CHECK(!metadata_live && !physical_live);
     puts("Production KPROC runtime ownership: stack limits, retained borrows, mapping owners and exact final reclamation: PASS (host MMU)");
     return 0;

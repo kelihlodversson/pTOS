@@ -69,7 +69,6 @@ typedef struct {
 #endif
 } PROCESS_DTA_ENTRY;
 
-enum { UH_MALLOC = 0 };         /* a block Malloc() gave out */
 enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
        PROCESS_DISPOSING, PROCESS_RETIRED };
 #endif
@@ -237,15 +236,6 @@ struct kproc {
     KASPACE *pending_space; /* owning reference while the image is loaded */
                                 /* at load time, with its image in it; the launch adopts it */
     BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
-    struct uheap_block {        /* legacy per-process heap ledger (#1018: unused) */
-        VADDR va;               /* sorted by address */
-        ULONG pages;
-        UBYTE kind;             /* only UH_MALLOC remains */
-        PD *pd;
-        UQUAD reservation;      /* immutable staged/image allocation birth */
-        UQUAD shared_generation; /* exact source-owned PD allocation incarnation */
-    } *heap;
-    ULONG nheap, heap_capacity;
 #if CONF_WITH_PRIVATE_CLONE
     struct private_image_snapshot *private_image; /* owned construction/runtime values */
 #endif
@@ -952,8 +942,6 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
           (VADDR)(uintptr_t)source->env_end<(VADDR)(uintptr_t)source->env_start ||
           (VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start>procmem_size(source->env_start)))))
         return FALSE;
-    /* The legacy heap ledger names reservations of this root. */
-    if (source->nheap) return FALSE;
     heap=kaspace_heap(source->active_space);
     for (i=0;i<heap->count;i++)
         if (!kaspace_mapping_owned(source->active_space,source->number,source,heap->blocks[i].reservation,
@@ -973,7 +961,7 @@ LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source)
     struct private_image_snapshot *snapshot;
     ULONG i;
     if (!kproc_clone_private_runtime(NULL,source)) return EACCDN;
-    if (!kproc_clone_target_ready(target, NULL) || target->heap || target->heap_capacity || target->private_image)
+    if (!kproc_clone_target_ready(target, NULL) || target->private_image)
         return EACCDN;
     snapshot=kalloc(sizeof(*snapshot));
     if (!snapshot) return ENSMEM;
@@ -1206,7 +1194,6 @@ BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *thread)
     if (!p || !p->pd || p->started || p->completed ||
         p->disposal_state != PROCESS_LIVE || p->clone_identity_only ||
         p->active_space || p->pending_space || p->has_image || p->lost || p->kstack_phys ||
-        p->nheap ||
         (thread ? p->threads != thread || *kthread_next_link(thread) : p->threads != NULL))
         return FALSE;
     for (i = 0; i < KPROC_BORROWS; i++)
@@ -2191,9 +2178,6 @@ static BOOL exec_image_source_ok(const KPROC *source, const KPROC *image)
             (!image || (source->borrowed[i].va != (VADDR)(uintptr_t)image->user_start &&
                         source->borrowed[i].va != (VADDR)(uintptr_t)image->env_start)))
             return FALSE;
-    /* Heap-ledger blocks (staged, moved or lent images, legacy give-back)
-     * name addresses and reservations of the root being replaced. */
-    if (source->nheap) return FALSE;
     return TRUE;
 }
 
@@ -2891,7 +2875,6 @@ void kproc_destroy(PD *pd)
              * PD finds nothing and cannot free either twice. */
             kaspace_put(kproc->active_space);
             kstack_free(kproc->kstack_phys);
-            kfree(kproc->heap);
 #if CONF_WITH_PRIVATE_CLONE
             if (kproc->private_image) {
                 kfree(kproc->private_image);
@@ -3673,9 +3656,6 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
             if (pk->stack_size && pk->aspace) {
                 VADDR highest = USER_HEAP_BASE;
 
-                if (kproc->nheap)
-                    highest = kproc->heap[kproc->nheap - 1].va +
-                              (VADDR)kproc->heap[kproc->nheap - 1].pages * USER_PAGE_SIZE;
                 if (kproc->has_image) {
                     VADDR end = ((kproc->layout.end + USER_PAGE_SIZE - 1) &
                                  ~(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK;
@@ -4665,6 +4645,7 @@ static BOOL image_reservation(const KPROC *kproc, VADDR *first, VADDR *end)
     return TRUE;
 }
 
+#if CONF_WITH_MMAP
 static void reservation_candidate(VADDR lo, VADDR hi, VADDR at, VADDR limit,
                                     VADDR *first, VADDR *end)
 {
@@ -4707,12 +4688,7 @@ static void next_reservation(const KPROC *kproc, VADDR at, VADDR limit, BOOL map
         reservation_candidate(kproc->logical_environment,kproc->logical_environment+kproc->logical_env_bytes,at,limit,first,end);
     }
 #endif
-    for (i = 0; i < kproc->nheap; i++)
-        reservation_candidate(kproc->heap[i].va,
-            kproc->heap[i].va + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE,
-            at, limit, first, end);
-    /* Ordinary Malloc() blocks live in the address space, staged loader
-     * images (above) in the PROCESS. */
+    /* Malloc() blocks live in the address space. */
     if (heap)
         for (i = 0; i < heap->count; i++)
             reservation_candidate(heap->blocks[i].va,
@@ -4742,6 +4718,7 @@ static BOOL reservation_free(const KPROC *kproc, VADDR at, VADDR bytes)
 {
     return reservation_clear(kproc, at, bytes, TRUE);
 }
+#endif
 
 /* Free space between two reservations. The heap must also stay out of ranges
  * held by captured snapshots; automatic mmap placement has never consulted
@@ -4763,7 +4740,7 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
 {
     VADDR first, end, found = 0, candidate;
     VADDR image_first = 0, image_end = 0;
-    ULONG index = 0, ordinary = 0;
+    ULONG ordinary = 0;
 #if CONF_WITH_PRIVATE_CLONE
     BOOL basepage_pending=kproc->logical_context && kproc->logical_bp_bytes;
     BOOL environment_pending=kproc->logical_context && kproc->logical_env_bytes;
@@ -4775,13 +4752,13 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
     const MMAP_REGION *region = mapping_first(kproc);
 #endif
 
-    /* Merge the sorted allocation lists (staged loader images, address-space
-     * Malloc() blocks and mappings) and the fixed intervals. Each reservation
+    /* Merge the sorted allocation lists (address-space Malloc() blocks and
+     * mappings) and the fixed intervals. Each reservation
      * is consumed once, including overlaps with the image, so Malloc(-1) and
      * first-fit allocation remain linear in the list sizes. */
     *largest = 0;
     while (at < limit) {
-        enum { GAP_END, GAP_SYSTEM, GAP_IMAGE, GAP_HEAP, GAP_ORDINARY, GAP_MAPPING, GAP_BASEPAGE, GAP_ENVIRONMENT } source = GAP_END;
+        enum { GAP_END, GAP_SYSTEM, GAP_IMAGE, GAP_ORDINARY, GAP_MAPPING, GAP_BASEPAGE, GAP_ENVIRONMENT } source = GAP_END;
 
         first = end = limit;
         if (system_pending && USER_SYSTEM_BASE < first) {
@@ -4802,11 +4779,6 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
             first=kproc->logical_environment;end=first+kproc->logical_env_bytes;source=GAP_ENVIRONMENT;
         }
 #endif
-        if (index < kproc->nheap && kproc->heap[index].va < first) {
-            first = kproc->heap[index].va;
-            end = first + (VADDR)kproc->heap[index].pages * USER_PAGE_SIZE;
-            source = GAP_HEAP;
-        }
         if (heap && ordinary < heap->count && heap->blocks[ordinary].va < first) {
             first = heap->blocks[ordinary].va;
             end = first + (VADDR)heap->blocks[ordinary].pages * USER_PAGE_SIZE;
@@ -4828,7 +4800,6 @@ static VADDR reservation_gap(const KPROC *kproc, VADDR at, VADDR limit,
 #endif
         case GAP_SYSTEM: system_pending = FALSE; break;
         case GAP_IMAGE: image_pending = FALSE; break;
-        case GAP_HEAP: index++; break;
         case GAP_ORDINARY: ordinary++; break;
 #if CONF_WITH_MMAP
         case GAP_MAPPING: region = region->next; break;
@@ -4856,10 +4827,6 @@ static VADDR heap_malloc_bytes(const KPROC *kproc)
     if (heap)
         for (i = 0; i < heap->count; i++)
             bytes += (VADDR)heap->blocks[i].pages * USER_PAGE_SIZE;
-
-    for (i = 0; i < kproc->nheap; i++)
-        if (kproc->heap[i].kind == UH_MALLOC)
-            bytes += (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE;
 #if CONF_WITH_MMAP
     if (kproc->active_space)
         bytes += kaspace_mmap(kproc->active_space)->bytes;
@@ -5330,26 +5297,6 @@ LONG kproc_mprot(PD *pd,UQUAD address,UQUAD length,UQUAD protection)
 }
 #endif
 
-static BOOL heap_room(KPROC *kproc)
-{
-    struct uheap_block *grown;
-    ULONG cap;
-
-    if (kproc->nheap < kproc->heap_capacity)
-        return TRUE;
-    cap = kproc->heap_capacity ? kproc->heap_capacity * 2 : 16;
-    grown = kalloc(cap * sizeof(*grown));
-    if (!grown)
-        return FALSE;
-    if (kproc->heap) {
-        memcpy(grown, kproc->heap, kproc->nheap * sizeof(*grown));
-        kfree(kproc->heap);
-    }
-    kproc->heap = grown;
-    kproc->heap_capacity = cap;
-    return TRUE;
-}
-
 static BOOL ordinary_heap_room(KPROC *kproc)
 {
     KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
@@ -5389,84 +5336,53 @@ static VADDR held_heap_gap(const KPROC *owner,VADDR at,VADDR end,VADDR bytes,VAD
     return found;
 }
 
-/* Merge ordinary and loader reservations into one address-order search.
- * For a new staged image, index is its insertion point in the loader table. */
-static VADDR heap_gap(const KPROC *kproc, VADDR bytes, ULONG *index, VADDR *largest)
+static VADDR heap_gap(const KPROC *kproc, VADDR bytes, VADDR *largest)
 {
-    VADDR found;
-    ULONG i;
-
-    found = reservation_gap(kproc, USER_HEAP_BASE, heap_limit(kproc), bytes, largest, TRUE);
-    for (i = 0; i < kproc->nheap && kproc->heap[i].va < found; i++)
-        ;
-    *index = i;
-    return found;
+    return reservation_gap(kproc, USER_HEAP_BASE, heap_limit(kproc), bytes, largest, TRUE);
 }
 
-static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eager, VADDR preferred)
+/* Malloc(): a lazy (with demand paging) block in the address-space heap */
+static VADDR heap_alloc(KPROC *kproc, ULONG bytes)
 {
-    VADDR va, largest, size, held_first, held_end;
-    ULONG index = 0;
+    VADDR va, largest, size;
     UQUAD reservation = 0;
+    KASPACE_HEAP *heap;
+    ULONG index;
 
     if (!kproc || !kproc->aspace || !bytes ||
         bytes > heap_limit(kproc) - USER_HEAP_BASE)
         return 0;
 #if CONF_WITH_PRIVATE_CLONE_TEST
-    if (kind==UH_MALLOC && mapping_pause_actor && mapping_pause_actor==ksched_context_id()) {
+    if (mapping_pause_actor && mapping_pause_actor==ksched_context_id()) {
         mapping_pause_actor=0;
         (void)ksched_yield(); /* real cooperative contention with root guard held */
     }
 #endif
-    if (kind==UH_MALLOC && (!kproc->allocation_scope || !mapping_owner_live(kproc))) return 0;
+    if (!kproc->allocation_scope || !mapping_owner_live(kproc)) return 0;
     size = ((VADDR)bytes + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
-    if (kind == UH_MALLOC && size > alloc_room(kproc))
+    if (size > alloc_room(kproc))
         return 0;                       /* over a Psetlimit() limit */
-    if (!(kind == UH_MALLOC ? ordinary_heap_room(kproc) : heap_room(kproc)))
+    if (!ordinary_heap_room(kproc))
         return 0;
-    if (preferred >= USER_HEAP_BASE && !(preferred & (USER_PAGE_SIZE - 1)) &&
-        reservation_free(kproc, preferred, size) &&
-        !kaspace_next_held(kproc->active_space, preferred, preferred + size, &held_first, &held_end)) {
-        va = preferred;
-        while (index < kproc->nheap && kproc->heap[index].va < va) index++;
-    } else {
-        va = heap_gap(kproc, size, &index, &largest);
-    }
+    va = heap_gap(kproc, size, &largest);
     /* A different PROCESS can own a captured image in this shared root.
      * Lazy publication must obey the same barrier as an eager leaf mutation. */
     if (!va || !kaspace_mapping_can_change(kproc->aspace,va,size)) return 0;
-    /* (Malloc() memory is lazy with CONF_WITH_DEMAND_PAGING; a program image
-     * is filled in by the kernel and moved page by page, so it is backed at
-     * once) */
-    if (!CONF_WITH_DEMAND_PAGING)
-        eager = TRUE;
     if (!(reservation=kaspace_reservation_next())) return 0;
     if (!kaspace_mapping_change(kproc->aspace,va,size) ||
-        (eager && !aspace_map_private(kproc->aspace, va, size,
-                                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER)))
+        (!CONF_WITH_DEMAND_PAGING && !aspace_map_private(kproc->aspace, va, size,
+                                                ASPACE_PROT_WRITE | ASPACE_PROT_USER)))
         return 0;
-    if (kind == UH_MALLOC) {
-        KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
-        for (index = 0; index < heap->count && heap->blocks[index].va < va; index++) ;
-        memmove(&heap->blocks[index + 1], &heap->blocks[index],
-                (heap->count - index) * sizeof(heap->blocks[0]));
-        heap->blocks[index].va = va;
-        heap->blocks[index].pages = (ULONG)(size / USER_PAGE_SIZE);
-        heap->blocks[index].reservation = reservation;
-        heap->blocks[index].flags = 0;
-        heap->blocks[index].scope=kproc->allocation_scope;
-        heap->count++;
-        return va;
-    }
-    memmove(&kproc->heap[index + 1], &kproc->heap[index],
-            (kproc->nheap - index) * sizeof(kproc->heap[0]));
-    kproc->heap[index].va = va;
-    kproc->heap[index].pages = (ULONG)(size / USER_PAGE_SIZE);
-    kproc->heap[index].kind = kind;
-    kproc->heap[index].pd = pd;
-    kproc->heap[index].reservation = reservation;
-    kproc->heap[index].shared_generation = 0;
-    kproc->nheap++;
+    heap = kaspace_heap(kproc->active_space);
+    for (index = 0; index < heap->count && heap->blocks[index].va < va; index++) ;
+    memmove(&heap->blocks[index + 1], &heap->blocks[index],
+            (heap->count - index) * sizeof(heap->blocks[0]));
+    heap->blocks[index].va = va;
+    heap->blocks[index].pages = (ULONG)(size / USER_PAGE_SIZE);
+    heap->blocks[index].reservation = reservation;
+    heap->blocks[index].flags = 0;
+    heap->blocks[index].scope=kproc->allocation_scope;
+    heap->count++;
     return va;
 }
 
@@ -5480,8 +5396,6 @@ static VADDR heap_alloc(KPROC *kproc, ULONG bytes, UBYTE kind, PD *pd, BOOL eage
 static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
 {
 #if CONF_WITH_DEMAND_PAGING
-    ULONG i;
-
     *prot = ASPACE_PROT_USER | ASPACE_PROT_WRITE;
 #if CONF_WITH_MMAP
     if (kaspace_mmap_protection(kproc->active_space, va, prot))
@@ -5491,10 +5405,6 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
         return TRUE;
     if (kaspace_heap_protection(kproc->active_space,va,prot))
         return (*prot&ASPACE_PROT_USER)!=0;
-    for (i = 0; i < kproc->nheap; i++)
-        if (va >= kproc->heap[i].va &&
-            va < kproc->heap[i].va + (VADDR)kproc->heap[i].pages * USER_PAGE_SIZE)
-            return TRUE;
 #else
     UNUSED(kproc);
     UNUSED(va);
@@ -5753,11 +5663,6 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
         if (size + USER_PAGE_SIZE > USER_STACK_TOP - USER_HEAP_BASE)
             return ENSMEM;
         highest = USER_HEAP_BASE;
-        if (kproc->nheap) {
-            const struct uheap_block *b = &kproc->heap[kproc->nheap - 1];
-
-            highest = b->va + (VADDR)b->pages * USER_PAGE_SIZE;
-        }
         {
             KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
             if (heap && heap->count) {
@@ -5872,7 +5777,7 @@ VADDR kproc_uheap_alloc(PD *pd, ULONG bytes)
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) {
-        result=heap_alloc(mutation.process,bytes,UH_MALLOC,NULL,FALSE,0);mapping_close(&mutation);
+        result=heap_alloc(mutation.process,bytes);mapping_close(&mutation);
     }
 #if CONF_WITH_NATIVE_SCHED
     ksched_cleanup_end(&scope);
@@ -5885,11 +5790,10 @@ static ULONG do_heap_largest(PD *pd)
 {
     KPROC *kproc = kproc_find(pd);
     VADDR largest;
-    ULONG index;
 
     if (!kproc || !kproc->aspace)
         return 0;
-    heap_gap(kproc, 0, &index, &largest);
+    heap_gap(kproc, 0, &largest);
     /* (Malloc() rounds a request up to whole pages: what is left, down to them) */
     if (largest > (alloc_room(kproc) & ~(USER_PAGE_SIZE - 1)))
         largest = alloc_room(kproc) & ~(USER_PAGE_SIZE - 1);
@@ -5921,16 +5825,6 @@ ULONG kproc_uheap_largest(PD *pd)
     return result;
 }
 
-static struct uheap_block *heap_find(KPROC *kproc, VADDR va)
-{
-    ULONG i;
-
-    for (i = 0; i < kproc->nheap; i++)
-        if (kproc->heap[i].va == va)
-            return &kproc->heap[i];
-    return NULL;
-}
-
 static KASPACE_HEAP_BLOCK *ordinary_heap_find(KPROC *kproc, VADDR va)
 {
     KASPACE_HEAP *heap = kaspace_heap(kproc->active_space);
@@ -5956,11 +5850,8 @@ static BOOL release_pages(ASPACE *as, VADDR va, VADDR bytes)
 BOOL kproc_callback_mfree_allowed(PD *pd, UQUAD address)
 {
     KPROC *kproc = kproc_find(pd);
-    struct uheap_block *b;
 
-    return kproc && kproc->aspace &&
-        (ordinary_heap_find(kproc, address) ||
-         ((b = heap_find(kproc, address)) != NULL && b->kind == UH_MALLOC));
+    return kproc && kproc->aspace && ordinary_heap_find(kproc, address);
 }
 
 BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size)
@@ -5981,46 +5872,30 @@ BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size)
 }
 #endif
 
-/* gives the block back: unmaps its pages and drops its entry */
-static LONG heap_release(KPROC *kproc, struct uheap_block *b)
-{
-    if (!release_pages(kproc->aspace, b->va,
-                                     (VADDR)b->pages * USER_PAGE_SIZE))
-        return ERR;
-    memmove(b, b + 1, (kproc->nheap - 1 - (ULONG)(b - kproc->heap)) * sizeof(*b));
-    kproc->nheap--;
-    return E_OK;
-}
-
 /* Mfree(): E_OK, or EIMBA if va is not the start of a block of this process */
 static LONG do_heap_free(PD *pd, VADDR va)
 {
     KPROC *kproc = kproc_find(pd);
-    struct uheap_block *b;
     KASPACE_HEAP_BLOCK *ordinary;
     KASPACE_HEAP *heap;
 
     if (!kproc || !kproc->aspace)
         return EIMBA;
     ordinary = ordinary_heap_find(kproc, va);
-    b = ordinary ? NULL : heap_find(kproc, va);
-    if (!ordinary && (!b || b->kind != UH_MALLOC)) return EIMBA;
+    if (!ordinary) return EIMBA;
 #if CONF_WITH_USER_CALLBACKS
-    if (user_callback_pinned(pd, va, (UQUAD)(ordinary ? ordinary->pages : b->pages) * USER_PAGE_SIZE))
+    if (user_callback_pinned(pd, va, (UQUAD)ordinary->pages * USER_PAGE_SIZE))
         return EACCDN;
 #endif
-    if (ordinary) {
-        heap = kaspace_heap(kproc->active_space);
-        if (!kaspace_mapping_owned(kproc->active_space,kproc->number,kproc,ordinary->reservation,
-                                  va,(VADDR)ordinary->pages*USER_PAGE_SIZE)) return EACCDN;
-        if (!release_pages(kproc->aspace, va, (VADDR)ordinary->pages * USER_PAGE_SIZE))
-            return ERR;
-        memmove(ordinary, ordinary + 1,
-                (heap->count - 1 - (ULONG)(ordinary - heap->blocks)) * sizeof(*ordinary));
-        heap->count--;
-        return E_OK;
-    }
-    return heap_release(kproc, b);
+    heap = kaspace_heap(kproc->active_space);
+    if (!kaspace_mapping_owned(kproc->active_space,kproc->number,kproc,ordinary->reservation,
+                              va,(VADDR)ordinary->pages*USER_PAGE_SIZE)) return EACCDN;
+    if (!release_pages(kproc->aspace, va, (VADDR)ordinary->pages * USER_PAGE_SIZE))
+        return ERR;
+    memmove(ordinary, ordinary + 1,
+            (heap->count - 1 - (ULONG)(ordinary - heap->blocks)) * sizeof(*ordinary));
+    heap->count--;
+    return E_OK;
 }
 
 LONG kproc_uheap_free(PD *pd,VADDR va)
@@ -6043,7 +5918,6 @@ LONG kproc_uheap_free(PD *pd,VADDR va)
 static LONG do_heap_shrink(PD *pd, VADDR va, long len)
 {
     KPROC *kproc = kproc_find(pd);
-    struct uheap_block *b;
     KASPACE_HEAP_BLOCK *ordinary;
     ULONG pages;
     VADDR keep;
@@ -6051,10 +5925,9 @@ static LONG do_heap_shrink(PD *pd, VADDR va, long len)
     if (!kproc || !kproc->aspace)
         return EIMBA;
     ordinary = ordinary_heap_find(kproc, va);
-    b = ordinary ? NULL : heap_find(kproc, va);
-    if (!ordinary && (!b || b->kind != UH_MALLOC)) return EIMBA;
-    pages = ordinary ? ordinary->pages : b->pages;
-    if (ordinary && !kaspace_mapping_owned(kproc->active_space,kproc->number,kproc,ordinary->reservation,
+    if (!ordinary) return EIMBA;
+    pages = ordinary->pages;
+    if (!kaspace_mapping_owned(kproc->active_space,kproc->number,kproc,ordinary->reservation,
                                           va,(VADDR)ordinary->pages*USER_PAGE_SIZE)) return EACCDN;
     if (len < 0)
         return ERANGE;
@@ -6073,8 +5946,7 @@ static LONG do_heap_shrink(PD *pd, VADDR va, long len)
     if (!release_pages(kproc->aspace, va + keep * USER_PAGE_SIZE,
                                      (VADDR)(pages - keep) * USER_PAGE_SIZE))
         return ERR;
-    if (ordinary) ordinary->pages = (ULONG)keep;
-    else b->pages = (ULONG)keep;
+    ordinary->pages = (ULONG)keep;
     return E_OK;
 }
 LONG kproc_uheap_shrink(PD *pd,VADDR va,long len)
@@ -6286,15 +6158,6 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
         if (length && address>=start && address-start<length && bytes<=length-(address-start) &&
             owner->borrowed[i].generation==procmem_gen(base) && procmem_owner(base)==pd) {
             birth=&owner->borrowed[i].reservation;raw=TRUE;
-        }
-    }
-    for (i=0;!birth && i<owner->nheap;i++) {
-        struct uheap_block *block=&owner->heap[i];
-        VADDR length=(VADDR)block->pages*USER_PAGE_SIZE;
-        if (address>=block->va && address-block->va<length &&
-            bytes<=length-(address-block->va)) {
-            birth=&block->reservation;
-            lazy=block->kind==UH_MALLOC && CONF_WITH_DEMAND_PAGING;
         }
     }
     if (!birth && owner->has_image

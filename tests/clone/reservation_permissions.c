@@ -6,7 +6,6 @@
 #include <stdlib.h>
 static PD pd;
 static KPROC process;
-static struct uheap_block image;
 static BOOL captured,grant_user=TRUE,mutation_permitted;
 static VADDR mutation_address,mutation_bytes;
 static UQUAD allocation_generation;
@@ -98,16 +97,20 @@ static void check_rights(void)
 int main(void)
 {
     KASPACE_RESERVATION_INFO info,unchanged;
-    memset(&process,0,sizeof(process));memset(&image,0,sizeof(image));
+    memset(&process,0,sizeof(process));
     process.pd=&pd;process.active_space=(KASPACE *)1;process.aspace=(ASPACE *)1;
     process.references=1;process.allocation_scope=(KASPACE_SCOPE *)1;
-    process.heap=&image;process.nheap=1; kproc_list=&process;
-    image.va=0x10000000UL;image.pages=2;image.kind=UH_MALLOC;image.reservation=7;
+    kproc_list=&process;
+    /* a loaded image's segment: its reservation is the PROCESS's */
+    process.has_image=TRUE;process.layout.nseg=1;
+    process.layout.seg[0].vaddr=0x10000000UL;process.layout.seg[0].memsz=2*USER_PAGE_SIZE;
+    process.reservation_birth[3]=7;
     check_rights(); /* no earlier broad witness */
     assert(!kproc_uheap_alloc(&pd,USER_PAGE_SIZE) && !ordinary.count);
     kfree(ordinary.blocks);memset(&ordinary,0,sizeof(ordinary));
     captured=TRUE;check_rights(); /* conservative earlier broad capture */
-    process.heap=NULL;process.nheap=0;check_rights(); /* immutable bounds after metadata is gone */
+    process.has_image=FALSE;memset(&process.layout,0,sizeof(process.layout));
+    check_rights(); /* immutable bounds after metadata is gone */
     captured_address=0x10000008UL;captured_bytes=16;
     memset(&info,0x5a,sizeof(info));unchanged=info;
     assert(kproc_reservation_info(&pd,0x10000ff0UL,16,&info)==EACCDN && !memcmp(&info,&unchanged,sizeof(info)));
@@ -153,10 +156,7 @@ int main(void)
         blocks[0].va=0x20000000UL;blocks[0].pages=1;blocks[0].flags=KASPACE_HEAP_GUARD;
         blocks[1].va=blocks[0].va+USER_PAGE_SIZE;blocks[1].pages=1;
         ordinary.blocks=blocks;ordinary.count=ordinary.capacity=2;
-        /* A PROCESS-local compatibility block must not override a matching
-         * authoritative ordinary-heap guard. Neither heap kind is executable. */
-        image.va=blocks[0].va;image.pages=2;image.kind=UH_MALLOC;
-        process.heap=&image;process.nheap=1;
+        /* An ordinary-heap guard is never accessible; no heap is executable. */
         assert(!kaspace_heap_protection(process.active_space,0x21000000UL,&rights) && rights==0x5a5a);
         assert(!lazy_area(&process,blocks[0].va,&rights));
 #if CONF_WITH_DEMAND_PAGING
