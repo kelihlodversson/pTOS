@@ -50,7 +50,9 @@ static BOOL shared_supervisor_compat(KPROC *source,void *base,UQUAD generation)
     }
     return TRUE;
 }
-static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,UQUAD generation)
+/* bytes: the held extent from the start of the allocation, 0 for all of it */
+static LONG shared_raw_extent(struct shared_exec_regions *set,KPROC *source,void *base,
+                              UQUAD generation,VADDR bytes)
 {
     LONG error;ULONG i;
     struct shared_exec_regions *inherited=shared_regions(source);
@@ -65,8 +67,8 @@ static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,
         if(error) kproc_release(owner);
     } else
     if(procmem_owner(base)==source->pd)
-        error=kproc_allocation_hold(source->pd,base,generation,0,procmem_size(base),ASPACE_PROT_USER,
-                                   &set->raw[set->nraw]);
+        error=kproc_allocation_hold(source->pd,base,generation,0,bytes?bytes:procmem_size(base),
+                                   ASPACE_PROT_USER,&set->raw[set->nraw]);
     else {
         error=EACCDN;
         if(inherited) for(i=0;i<inherited->nraw;i++)
@@ -77,6 +79,10 @@ static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,
     }
     if(!error) set->nraw++;
     return error;
+}
+static LONG shared_raw(struct shared_exec_regions *set,KPROC *source,void *base,UQUAD generation)
+{
+    return shared_raw_extent(set,source,base,generation,0);
 }
 static LONG shared_compat_logical(struct shared_exec_regions *set,KPROC *source,
                                   void *base,UQUAD generation,UQUAD *birth)
@@ -263,7 +269,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     KASPACE_PROTECTION policy[PROG_MAX_SEGMENTS];
     KASPACE_HEAP *heap;
     ULONG i;UWORD count=0;LONG error=EACCDN;BOOL legacy=FALSE;
-    VADDR body;UQUAD guard_birth;
+    VADDR body,held;UQUAD guard_birth;
     if(!source || source->pd!=run || !target || target==source || !startup ||
         !permissions || *permissions || !source->active_space || !target->pd ||
         target->creator!=source->pd || target->started || target->completed ||
@@ -313,10 +319,25 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         error=EIMBA;goto failed;
     }
     if(!kproc_user_access(source->pd,(VADDR)(uintptr_t)target->pd,sizeof(PD),TRUE)) {error=EACCDN;goto failed;}
+    /* What the child keeps of its TPA. A staged PRG gets the free memory, as
+     * on TOS, and its startup Mshrink()s the rest: hold only the loaded
+     * basepage, text, data and bss, so that shrink can succeed. The lengths
+     * past the text are the caller's to state; a short extent only exposes
+     * the child's own tail. */
+    held=procmem_size(target->user_start);
+#if KPROC_LEGACY_PRG
+    if(legacy) {
+        VADDR image=sizeof(PD)+target->legacy_text_bytes;
+        ULONG dlen=target->pd->p_dlen,blen=target->pd->p_blen;
+        if(dlen<held && blen<held && image+dlen+blen<held)
+            held=(image+dlen+blen+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        if(held>procmem_size(target->user_start)) held=procmem_size(target->user_start);
+    }
+#endif
 #define SHARED_TRY(call) do {error=shared_failure_point()?ENSMEM:(call);if(error) goto failed;}while(0)
     /* The borrowed-text transaction authenticates an already-owned R1 ticket.
      * Keep that exact physical allocation held until commit or full rollback. */
-    SHARED_TRY(shared_raw(set,source,target->user_start,target->tpa_gen));
+    SHARED_TRY(shared_raw_extent(set,source,target->user_start,target->tpa_gen,held));
     inherited=shared_regions(source);
     if(inherited) for(i=0;i<inherited->nraw;i++) {
         if(set->nraw==SHARED_RAW) {error=ENSMEM;goto failed;}
@@ -326,7 +347,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     if(legacy) {
 #if KPROC_LEGACY_PRG
         VADDR base=(VADDR)(uintptr_t)target->user_start;
-        VADDR bytes=procmem_size(target->user_start);
+        VADDR bytes=held;
         VADDR text_end=(base+sizeof(PD)+target->legacy_text_bytes+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1);
         policy[0].address=base;policy[0].bytes=text_end-base;
         policy[0].rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC;count=1;
@@ -344,6 +365,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     SHARED_TRY(shared_raw(set,source,source->user_start,source->tpa_gen));
     SHARED_TRY(shared_raw(set,source,source->env_start,source->env_gen));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)target->user_start,
+                              held<(VADDR)(target->user_end-target->user_start)?held:
                               (VADDR)(target->user_end-target->user_start),ASPACE_PROT_USER));
     SHARED_TRY(shared_logical(set,source,(VADDR)(uintptr_t)target->env_start,
                               (VADDR)(target->env_end-target->env_start),ASPACE_PROT_USER));
