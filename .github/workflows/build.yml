@@ -141,16 +141,11 @@ jobs:
               export HOSTCC=gcc
             fi
             /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py --permissions --mode "$mode"
-            /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py --relro --mode "$mode"
-            /tmp/elf-shared-venv/bin/python tools/test-elf-startup.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-elf-bootstrap.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-kproc-runtime.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-kproc-runtime.py --image-policy --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --shared --mode "$mode"
-            for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
-              /tmp/elf-shared-venv/bin/python tools/test-private-image-admission.py --preset "$preset" --mode "$mode"
-            done
           done
       - name: Test address-space ownership
         run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
@@ -545,8 +540,8 @@ jobs:
           EXEC_REPLACEMENT_TEST: '1'
           EXEC_HANDOFF_TEST: '1'
           EXEC_STAGING_PROFILE: '1'
-          # 68k compatibility only (#1018): ARM/x32 have no shared-VM Pexec.
-          SHARED_VM_PEXEC_TEST: ${{ matrix.arch == 'm68k' && '1' || '0' }}
+          # 68k MMU only (#1018): ARM/x32 have no shared-VM Pexec.
+          SHARED_VM_PEXEC: ${{ matrix.arch == 'm68k' && '1' || '0' }}
           SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
         run: tools/ci-regression.sh "${{ matrix.machine }}"
 

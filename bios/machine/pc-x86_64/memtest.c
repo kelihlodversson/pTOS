@@ -3751,7 +3751,7 @@ void x86_64_memtest_clone_yield(void)
             identity = kproc_retain(replacement);
             CHECK(kproc_ref_pid(identity) != kproc_ref_pid(active_clone.parent),
                   "replacement has a fresh canonical PROCESS identity");
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
             CHECK(replacement != active_clone.old_pd &&
                   procmem_gen(active_clone.old_pd)==active_clone.old_generation &&
                   !procmem_mutation_allowed(active_clone.old_pd,active_clone.old_generation,0,procmem_size(active_clone.old_pd)),
@@ -3893,7 +3893,7 @@ static void test_clone_execution(void)
                 CHECK(active_clone.child_progress, "blocked creator permits independent child execution");
             if (active_clone.scenario == 2) {
                 CHECK(active_clone.replacement_checked,"orphan survived a fresh PROCESS after source retirement");
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
                 {
                     PD *again=new_basepage();
                     KPROC *identity;

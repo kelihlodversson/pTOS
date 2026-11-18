@@ -256,14 +256,14 @@ ULONG kproc_test_mapping_wait_count(void);
 #endif
 #if CONF_WITH_NATIVE_SCHED
 #include "thread_startup.h"
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 /* m68k test kernels: a staged PRG (68k PE_LOAD) as a distinct PROCESS
  * sharing the caller's ASPACE; no resource adoption on failure. */
 LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PERMISSION_TRANSACTION **);
 void kproc_shared_exec_finish(KPROC *);
 #endif
 LONG kproc_shared_exec_take_mapping_owners(KPROC *,KASPACE_MEMBER **);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 LONG kproc_shared_dependencies_prepare(KPROC *,KPROC *);
 #if CONF_WITH_PRIVATE_CLONE_TEST
 void kproc_shared_dependency_test_fail_after(UWORD);
@@ -542,7 +542,7 @@ LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
 LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 void kproc_shared_test_fail_after(UWORD after);
 UWORD kproc_shared_test_steps(void);
 #endif

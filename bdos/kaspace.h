@@ -116,11 +116,6 @@ void kaspace_permission_finish(KASPACE_PERMISSION_TRANSACTION **,BOOL commit);
 
 /* Logical reservation-preserving lazy/file backing only. This cannot authorize
  * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-/* Backend-only, after complete resident private-frame preflight; only image
- * write removal which preserves all retained minimum-access obligations. */
-BOOL kaspace_relro_change(struct aspace *,VADDR,VADDR);
-#endif
 BOOL kaspace_materialization_change(struct aspace *backend, VADDR address,
                                    VADDR bytes, UWORD logical_rights);
 
@@ -206,7 +201,7 @@ LONG kaspace_reservation_hold_captured(KASPACE *space,
 BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *rights);
 /* Borrowed canonical owner; source ticket must stay owned across duplication. */
 void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 /* Pure authentication of this selected live captured nonlazy receipt, not a
  * query whose metadata could be supplied by another hold. Caller owns the
  * receipt throughout; no retain, backing, access grant or transfer occurs. */

@@ -450,7 +450,7 @@ void procmem_stats(PROCMEM_STATS *stats)
     stats->bad_frees = bad_frees;
 }
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 #include "shared_pexec_test.h"
 void procmem_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
 {

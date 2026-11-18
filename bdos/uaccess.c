@@ -306,13 +306,13 @@ static long pexec_ok(const long *pw)
 #endif
         return E_OK;
     }
-#if CONF_WITH_LEGACY_PEXEC
-#if CONF_WITH_USER_ASPACE && !(CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST)
+#if CONF_WITH_STAGED_PEXEC
+#if CONF_WITH_USER_ASPACE && !(CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC)
     /* Production gate: no staged-image access before capability acceptance. */
     if (mode == PE_GO && kproc_user_aspace(run)) return EINVFN;
 #endif
     if (mode == PE_GO || mode == PE_GOTHENFREE
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
         || mode == 104
 #endif
 #if CONF_WITH_NATIVE_SCHED
@@ -329,7 +329,7 @@ static long pexec_ok(const long *pw)
     }
 #endif
     if (mode == PE_LOADGO
-#if CONF_WITH_LEGACY_PEXEC
+#if CONF_WITH_STAGED_PEXEC
         || mode == PE_LOAD
 #endif
 #if CONF_WITH_NATIVE_SCHED
@@ -343,7 +343,7 @@ static long pexec_ok(const long *pw)
         if (rc)
             return rc;
     }
-#if CONF_WITH_LEGACY_PEXEC
+#if CONF_WITH_STAGED_PEXEC
     else if (mode != PE_BASEPAGE && mode != PE_BASEPAGEFLAGS) {
 #if CONF_WITH_USER_ASPACE
         /* the kernel's own modes (PE_RELOCATE) are not for the user */

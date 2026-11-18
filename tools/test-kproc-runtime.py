@@ -31,10 +31,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-kproc-runtime-") as directory:
             k.syms["CONF_WITH_IMAGE_POLICY"].set_value(2)
             assert k.syms["CONF_WITH_IMAGE_POLICY"].str_value == "y"
         if arch == "m68k":
-            k.syms["CONF_WITH_SHARED_VM_PEXEC_TEST"].set_value(2)
-            assert k.syms["CONF_WITH_SHARED_VM_PEXEC_TEST"].str_value == "y"
+            assert k.syms["CONF_WITH_SHARED_VM_PEXEC"].str_value == "y"
         else:
-            assert k.syms["CONF_WITH_SHARED_VM_PEXEC_TEST"].str_value == "n"
+            assert k.syms["CONF_WITH_SHARED_VM_PEXEC"].str_value == "n"
         k.syms["CONF_WITH_ELF_SHARED"].set_value(2)
         k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(0)
         k.syms["CONF_WITH_MMAP"].set_value(2)

@@ -118,11 +118,10 @@ if os.environ.get('EXEC_HANDOFF_TEST') == '1':
     for required in ('CONF_WITH_EXEC_REPLACEMENT_TEST', 'CONF_WITH_EXEC_HANDOFF_TEST'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
-if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
-    # 68k compatibility only (#1018); the symbol depends on M68K.
-    config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
-    assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'
-if os.environ.get('SHARED_VM_PEXEC_TEST') == '1' or os.environ.get('EXEC_STAGING_PROFILE') == '1':
+if os.environ.get('SHARED_VM_PEXEC') == '1':
+    # m68k MMU kernels only (#1018); derived, never forced.
+    assert config.syms['CONF_WITH_SHARED_VM_PEXEC'].str_value == 'y'
+if os.environ.get('SHARED_VM_PEXEC') == '1' or os.environ.get('EXEC_STAGING_PROFILE') == '1':
     for required in ('CONF_WITH_IMAGE_POLICY', 'CONF_WITH_IMAGE_POLICY_TEST'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
@@ -154,15 +153,15 @@ if [ "$traditional_fat" = true ]; then
 fi
 make $make_args 2>&1 | tee -a build.log
 tools/check-build-warnings.sh build.log
-if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ]; then
-    for symbol in CONF_WITH_SHARED_VM_PEXEC_TEST CONF_WITH_ELF_SHARED CONF_WITH_MMAP \
+if [ "${SHARED_VM_PEXEC:-0}" = 1 ]; then
+    for symbol in CONF_WITH_SHARED_VM_PEXEC CONF_WITH_ELF_SHARED CONF_WITH_MMAP \
                   CONF_WITH_PRIVATE_CLONE_TEST CONF_WITH_NATIVE_SCHED CONF_WITH_PCLONE; do
         grep -q "^#define $symbol 1$" obj/autoconf.h || {
             echo "positive shared-Pexec configuration missing effective $symbol" >&2
             exit 2
         }
     done
-    echo 'positive shared-Pexec effective gates: shared/mmap/private-test/scheduler/clone=1'
+    echo 'shared-VM Pexec effective gates: shared/mmap/private-test/scheduler/clone=1'
 fi
 make $make_args test-dir
 

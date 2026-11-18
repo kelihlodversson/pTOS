@@ -1188,42 +1188,6 @@ static BOOL capture_current_rights(KASPACE *space,UQUAD birth,VADDR address,VADD
     *rights=current;return TRUE;
 }
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-/* Authenticated image RELRO only: private backend separately checks resident
- * frame ownership and preserves USER/EXEC. No callbacks/allocations/yields.
- * Every page needs a live nonlazy witness; cleanup fences grant no authority. */
-BOOL kaspace_relro_change(ASPACE *backend,VADDR address,VADDR bytes)
-{
-    KASPACE *space;KASPACE_LEASE *lease;VADDR page,last,first;
-    if(!bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address ||
-       (address&(USER_PAGE_SIZE-1)) || (bytes&(USER_PAGE_SIZE-1))) return FALSE;
-    for(space=spaces;space && space->backend!=backend;space=space->next) { }
-    if(!space) return FALSE;
-    first=address;last=address+bytes-USER_PAGE_SIZE;
-    for(page=first;;page+=USER_PAGE_SIZE) {
-        BOOL witness=FALSE;
-        for(lease=space->leases;lease;lease=lease->next) {
-            if(page<lease->first || page>lease->last) continue;
-            if(lease->sealed) return FALSE;
-            if(!lease->held) continue; /* revocable snapshots retire below */
-            if(lease->retire_bytes && !lease->reservation_ticket) continue;
-            if(!lease->reservation_ticket || !lease->captured || lease->revoked ||
-               (lease->reservation_flags&KASPACE_RESERVATION_LAZY) ||
-               (lease->access&~ASPACE_PROT_USER)) return FALSE;
-            if(reservation_backing_contains(lease,page,page)) witness=TRUE;
-        }
-        if(!witness) return FALSE;
-        if(page==last) break;
-    }
-    for(lease=space->leases;lease;lease=lease->next)
-        if(!lease->attachment_ticket && !lease->held && !lease->sealed &&
-           first<=lease->last && lease->first<=last) lease->revoked=TRUE;
-    /* Backend has completed its whole-range/frame preflight. The following
-     * leaf/COW permission stores are infallible and cannot yield. */
-    space->resident_permissions_tightened=TRUE;
-    return TRUE;
-}
-#endif
 
 BOOL kaspace_reservation_info(KASPACE *space, VADDR address, VADDR bytes,
                              KASPACE_RESERVATION_INFO *result)
@@ -1350,7 +1314,7 @@ void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold)
     return lease ? lease->owner_identity : NULL;
 }
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 BOOL kaspace_reservation_matches(const KASPACE_RESERVATION_HOLD *hold,
         const KASPACE *space,UQUAD birth,VADDR address,VADDR bytes)
 {
@@ -2209,7 +2173,7 @@ LONG kaspace_clone(const KASPACE *source,KASPACE **result)
 #include "kaspace_permission.h"
 #endif
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 #include "shared_pexec_test.h"
 
 void kaspace_shared_snapshot(const ASPACE *current,SHARED_PEXEC_SNAPSHOT *out)

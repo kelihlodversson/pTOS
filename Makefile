@@ -1922,8 +1922,9 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_ELF_LOADER),-DTEST_WITH_ELF_LOADER) \
               $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
-              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),-DTEST_WITH_SHARED_VM_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC)),-DTEST_WITH_SHARED_VM_PEXEC) \
               $(if $(filter y,$(CONF_WITH_LEGACY_PEXEC)),-DTEST_WITH_LEGACY_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_STAGED_PEXEC)),-DTEST_WITH_STAGED_PEXEC) \
               $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_REPLACEMENT_TEST)),-DTEST_WITH_EXEC_REPLACEMENT_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_HANDOFF_TEST)),-DTEST_WITH_EXEC_HANDOFF_TEST) \
@@ -1947,7 +1948,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(MACHINE_AMIGA),-DTEST_LOG_FILE) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
               $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
-              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST))),-DTEST_WITH_ELF_SHARED)) \
+              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(filter y,$(CONF_WITH_SHARED_VM_PEXEC))),-DTEST_WITH_ELF_SHARED)) \
               $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 

@@ -2981,7 +2981,7 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
                 native_sched_irq_restore(flags);return EACCDN;
             }
             kproc_add_child_usage(run, task->usage[0]);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
             if(completion && (!process_observer_snapshot(task->process,completion) ||
                 completion->state!=PROCESS_COMPLETED)) panic("zombie without canonical PROCESS result");
 #endif
@@ -3047,7 +3047,7 @@ LONG ksched_wait_exact(WORD pid,LONG *result)
 }
 LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion)
 {
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
     if(!completion) return EINVAL;
     return wait_process(pid,0,0,completion,NULL);
 #else

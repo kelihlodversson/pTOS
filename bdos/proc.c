@@ -184,7 +184,7 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void proc_release_block(void *base)
 {
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
     if(kproc_shared_exec_retire_source(base)) return;
 #endif
     /* the tables are in the record: release through it, then drop it */
@@ -210,7 +210,7 @@ static void proc_release_block(void *base)
 static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
     if(kproc_shared_exec_retire_source(base)) return;
 #endif
 #if CONF_WITH_USER_ASPACE
@@ -561,11 +561,12 @@ struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
     ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
 /* #1018: the public modes of this platform. The historical staged modes are
- * 68k compatibility (doc/pexec-legacy-modes.txt); ARM and x32 keep only
- * Pexec(0/100/200) until #1008. Unknown modes fail in exec_common(). */
+ * 68k compatibility (doc/pexec-legacy-modes.txt); MMU ARM and x32 keep only
+ * Pexec(0/100/200) until #1008. Non-MMU ARM is left unchecked: it has no
+ * user/kernel boundary. Unknown modes fail in exec_common(). */
 static BOOL pexec_public_mode(WORD flag)
 {
-#if CONF_WITH_LEGACY_PEXEC
+#if CONF_WITH_STAGED_PEXEC
     UNUSED(flag);
     return TRUE;
 #else
@@ -763,8 +764,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 
         return (long)p;
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_LEGACY_PEXEC
-    case 104: /* Test kernels only until native/owner activation acceptance. */
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+    case 104: /* m68k MMU: async shared-VM start of a staged PRG (#1018) */
+#if CONF_WITH_SHARED_VM_PEXEC
         return caller_has_aspace() ? proc_shared_vm_exec((PD *)tail,TRUE) : EINVFN;
 #else
         return EINVFN;
@@ -806,10 +807,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         FALLTHROUGH;
     case PE_GO:
 #if CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC
-        /* Ring-3 mode 4 is shared-VM Pexec (#894), still test-only. Refuse it
-         * before touching the staged image or changing any ownership. */
+        /* Ring-3 mode 4 is shared-VM Pexec of a staged PRG (#894, #1018);
+         * without the scheduler it is refused before touching the image. */
         if (flag == PE_GO && caller_has_aspace()) {
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
             return proc_shared_vm_exec((PD *)tail,FALSE);
 #else
             return EINVFN;

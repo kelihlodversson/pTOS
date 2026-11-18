@@ -59,7 +59,7 @@ done:
 #else
 #include <mint/basepage.h>
 
-#if !defined(TEST_WITH_USER_ASPACE) && defined(TEST_WITH_LEGACY_PEXEC)
+#ifndef TEST_WITH_USER_ASPACE
 static void inherited_child(void)
 {
     char c = 0;
@@ -150,7 +150,7 @@ void test_open_unlink(void)
     char original[1024], buffer[1024];
 
     ptest_begin("open_unlink (traditional GEMDOS)");
-#if !defined(TEST_WITH_USER_ASPACE) && defined(TEST_WITH_LEGACY_PEXEC)
+#ifndef TEST_WITH_USER_ASPACE
     staged_inheritance();
     staged_foreign_handle();
 #endif

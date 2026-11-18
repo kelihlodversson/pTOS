@@ -97,7 +97,7 @@ static LONG mapping_snapshot(VADDR output)
 }
 #endif
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 /* Call the actual production symbol, including the m68k assembly. The byte
  * oracle is computed from the original pattern, never by another memmove. */
 static LONG shared_move_probe(void)
@@ -162,7 +162,7 @@ static long clone_request(uint64_t address, uint64_t size)
     }
     if ((size&0xffffffffffff0000ULL)==IMAGE_POLICY_CLONE) { image_policy_test=TRUE;size&=0xffff; }
 #endif
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
     if(!address && size==SHARED_PEXEC_MOVE_QUERY) return shared_move_probe();
     if(!address && size>=SHARED_PEXEC_DEPENDENCY_FAIL && size<=SHARED_PEXEC_DEPENDENCY_FAIL+255) {
         kproc_shared_dependency_test_fail_after((UWORD)(size&255));return E_OK;

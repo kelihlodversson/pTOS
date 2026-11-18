@@ -110,7 +110,7 @@ static void retiring_construction_borrows(void)
         CHECK(metadata_live==metadata && physical_live==ram);
     }
 }
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 /* 68k shared-VM Pexec only (#1018). */
 static void supervisor_clone_metadata(void)
 {
@@ -185,7 +185,7 @@ static void supervisor_clone_metadata(void)
     puts("Production generic-clone metadata: USER hold rejected, exact no-access lifetime, no phantom top stack and final conservation: PASS (host MMU)");
 }
 #endif
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 /* MAP_PTOS_RUNTIME scopes exist only with 68k shared-VM Pexec (#1018). */
 /* Host installation adapters only: use the production mapping constructors,
  * syscall policy and final owner release with real counted MMU providers. */
@@ -276,10 +276,10 @@ int main(void)
     legacy_image_policy();
 #endif
     retiring_construction_borrows();
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
     supervisor_clone_metadata();
 #endif
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
     runtime_mapping_policy();
 #endif
     source.number=123;source.references=1;
@@ -302,7 +302,7 @@ int main(void)
         CHECK(free_pages==before && source.stack_size==1024UL*1024);
         kproc_list=NULL;source.shared_exec=NULL;source.stack_size=0;
     }
-#if CONF_WITH_MMAP && CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_MMAP && CONF_WITH_SHARED_VM_PEXEC
     {
         struct shared_exec_regions retained={0};void *identity=NULL;
         MMAP_REGION *region=kalloc(sizeof(*region));UWORD rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE;

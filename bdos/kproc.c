@@ -1226,7 +1226,7 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
     p->active_space = space; /* transfer the transaction's owning reference */
     p->aspace = kaspace_backend(space);
     p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
     if(p->shared_inherited) p->shared_inherited->committed=TRUE;
 #endif
     return TRUE;
@@ -1310,7 +1310,7 @@ static LONG prepare_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,
 #endif
         kaspace_member_claim_private(*result);
     }
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_ELF_SHARED
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_ELF_SHARED
     if (loaded && p->standard_entry) {
         error=kaspace_member_add_runtime(space,p->number,p,result,&p->prepared_runtime_scope);
         if (error) goto failed;
@@ -1957,7 +1957,7 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
         p->parent = p->clone_controller_pd; /* logical identity remains separate */
     }
     if(p->shared_exec) shared_exec_commit(p);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
     if(p->shared_inherited) p->shared_inherited->committed=TRUE;
 #endif
     p->active_space = space; p->aspace = kaspace_backend(space);
@@ -2296,7 +2296,7 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     if (kaspace_member_new(selected, source->number, source, &b->members) || exec_image_injected(2))
         goto failed;
     b->allocation_scope = kaspace_member_scope(b->members);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_ELF_SHARED
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_ELF_SHARED
     if (image->standard_entry &&
         kaspace_member_add_runtime(selected, source->number, source, &b->members, &b->runtime_scope))
         goto failed;
@@ -2926,7 +2926,7 @@ void kproc_destroy(PD *pd)
             kproc_load_leave();             /* (a disk error jumped out of a load) */
 #if CONF_WITH_NATIVE_SCHED
             kproc_clone_drop_compat(kproc);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
             kproc_shared_exec_abort(kproc);
 #endif
 #endif
@@ -3634,7 +3634,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         return FALSE;
     }
     kproc->allocation_scope=kaspace_member_scope(kproc->mapping_members);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_ELF_SHARED
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_ELF_SHARED
     if (kproc->standard_entry && kaspace_member_add_runtime(owner,kproc->number,kproc,
                                     &kproc->mapping_members,&kproc->runtime_scope)) {
         kaspace_member_release(&kproc->mapping_members);kproc->allocation_scope=kproc->runtime_scope=NULL;
@@ -5045,7 +5045,7 @@ static LONG do_mmap(PD *pd, UQUAD address, UQUAD length, UQUAD protection,
     if (!kproc || !kproc->aspace || !kproc->allocation_scope || !mapping_owner_live(kproc))
         return EACCDN;
     /* Private anonymous or file-backed reservations; never MAP_SHARED. */
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
     allowed |= MAP_PTOS_RUNTIME;
 #endif
     if ((flags & ~allowed) ||
@@ -6407,7 +6407,7 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
         if (page==last) break;
     }
     if (!(rights&ASPACE_PROT_USER)) {
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
         if(raw || lazy) return EACCDN;
 #else
         return EACCDN;
@@ -6715,7 +6715,7 @@ BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size)
 }
 
 #if CONF_WITH_NATIVE_SCHED
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 static UWORD shared_fail_after,shared_steps;
 static UWORD shared_dependency_after,shared_dependency_steps;
 void kproc_shared_dependency_test_fail_after(UWORD after)
@@ -6733,7 +6733,7 @@ static BOOL shared_failure_point(void)
     shared_steps++;
     return shared_fail_after && !--shared_fail_after;
 }
-#elif CONF_WITH_SHARED_VM_PEXEC_TEST
+#elif CONF_WITH_SHARED_VM_PEXEC
 static BOOL shared_failure_point(void) {return FALSE;}
 #define shared_dependency_point() FALSE
 #endif

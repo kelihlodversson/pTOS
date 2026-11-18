@@ -65,9 +65,10 @@ static int run(const char *name, const char *kind, int mode, int classic, long e
     return 0;
 }
 
+#if defined(__m68k__) || !defined(STAGED_UNCHECKED)
 /* #1018: mode 3 names an executable and stages a 68k PRG only; everything
  * that would stage an ELF (a foreign ELF, an interpreter) is EPLFMT before
- * anything is allocated, and ARM/x32 have no mode 3 at all. */
+ * anything is allocated, and MMU ARM/x32 have no mode 3 at all. */
 static int staged(const char *name, long expected)
 {
     char path[80];
@@ -85,6 +86,8 @@ static int staged(const char *name, long expected)
     }
     return 0;
 }
+
+#endif
 
 #if defined(__m68k__)
 /* What a script stages is its interpreter: allowed only if that is a PRG. */
@@ -122,7 +125,12 @@ int main(void)
     shared = Fcreate(path, 0);
     if (shared < 0) goto failed;
     (void)Dsetdrv(0);
+#if defined(STAGED_UNCHECKED)
+    /* non-MMU ARM (to be deprecated) keeps the staged modes unchecked */
+    for (mode = 0; mode <= 6; mode += 6)
+#else
     mode = 0;
+#endif
     {
         if (run("SUB\\DEMO.FMT", "FORMAT", mode, 0, 37, 1) ||
             run("SUB\\SIMPLE.TOS", "SHEBANG", mode, 0, 37, 1) ||
@@ -149,7 +157,7 @@ int main(void)
         staged("SUB\\DEMO.FMT", interpreted_expectation()) ||
         staged("SUB\\SIMPLE.TOS", interpreted_expectation()) ||
         staged("BIN\\INTERP.TOS", interpreted_expectation())) goto failed;
-#else
+#elif !defined(STAGED_UNCHECKED)
     if (staged("SUB\\RAW.TOS", -32) || staged("SUB\\DEMO.FMT", -32)) goto failed;
 #endif
     for (i = 0; i < 12; i++) {

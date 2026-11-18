@@ -3,7 +3,7 @@ static struct shared_exec_regions *shared_regions(const KPROC *p)
     if(p->shared_exec && p->shared_inherited) panic("duplicate special execution region owner");
     return p->shared_exec?p->shared_exec:p->shared_inherited;
 }
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 static LONG shared_logical(struct shared_exec_regions *set,KPROC *source,VADDR va,VADDR bytes,UWORD access)
 {
     KASPACE_RESERVATION_INFO info;
@@ -133,7 +133,7 @@ void kproc_shared_exec_abort(KPROC *process)
     process->shared_exec=process->shared_inherited=NULL;
     shared_regions_release(process,set); /* close admission before callbacks */
 }
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
 {
     struct shared_exec_regions *set,*inherited;
@@ -255,7 +255,7 @@ BOOL kproc_shared_exec_retire_source(void *base)
     }
     return FALSE;
 }
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *startup,
                               KASPACE_PERMISSION_TRANSACTION **permissions)
 {
@@ -281,7 +281,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         target->legacy_text_bytes<=(VADDR)(target->user_end-target->user_start)-sizeof(PD);
 #endif
     /* #1018: a staged 68k PRG only, entered with the classic PRG convention;
-     * its text extent is the loader's trusted snapshot (test-gated path). */
+     * its text extent is the loader's trusted snapshot. */
     if(!legacy) return EINVFN;
     if(shared_failure_point()) return ENSMEM;
     set=kalloc(sizeof(*set));if(!set) return ENSMEM;memset(set,0,sizeof(*set));
@@ -413,7 +413,7 @@ static void shared_exec_commit(KPROC *target)
 #undef SHARED_REGIONS
 #undef SHARED_STACK_BYTES
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 void kproc_shared_exec_finish(KPROC *process)
 {
     if(!process || !process->shared_exec || !process->shared_exec->committed)

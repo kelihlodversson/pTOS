@@ -43,7 +43,7 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
     if(!error) {stage=6;error=proc_clone_spawn(&tx,&ids); }
     if(!error) kproc_shared_exec_finish(target);
 done:
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
     if(error) kcprintf("shared VM preparation stage=%u error=%ld\n",stage,(long)error);
 #else
     UNUSED(stage);

@@ -84,9 +84,9 @@ cleanup() {
 trap cleanup EXIT
 
 [ -d "$top/test-dir" ] || { echo "$0: no test-dir/: run 'make test-dir' first" >&2; exit 2; }
-if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ] &&
-   ! grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1$' "$top/obj/autoconf.h"; then
-    echo "$0: requested positive shared-Pexec but the effective gate is disabled" >&2
+if [ "${SHARED_VM_PEXEC:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested shared-VM Pexec but the kernel does not have it" >&2
     exit 2
 fi
 
@@ -620,7 +620,7 @@ if grep -q '^#define CONF_WITH_IMAGE_POLICY_TEST 1' "$top/obj/autoconf.h" &&
     record "native immutable image policy" FAIL "configured capture/activation/rollback assertions did not execute"
 fi
 # 68k compatibility only (#1018): a staged PRG started with Pexec 4/104.
-if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h" &&
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native shared-VM PRG Pexec4/104 entry, status and shared data: tested' "$suite_log"; then
     record "native shared-Pexec PRG" FAIL "PRG assertions did not execute"
 fi

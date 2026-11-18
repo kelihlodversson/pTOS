@@ -90,7 +90,7 @@ typedef struct {
 BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
         const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
         UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 BOOL procmem_hold_lifetime(const void *base,UQUAD allocation,const void *expected_owner,
         UQUAD owner_number,void *owner_identity,PROCMEM_HOLD *result);
 #endif
@@ -463,11 +463,6 @@ BOOL aspace_move_private(ASPACE *from, ASPACE *to,
  * page and its ownership stay).  FALSE, with nothing changed, if a page is
  * not one of its private pages.
  */
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-/* Current PROCESS must authenticate its exact loaded GNU_RELRO interval.
- * Resident private RAM only; removes WRITE, never USER/EXEC or a frame. */
-BOOL aspace_protect_relro(ASPACE *as,VADDR address,VADDR bytes);
-#endif
 BOOL aspace_protect_private(ASPACE *as, VADDR va, VADDR bytes, UWORD prot);
 /* Same ownership/atomicity checks, but absent pages are skipped. The caller
  * owns and validates the lazy reservation and records its future permissions.
