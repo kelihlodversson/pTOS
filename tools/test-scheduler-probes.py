@@ -12,15 +12,22 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'tests/pclone/irq_registers.S').read_text()
-arm = source.split('#elif defined(__arm__) && defined(__ARM_NEON)', 1)[1].split('#elif', 1)[0]
-# Enumerate writes of a constant to the sentinel register. A live IRQ can
-# arrive on any instruction, including comparisons after the loop. One
-# observation window only: installed last, invalidated before scratch checks.
-constants = re.findall(r'\bldr\s+r12,\s*=(0x[0-9a-fA-F]+)', arm)
-assert constants.count('0x71307132') == 1, 'ARM probe reopens sentinel during post-loop comparisons'
-assert arm.index('ldr r12,=0x71307132') < arm.index('1:') < arm.index('mov r12,#0') < arm.index('ldr r1,[sp,#4]')
-assert 'cmp r1,r0' in arm, 'saved sentinel must be checked without reopening the IRQ window'
-print('ARM IRQ probe: one sentinel window, closed before comparison scratch: PASS (source model)')
+# Expand the actual original/alternate assembly macros, then validate each
+# observation window. This catches a marker accidentally reinstalled after
+# the loop without coupling the guard to spelling of the source macros.
+for alternate, marker in [(False, '0x71307132'), (True, '0x72407242')]:
+    command = shlex.split(os.environ.get('HOSTCC', 'cc')) + [
+        '-E', '-P', '-x', 'assembler-with-cpp', '-U__x86_64__',
+        '-D__arm__', '-D__ARM_NEON', '-DTEST_WITH_IRQ_RESTART']
+    if alternate:
+        command.append('-DIRQ_ALTERNATE')
+    arm = subprocess.run(command + ['-'], input=source, check=True,
+                         text=True, capture_output=True).stdout
+    constants = re.findall(r'\bldr\s+r12,\s*=(0x[0-9a-fA-F]+)', arm)
+    assert constants.count(marker) == 1, 'ARM probe reopens sentinel during comparisons'
+    assert arm.index('ldr r12,='+marker) < arm.index('1:') < arm.index('mov r12,#0') < arm.index('ldr r1,[sp,#4]')
+    assert 'cmp r1,r0' in arm
+print('ARM original/alternate IRQ probes: one sentinel window before comparison scratch: PASS (source model)')
 
 script = (root / 'tools/run-regression-tests.sh').read_text()
 markers = {

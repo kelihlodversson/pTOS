@@ -19,6 +19,7 @@
 #include "process_files.h"
 #endif
 #include "ksched.h"
+#include "interrupt_restart.h"
 #if CONF_WITH_IMAGE_POLICY_TEST
 #include "kproc_image_policy.h"
 #include "image_policy_test.h"
@@ -217,6 +218,10 @@ static long clone_request(uint64_t address, uint64_t size)
         for(i=0;i<NCURDIR;i++) out.count[SP_DIRECTORY_USES]+=dirtbl[i].use;
         return kproc_copy_to_user_resident((VADDR)address,&out,sizeof(out))?E_OK:EIMBA;
     }
+#endif
+#if CONF_WITH_IRQ_RESTART_TEST
+    if (size>=IRQ_RESTART_BEGIN && size<=IRQ_RESTART_FAIL_STACK)
+        return interrupt_restart_test(address,size);
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     if (size==PRIVATE_SNAPSHOT_QUERY) {

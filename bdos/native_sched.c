@@ -153,6 +153,9 @@ typedef struct {
     void *loaded_launcher; /* CPU-loaded nested chain, saved in each execution context. */
     KERNEL_TASK *current, *inflight;
     KSCHED_WAKE_STATE wake; /* permanent CPU-owned IRQ/idle handshake */
+#if CONF_WITH_IRQ_RESTART_TEST
+    UQUAD irq_selected, irq_last_selected, irq_user_observed, irq_last_user;
+#endif
     BOOL entered, pump;
     ULONG budget;
     BOOL (*entry_ready)(void *);
@@ -281,6 +284,9 @@ static void cpu_acknowledge_handoff(void)
 #if CONF_WITH_USER_ASPACE
         task->execution.interrupted_user.valid=FALSE;
 #endif
+#if CONF_WITH_IRQ_RESTART_TEST
+        interrupt_restart_root_ack(&task->execution);
+#endif
         task->execution.on_cpu=FALSE;
         execution_cpu.inflight=NULL;
     }
@@ -295,8 +301,30 @@ static void cpu_claim_task(KERNEL_TASK *task)
     task->execution.owner_cpu=execution_cpu.number;
     task->execution.on_cpu=TRUE;
     execution_cpu.current=execution_cpu.inflight=task;
+#if CONF_WITH_IRQ_RESTART_TEST
+    if (execution_cpu.irq_last_selected!=task->execution.identity) {
+        if (execution_cpu.irq_selected==~(UQUAD)0) panic("IRQ restart: selection epoch exhausted");
+        execution_cpu.irq_selected++;
+        execution_cpu.irq_last_selected=task->execution.identity;
+    }
+#endif
     runqueue_leave(guard);
 }
+#if CONF_WITH_IRQ_RESTART_TEST
+UQUAD ksched_irq_restart_selected(void) { return execution_cpu.irq_selected; }
+UQUAD ksched_irq_restart_user_observed(void) { return execution_cpu.irq_user_observed; }
+void ksched_irq_restart_observe_user(UQUAD identity)
+{
+    /* Architecture USER IRQ/trap observation is masked and authenticated. */
+    if (!execution_cpu.current || execution_cpu.current->execution.identity!=identity)
+        panic("IRQ restart: foreign USER observation");
+    if (execution_cpu.irq_last_user!=identity) {
+        if (execution_cpu.irq_user_observed==~(UQUAD)0) panic("IRQ restart: USER epoch exhausted");
+        execution_cpu.irq_user_observed++;
+        execution_cpu.irq_last_user=identity;
+    }
+}
+#endif
 void ksched_shutdown_begin(void)
 {
     RUNQUEUE_GUARD guard=runqueue_enter();
@@ -932,6 +960,9 @@ static void exec_handoff_on_root(void)
     KSCHED_EXEC_HANDOFF *tx = execution_cpu.pending_exec;
     THREAD_STARTUP_STACK_OWNERS stacks = { {0,0}, {0,0} };
     KERNEL_TASK *task;
+#if CONF_WITH_IRQ_RESTART_TEST
+    IRQ_RESTART retired_restart;
+#endif
     if (!tx) return;
     check_root_stack();
     task = tx->task;
@@ -966,6 +997,11 @@ static void exec_handoff_on_root(void)
     kthread_exec_handoff_stack(tx->thread, tx, &tx->hold, &tx->retired_hold);
     tx->retired_startup = task->startup;
     tx->retired_stack = kthread_stack_detach(&task->execution.stack);
+#if CONF_WITH_IRQ_RESTART_TEST
+    /* Move execution-resource owners before erasing the context. Destructors
+     * must wait until the fresh context and startup stores are installed. */
+    interrupt_restart_detach(&task->execution,&retired_restart);
+#endif
     /* Never copy a jmp_buf, C continuation or old CPU return image. */
     memset(&task->execution, 0, sizeof(task->execution));
     task->execution.identity = tx->next_execution;
@@ -988,6 +1024,9 @@ static void exec_handoff_on_root(void)
     kthread_stack_release(&tx->retired_stack);
     thread_startup_reclaim(&tx->retired_startup);
     kaspace_lease_release(&tx->retired_hold);
+#if CONF_WITH_IRQ_RESTART_TEST
+    interrupt_restart_retire(&retired_restart);
+#endif
     task->replacement = NULL;
     execution_cpu.pending_exec = NULL;
     if (tx->bundle) {
@@ -1956,6 +1995,9 @@ static void reclaim_task_execution(void *resource)
         panic("scheduler: reclaiming current execution stack");
 #if CONF_WITH_X86_64_MEMTEST
     x86_64_memtest_task_thread(NULL, execution->stack.physical, 7);
+#endif
+#if CONF_WITH_IRQ_RESTART_TEST
+    interrupt_restart_dispose(execution);
 #endif
     kthread_stack_release(&execution->stack);
     kthread_stack_release(&execution->syscall_stack);

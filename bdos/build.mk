@@ -49,6 +49,7 @@ obj-$(CONF_WITH_MMAP) += fileback.o
 
 # Native kernel tasks for external libaes, independent of kernel AES.
 obj-$(CONF_WITH_NATIVE_SCHED) += shared_vm_exec.o process_exec.o process_exec_request.o native_sched.o sched_lifetime.o native_sched_entry.o kthread_context.o $(if $(ARCH_X86_64),thread_startup_x32.o interrupt_user.o,thread_startup32.o interrupt_user.o) thread_return.o
+obj-$(CONF_WITH_IRQ_RESTART_TEST) += interrupt_restart.o
 
 # Native ownership assertions, using only existing memory/rollback test gates.
 ifeq ($(CONF_WITH_NATIVE_SCHED),y)

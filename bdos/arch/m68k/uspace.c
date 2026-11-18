@@ -37,6 +37,7 @@
 #include "ksched.h"
 #include "native_sched_backend.h"
 #include "arch/m68k/irqframe.h"
+#include "interrupt_restart.h"
 #include "thread_startup32.h"
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
@@ -117,6 +118,11 @@ void m68k_gemdos_dispatch(struct uframe *f);
 void m68k_gemdos_dispatch(struct uframe *f)
 {
     WORD pw[ARG_WORDS];
+#if CONF_WITH_IRQ_RESTART_TEST
+    /* This entry's real TRAP frame follows its saved USP/GPR prefix. This is
+     * observation only, never an IRQ-frame or saved-return layout conversion. */
+    if(!(*(const UWORD *)((const UBYTE *)f+64)&0x2000)) interrupt_restart_user_entry();
+#endif
 
     if (!user_stack_words(f->usp, pw, ARG_WORDS)) {
         f->d[0] = (ULONG)ERANGE;

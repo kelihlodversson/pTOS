@@ -88,6 +88,9 @@ static inline BOOL arm_irq_same_entry_valid(const ARM_USER_IRQ_CAPTURE *c,
 }
 struct _pd;
 void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame);
+#if CONF_WITH_IRQ_RESTART_TEST
+void arm_restart_user_irq(ARM_USER_IRQ_FRAME *frame);
+#endif
 BOOL arm_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
 #if CONF_WITH_EXIT_HANDOFF_TEST
 void arm_irq_capture_report(void);
@@ -117,6 +120,17 @@ void arm_irq_capture_report(void);
 .endm
 .macro ARM_IRQ_POP_CAPTURE
     FPU_POP_ALL r0
+#if CONF_WITH_IRQ_RESTART_TEST
+    /* Only register loads in IRQ mode: its SP may legitimately be zero.
+     * Keep the live SVC SP; the original SRS pair still drives RFE. */
+    mov r0,sp
+    cps #0x12
+    ldr sp,[r0,#8]
+    ldr lr,[r0,#12]
+    ldr r1,[r0,#(ARM_IRQ_CPSR-ARM_IRQ_BANKED)]
+    msr spsr_cxsf,r1
+    cps #0x13
+#endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
     /* Prove prefix consumption only AFTER device work has unwound. Never
      * expose poisoned user SP/LR to a handler or callback. No C call/dispatch

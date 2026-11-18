@@ -96,6 +96,9 @@ config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
 config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
 config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].set_value(2)
 assert config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].str_value == 'y'
+if os.environ.get('IRQ_RESTART_TEST') == '1':
+    config.syms['CONF_WITH_IRQ_RESTART_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'y'
 config.syms['CONF_WITH_PTHJOIN'].set_value(2)
 config.syms['CONF_WITH_PTERMGRP'].set_value(2)

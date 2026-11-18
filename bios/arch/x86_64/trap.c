@@ -167,6 +167,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
 #include "arch/x86_64/irqframe.h"
+#include "../../../bdos/interrupt_restart.h"
 void x86_64_irq_read_controls(X86_IRQ_CONTROLS *c)
 {
     /* Device IRQ entry does not SWAPGS: a genuine outer user IRQ has the
@@ -181,6 +182,23 @@ void x86_64_irq_read_controls(X86_IRQ_CONTROLS *c)
         : "=m"(c->ds), "=m"(c->es), "=m"(c->fs), "=m"(c->gs));
     c->in_syscall=percpu.syscall_gs_swapped;
 }
+#if CONF_WITH_IRQ_RESTART_TEST
+void x86_64_irq_restore_user_segments(const X86_IRQ_CONTROLS *c)
+{
+    X86_IRQ_CONTROLS current;
+    x86_64_irq_read_controls(&current);
+    if (!x86_irq_return_controls_valid(c) || current.cr0!=c->cr0 || current.cr4!=c->cr4 ||
+        current.efer!=c->efer || current.in_syscall || c->entry_record!=(UQUAD)(uintptr_t)&percpu ||
+        current.kernel_gs_base!=c->entry_record)
+        panic("IRQ restart: x32 CPU/GS return authority changed");
+    __asm__ volatile ("movw %0,%%ds; movw %1,%%es; movw %2,%%fs; movw %3,%%gs"
+        :: "rm"(c->ds), "rm"(c->es), "rm"(c->fs), "rm"(c->gs) : "memory");
+    /* The only supported user bases are zero. Selectors precede bases; no
+     * extra SWAPGS and no TLS/XSAVE capability is introduced. */
+    x86_64_wrmsr(0xc0000100UL,0);
+    x86_64_wrmsr(0xc0000101UL,0);
+}
+#endif
 #endif
 
 #if CONF_WITH_SAVED_RETURN
@@ -235,6 +253,9 @@ static LONG return_probe(x86_64_trap_frame_t *f)
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
+#if CONF_WITH_IRQ_RESTART_TEST
+    if(from_ring3) interrupt_restart_user_entry();
+#endif
     /* Stack-local policy belongs to this invocation across nested callbacks,
      * Pexec and AES dispatch. No global latch can leak to another return. */
 

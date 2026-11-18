@@ -37,6 +37,7 @@
 #include "ksched.h"
 #include "native_sched_backend.h"
 #include "arch/arm/irqframe.h"
+#include "interrupt_restart.h"
 #include "thread_startup32.h"
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
@@ -84,6 +85,9 @@ void arm_gemdos_dispatch(struct uframe *f)
 {
     long pw[8];
     int i;
+#if CONF_WITH_IRQ_RESTART_TEST
+    if((f->spsr&0x1f)==0x10) interrupt_restart_user_entry();
+#endif
 
     for (i = 0; i < 8; i++)
         pw[i] = (long)f->r[i];

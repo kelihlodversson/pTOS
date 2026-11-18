@@ -857,6 +857,16 @@ esac
 # End native initial-entry marker.
 
 
+if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native interrupted USER A IRQ / B USER execution / saved A restart: PASS' "$suite_log"; then
+        record "native delayed IRQ restart" FAIL "hardware A IRQ / actual B USER / saved A return was not proved"
+    fi
+    if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS' "$suite_log"; then
+        record "native retained IRQ retirement" FAIL "acknowledged cancellation and exact retirement conservation were not proved"
+    fi
+fi
+
 if [ "$machine" = pc-x86_64 ] &&
    grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
