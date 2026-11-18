@@ -2,12 +2,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "emutos.h"
+/* Exercise the production test-only copy-back branch too. CPU/control queries
+ * remain modeled; this never executes a privileged instruction. */
+#undef CONF_WITH_EXIT_HANDOFF_TEST
+#define CONF_WITH_EXIT_HANDOFF_TEST 1
 #include "../bdos/arch/x86_64/interrupt_user.c"
 #define CHECK(x) do { if (!(x)) abort(); } while (0)
 void panic(const char *format, ...) { (void)format; abort(); }
 PD *run;
 static KTHREAD_CONTEXT execution;
 static BOOL owned=TRUE;
+static BOOL controls_supported=TRUE;
 static unsigned notifications;
 void ksched_irq_notify(void) { notifications++; }
 static UQUAD root=0x1000, top;
@@ -22,6 +27,7 @@ void x86_64_irq_read_controls(X86_IRQ_CONTROLS *c)
 {
     memset(c,0,sizeof(*c)); c->cr0=0x80000001ULL; c->cr4=1ULL<<9;
     c->efer=0xc01; c->entry_record=c->kernel_gs_base=0xffff800000100000ULL;
+    if (!controls_supported) c->fs_base=1;
 }
 int main(void)
 {
@@ -66,6 +72,11 @@ int main(void)
     c->sequence=7; owned=FALSE; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==7);
     owned=TRUE; f.cs=8; x86_64_capture_user_irq(&f); CHECK(!c->valid && c->sequence==7);
     CHECK(notifications==7); /* kernel/rejected IRQs still notify, never become user images */
+    f.cs=X86_64_USER_CODE_SEL; f.r15=0x7130000000713015ULL;
+    before=f; controls_supported=FALSE;
+    x86_64_capture_user_irq(&f);
+    CHECK(c->valid && !x86_irq_return_controls_valid(&c->binding.controls));
+    CHECK(!memcmp(&f,&before,sizeof(f))); /* Unsupported profile returns normally, no poison/panic. */
     puts("x32 capture producer: copied frame, same-entry eligibility, unchanged IRQ source, binding rejection and sequence exhaustion: PASS (CPU queries modeled)");
     return 0;
 }
