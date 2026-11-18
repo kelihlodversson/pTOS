@@ -12,8 +12,10 @@
 extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST
 /* Debugger-readable evidence: seen, mismatch, nonzero FPIAR, owned copy-backs.
- * Test-only, serialized under the entry wrapper's local IRQ exclusion. */
-ULONG m68k_irq_test_state[4];
+ * Test-only, serialized under the entry wrapper's local IRQ exclusion. These
+ * observations include counters never read by C (FPIAR), so LTO must neither
+ * discard their writes nor privatize the symbol the debugger resolves. */
+volatile ULONG m68k_irq_test_state[4] __attribute__((used,externally_visible));
 #define irq_pattern_seen m68k_irq_test_state[0]
 #define irq_pattern_bad m68k_irq_test_state[1]
 static BOOL irq_pattern_reported;

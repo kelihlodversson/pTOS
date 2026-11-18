@@ -115,7 +115,7 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame);
 BOOL m68k_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
 #if CONF_WITH_EXIT_HANDOFF_TEST
 void m68k_irq_capture_report(void);
-extern ULONG m68k_irq_test_state[4];
+extern volatile ULONG m68k_irq_test_state[4];
 #endif
 #else
 /* Brief local IRQ exclusion protects the single-CPU captured image, not SMP.
