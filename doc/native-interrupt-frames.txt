@@ -406,3 +406,13 @@ current same-entry validator must never be promoted into a delayed restore API
 by omitting its untouched-source/freshness requirement. B2a IRQ generation and
 idle admission semantics are unchanged. #933's cooperative no-reentry filesystem
 assumptions must be reviewed again before making those paths preemptible.
+
+B2 architecture preparation follow-up (no deferred restart)
+-----------------------------------------------------------
+native-interrupt-restart.txt records the current per-architecture gaps, strict
+hardware-control qualification, ARM and 040 format-0 fresh copied-return probes,
+and the narrow remaining B2 scheduler resume transaction. These additions reuse
+the existing THREAD-owned images and original IRQ epilogues; they do not change
+root's diagnostic invalidation or make an image runnable. Unsupported profiles
+retain ordinary IRQ return. Native same-entry copy-back and capture evidence
+must remain separate from the still-required real IRQ-A -> B -> saved-A return.

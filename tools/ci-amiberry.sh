@@ -23,6 +23,11 @@
 
 set -u
 
+if [ "${IRQ_COPY_PROOF:-0}" = 1 ] && [ "${NATIVE_THREADS:-0}" != 1 ]; then
+    echo "ci-amiberry: IRQ_COPY_PROOF requires NATIVE_THREADS=1" >&2
+    exit 2
+fi
+
 combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060 amiga-aspace:68030 amiga-aspace040:68040 amiga-aspace040:68060"}
 mkdir -p logs
 failed=
@@ -38,13 +43,24 @@ for combo in $combos; do
         make "${config}_defconfig" >/dev/null || return 1
         if [ "${NATIVE_THREADS:-0}" = 1 ]; then
             CONFIG_= python3 - <<'PYCONFIG' || return 1
-import kconfiglib
+import kconfiglib, os
 k=kconfiglib.Kconfig()
 k.load_config()
 assert k.syms['CONF_WITH_USER_ASPACE'].str_value == 'y'
 for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP','CONF_WITH_EXIT_HANDOFF_TEST'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name
+if os.environ.get('IRQ_COPY_PROOF') == '1':
+    # Copied return is qualified only for the stack ABI on 040. Keep the
+    # ordinary 030/060 fastcall lanes; this separate proof uses the existing
+    # 512-KB 040 ROM profile and must actually include the complete FPU helpers.
+    for name in ('CONF_AMIGA_HIGHER_HALF_68040','CONF_AMIGA_ROM_512K'):
+        assert k.syms[name].str_value == 'y', name
+    k.syms['CONF_WITH_MFASTCALL'].set_value(0)
+    assert k.syms['CONF_WITH_MFASTCALL'].str_value == 'n'
+    k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
+    assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
+    assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
 k.write_config()
 PYCONFIG
         fi
@@ -76,6 +92,7 @@ PYCONFIG
             irq_state=$(python3 -c "print(hex(int('$irq_state',16) & 0x7fffffff))")
         fi
         managed="$managed --irq-capture-state $irq_state"
+        [ "${IRQ_COPY_PROOF:-0}" != 1 ] || managed="$managed --require-owned-irq-copy"
     fi
 
     # an image with an address space for every process has no desktop: the

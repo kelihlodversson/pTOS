@@ -60,6 +60,7 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     binding.syscall_top=x86_64_get_kernel_stack();
     binding.irq_top=x86_64_get_irq_stack();
     binding.frame_address=(UQUAD)(uintptr_t)frame;
+    x86_64_irq_read_controls(&binding.controls);
     capture=&execution->interrupted_user;
     capture->valid=FALSE;
     if (!x86_irq_user_valid(frame,&binding,USER_VA_LIMIT) || capture->sequence==~(UQUAD)0) return;
@@ -70,6 +71,9 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     capture->sequence++;
     capture->valid=TRUE;
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
+    /* Keep the diagnostic image, but an unsupported proof must neither alter
+     * IRQ return nor leave a pattern count that makes root demand copy-back. */
+    if (!x86_irq_return_controls_valid(&binding.controls)) return;
     check_irq_pattern(&capture->image);
     /* Restricted proof BEFORE dispatch/callbacks: no yield, reference release,
      * mapping change or GS/FS/TSS change can intervene. The original IRQ stack

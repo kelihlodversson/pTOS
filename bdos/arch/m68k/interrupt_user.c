@@ -8,14 +8,18 @@
 #include "../../../bios/processor.h"
 #include "string.h"
 #include "biosext.h"
+#include "gemerror.h"
 extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST
-/* Debugger-readable native evidence: seen, mismatch, nonzero FPIAR captures.
- * Test-only, serialized under the entry wrapper's local IRQ exclusion. */
-ULONG m68k_irq_test_state[3];
+/* Debugger-readable evidence: seen, mismatch, nonzero FPIAR, owned copy-backs.
+ * Test-only, serialized under the entry wrapper's local IRQ exclusion. These
+ * observations include counters never read by C (FPIAR), so LTO must neither
+ * discard their writes nor privatize the symbol the debugger resolves. */
+volatile ULONG m68k_irq_test_state[4] __attribute__((used,externally_visible));
 #define irq_pattern_seen m68k_irq_test_state[0]
 #define irq_pattern_bad m68k_irq_test_state[1]
 static BOOL irq_pattern_reported;
+#define irq_roundtrip_seen m68k_irq_test_state[3]
 static void check_irq_pattern(const M68K_USER_IRQ_CAPTURE *c)
 {
     UWORD i;
@@ -38,7 +42,36 @@ void m68k_irq_capture_report(void)
     if (!irq_pattern_seen || irq_pattern_reported) return;
     irq_pattern_reported=TRUE;
     kprintf("native m68k interrupted-user GPR/USP/FPU format-0 capture: PASS\r\n");
+    if (irq_roundtrip_seen)
+        kprintf("native m68k fresh owned format-0 IRQ image round trip: PASS\r\n");
 }
+#endif
+/* Observe controls using the existing backends' exact CPU instructions. This
+ * does not load a root or alter caches/MMU policy. 030 never executes MOVEC
+ * for the 040-only control registers. */
+static void read_control(M68K_IRQ_BINDING *b)
+{
+    memset(b->roots,0,sizeof(b->roots));
+    memset(b->tt,0,sizeof(b->tt));
+    if (b->model==30) {
+        __asm__ volatile ("lea %0,%%a0; .long 0xf0104200" : "=m"(b->tc) :: "a0", "memory");
+        __asm__ volatile ("lea %0,%%a0; .long 0xf0104e00" : "=m"(b->roots[0]) :: "a0", "memory");
+        __asm__ volatile ("lea %0,%%a0; .long 0xf0104a00" : "=m"(b->roots[2]) :: "a0", "memory");
+        __asm__ volatile ("lea %0,%%a0; .long 0xf0100a00" : "=m"(b->tt[0]) :: "a0", "memory");
+        __asm__ volatile ("lea %0,%%a0; .long 0xf0100e00" : "=m"(b->tt[1]) :: "a0", "memory");
+    } else {
+        __asm__ volatile (".long 0x4e7a0003; move.l %%d0,%0" : "=m"(b->tc) :: "d0", "memory");
+        __asm__ volatile (".long 0x4e7a0806; move.l %%d0,%0" : "=m"(b->roots[0]) :: "d0", "memory");
+        __asm__ volatile (".long 0x4e7a0807; move.l %%d0,%0" : "=m"(b->roots[1]) :: "d0", "memory");
+        __asm__ volatile (".long 0x4e7a0004; move.l %%d0,%0" : "=m"(b->tt[0]) :: "d0", "memory");
+        __asm__ volatile (".long 0x4e7a0005; move.l %%d0,%0" : "=m"(b->tt[1]) :: "d0", "memory");
+        __asm__ volatile (".long 0x4e7a0006; move.l %%d0,%0" : "=m"(b->tt[2]) :: "d0", "memory");
+        __asm__ volatile (".long 0x4e7a0007; move.l %%d0,%0" : "=m"(b->tt[3]) :: "d0", "memory");
+    }
+}
+#if CONF_WITH_SAVED_RETURN
+extern LONG m68k_fpu_save_complete(void *);
+extern void m68k_fpu_restore_complete(const void *);
 #endif
 void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
 {
@@ -58,6 +91,8 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     binding.root=aspace_hw_current();
     binding.expected_root=aspace_root(kaspace_backend(space));
     binding.model=mcpu; binding.fpu_type=fputype;
+    if (!m68k_irq_fpu_supported(binding.model,binding.fpu_type)) return;
+    read_control(&binding);
     binding.frame_address=(uintptr_t)frame;
     if (!m68k_process_irq_stack(run,&binding.stack_base,&binding.stack_top)) return;
     capture=&execution->interrupted_user;
@@ -66,11 +101,21 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     memcpy(&capture->image,frame,sizeof(*frame));
     capture->binding=binding;
     memset(&capture->fpu,0,sizeof(capture->fpu));
+    capture->complete_fpu=!fputype;
     if (fputype) {
         /* Reuse the existing 030/040/060 backend and restore immediately.
          * FSAVE images remain opaque and model-tagged, not a new restore ABI. */
-        m68k_fpu_save(&capture->fpu);
-        m68k_fpu_restore(&capture->fpu);
+#if CONF_WITH_SAVED_RETURN
+        if (mcpu==40) {
+            if (m68k_fpu_save_complete(&capture->fpu)!=E_OK) return;
+            m68k_fpu_restore_complete(&capture->fpu);
+            capture->complete_fpu=TRUE;
+        } else
+#endif
+        {
+            m68k_fpu_save(&capture->fpu);
+            m68k_fpu_restore(&capture->fpu);
+        }
     }
     capture->execution=execution->identity;
     capture->tid=tid; capture->cpu=execution->owner_cpu;
@@ -78,6 +123,22 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     capture->valid=TRUE;
 #if CONF_WITH_EXIT_HANDOFF_TEST
     check_irq_pattern(capture);
+    if (capture->image.d[7]==0x71307137UL &&
+        m68k_irq_same_entry_valid(capture,frame,&binding,execution->identity,
+            capture->sequence,tid,execution->owner_cpu,USER_VA_LIMIT)) {
+        M68K_USER_IRQ_FRAME *destination=(M68K_USER_IRQ_FRAME *)(uintptr_t)frame;
+        *(volatile ULONG *)&destination->d[1]=0;
+        __asm__ volatile ("" ::: "memory");
+        memcpy(destination,&capture->image,sizeof(*destination));
+        __asm__ volatile ("move.l %0,%%usp" :: "a"((ULONG)0) : "memory");
+#if CONF_WITH_SAVED_RETURN
+        if (fputype) {
+            m68k_fpu_init();
+            m68k_fpu_restore_complete(&capture->fpu);
+        }
+#endif
+        irq_roundtrip_seen++;
+    }
 #endif
 }
 #endif

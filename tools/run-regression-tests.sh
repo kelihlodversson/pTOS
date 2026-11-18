@@ -873,6 +873,9 @@ if [ "$machine" = virt-arm ] &&
     if ! grep -aq 'native ARM interrupted-user integer/VFP/banked capture: PASS' "$suite_log"; then
         record "native ARM user IRQ capture" FAIL "real user integer/VFP/banked pattern was not captured"
     fi
+    if ! grep -aq 'native ARM fresh owned IRQ image round trip: PASS' "$suite_log"; then
+        record "native ARM owned IRQ return" FAIL "fresh copied integer/VFP/user-bank image was not restored"
+    fi
 fi
 
 if [ "$machine" = virt-m68k-aspace ] &&
@@ -881,6 +884,9 @@ if [ "$machine" = virt-m68k-aspace ] &&
    grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h"; then
     if ! grep -aq 'native m68k interrupted-user GPR/USP/FPU format-0 capture: PASS' "$suite_log"; then
         record "native m68k user IRQ capture" FAIL "real user GPR/USP/FPU pattern was not captured"
+    fi
+    if ! grep -aq 'native m68k fresh owned format-0 IRQ image round trip: PASS' "$suite_log"; then
+        record "native m68k owned IRQ return" FAIL "fresh copied format-0/FPU/USP image was not restored"
     fi
 fi
 

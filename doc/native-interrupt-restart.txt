@@ -1,0 +1,164 @@
+Phase B2 interrupted-user restart: preparation and integration boundary (#713)
+=============================================================================
+
+Source and branch
+-----------------
+Original source: a04e35a9e0df5ac347b0b5ae6ed58f6ec2eef952. The twelve
+architecture-preparation commits were rebased onto accepted epic head
+5169521fcb5ca1fbda19a544e4ac2de993cd9722 after #1017 merged. Its managed
+Pexec(0), exact-child wait, completion claims and cancellation/orphan policy
+are the canonical PROCESS state machines, not an outstanding dependency.
+This increment does not change those interfaces or enable production preemption.
+
+The native m68k boot CPU retains the existing BIOS stack while loading its
+first managed program, before the separate permanent root has been entered.
+The old 2-KiB budget is insufficient on the 030 LTO native configuration:
+an instruction trace reaches SP=0x1cc below stkbot=0x800 before a BIOS trap
+dispatches through overwritten low vectors into BSS. Native MMU builds now
+reserve 16 KiB for that same BIOS stack, matching the existing root budget.
+Startup and the memory allocator use its linker bounds; the low-memory mapping
+already covers it. This adds 14 KiB of permanent kernel RAM, not another stack
+owner. Non-native stacks, ARM's separate 32-KiB stack and x32 are unchanged.
+
+Audit of the accepted B1 foundation
+-----------------------------------
+All backends have preallocated KTHREAD_CONTEXT.interrupted_user storage and
+nonrecycled execution/TID/CPU provenance. ksched_interrupt_target authenticates
+only the currently pinned RUNNING execution, its live PROCESS/ASPACE and loaded
+PD; callback, nested different-PROCESS, leaf and legacy IRQ scopes are excluded.
+K1 binds loaded launcher/error/callback state to the boot CPU. Strong KTHREAD
+references retain PROCESS/ASPACE storage, not immutable mapping permissions.
+
+The diagnostic valid bit is intentionally invalidated by the root's existing
+cpu_acknowledge_handoff before on_cpu/inflight ownership is released. Dispatch
+restores a cooperative CPU image and longjmps execution.resume. There is no
+pending interrupted-return transaction, selected IRQ-return discriminator,
+cancellation disposal protocol or separately acknowledged resume capability.
+A cached numeric frame_address does not own its stack or preserve its bytes.
+
+x32 gaps: the 688-byte IRQ image includes every GPR, RFLAGS, the five-word
+IRETQ frame and FXSAVE. CR3 and stack tops are bound, but syscall/GS nesting,
+FS/GS bases/selectors and enabled FPU/control profile must also be eligible.
+The same-entry copied-return probe keeps the original frame as its freshness
+witness; it does not survive a scheduler handoff. TLS and XSAVE/AVX are excluded.
+
+ARM gaps: IRQ SRS/RFE and SVC frames differ. The IRQ image has complete R0-R12,
+user SP/LR, SVC/IRQ bank provenance, PC/SPSR and D0-D31/FPSCR on Cortex-A7.
+TTBR/control registers are observed, but pending VFP state and A32/control
+eligibility need a distinct return check. Copied banked user registers must be
+installed deliberately; copying them into an ignored diagnostic prefix does
+not restore them. Thumb, FIQ and VFP exception restart remain unsupported.
+
+m68k gaps: only exact model-tagged hardware format-0 frames are captured.
+M68K_IRQ_CAPTURE discards its GPR/USP image BEFORE the device handler, which
+then reuses that stack address. A delayed tail must construct a fresh complete
+image after handler registers are restored, never dereference the old address.
+Root-address equality alone misses TC, CRP descriptor/control, SRP and TTR
+changes. Diagnostic FSAVE skips data/control registers in null state and does
+not qualify busy/pending images for remote restart. Fastcall and extended
+exception formats cannot be inferred from successful ordinary RTE tests.
+
+Remaining B2 handoff integration on the accepted #1017 model
+----------------------------------------------------------
+Use the existing dispatcher, task, KTHREAD, PROCESS, KASPACE and backend images.
+Add transaction metadata, not another context representation or owner registry:
+
+1. In serialized process context, prepare a nonrecycled resume operation bound
+   to execution/TID/CPU and the retained live PROCESS/KASPACE. Retain resident
+   executable and user-stack mapping authority and the original launcher/syscall
+   stack. kaspace_lease_valid alone can accept logical lazy/COW protection;
+   require explicit materialization-free residency checks as well. A durable
+   hold, not a short publication seal, must survive execution of another THREAD.
+2. IRQ capture only records into preallocated storage, under local exclusion.
+   No allocation, copyin/out, callback, filesystem action or final put occurs.
+   Do not overwrite an already pending image. Ineligible IRQs return normally.
+3. After device ACK and all handler/callback frames unwind, revalidate genuine
+   outer user origin, stack bounds, owner identities, IRQ/syscall depth, loaded
+   launcher/error/GS phase, no cleanup/owner/leaf/callback/nested activity and
+   architecture controls. Refuse without modifying the original return frame.
+4. A dedicated restricted handoff publishes the prepared return kind and parks
+   A on its retained stack, outside leaf exclusion. It uses the existing root
+   and runnable selection, not ksched_yield's syscall selftests/cancellation or
+   another owned wait/claim protocol. A bounded always-ready bare block may
+   transport the retained outer return without installing a cancel boundary.
+   Root acknowledges A's departure before releasing its
+   CPU claim; acknowledgement of diagnostic capture is not resume disposal.
+5. Let B execute. Revalidate A's owner/generation, mapping holds and restored
+   architecture control context before installing its saved image. A remains
+   an EXECUTING, nonterminal KTHREAD while suspended. No PROCESS completion or
+   exact-child-wait claim is invented or consumed. Return through IRETQ/RFE/RTE.
+6. Acknowledge return/abort exactly once before resource retirement. Cancellation,
+   exit, replacement and shutdown must detach the resume operation before root
+   reuse/reap, release owners only off their stacks and never revive stale IDs.
+
+Managed synchronous Pexec(0) now creates an independent PROCESS anchor and
+uses ksched_wait_exact. Callbacks, unmanaged callers and the explicit nested
+test override retain the carrier path. IRQ eligibility must authenticate the
+selected execution and loaded launcher, not infer ownership from a PD alone.
+The exact-child claim lives on the child task. Parent cancellation releases
+the claim before the parent's ordinary exit orphans that child; it must not
+dispose a child's retained IRQ operation. Pexec(200) preserves an exact
+waiter's child claim across replacement. Its execution-resource retirement
+hook must move retained IRQ owners before context erasure and put them only
+after the fresh context/startup has been installed, outside the leaf.
+
+This changes the scheduler's execution handoff/retirement contract. Integrate
+only that narrow seam on top of the accepted mechanisms. PROCESS creation,
+Pexec(0) and ksched_wait_exact remain unchanged; no second cancellation,
+admission or reaping protocol is needed. No scheduler policy changes are implied.
+
+Evidence classification
+------------------------
+Host frame/control tests use synthetic input and modeled ownership. Native
+capture proves a hardware IRQ observed the register pattern. An ordinary IRQ
+return proves preservation by its existing epilogue. A fresh same-entry owned
+copy-back proves that the architecture epilogue consumes the copied image.
+NONE proves deferred restart. Only ordered real IRQ-A -> B execution -> saved
+A return, with exact final resource baselines, proves the central B2 capability.
+Until that transaction is integrated and demonstrated on each architecture,
+B2 remains incomplete and #713 remains open. Phase C, SMP and arbitrary kernel
+preemption remain disabled.
+
+Architecture preparation implemented on this branch
+----------------------------------------------------
+x32 additionally observes CR0/CR4/EFER, DS/ES/FS/GS and both GS bases, the
+CPU entry-record address and syscall GS phase. Restricted copy-back refuses
+nonzero FS/GS TLS, FSGSBASE, OSXSAVE/AVX, disabled/emulated FPU and a swapped
+syscall context. These observations do not add TLS or a new FPU switcher.
+
+ARM observes raw TTBR0/TTBR1/CPACR alongside the existing control binding.
+Fresh copy-back requires little-endian A32 (no Thumb/Jazelle/IT), the existing
+N=1 short-descriptor profile, D32 and FPEXC.EN without pending restart state.
+The test poisons saved integer/VFP data and live user SP/LR, then restores the
+owned image and consumes its user-bank prefix through the existing IRQ POP/RFE.
+SVC frame offsets are never substituted. DACR/context/TTBR1 equality is binding
+evidence within this entry, not complete certification of remote MMU policy.
+
+m68k observes 030 TC/CRP/SRP/TT0/TT1 or 040/060 TC/URP/SRP/ITT0/ITT1/DTT0/DTT1,
+using the existing backends' exact CPU instructions without changing controls.
+030 requires its long CRP descriptor and SRE-clear profile. 040/060 require the
+existing TC and both roots. TTR values are equality-bound, not certified for
+delayed restoration; higher-half kernels legitimately use DTT0. Exact format-0
+fresh copy-back qualifies 040 complete null/idle FPU through the existing
+save_complete/restore_complete helpers. It poisons GPR, USP and FPU state, then
+consumes the copied integer/USP image and returns through the original RTE.
+Amiberry's native 040 lane requires nonzero FPIAR and a fourth debugger-read
+test counter proving that owned copy-back actually ran, with caches off/on.
+The native 030/68882 and 060 lanes verify capture/ordinary return separately;
+they do not require or claim copied return. No test opcode or kernel address
+is exposed to user mode by this debugger evidence.
+030/060 copied restart, busy/pending/foreign FPU frames and fastcall are refused by
+copy-back eligibility. Their existing diagnostic capture/ordinary return stays.
+
+No preparation predicate is a runnable capability. There are no new retained
+owners or pending-return states. The sole native_sched.c preparation fix gives
+the existing boot_cpu object stable hidden linkage under LTO; emutos.ld resolves
+its run alias after all LTO partitions are linked. This avoids an assembler
+.set losing its target in a different partition. LTO remains enabled, including
+for native_sched.c in the native 030 configuration. There is still one complete
+CPU storage object and
+no overlapping C alias. proc.c, ksched.h, PROCESS creation/wait/reaping/admission
+and Pexec(0) are unchanged. Root invalidation
+is unchanged. The native proof gates deliberately require separate copy-back
+markers alongside the full regression/shutdown verdicts; they are not B2's
+missing IRQ-A -> B -> A marker.

@@ -171,7 +171,14 @@ typedef struct {
 #endif
     ULONG stack[ROOT_STACK_BYTES/sizeof(ULONG)] __attribute__((aligned(16)));
 } NATIVE_SCHED_CPU;
+/* LTO may put a top-level .set in a different object from its target. The
+ * preprocessed linker script resolves that alias after all LTO partitions;
+ * retain its one target with stable hidden linkage. No second storage. */
+#ifdef PTOS_LTO_RUN_ALIAS
+NATIVE_SCHED_CPU boot_cpu __attribute__((used,externally_visible,visibility("hidden")));
+#else
 static NATIVE_SCHED_CPU boot_cpu;
+#endif
 /* TOS exports &run in OSHEADER. Keep that ABI without a second mutable mirror.
  * Only boot CPU dispatch exists; a future CPU selector must not export its
  * private slot as another system-wide TOS pointer or activate SMP here. */
@@ -181,9 +188,11 @@ typedef char loaded_process_abi_offset[offsetof(NATIVE_SCHED_CPU,loaded_process)
 /* An assembler alias leaves one complete storage object for instrumentation.
  * A C variable alias of pointer size registers a second, overlapping ASan
  * global and poisons the remaining CPU fields as the pointer's redzone. */
+#ifndef PTOS_LTO_RUN_ALIAS
 __asm__(".globl " KSCHED_STRING(__USER_LABEL_PREFIX__) "run\n"
         ".set " KSCHED_STRING(__USER_LABEL_PREFIX__) "run,"
                 KSCHED_STRING(__USER_LABEL_PREFIX__) "boot_cpu");
+#endif
 #undef KSCHED_STRING
 #undef KSCHED_STRING_
 /* Deliberately boot-CPU-only. B1c/B2 must add architecture CPU-local selection;

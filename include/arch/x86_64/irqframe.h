@@ -56,9 +56,27 @@ typedef char irq_offset_rflags[offsetof(X86_USER_IRQ_FRAME,rflags)==X86_IRQ_RFLA
 typedef char irq_offset_rsp[offsetof(X86_USER_IRQ_FRAME,rsp)==X86_IRQ_RSP ? 1 : -1];
 typedef char irq_offset_ss[offsetof(X86_USER_IRQ_FRAME,ss)==X86_IRQ_SS ? 1 : -1];
 typedef char irq_frame_size[sizeof(X86_USER_IRQ_FRAME)==X86_IRQ_BYTES ? 1 : -1];
+typedef struct x86_irq_controls {
+    UQUAD cr0, cr4, efer, fs_base, gs_base, kernel_gs_base, entry_record;
+    UWORD ds, es, fs, gs;
+    BOOL in_syscall;
+} X86_IRQ_CONTROLS;
 typedef struct {
     UQUAD cr3, expected_cr3, syscall_top, irq_top, frame_address;
+    X86_IRQ_CONTROLS controls;
 } X86_IRQ_BINDING;
+/* This is only the supported hardware profile. It grants no mapping/stack
+ * lifetime or scheduler resume authority. No FS/GS TLS or XSAVE/AVX support. */
+static inline BOOL x86_irq_return_controls_valid(const X86_IRQ_CONTROLS *c)
+{
+    return (c->cr0 & ((1ULL<<31)|1|12)) == ((1ULL<<31)|1) &&
+        (c->cr4 & ((1ULL<<9)|(1ULL<<18)|(1ULL<<16))) == (1ULL<<9) &&
+        (c->efer & ((1ULL<<10)|(1ULL<<11)|1)) == ((1ULL<<10)|(1ULL<<11)|1) &&
+        !c->fs_base && !c->gs_base && !c->fs && !c->gs && !c->in_syscall &&
+        c->entry_record && c->kernel_gs_base==c->entry_record &&
+        (!c->ds || c->ds==X86_64_USER_DATA_SEL) && (!c->es || c->es==X86_64_USER_DATA_SEL);
+}
+void x86_64_irq_read_controls(X86_IRQ_CONTROLS *controls);
 /* Trusted kernel image only: this never touches user memory or walks mappings.
  * FXSAVE covers the enabled x87/MMX/SSE state; OSXSAVE/AVX is not enabled here. */
 static inline BOOL x86_irq_user_valid(const X86_USER_IRQ_FRAME *f,
@@ -90,6 +108,7 @@ static inline BOOL x86_irq_same_entry_valid(const X86_USER_IRQ_CAPTURE *capture,
 {
     const X86_IRQ_BINDING *saved=&capture->binding;
     const UBYTE *a=(const UBYTE *)&capture->image,*b=(const UBYTE *)original;
+    const X86_IRQ_CONTROLS *sc=&saved->controls,*cc=&current->controls;
     ULONG i;
     if (!capture->valid || !sequence || capture->sequence!=sequence ||
         !execution || capture->execution!=execution || capture->tid!=tid || capture->cpu!=cpu ||
@@ -97,7 +116,13 @@ static inline BOOL x86_irq_same_entry_valid(const X86_USER_IRQ_CAPTURE *capture,
         saved->frame_address!=current->frame_address || saved->cr3!=current->cr3 ||
         saved->expected_cr3!=current->expected_cr3 || saved->syscall_top!=current->syscall_top ||
         saved->irq_top!=current->irq_top || !x86_irq_user_valid(original,current,limit) ||
-        !x86_irq_user_valid(&capture->image,current,limit)) return FALSE;
+        !x86_irq_user_valid(&capture->image,current,limit) ||
+        !x86_irq_return_controls_valid(&current->controls)) return FALSE;
+    if (sc->cr0!=cc->cr0 || sc->cr4!=cc->cr4 || sc->efer!=cc->efer ||
+        sc->fs_base!=cc->fs_base || sc->gs_base!=cc->gs_base ||
+        sc->kernel_gs_base!=cc->kernel_gs_base || sc->entry_record!=cc->entry_record ||
+        sc->ds!=cc->ds || sc->es!=cc->es || sc->fs!=cc->fs || sc->gs!=cc->gs ||
+        sc->in_syscall!=cc->in_syscall) return FALSE;
     for(i=0;i<sizeof(*original);i++) if(a[i]!=b[i]) return FALSE;
     return TRUE;
 }

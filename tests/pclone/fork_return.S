@@ -188,6 +188,10 @@ C_SYM(fork_return_native):
         vpop {d8-d15}
         pop {r4-r11,r12,pc}
 #else
+        /* The runtime probe qualifies saved return only on 040. Amiga's
+         * portable C preset still uses -m68000; admit this existing probe's
+         * explicit CCR/FPU instructions just like irq_registers.S does. */
+        .cpu 68040
         .globl C_SYM(fork_return_native)
 C_SYM(fork_return_native):
         movem.l %d2-%d7/%a2-%a6,-(%sp)

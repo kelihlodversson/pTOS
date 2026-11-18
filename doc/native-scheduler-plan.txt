@@ -381,6 +381,11 @@ path is replaced. B2b restartable-frame proof and B2c deferred handoff remain
 gated; fork's independently owned syscall-return startup (#932) is a different
 contract and does not authorize restoring diagnostic IRQ captures.
 
+The independent architecture preparation and its remaining B2 handoff boundary
+are specified in native-interrupt-restart.txt. Fresh owned-image return probes
+are preparation only; deferred restart requires an owned resume transaction and
+actual IRQ-A -> B -> saved-A evidence, without changing #1017's exact waits.
+
 B2b restricted proof increment
 -----------------------------
 x32 test kernels can round-trip a freshly captured known user IRQ pattern

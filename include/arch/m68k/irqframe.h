@@ -25,6 +25,7 @@ typedef char m68k_irq_format[offsetof(M68K_USER_IRQ_FRAME,format_vector)==M68K_I
 typedef char m68k_irq_size[sizeof(M68K_USER_IRQ_FRAME)==M68K_IRQ_BYTES ? 1:-1];
 typedef struct {
     ULONG root, expected_root, model, fpu_type;
+    ULONG tc, roots[4], tt[4]; /* model-tagged observation, not another MMU backend */
     uintptr_t stack_base, stack_top, frame_address;
 } M68K_IRQ_BINDING;
 /* Values are the hardware _FPU cookies returned by processor.S. A nonzero
@@ -60,14 +61,61 @@ typedef struct {
     UQUAD execution, sequence;
     ULONG tid;
     UWORD cpu;
-    BOOL valid;
+    BOOL valid, complete_fpu;
 } M68K_USER_IRQ_CAPTURE;
+/* Only proven null/idle headers qualify for the restricted copy-back proof.
+ * FSAVE remains opaque; no guessed exception or busy-frame length is copied. */
+static inline BOOL m68k_irq_fpu_idle(const M68K_IRQ_BINDING *b, const struct fpuctx *f)
+{
+    if (!m68k_irq_fpu_supported(b->model,b->fpu_type)) return FALSE;
+    if (!b->fpu_type) return TRUE;
+    if (b->model==40)
+        return (!f->frame[0] || f->frame[0]==0x40 || f->frame[0]==0x41) &&
+            !f->frame[1] && !f->frame[2] && !f->frame[3];
+    /* 030/6888x pending BIU state and 060 exception-state restoration require
+     * separate native proof. Their diagnostic captures remain supported. */
+    return FALSE;
+}
+static inline BOOL m68k_irq_return_controls_valid(const M68K_IRQ_BINDING *b)
+{
+#if CONF_WITH_MFASTCALL
+    (void)b;
+    return FALSE;
+#else
+    if (b->model==30)
+        return b->tc==0x80c07760UL && b->roots[0]==0x7fff0003UL && b->roots[1]==b->root &&
+            !(b->tt[0]&0x8000UL) && !(b->tt[1]&0x8000UL);
+    return (b->model==40 || b->model==60) && b->tc==0x8000UL &&
+        b->roots[0]==b->root && b->roots[1]==b->root;
+#endif
+}
+static inline BOOL m68k_irq_same_entry_valid(const M68K_USER_IRQ_CAPTURE *c,
+    const M68K_USER_IRQ_FRAME *original, const M68K_IRQ_BINDING *b,
+    UQUAD execution, UQUAD sequence, ULONG tid, UWORD cpu, ULONG limit)
+{
+    const M68K_IRQ_BINDING *s=&c->binding;
+    const UBYTE *a=(const UBYTE *)&c->image,*o=(const UBYTE *)original;
+    ULONG i;
+    /* The copied-return proof is qualified only on 040, including no-FPU.
+     * 030/060 control observations are preparation, not native copy-back proof. */
+    if (b->model!=40 || !c->valid || !execution || c->execution!=execution || !sequence || c->sequence!=sequence ||
+        c->tid!=tid || c->cpu!=cpu || b->frame_address!=(uintptr_t)original ||
+        s->root!=b->root || s->expected_root!=b->expected_root || s->model!=b->model ||
+        s->fpu_type!=b->fpu_type || s->tc!=b->tc || s->stack_base!=b->stack_base ||
+        s->stack_top!=b->stack_top || s->frame_address!=b->frame_address ||
+        !m68k_irq_user_valid(original,b,limit) || !m68k_irq_user_valid(&c->image,b,limit) ||
+        !m68k_irq_return_controls_valid(b) || !m68k_irq_fpu_idle(b,&c->fpu) ||
+        (b->fpu_type && !c->complete_fpu)) return FALSE;
+    for(i=0;i<4;i++) if(s->roots[i]!=b->roots[i] || s->tt[i]!=b->tt[i]) return FALSE;
+    for(i=0;i<sizeof(*original);i++) if(a[i]!=o[i]) return FALSE;
+    return TRUE;
+}
 struct _pd;
 void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame);
 BOOL m68k_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
 #if CONF_WITH_EXIT_HANDOFF_TEST
 void m68k_irq_capture_report(void);
-extern ULONG m68k_irq_test_state[3];
+extern volatile ULONG m68k_irq_test_state[4];
 #endif
 #else
 /* Brief local IRQ exclusion protects the single-CPU captured image, not SMP.
@@ -87,9 +135,13 @@ extern ULONG m68k_irq_test_state[3];
     jsr C_SYM(m68k_capture_user_irq)
     addq.l #4,sp
 #endif
-    move.w (sp),sr
+    move.w (sp),d0 /* Original D0 remains in the MOVEM image. */
     addq.l #4,sp
-    addq.l #4,sp /* USP is observed, never modified. */
+    move.l (sp)+,a0
+    move.l a0,usp /* Consume the user-bank prefix before restoring A0. */
+    /* Keep IPL7 until USP is valid, including the test's poisoned bank.
+     * A higher-priority IRQ must never observe that temporary state. */
+    move.w d0,sr
     movem.l (sp)+,d0-d7/a0-a6
 .endm
 #endif
