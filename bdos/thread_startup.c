@@ -22,9 +22,7 @@ struct thread_startup_draft {
     BOOL outputs_prepared;
     BOOL saved_return;
     BOOL cloned_return;
-    BOOL elf_entry;
     BOOL program_entry; /* ordinary process entry from the KPROC record */
-    VADDR initial_sp;
     VADDR outputs[2]; /* exact destinations retained; never written yet */
     THREAD_STARTUP_OBSERVER observer;
     void *observer_context;
@@ -33,7 +31,7 @@ struct thread_startup_draft {
 #endif
 
 static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
-                            THREAD_STARTUP_DRAFT **result, BOOL public_return, KASPACE *source, const void *saved, VADDR initial_sp)
+                            THREAD_STARTUP_DRAFT **result, BOOL public_return, KASPACE *source, const void *saved)
 {
     (void)source;
     if (!result || *result || !space || !args) return EINVAL;
@@ -43,9 +41,6 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         LONG error;
         UWORD i;
         error = thread_startup_arch_validate(kaspace_backend(space), args);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-        if(!error && initial_sp) error=thread_startup_arch_validate_elf(kaspace_backend(space),args,initial_sp);
-#endif
         if (error) return error;
         draft = kalloc(sizeof(*draft));
         if (!draft) return ENSMEM;
@@ -56,9 +51,7 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         draft->outputs_prepared = FALSE;
         draft->saved_return = saved != NULL;
         draft->cloned_return = saved != NULL && source != NULL;
-        draft->elf_entry = initial_sp != 0;
         draft->program_entry = FALSE;
-        draft->initial_sp = initial_sp;
         draft->outputs[0] = draft->outputs[1] = 0;
         draft->observer.acquire = NULL;
         draft->observer.release = NULL;
@@ -74,9 +67,6 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
 #endif
             thread_startup_arch_bridge_acquire(space, &draft->bridge);
         if (!error) error = thread_startup_arch_prepare(kaspace_backend(space), &draft->args, draft->bridge, &draft->image);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-        if (!error && initial_sp) error = thread_startup_arch_elf_entry(kaspace_backend(space),args,initial_sp,draft->image);
-#endif
         if (!error && public_return) error = thread_startup_arch_public_return(draft->image, draft->bridge);
 #if CONF_WITH_SAVED_RETURN
         if (!error && saved) error = thread_startup_arch_saved_return(draft->image, saved);
@@ -94,16 +84,16 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
         return E_OK;
     }
 #else
-    (void)public_return; (void)source; (void)saved; (void)initial_sp; return EINVFN;
+    (void)public_return; (void)source; (void)saved; return EINVFN;
 #endif
 }
 LONG thread_startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, FALSE, NULL, NULL, 0);
+    return startup_prepare(space, args, out, FALSE, NULL, NULL);
 }
 LONG thread_startup_prepare_public(KASPACE *space, const THREAD_STARTUP_ARGS *args, THREAD_STARTUP_DRAFT **out)
 {
-    return startup_prepare(space, args, out, TRUE, NULL, NULL, 0);
+    return startup_prepare(space, args, out, TRUE, NULL, NULL);
 }
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
@@ -121,7 +111,7 @@ LONG thread_startup_prepare_program(KASPACE *space, const THREAD_STARTUP_ARGS *a
 {
     LONG error;
     if (!args || args->argument) return EINVAL;
-    error = startup_prepare(space, args, out, FALSE, NULL, NULL, 0);
+    error = startup_prepare(space, args, out, FALSE, NULL, NULL);
     if (error) return error;
     /* The replaced PROCESS keeps its canonical completion admission, so no
      * lifecycle observer is registered. No frame alias is ever committed. */
@@ -134,27 +124,11 @@ BOOL thread_startup_program_entry(const THREAD_STARTUP_DRAFT *draft)
     return draft && draft->program_entry && draft->state == THREAD_STARTUP_RUNNABLE;
 }
 #endif
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-LONG thread_startup_prepare_elf(KASPACE *space,const THREAD_STARTUP_ARGS *args,
-                               VADDR initial_sp,THREAD_STARTUP_DRAFT **out)
-{
-    if(!initial_sp) return EINVAL;
-    return startup_prepare(space,args,out,FALSE,NULL,NULL,initial_sp);
-}
-VADDR thread_startup_elf_initial_sp(const THREAD_STARTUP_DRAFT *draft)
-{
-#if CONF_WITH_NATIVE_SCHED
-    return draft && draft->elf_entry && draft->state==THREAD_STARTUP_RUNNABLE ? draft->initial_sp : 0;
-#else
-    UNUSED(draft);return 0;
-#endif
-}
-#endif
 #if CONF_WITH_SAVED_RETURN
 LONG thread_startup_prepare_saved_return(KASPACE *space, const SYSCALL_RETURN *saved, THREAD_STARTUP_DRAFT **out)
 {
     if (!saved || saved->space != space) return EACCDN;
-    return startup_prepare(space, &saved->mappings, out, FALSE, NULL, saved, 0);
+    return startup_prepare(space, &saved->mappings, out, FALSE, NULL, saved);
 }
 #if CONF_WITH_PRIVATE_CLONE
 LONG thread_startup_prepare_cloned_return(KASPACE *source, KASPACE *selected,
@@ -164,14 +138,14 @@ LONG thread_startup_prepare_cloned_return(KASPACE *source, KASPACE *selected,
         return EACCDN;
     /* The capture authenticates the source. Mappings, bridge and execution
      * stacks belong to the selected child root, never the captured root. */
-    return startup_prepare(selected, &saved->mappings, out, FALSE, source, saved, 0);
+    return startup_prepare(selected, &saved->mappings, out, FALSE, source, saved);
 }
 #endif
 #endif
 #if CONF_WITH_PRIVATE_CLONE
 LONG thread_startup_prepare_cloned(KASPACE *source, KASPACE *space, const THREAD_STARTUP_ARGS *args,
                                   BOOL public_return, THREAD_STARTUP_DRAFT **out)
-{ return startup_prepare(space, args, out, public_return, source, NULL, 0); }
+{ return startup_prepare(space, args, out, public_return, source, NULL); }
 #endif
 
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
@@ -186,9 +160,6 @@ LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
             if (draft->outputs[i] && !aspace_copy_to_user_ok(kaspace_backend(draft->space),
                     draft->outputs[i], 4)) return EIMBA;
         if (!thread_startup_arch_bridge_valid(draft->bridge)) return EIMBA;
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-        if(draft->elf_entry) return thread_startup_arch_validate_elf(kaspace_backend(draft->space),&draft->args,draft->initial_sp);
-#endif
         return thread_startup_arch_validate(kaspace_backend(draft->space), &draft->args);
     }
 #else
@@ -361,7 +332,7 @@ LONG thread_startup_run_preflight(THREAD_STARTUP_DRAFT *draft)
     if (!draft || draft->state != THREAD_STARTUP_OBSERVED) return EINVAL;
     error = thread_startup_validate(draft);
     if (error) return error;
-    if (!draft->saved_return && !draft->elf_entry && !draft->program_entry) {
+    if (!draft->saved_return && !draft->program_entry) {
         draft->frame_alias = thread_startup_arch_frame_alias(kaspace_backend(draft->space), draft->image);
         if (!draft->frame_alias) return EIMBA;
     }
@@ -383,7 +354,7 @@ void thread_startup_commit_stores(THREAD_STARTUP_DRAFT *draft, WORD pid, ULONG t
 {
     UWORD i;
     ULONG values[2];
-    if (!draft->saved_return && !draft->elf_entry && !draft->program_entry)
+    if (!draft->saved_return && !draft->program_entry)
         thread_startup_arch_commit_frame(draft->image, draft->frame_alias);
     values[0] = (LONG)pid; values[1] = tid;
     for (i = 0; i < 2; i++) if (draft->output_aliases[i]) {

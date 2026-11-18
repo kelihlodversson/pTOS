@@ -186,7 +186,6 @@ static void proc_release_block(void *base)
 {
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
     if(kproc_shared_exec_retire_source(base)) return;
-    kproc_shared_exec_release_base(base);
 #endif
     /* the tables are in the record: release through it, then drop it */
     if (kproc_unlaunched((PD *)base))
@@ -213,7 +212,6 @@ static void proc_drop_child_record(void *base)
     PD *child = (PD *)base;
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
     if(kproc_shared_exec_retire_source(base)) return;
-    kproc_shared_exec_release_base(base);
 #endif
 #if CONF_WITH_USER_ASPACE
     KPROC *observer = kproc_unlaunched(child) ? kproc_retain(child) : NULL;

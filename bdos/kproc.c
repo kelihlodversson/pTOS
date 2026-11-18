@@ -57,10 +57,6 @@
 #include "../lib/ldso/startup.h"
 #endif
 
-#define KPROC_SHARED_INTERP (CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_ELF_SHARED)
-#if KPROC_SHARED_INTERP
-struct shared_interp_recipe { DL_IMAGE program,interpreter; ULONG bias,ibias; char filename[1024]; };
-#endif
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
 
@@ -73,11 +69,7 @@ typedef struct {
 #endif
 } PROCESS_DTA_ENTRY;
 
-enum { UH_MALLOC = 0,           /* a block Malloc() gave out */
-       UH_LOADED = 1,           /* a program Pexec(PE_LOAD) loaded for a child, until PE_GO */
-       UH_IMAGE = 2,            /* the image of this very process, moved here by PE_GO */
-       UH_LENT = 3,
-       UH_SHARED_IMAGE = 4 };           /* the image of a PE_GO child, lent to it until it ends */
+enum { UH_MALLOC = 0 };         /* a block Malloc() gave out */
 enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
        PROCESS_DISPOSING, PROCESS_RETIRED };
 #endif
@@ -104,18 +96,6 @@ struct shared_exec_regions {
     KASPACE_PERMISSION_TRANSACTION *permissions;
     KASPACE_MEMBER *mapping_members; /* owns the prepared token until clone takes it */
     BOOL committed, legacy, preparing;
-#if KPROC_SHARED_INTERP
-    BOOL interpreted, preparing_interp;
-    KASPACE *original_pending;
-    PROG_LAYOUT original_layout,original_interpreter;
-    PD original_pd;
-    UQUAD original_initial_rsp,original_interp_entry,original_interp_bytes,original_stack_low;
-    VADDR original_entry,original_stack_top,initial_sp;
-    VADDR provisional_va;ULONG provisional_pages;
-    UQUAD provisional_birth,image_owner;
-    UWORD image_hold;
-    VADDR relro_address[2],relro_bytes[2];
-#endif
     ULONG stack_bytes;
     VADDR inherited_stack,inherited_core,inherited_data;
     SBYTE inherited_priority;
@@ -250,9 +230,6 @@ struct kproc {
 #endif
 #endif
 #if CONF_WITH_ELF_SHARED
-#if KPROC_SHARED_INTERP
-    struct shared_interp_recipe *shared_interp_recipe;
-#endif
     PROG_LAYOUT interpreter_layout;
     BOOL standard_entry;
     UQUAD interp_entry, initial_rsp, interp_bytes;
@@ -261,11 +238,6 @@ struct kproc {
     KASPACE *pending_space; /* owning reference while the image is loaded */
                                 /* at load time, with its image in it; the launch adopts it */
     BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
-    PD *load_parent;            /* PE_LOAD: the process whose heap holds the image */
-    VADDR load_va;              /* until the launch moves it here: where, */
-    ULONG load_pages;           /* and how many pages (startup area included) */
-    BOOL give_back;             /* PE_GO: the image goes back to its loader when this ends */
-    PD *lender;                 /* ... the process whose heap it came from, once moved */
     struct uheap_block {        /* loader staging and legacy returned-image blocks */
         VADDR va;               /* sorted by address */
         ULONG pages;
@@ -300,8 +272,6 @@ struct kproc {
 /* Values and a fresh ledger, never source allocations, loader recipes or pins.
  * The PROCESS owns this draft through abort, then retains its logical VAs. */
 struct private_image_snapshot {
-    struct uheap_block *heap;
-    ULONG count;
     BOOL committed,has_image,legacy,top_stack;
 #if CONF_WITH_IMAGE_POLICY
     BOOL policy_only;
@@ -566,8 +536,6 @@ BOOL kproc_create(PD *pd)
 }
 
 #if CONF_WITH_USER_ASPACE
-static void give_image_back(KPROC *kproc);
-static void release_loaded(KPROC *kproc);
 #if CONF_WITH_X86_64_MEMTEST
 ULONG kproc_test_child_ticks(const KPROC *process) { return process->child_ticks; }
 void kproc_test_age_unstarted(KPROC *process, ULONG ticks)
@@ -964,9 +932,7 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
     KASPACE_HEAP *heap;
     ULONG i;
     if (!source || !source->active_space || !source->threads ||
-        !kproc_thread_is_sole(source, source->threads) || source->pending_space ||
-        source->load_parent || source->mapping_preparation ||
-        source->give_back || source->lender || source->lost) return FALSE;
+        !kproc_thread_is_sole(source, source->threads) || source->pending_space || source->mapping_preparation || source->lost) return FALSE;
     original=source->active_space;
     if (!mapping_wait_idle(original) || source->active_space!=original || !source->threads ||
         !kproc_thread_is_sole(source,source->threads) ||
@@ -987,13 +953,8 @@ BOOL kproc_clone_private_runtime(KPROC *target, KPROC *source)
           (VADDR)(uintptr_t)source->env_end<(VADDR)(uintptr_t)source->env_start ||
           (VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start>procmem_size(source->env_start)))))
         return FALSE;
-    for (i=0;i<source->nheap;i++) {
-        const struct uheap_block *block=&source->heap[i];
-        if (block->kind!=UH_IMAGE || block->pd || block->shared_generation || !block->pages ||
-            block->va>=USER_VA_LIMIT || block->pages>(USER_VA_LIMIT-block->va)/USER_PAGE_SIZE ||
-            !aspace_private_range_ok(source->aspace,block->va,(VADDR)block->pages*USER_PAGE_SIZE))
-            return FALSE;
-    }
+    /* The legacy heap ledger names reservations of this root. */
+    if (source->nheap) return FALSE;
     heap=kaspace_heap(source->active_space);
     for (i=0;i<heap->count;i++)
         if (!kaspace_mapping_owned(source->active_space,source->number,source,heap->blocks[i].reservation,
@@ -1013,23 +974,11 @@ LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source)
     struct private_image_snapshot *snapshot;
     ULONG i;
     if (!kproc_clone_private_runtime(NULL,source)) return EACCDN;
-    if (!kproc_clone_target_ready(target, NULL) || target->heap || target->heap_capacity || target->private_image ||
-        source->nheap>~(ULONG)0/sizeof(*source->heap)) return EACCDN;
+    if (!kproc_clone_target_ready(target, NULL) || target->heap || target->heap_capacity || target->private_image)
+        return EACCDN;
     snapshot=kalloc(sizeof(*snapshot));
     if (!snapshot) return ENSMEM;
     bzero(snapshot,sizeof(*snapshot));
-    if (source->nheap) {
-        snapshot->heap=kalloc(source->nheap*sizeof(*snapshot->heap));
-        if (!snapshot->heap) { kfree(snapshot);return ENSMEM; }
-        for (i=0;i<source->nheap;i++) {
-            snapshot->heap[i]=source->heap[i];
-            snapshot->heap[i].reservation=kaspace_reservation_next();
-            if (!snapshot->heap[i].reservation) {
-                kfree(snapshot->heap);kfree(snapshot);return ENSMEM;
-            }
-        }
-    }
-    snapshot->count=source->nheap;
 #if CONF_WITH_IMAGE_POLICY
     snapshot->policy_only=source->image_policy_only;
 #endif
@@ -1041,12 +990,12 @@ LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source)
         ((VADDR)(uintptr_t)source->env_end-(VADDR)(uintptr_t)source->env_start);
     if (snapshot->basepage>=USER_VA_LIMIT || snapshot->basepage_bytes>USER_VA_LIMIT-snapshot->basepage ||
         snapshot->environment>=USER_VA_LIMIT || snapshot->environment_bytes>USER_VA_LIMIT-snapshot->environment) {
-        kfree(snapshot->heap);kfree(snapshot);return EACCDN;
+        kfree(snapshot);return EACCDN;
     }
     snapshot->basepage_birth=kaspace_reservation_next();
     snapshot->environment_birth=kaspace_reservation_next();
     if (!snapshot->basepage_birth || !snapshot->environment_birth) {
-        kfree(snapshot->heap);kfree(snapshot);return ENSMEM;
+        kfree(snapshot);return ENSMEM;
     }
     snapshot->dta=(VADDR)(uintptr_t)source->dta;
     snapshot->has_image=source->has_image;snapshot->legacy=source->legacy;
@@ -1079,11 +1028,9 @@ static void private_image_commit(KPROC *target)
 {
     struct private_image_snapshot *snapshot=target->private_image;
     if (!snapshot || snapshot->committed) return;
-    target->heap=snapshot->heap;snapshot->heap=NULL;
 #if CONF_WITH_IMAGE_POLICY
     target->image_policy_only=snapshot->policy_only;
 #endif
-    target->nheap=target->heap_capacity=snapshot->count;
     target->layout=snapshot->layout;target->has_image=snapshot->has_image;target->legacy=snapshot->legacy;
     target->stack_size=snapshot->stack_size;target->stack_low=snapshot->stack_low;
     target->stack_top=snapshot->stack_top;target->entry=snapshot->entry;
@@ -1260,7 +1207,7 @@ BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *thread)
     if (!p || !p->pd || p->started || p->completed ||
         p->disposal_state != PROCESS_LIVE || p->clone_identity_only ||
         p->active_space || p->pending_space || p->has_image || p->lost || p->kstack_phys ||
-        p->nheap || p->load_parent || p->lender ||
+        p->nheap ||
         (thread ? p->threads != thread || *kthread_next_link(thread) : p->threads != NULL))
         return FALSE;
     for (i = 0; i < KPROC_BORROWS; i++)
@@ -1709,9 +1656,6 @@ static BOOL image_preparation_ready(const KPROC_IMAGE_PREPARATION *prepared,BOOL
 #if CONF_WITH_ELF_SHARED
         target->standard_entry || target->interpreter_layout.nseg || target->initial_rsp ||
         target->interp_entry || target->interp_bytes ||
-#if KPROC_SHARED_INTERP
-        target->shared_interp_recipe ||
-#endif
 #endif
         !kthread_clone_run_ready(prepared->thread) ||
         kthread_tid(prepared->thread)!=prepared->tid ||
@@ -2093,7 +2037,6 @@ static BOOL exec_replacement_source(KPROC *process,KTHREAD *thread,KASPACE *sele
         !kproc_thread_is_sole(process,thread) || !kthread_is_executing(thread) ||
         kthread_aspace(thread)!=original || !process->started || process->pending_space ||
         process->mapping_preparation || process->user_copies || process->exec_committing || process->lost ||
-        process->give_back || process->lender ||
         kaspace_mutation_busy(original) || kaspace_mutation_busy(selected) ||
         !aspace_root(kaspace_backend(selected)) ||
         aspace_root(kaspace_backend(selected))==aspace_root(kaspace_backend(original))) return FALSE;
@@ -2168,7 +2111,7 @@ static BOOL exec_image_loaded(const KPROC *image,const KASPACE *selected)
 BOOL kproc_exec_image_pending(const KPROC *image,const KASPACE *selected,BOOL complete)
 {
     return image && image->pd && !image->completed && image->disposal_state==PROCESS_LIVE &&
-        !image->started && !image->active_space && !image->threads && !image->lost && !image->load_parent &&
+        !image->started && !image->active_space && !image->threads && !image->lost &&
         !image->mapping_preparation && !image->mapping_members && !image->prepared_mapping_members &&
         image->exec_image_staging && image->pending_space==selected &&
         (!complete || exec_image_loaded(image,selected));
@@ -2272,7 +2215,7 @@ static BOOL exec_image_source_ok(const KPROC *source, const KPROC *image)
 {
     int i;
     if (!source || !source->pd || !source->started || !source->active_space || !source->aspace ||
-        source->kstack_phys || source->load_parent || source->give_back || source->lender)
+        source->kstack_phys)
         return FALSE;
 #if CONF_WITH_NATIVE_SCHED
     if (source->shared_exec || source->shared_inherited ||
@@ -2502,8 +2445,6 @@ static void exec_image_rekey(PD *old, PD *new)
 #if CONF_WITH_NATIVE_SCHED
         if (k->async_parent == old) k->async_parent = new;
 #endif
-        if (k->load_parent == old) k->load_parent = new;
-        if (k->lender == old) k->lender = new;
     }
 }
 
@@ -2558,12 +2499,6 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     s->initial_rsp = i->initial_rsp; s->interp_bytes = i->interp_bytes;
     i->standard_entry = FALSE; i->interp_entry = i->initial_rsp = i->interp_bytes = 0;
     memset(&i->interpreter_layout, 0, sizeof(i->interpreter_layout));
-#if KPROC_SHARED_INTERP
-    {
-        struct shared_interp_recipe *recipe = s->shared_interp_recipe;
-        s->shared_interp_recipe = i->shared_interp_recipe; i->shared_interp_recipe = recipe;
-    }
-#endif
 #endif
     s->legacy = i->legacy; i->legacy = FALSE;
 #if KPROC_LEGACY_PRG
@@ -2573,7 +2508,6 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     s->legacy_text_entry = i->legacy_text_entry; i->legacy_text_entry = 0;
 #endif
 #endif
-    s->load_va = 0; s->load_pages = 0;
     s->entry = s->legacy ? 0 : b->entry;   /* a classic PRG starts at its p_tbase */
     s->stack_top = b->stack_top;
     s->stack_low = b->stack_low; s->stack_size = b->stack_size;
@@ -2682,8 +2616,7 @@ BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread, BOOL replacing)
         process->completed || process->completion_pending || !process->started ||
         !process->active_space || process->pending_space || process->kstack_phys ||
         !kproc_thread_is_sole(process, thread) || !kthread_is_executing(thread) ||
-        kthread_aspace(thread) != process->active_space || process->lost ||
-        process->give_back || process->lender || process->mapping_preparation ||
+        kthread_aspace(thread) != process->active_space || process->lost || process->mapping_preparation ||
         process->user_copies || process->exec_committing || !process->exec_replacement_ticket != !replacing ||
         (process->clone_guarded && (!replacing || !exec_private_clone(process))) ||
         kaspace_mutation_busy(process->active_space)) return FALSE;
@@ -2990,36 +2923,12 @@ void kproc_destroy(PD *pd)
             )
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;
 #if CONF_WITH_USER_ASPACE
-            /* Loader staging has no executing consumer. Transfer its cleanup
-             * before the retiring owner loses its private heap metadata. Images
-             * already in execution (UH_IMAGE) keep the shared root's ordinary
-             * lifetime; this does not revoke another PROCESS's running image. */
-            if (kproc->active_space) {
-                ULONG staged_index;
-                for (staged_index=0;staged_index<kproc->nheap;staged_index++) {
-                    struct uheap_block *staged=&kproc->heap[staged_index];
-                    if ((staged->kind==UH_LOADED || staged->kind==UH_SHARED_IMAGE) && staged->pages) {
-                        if (!kaspace_retire_private(kproc->active_space,staged->va,
-                                (VADDR)staged->pages*USER_PAGE_SIZE)) panic("loader-owner staging retirement");
-                        staged->pd=NULL; staged->pages=0;
-                    }
-                }
-            }
-            /* a program PE_LOAD put in its caller's heap that was never
-             * launched goes back with the basepage */
-            if (kproc->load_parent)
-                release_loaded(kproc);
-            if (kproc->lender)
-                give_image_back(kproc);
             kproc_load_leave();             /* (a disk error jumped out of a load) */
 #if CONF_WITH_NATIVE_SCHED
             kproc_clone_drop_compat(kproc);
 #if CONF_WITH_SHARED_VM_PEXEC_TEST
             kproc_shared_exec_abort(kproc);
 #endif
-#endif
-#if KPROC_SHARED_INTERP
-            kfree(kproc->shared_interp_recipe);
 #endif
             kaspace_member_release(&kproc->mapping_members);
             kproc->allocation_scope=kproc->runtime_scope=NULL;
@@ -3033,7 +2942,7 @@ void kproc_destroy(PD *pd)
             kfree(kproc->heap);
 #if CONF_WITH_PRIVATE_CLONE
             if (kproc->private_image) {
-                kfree(kproc->private_image->heap);kfree(kproc->private_image);
+                kfree(kproc->private_image);
             }
 #endif
 #endif
@@ -3586,7 +3495,6 @@ static BOOL build_ancestors(KPROC *kproc, ASPACE *as, PD *parent)
     return TRUE;
 }
 
-static BOOL move_loaded_image(KPROC *kproc, ASPACE *to, PD *launcher);
 static VADDR stack_bytes(const KPROC *kproc);
 
 /* A launch that cannot be completed: the address space is gone.  One that was
@@ -3821,9 +3729,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
             if (pk->stack_size && pk->aspace) {
                 VADDR highest = USER_HEAP_BASE;
 
-                if (kproc->has_image && !kproc->pending_as && kproc->load_parent)
-                    highest = kproc->load_va + (VADDR)kproc->load_pages * USER_PAGE_SIZE;
-                else if (kproc->nheap)
+                if (kproc->nheap)
                     highest = kproc->heap[kproc->nheap - 1].va +
                               (VADDR)kproc->heap[kproc->nheap - 1].pages * USER_PAGE_SIZE;
                 if (kproc->has_image) {
@@ -3857,17 +3763,12 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     /*
      * A built-in image gets its segments as private pages at the fixed
      * addresses of include/procmem.h's layout (one loaded from a file has them
-     * already, and one PE_LOAD put in its caller's heap is moved here).  The
-     * private stack (a TPA is no stack: the image of a program loaded into it,
-     * or the code a caller put there, is not something to push onto) is lazy
-     * with CONF_WITH_DEMAND_PAGING: nothing is mapped for it, its pages come
-     * with the first touch; without it, it was mapped above.  The move
-     * of a PE_LOAD image out of its caller cannot be undone, so nothing that
-     * can fail may follow it.
+     * already).  The private stack (a TPA is no stack: the image of a program
+     * loaded into it, or the code a caller put there, is not something to push
+     * onto) is lazy with CONF_WITH_DEMAND_PAGING: nothing is mapped for it, its
+     * pages come with the first touch; without it, it was mapped above.
      */
-    if (kproc->has_image && !kproc->pending_as &&
-        (kproc->load_parent ? !move_loaded_image(kproc, as, parent)
-                            : !layout_load(as, &kproc->layout))) {
+    if (kproc->has_image && !kproc->pending_as && !layout_load(as, &kproc->layout)) {
         kthread_destroy(thread);
         return prepare_failed(kproc, owner);
     }
@@ -4364,9 +4265,6 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     DL_START_INFO info;
     LONG rc = ENSMEM;
     int status;
-#if KPROC_SHARED_INTERP
-    struct shared_interp_recipe *recipe=NULL;
-#endif
 
     if (!kproc || kproc->has_image || kproc->pending_as || kproc->aspace ||
         program->nload > PROG_MAX_SEGMENTS || interpreter->nload > PROG_MAX_SEGMENTS ||
@@ -4389,15 +4287,6 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     stack = kalloc(DL_START_CAPACITY);
     if (!stack)
         return ENSMEM;
-#if KPROC_SHARED_INTERP
-    if(procmem_owner(pd)!=pd && kproc_has_heap(run)) {
-        recipe=kalloc(sizeof(*recipe));
-        if(!recipe) { kfree(stack);return ENSMEM; }
-        recipe->program=*program;recipe->interpreter=*interpreter;
-        recipe->bias=bias;recipe->ibias=ibias;
-        memcpy(recipe->filename,filename,fnsize+1);
-    }
-#endif
     info.phdr = program->phdr + bias;
     info.phnum = program->phnum;
     info.entry = program->entry + bias;
@@ -4469,14 +4358,8 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     pd->p_tlen = program->size;
     pd->p_dbase = pd->p_bbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)kproc->layout.end);
     pd->p_dlen = pd->p_blen = 0;
-#if KPROC_SHARED_INTERP
-    kproc->shared_interp_recipe=recipe;recipe=NULL;
-#endif
     rc = E_OK;
 done:
-#if KPROC_SHARED_INTERP
-    kfree(recipe);
-#endif
     kfree(stack);
     return rc;
 }
@@ -4490,6 +4373,7 @@ void kproc_set_creator(PD *pd, PD *creator)
         kproc->creator = creator;
 }
 
+#if CONF_WITH_LEGACY_PEXEC
 /*
  * Pexec(PE_BASEPAGE*, PE_LOAD) from ring 3: the basepage and its blocks,
  * borrowed supervisor-only while they were built, are handed to the caller
@@ -4512,19 +4396,8 @@ void kproc_hand_over(PD *caller, PD *child)
                           procmem_size(kproc->user_start),
                           ASPACE_PROT_WRITE | ASPACE_PROT_EXEC | ASPACE_PROT_USER);
 }
-
-#if CONF_WITH_CUIS
-/* Identify from trusted creator/allocation metadata, without reading the
- * caller-writable basepage or allowing a child to run before observation. */
-LONG kproc_child_image_pid(PD *pd, PD *caller)
-{
-    KPROC *kproc = kproc_find(pd);
-    if (!kproc || kproc->started || kproc->creator != caller || kproc->aspace ||
-        procmem_gen(kproc->user_start) != kproc->tpa_gen ||
-        procmem_gen(kproc->env_start) != kproc->env_gen) return EIMBA;
-    return kproc->pid;
-}
 #endif
+
 
 
 /*
@@ -4538,7 +4411,7 @@ LONG kproc_child_image_pid(PD *pd, PD *caller)
 
 BOOL kproc_allocation_disposal_allowed(const void *base)
 {
-    KPROC *owner, *target=kproc_find((PD *)base);
+    KPROC *owner;
     ULONG i;
     for (owner=kproc_list;owner;owner=owner->next)
         if (owner->aspace)
@@ -4546,14 +4419,10 @@ BOOL kproc_allocation_disposal_allowed(const void *base)
                 if (owner->borrowed[i].bytes && owner->borrowed[i].va==(VADDR)(uintptr_t)base &&
                     !kaspace_mapping_can_change(owner->aspace,owner->borrowed[i].va,owner->borrowed[i].bytes))
                     return FALSE;
-    if (target && target->load_parent) {
-        owner=kproc_find(target->load_parent);
-        if (owner && owner->aspace && !kaspace_mapping_can_change(owner->aspace,
-                target->load_va,(VADDR)target->load_pages*USER_PAGE_SIZE)) return FALSE;
-    }
     return TRUE;
 }
 
+#if CONF_WITH_LEGACY_PEXEC
 LONG kproc_check_launch(PD *pd, PD *caller)
 {
     KPROC *kproc = kproc_find(pd);
@@ -4589,6 +4458,7 @@ LONG kproc_check_launch(PD *pd, PD *caller)
     kproc->user_end = (UBYTE *)(uintptr_t)hitpa;    /* the trusted bound */
     return E_OK;
 }
+#endif
 
 #if KPROC_LEGACY_PRG
 BOOL kproc_record_legacy_text(PD *pd, ULONG text_bytes)
@@ -5433,15 +5303,6 @@ static LONG do_mprot(PD *pd, UQUAD address, UQUAD length, UQUAD protection)
     rc = mapping_protection(protection, &prot);
     if (rc)
         return rc;
-#if KPROC_SHARED_INTERP
-    /* Only the current interpreted PROCESS's captured GNU_RELRO allocation
-     * may initialize beneath non-WRITE lifetime witnesses. General image,
-     * heap and mmap protection retains the ordinary mutation barrier. */
-    if(kproc->shared_exec && kproc->standard_entry && standard_image_range(kproc,address,length)) {
-        if(prot!=ASPACE_PROT_USER || !kproc_shared_exec_relro_range(kproc,address,length)) return EACCDN;
-        return aspace_protect_relro(kproc->aspace,address,length)?E_OK:EACCDN;
-    }
-#endif
     if (mapping_range(address,length) && !mapping_owned_range(kproc,(VADDR)address,(VADDR)length)) return EACCDN;
     if (!kaspace_mapping_change(kproc->aspace, address, length)) return EACCDN;
 #if CONF_WITH_ELF_SHARED
@@ -6170,21 +6031,13 @@ BOOL kproc_callback_stack_stable(PD *pd, UQUAD address, ULONG size)
 
     if (!kproc || !kproc->aspace)
         return FALSE;
-    /* Child basepage/environment grants have the same independent lifetime
-     * as PE_LOAD heap images, even though they are writable in the caller. */
+    /* Child basepage/environment grants have an independent lifetime, even
+     * though they are writable in the caller. */
     for (i = 0; i < KPROC_BORROWS; i++)
         if (kproc->borrowed[i].bytes &&
             address < kproc->borrowed[i].va + kproc->borrowed[i].bytes &&
             kproc->borrowed[i].va < address + size)
             return FALSE;
-    for (i = 0; i < kproc->nheap; i++) {
-        const struct uheap_block *b = &kproc->heap[i];
-
-        if ((b->kind == UH_LOADED || b->kind == UH_LENT) &&
-            address < b->va + (UQUAD)b->pages * USER_PAGE_SIZE &&
-            b->va < address + size)
-            return FALSE;
-    }
     return TRUE;
 }
 #endif
@@ -6300,154 +6153,6 @@ LONG kproc_uheap_shrink(PD *pd,VADDR va,long len)
     return result;
 }
 
-/*
- * The end of a PE_GO child that was loaded by PE_LOAD: its image, which the
- * launch moved out of the loader's heap, goes back to the loader, at the same
- * addresses, as a block it owns (Malloc() memory: it frees it with Mfree()).
- * The loader was stopped all the time and now sees what the program left in
- * its data.  This is for Pterm() and Ptermres() alike; if a Ptermres() process
- * later keeps more than its basepage, that is where it would change.  If the
- * pages cannot be moved (a page table cannot be allocated), they are freed
- * with the child and the loader's block is dropped.
- */
-static void give_image_back(KPROC *kproc)
-{
-    KPROC *pk = kproc_find(kproc->lender);
-    struct uheap_block *b, *own;
-
-    /* (the heap table is sorted by address: the child may have put blocks
-     * below its image, so look for it where it is) */
-    if (!pk || !pk->aspace || !kproc->aspace ||
-        !(own = heap_find(kproc, kproc->load_va)) || own->kind != UH_IMAGE ||
-        !(b = heap_find(pk, kproc->load_va)) || b->kind != UH_LENT || b->pd != kproc->pd)
-        return;
-    if (aspace_move_private(kproc->aspace, pk->aspace, b->va,
-                                   (VADDR)b->pages * USER_PAGE_SIZE,
-                                   ASPACE_PROT_WRITE | ASPACE_PROT_USER)) {
-        b->kind = UH_MALLOC;
-        b->pd = NULL;
-    } else {
-        memmove(b, b + 1, (pk->nheap - 1 - (ULONG)(b - pk->heap)) * sizeof(*b));
-        pk->nheap--;
-    }
-}
-
-/* Pexec(PE_GO) (TRUE) or PE_GOTHENFREE: whether the image goes back to its
- * loader when the process ends; set on every launch attempt */
-void kproc_set_give_back(PD *pd, BOOL give_back)
-{
-    KPROC *kproc = kproc_find(pd);
-
-    if (kproc)
-        kproc->give_back = give_back;
-}
-
-/*
- * Pexec(PE_LOAD) from a ring-3 caller puts the program in the caller's own
- * address space, in its heap, where the caller can read it and patch it
- * before launching it.  The block is the caller's until PE_GO/PE_GOTHENFREE,
- * which moves its pages, at the same addresses, to the new process (see
- * move_loaded_image()); Mfree() leaves it alone, and freeing the child's
- * basepage gives it back.
- */
-VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes, VADDR preferred)
-{
-    KPROC *ck = kproc_find(child);
-    VADDR va;
-
-    if (!ck || ck->load_parent)
-        return 0;
-    va = heap_alloc(kproc_find(caller), bytes, UH_LOADED, child, TRUE, preferred);
-    if (!va)
-        return 0;
-    /* recorded with the child at once: a disk error before the load is done
-     * jumps past the loader, and destroying the child gives the block back */
-    ck->load_parent = caller;
-    ck->load_va = va;
-    ck->load_pages = (bytes + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
-    return va;
-}
-
-void kproc_load_release(PD *caller, VADDR va)
-{
-    KPROC *kproc = kproc_find(caller);
-    struct uheap_block *b;
-
-    if (kproc && kproc->aspace && (b = heap_find(kproc, va)) != NULL && b->kind == UH_LOADED)
-        heap_release(kproc, b);
-}
-
-/* the block a never-launched child holds in its loader's heap, if it is still
- * that child's */
-static void release_loaded(KPROC *kproc)
-{
-    KPROC *pk = kproc_find(kproc->load_parent);
-    struct uheap_block *b;
-
-    if (pk && pk->aspace && (b = heap_find(pk, kproc->load_va)) != NULL &&
-        b->kind == UH_LOADED && b->pd == kproc->pd) {
-        if (heap_release(pk,b)!=E_OK) {
-            if (!kaspace_retire_private(pk->active_space,b->va,(VADDR)b->pages*USER_PAGE_SIZE))
-                panic("held loader staging retirement");
-            /* Existing lease owns the extent now; no stale PD is kept. */
-            memmove(b,b+1,(pk->nheap-1-(ULONG)(b-pk->heap))*sizeof(*b)); pk->nheap--;
-        }
-    }
-}
-
-/* The process `pd` is the program loaded into [va, va + pages) of `caller`'s
- * heap (kproc_load_alloc()), laid out as `layout` there.  FALSE, with the block
- * still the caller's to release, if that is not so. */
-BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages)
-{
-    KPROC *kproc = kproc_find(pd);
-    KPROC *ck = kproc_find(caller);
-    struct uheap_block *b;
-
-    if (!kproc || kproc->aspace || kproc->has_image || !ck || !ck->aspace ||
-        kproc->load_parent != caller || kproc->load_va != va || kproc->load_pages != pages ||
-        !(b = heap_find(ck, va)) || b->kind != UH_LOADED || b->pd != pd || b->pages != pages ||
-        !layout_valid_in(layout, FALSE, va, va + (VADDR)pages * USER_PAGE_SIZE))
-        return FALSE;
-    kproc->layout = *layout;
-    kproc->has_image = TRUE;
-    return TRUE;
-}
-
-/* The launch: the block leaves the caller's address space for the new one,
- * with each segment's own permissions, and is the new process's image. */
-static BOOL move_loaded_image(KPROC *kproc, ASPACE *to, PD *launcher)
-{
-    KPROC *pk = kproc_find(kproc->load_parent);
-    struct uheap_block *b;
-
-    if (!pk || !pk->aspace || kproc->load_parent != launcher ||
-        !(b = heap_find(pk, kproc->load_va)) || b->kind != UH_LOADED ||
-        b->pd != kproc->pd || b->pages != kproc->load_pages || !heap_room(kproc))
-        return FALSE;
-    if (!aspace_move_private(pk->aspace, to, kproc->load_va,
-                                    (VADDR)kproc->load_pages * USER_PAGE_SIZE,
-                                    ASPACE_PROT_WRITE | ASPACE_PROT_USER))
-        return FALSE;
-    kproc->heap[0].va = kproc->load_va;     /* (the new process has no other block yet) */
-    kproc->heap[0].pages = kproc->load_pages;
-    kproc->heap[0].kind = UH_IMAGE;
-    kproc->heap[0].pd = NULL;
-    kproc->heap[0].reservation = b->reservation;
-    kproc->heap[0].shared_generation = 0;
-    kproc->nheap = 1;
-    if (kproc->give_back) {                 /* PE_GO: only lent, the loader's block stays */
-        b->kind = UH_LENT;
-        kproc->lender = kproc->load_parent;
-    } else {
-        memmove(b, b + 1, (pk->nheap - 1 - (ULONG)(b - pk->heap)) * sizeof(*b));
-        pk->nheap--;
-    }
-    kproc->load_parent = NULL;
-    if (!protect_layout(to, &kproc->layout))
-        return FALSE;
-    return TRUE;
-}
 
 VADDR kproc_user_stack(PD *pd)
 {
@@ -6647,13 +6352,8 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
     for (i=0;!birth && i<owner->nheap;i++) {
         struct uheap_block *block=&owner->heap[i];
         VADDR length=(VADDR)block->pages*USER_PAGE_SIZE;
-        if (block->kind!=UH_LENT && address>=block->va && address-block->va<length &&
+        if (address>=block->va && address-block->va<length &&
             bytes<=length-(address-block->va)) {
-            if (block->kind==UH_LOADED) {
-                KPROC *staged=kproc_find(block->pd);
-                if (!staged || staged->started || staged->creator!=pd ||
-                    staged->load_parent!=pd || staged->load_va!=block->va) return EACCDN;
-            }
             birth=&block->reservation;
             lazy=block->kind==UH_MALLOC && CONF_WITH_DEMAND_PAGING;
         }
@@ -7033,12 +6733,9 @@ static BOOL shared_failure_point(void)
     shared_steps++;
     return shared_fail_after && !--shared_fail_after;
 }
-#else
+#elif CONF_WITH_SHARED_VM_PEXEC_TEST
 static BOOL shared_failure_point(void) {return FALSE;}
 #define shared_dependency_point() FALSE
-#endif
-#if KPROC_SHARED_INTERP
-#include "kproc_shared_interp.h"
 #endif
 #include "kproc_shared_exec.h"
 #endif

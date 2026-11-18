@@ -513,15 +513,6 @@ void gouser_entry(WORD entry_type)
 #endif
         if (prepared) {
             entry_rip = prepared->user.rip; user_rsp = prepared->user.rsp; standard_entry = FALSE;
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-            {
-                VADDR initial_sp=thread_startup_elf_initial_sp(startup);
-                if(initial_sp) {
-                    if(user_rsp!=initial_sp) panic("x86-64: published ELF stack changed\n");
-                    standard_entry=TRUE;
-                }
-            }
-#endif
         }
 #endif
         if (!entry_rip)         /* no image: a basepage with its code in its TPA */

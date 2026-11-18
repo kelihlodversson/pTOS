@@ -3519,7 +3519,7 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
 {
     CUIS_CLIENT *client;
     UQUAD flags;
-    UWORD i, j, index = 0, *senders;
+    UWORD i, index = 0, *senders;
     ULONG token = 0, at;
     UBYTE data[32], *storage = NULL;
     BOOL need_storage = FALSE;
@@ -3540,17 +3540,10 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
         for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
             if (b && client->children[i].token == b) break;
         if (i == CUIS_CHILDREN_PER_SESSION) { result = EACCDN; goto child_done; }
-        if (a == CUIS_CHILD_CANCEL) {
-            if (c) { result = EINVAL; goto child_done; }
-            child_remove(client,i); result = E_OK; goto child_done;
-        }
-        if (!c || client->children[i].pid) { result = EINVAL; goto child_done; }
-        result = kproc_child_image_pid((PD *)(uintptr_t)(ULONG)c,run);
-        if (result < 0) goto child_done;
-        for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
-            if (client->children[j].pid == result) { result = EACCDN; goto child_done; }
-        client->children[i].pid = (WORD)result;
-        result = E_OK; goto child_done;
+        /* CANCEL; there is no other action. Binding an unlaunched staged
+         * image (formerly 1) went with the x32 staged Pexec modes (#1018). */
+        if (a != CUIS_CHILD_CANCEL || c) { result = EINVAL; goto child_done; }
+        child_remove(client,i); result = E_OK; goto child_done;
     }
     if (function == CUIS_CHILD_RESULT) {
         if (a || b || c) { result = EINVAL; goto child_done; }

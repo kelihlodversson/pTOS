@@ -35,11 +35,6 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
     stage=2;error=proc_clone_loaded_shared(source,target,&tx);
     if(!error) {
         stage=3;
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-        if(kproc_shared_exec_initial_sp(target))
-            error=proc_clone_prepare_startup_elf(tx,&startup,kproc_shared_exec_initial_sp(target));
-        else
-#endif
         error=proc_clone_prepare_startup(tx,&startup);
     }
     if(!error) {stage=4;error=proc_clone_retain_startup_stack(tx); }
