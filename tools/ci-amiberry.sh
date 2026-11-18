@@ -23,6 +23,11 @@
 
 set -u
 
+if [ "${IRQ_COPY_PROOF:-0}" = 1 ] && [ "${NATIVE_THREADS:-0}" != 1 ]; then
+    echo "ci-amiberry: IRQ_COPY_PROOF requires NATIVE_THREADS=1" >&2
+    exit 2
+fi
+
 combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060 amiga-aspace:68030 amiga-aspace040:68040 amiga-aspace040:68060"}
 mkdir -p logs
 failed=
