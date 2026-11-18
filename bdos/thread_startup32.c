@@ -53,6 +53,7 @@ LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args,
     if (!draft->syscall.physical) goto failed;
     draft->entry = args->entry;
     draft->argument = args->argument;
+    draft->flags = args->flags;
     draft->return_pc = thread_return_bridge_address(bridge);
 #if ARCH_ARM
     /* AAPCS32: aligned SP, argument r0, return PC in LR; reserve one word

@@ -425,7 +425,8 @@ relaunch:
         initial_entry.kstack_top = (ULONG)kstack_top;
         initial_entry.argument = 0;
 #if CONF_WITH_NATIVE_SCHED
-        if (prepared) initial_entry.argument = prepared->argument;
+        if (prepared && !(prepared->flags & THREAD_STARTUP_PRG_ENTRY))
+            initial_entry.argument = prepared->argument;
 #endif
 #if CONF_WITH_NATIVE_SCHED
         if (prepared) thread_startup_entering(startup);

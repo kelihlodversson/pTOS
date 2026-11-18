@@ -16,6 +16,11 @@ typedef struct {
 /* The entry need not be executable: like FreeMiNT's Pexec(4/104), a bad
  * entry faults in the started THREAD instead of failing the start. */
 #define THREAD_STARTUP_ENTRY_UNCHECKED 1
+/* The classic 68k PRG entry (TOS, FreeMiNT's exec_region()): the argument
+ * is only at 4(sp) and every register is zero; A0 != 0 would tell the
+ * program's startup that it is a desk accessory. Without it a native
+ * fastcall kernel also passes the argument in A0. */
+#define THREAD_STARTUP_PRG_ENTRY 2
 /* All arguments are normalized kernel values, not a user structure. Requires
  * resident mappings; backing/COW must be completed before prepare. It never
  * faults in or writes user memory. Retains ASPACE

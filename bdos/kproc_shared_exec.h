@@ -414,7 +414,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         startup->entry=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_tbase);
         startup->argument=(VADDR)(uintptr_t)target->pd;
         startup->stack_base=base;startup->stack_size=(ULONG)(top-base);
-        startup->flags=THREAD_STARTUP_ENTRY_UNCHECKED;
+        startup->flags=THREAD_STARTUP_ENTRY_UNCHECKED|THREAD_STARTUP_PRG_ENTRY;
     }
     set->preparing=FALSE;
     return E_OK;
