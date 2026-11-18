@@ -1,0 +1,90 @@
+Historical Pexec modes (#1018)
+==============================
+
+The staged-execution Pexec modes are 68k TOS/FreeMiNT compatibility, not a
+native launch API. pTOS has not released 1.0 and makes a clean break:
+
+  mode               m68k                                   ARM / x32
+  ----------------   ------------------------------------   -----------------
+  0 / 100 / 200      PRG and ELF launch/replacement         retained (#1008
+                                                            moves them to
+                                                            Pexecve later)
+  3  (PE_LOAD)       loads a PRG only; an ELF target, or a  EINVFN
+                     binfmt outcome that would stage one,
+                     is EPLFMT before any allocation
+  5 / 7 (basepage)   platform gate only                     EINVFN
+  4 / 6 / 104 / 106  platform gate only; always entered     EINVFN
+                     with the classic PRG convention
+  50 (PE_RELOCATE)   kernel only (NatFeats bootstrap)       not available
+
+Targetless modes (5/7/4/6/104/106) carry no executable pathname, so neither
+the caller's format nor the content of the basepage decides whether they are
+allowed: an ELF program on m68k may use them like a PRG. A GO enters the
+basepage the way TOS does, at p_tbase with the basepage address; there is no
+ELF entry, no format dispatch and no retained PRG/ELF provenance check. What
+remains is ordinary runtime safety: the basepage must be one the caller made
+or loaded and still owns, not launched, stale or foreign, and every
+allocation is rolled back on failure.
+
+On ARM and x32 the public modes are refused with EINVFN before the
+arguments are read (bdos/uaccess.c) and again at the GEMDOS entry
+(xexec()), so no image is allocated and no ownership moves.
+
+Kernel-internal requests
+------------------------
+The kernel itself still creates basepages for, and starts, code it carries:
+the ROM shell (exec_os), the built-in and early EmuCON, ROM programs the AES
+runs (aes_run_rom_program()) and the NatFeats bootstrap; and the AES loads
+desk accessories with a load-only request (pgmld()). On m68k and ARM these
+requests must enter through the GEMDOS trap, whose return delivers a
+reentrant launch's exit code to the right call site. They therefore use the
+same dispatcher with PE_KERNEL set in the mode (include/bdosdefs.h). A
+process with a user address space can never make such a request (refused in
+uaccess.c and xexec()); a kernel without address spaces has no user/kernel
+boundary to enforce. PE_KERNEL requests never stage into a caller's heap and
+never move ownership to a user caller: the caller has no address space.
+
+Inventory at dde5e08b (classification)
+---------------------------------------
+A  canonical, kept and simplified
+   - exec_common() file load: header, environment, TPA, kpgmld, binfmt,
+     PE_LOADGO / PE_ASYNC_LOADGO launch, managed Pexec(0) anchor (#1015),
+     ksched_spawn/observe/prepare, init_pd_files, fs_set_process_directory.
+   - The PE_LOAD loader path as used by Pexec(200) staging
+     (proc_exec_replacement_stage(): exec_common(PE_LOAD, ..., replacement)),
+     kproc_load_begin/enter/leave, kproc_set_loaded_image, the image bundle
+     and committed-exec transaction (#970/#999/#1007).
+   - proc_clone(CLONE_VM), private clone/fork, generic ASPACE/KASPACE.
+
+B  68k compatibility, kept and isolated to m68k
+   - Public 3/5/7/4/6/104/106 dispatch, PRG-only mode 3.
+   - User-address-space staging: hand_over()/kproc_hand_over(),
+     kproc_set_creator(), check_launch()/kproc_check_launch(), the
+     basepage-creator record, mode 6 and 106 (image-consuming GO, sync and
+     async).
+   - Classic in-place 4/6 on non-MMU m68k and ROM.
+   - Shared-VM 4/104 (bdos/shared_vm_exec.c, kproc_shared_exec_*), still
+     test-gated (CONF_WITH_SHARED_VM_PEXEC_TEST, now depends on M68K), PRG
+     staged images only.
+
+C  obsolete, deleted
+   - Native ARM/x32 public 3/5/7/4/6/104/106.
+   - ELF PE_LOAD into the caller's heap: elf_set_load_into_caller(), the
+     caller-heap placement in elfld.c, kproc_load_alloc(),
+     kproc_load_release(), kproc_set_moved_image(), the UH_LOADED / UH_IMAGE
+     heap kinds and the KPROC load_parent link.
+   - PE_GO image give-back: give_back_image(), kproc_set_give_back(), the
+     KPROC give_back flag and the UH_SHARED_IMAGE loan. Production refused
+     ring-3 PE_GO on every address-space kernel, and no kernel PE_GO launches
+     a loaded image, so it had no reachable consumer.
+   - ELF shared-VM GO: proc_clone_prepare_startup_elf(),
+     thread_startup ELF initial-SP entry, kproc_shared_exec_initial_sp(),
+     interpreted staging (kproc_shared_interp.h) and its RELRO tightening.
+   - CUIS_CHILD_BIND and kproc_child_image_pid(): binding an unlaunched
+     staged image to a CUIS child; its only producers were x32 modes 3/5.
+   - Positive tests and fixtures for the above (see the PR).
+
+D  internal, kept behind PE_KERNEL
+   - Kernel basepage creation (5/7), kernel GO/GOTHENFREE of ROM code and of
+     the built-in x32 EmuCON image, PE_RELOCATE (m68k NatFeats), and the
+     AES accessory load (3).
