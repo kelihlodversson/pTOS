@@ -122,11 +122,13 @@ if os.environ.get('SHARED_VM_PEXEC') == '1':
     # m68k MMU kernels only (#1018); derived, never forced.
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC'].str_value == 'y'
 if os.environ.get('SHARED_VM_PEXEC') == '1' or os.environ.get('EXEC_STAGING_PROFILE') == '1':
-    for required in ('CONF_WITH_IMAGE_POLICY', 'CONF_WITH_IMAGE_POLICY_TEST'):
-        config.syms[required].set_value(2)
-        assert config.syms[required].str_value == 'y', required
-    config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].set_value(2)
-    assert config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].str_value == 'y'
+    config.syms['CONF_WITH_IMAGE_POLICY'].set_value(2)
+    assert config.syms['CONF_WITH_IMAGE_POLICY'].str_value == 'y'
+    # These two exercise shared-VM Pexec: m68k MMU kernels only (#1018).
+    shared = config.syms['CONF_WITH_SHARED_VM_PEXEC'].str_value == 'y'
+    for required in ('CONF_WITH_IMAGE_POLICY_TEST', 'CONF_WITH_PRIVATE_SNAPSHOT_TEST'):
+        config.syms[required].set_value(2 if shared else 0)
+        assert config.syms[required].str_value == ('y' if shared else 'n'), required
     for required in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_MMAP'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required

@@ -257,7 +257,7 @@ jobs:
           make -j2
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
-      - name: Boot-test private clone, image policy and independent CUIS observation
+      - name: Boot-test private clone and independent CUIS observation
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
           CONFIG_= python - <<'PY'
@@ -266,7 +266,7 @@ jobs:
           config.load_config()
           for name in ("CONF_WITH_NATIVE_SCHED", "CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP",
                        "CONF_WITH_PRIVATE_CLONE", "CONF_WITH_PRIVATE_CLONE_TEST",
-                       "CONF_WITH_IMAGE_POLICY", "CONF_WITH_IMAGE_POLICY_TEST"):
+                       "CONF_WITH_IMAGE_POLICY"):
               config.syms[name].set_value(2)
               assert config.syms[name].str_value == "y", name
           config.write_config()
