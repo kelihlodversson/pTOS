@@ -15,14 +15,6 @@ static int32_t process(uint32_t function, uint64_t a, uint64_t b, uint64_t c, ui
         : "rcx","r11","memory","cc");
     return (int32_t)ax;
 }
-static int32_t native_ui(uint32_t function, uint64_t a, uint64_t b, uint64_t c, uint64_t d)
-{
-    register uint64_t ax __asm__("rax") = ((uint64_t)CUIS_SERVICE_CLASS << 32) | function;
-    register uint64_t fourth __asm__("r10") = d;
-    __asm__ volatile ("syscall" : "+a"(ax) : "D"(a),"S"(b),"d"(c),"r"(fourth)
-        : "rcx","r11","memory","cc");
-    return (int32_t)ax;
-}
 static short receive(short *message, unsigned long timeout, AESGLOBAL *global)
 {
     return mt_evnt_multi(MU_MESAG|MU_TIMER,0,0,0,0,0,0,0,0,0,0,0,0,0,
