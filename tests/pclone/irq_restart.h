@@ -5,6 +5,7 @@
 #define IRT_FINISH 0xc713b201UL
 #define IRT_ABORT 0xc713b202UL
 #define IRT_QUERY 0xc713b204UL
+#define IRT_NO_CREDIT 0xc713b205UL
 #define IRT_CAPTURE_ONLY 0xc713b203UL
 #define IRT_FAIL_CODE 0xc713b211UL
 #define IRT_FAIL_STACK 0xc713b212UL
@@ -96,6 +97,15 @@ static void irq_restart_entry(void *argument)
             char message[64];sprintf(message,"IRQ restart finish failed %ld\r\n",value);conws(message);
             w->error|=16;
         }
+    }
+    /* Force the no-credit branch even if B executes. Native register/FPU
+     * checks must still pass: restoration must never depend on proof credit.
+     * FINISH refuses this test unless an actual root handoff occurred. */
+    value=pclone_trap(&args,IRT_NO_CREDIT);
+    if(value) w->error|=512;
+    else {
+        (void)Syield();
+        if(irq_restart_pattern(w->pattern) || pclone_trap(0,IRT_FINISH)!=-326L)w->error|=512;
     }
     if(w->error) {
         char message[80];
@@ -274,5 +284,13 @@ static void test_irq_restart(void)
     status=Pwaitpid(child,0,0);
     { char message[80];sprintf(message,"IRQ restart source child=%ld status=%lx\r\n",child,(unsigned long)status);conws(message); }
     ptest_assert_msg((status>>16)==child && !(status&65535),"owned IRQ restart source and all peers complete");
+    /* The owned private driver's buffered log is private as well. Publish its
+     * checked verdict in the original harness log (Amiberry reads the disk). */
+    if((status>>16)==child && !(status&65535)) {
+        conws("native interrupted USER A IRQ / B USER execution / saved A restart: PASS\r\n");
+#if defined(TEST_WITH_PTERMGRP)
+        conws("native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS\r\n");
+#endif
+    }
 }
 #endif

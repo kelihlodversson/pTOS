@@ -22,7 +22,7 @@ typedef struct {
     ULONG tid;
     UWORD cpu;
     IRQ_RESTART_STATE state;
-    BOOL peer_ran, capture_only, captured;
+    BOOL peer_ran, capture_only, captured, suppress_credit, transported;
 } IRQ_RESTART;
 /* Test-only Pclone transport, not a public syscall/clone flag. */
 #define IRQ_RESTART_BEGIN  0xc713b200UL
@@ -30,6 +30,7 @@ typedef struct {
 #define IRQ_RESTART_ABORT  0xc713b202UL
 #define IRQ_RESTART_CAPTURE_ONLY 0xc713b203UL
 #define IRQ_RESTART_QUERY 0xc713b204UL
+#define IRQ_RESTART_NO_CREDIT 0xc713b205UL
 #define IRQ_RESTART_FAIL_CODE  0xc713b211UL
 #define IRQ_RESTART_FAIL_STACK 0xc713b212UL
 typedef struct { UQUAD code, code_bytes, stack, stack_bytes; } IRQ_RESTART_ARGS;

@@ -359,7 +359,11 @@ irq_fpu_last:
         movea.l %d1,%a3
         movea.l %d1,%a4
         movea.l %d1,%a5
+#if defined(TEST_WITH_IRQ_RESTART)
+        move.l #40000000,%d0
+#else
         move.l #4000000,%d0
+#endif
         move.l #IRQ_M68K_MARKER,%d7
 1:      subq.l #1,%d0
         jne 1b

@@ -26,7 +26,11 @@ static void check_irq_pattern(const M68K_USER_IRQ_CAPTURE *c)
     const M68K_USER_IRQ_FRAME *f=&c->image;
     if (f->d[7]!=0x71307137UL) return;
     irq_pattern_seen++;
+#if CONF_WITH_IRQ_RESTART_TEST
+    if (f->d[0]>40000000UL) irq_pattern_bad=TRUE;
+#else
     if (f->d[0]>4000000UL) irq_pattern_bad=TRUE;
+#endif
     for (i=1;i<7;i++) if (f->d[i]!=0x71307130UL) irq_pattern_bad=TRUE;
     for (i=0;i<6;i++) if (f->a[i]!=0x71307130UL) irq_pattern_bad=TRUE;
     if (c->binding.fpu_type) {

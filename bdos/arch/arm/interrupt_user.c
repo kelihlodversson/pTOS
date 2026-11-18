@@ -1,4 +1,4 @@
-/* Capture only: no detached exception continuation and no scheduler transfer. */
+/* Diagnostic capture and the restricted default-off outer USER IRQ tail. */
 #include "emutos.h"
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
 #include "kthread_context.h"

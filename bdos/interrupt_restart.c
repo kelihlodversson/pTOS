@@ -89,6 +89,7 @@ static LONG prepare(KTHREAD_CONTEXT *c, KASPACE *space, ULONG tid,
     draft.code_address=(VADDR)a->code; draft.code_bytes=(VADDR)a->code_bytes;
     draft.stack_address=(VADDR)a->stack; draft.stack_bytes=(VADDR)a->stack_bytes;
     draft.capture_only=fail==3;
+    draft.suppress_credit=fail==4;
     error=kaspace_lease_acquire(space,draft.code_address,draft.code_bytes,
                                ASPACE_PROT_USER|ASPACE_PROT_EXEC,&draft.code);
     if (error) goto failed;
@@ -136,12 +137,14 @@ LONG interrupt_restart_test(UQUAD address, UQUAD selector)
         if (address || (r->state!=IRQ_RESTART_ARMED && r->state!=IRQ_RESTART_ACKED)) return EACCDN;
         if (!owner_valid(c)) return EACCDN;
         result=selector==IRQ_RESTART_ABORT || (r->state==IRQ_RESTART_ACKED && r->peer_ran) ? E_OK:EAGAIN;
+        if (selector==IRQ_RESTART_FINISH && r->suppress_credit && !r->transported)
+            result=EINVFN; /* injected no-credit proof must actually hand off */
         if (selector==IRQ_RESTART_FINISH && r->capture_only && r->captured && r->state==IRQ_RESTART_ARMED)
             result=1; /* explicitly capture/ordinary return, never a B2 success */
         release(r);
         return result;
     }
-    if (selector==IRQ_RESTART_BEGIN || selector==IRQ_RESTART_CAPTURE_ONLY ||
+    if (selector==IRQ_RESTART_BEGIN || selector==IRQ_RESTART_CAPTURE_ONLY || selector==IRQ_RESTART_NO_CREDIT ||
         selector==IRQ_RESTART_FAIL_CODE || selector==IRQ_RESTART_FAIL_STACK) {
         IRQ_RESTART_ARGS args;
         LONG error;
@@ -149,7 +152,8 @@ LONG interrupt_restart_test(UQUAD address, UQUAD selector)
         error=kproc_copy_from_user_checked(&args,(VADDR)address,sizeof(args));
         if(error) return error;
         return prepare(c,space,tid,&args,selector==IRQ_RESTART_FAIL_CODE?1:
-                       selector==IRQ_RESTART_FAIL_STACK?2:selector==IRQ_RESTART_CAPTURE_ONLY?3:0);
+                       selector==IRQ_RESTART_FAIL_STACK?2:selector==IRQ_RESTART_CAPTURE_ONLY?3:
+                       selector==IRQ_RESTART_NO_CREDIT?4:0);
     }
     return EINVFN;
 }
@@ -224,7 +228,8 @@ BOOL interrupt_restart_suspend(KTHREAD_CONTEXT *c)
         xterm(-1);
         panic("IRQ restart: mapping abort returned");
     }
-    r->peer_ran=ksched_irq_restart_selected()>r->selected &&
+    r->transported=TRUE;
+    r->peer_ran=!r->suppress_credit && ksched_irq_restart_selected()>r->selected &&
         ksched_irq_restart_selected()-r->selected>=2 &&
         ksched_irq_restart_user_observed()>r->user_observed;
     /* Even an unproven handoff may have run a different kernel context.

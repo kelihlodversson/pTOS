@@ -35,7 +35,7 @@ typedef struct kthread_context {
     IRQ_RESTART irq_restart;
 #endif
 #if ARCH_X86_64 && CONF_WITH_USER_ASPACE
-    X86_USER_IRQ_CAPTURE interrupted_user; /* preallocated; no detached IRQ lifetime */
+    X86_USER_IRQ_CAPTURE interrupted_user; /* preallocated image; pending authority is separate */
 #elif ARCH_ARM && CONF_WITH_USER_ASPACE
     ARM_USER_IRQ_CAPTURE interrupted_user;
 #elif ARCH_M68K && CONF_WITH_USER_ASPACE
