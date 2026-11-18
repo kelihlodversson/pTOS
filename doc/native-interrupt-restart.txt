@@ -119,6 +119,11 @@ delayed restoration; higher-half kernels legitimately use DTT0. Exact format-0
 fresh copy-back qualifies 040 complete null/idle FPU through the existing
 save_complete/restore_complete helpers. It poisons GPR, USP and FPU state, then
 consumes the copied integer/USP image and returns through the original RTE.
+Amiberry's native 040 lane requires nonzero FPIAR and a fourth debugger-read
+test counter proving that owned copy-back actually ran, with caches off/on.
+The native 030/68882 and 060 lanes verify capture/ordinary return separately;
+they do not require or claim copied return. No test opcode or kernel address
+is exposed to user mode by this debugger evidence.
 030/060 copied restart, busy/pending/foreign FPU frames and fastcall are refused by
 copy-back eligibility. Their existing diagnostic capture/ordinary return stays.
 

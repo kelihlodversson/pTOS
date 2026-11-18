@@ -105,6 +105,21 @@ jobs:
           REQUIRE_FPIAR: "1"
         run: sh tools/ci-amiberry.sh amiga-aspace040:68060
 
+      - name: Native 68030 capture and ordinary return with 68882
+        env:
+          NATIVE_THREADS: "1"
+          AMIBERRY_FPU: "68882"
+          REQUIRE_FPIAR: "1"
+        run: sh tools/ci-amiberry.sh amiga-aspace:68030
+
+      - name: Native 68040 owned IRQ copy-back with nonzero FPIAR
+        env:
+          NATIVE_THREADS: "1"
+          AMIBERRY_FPU: "68040"
+          REQUIRE_FPIAR: "1"
+          IRQ_COPY_PROOF: "1"
+        run: sh tools/ci-amiberry.sh amiga-aspace040:68040
+
       - name: Keep the logs and the screens
         if: always()
         uses: actions/upload-artifact@v4

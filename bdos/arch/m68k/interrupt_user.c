@@ -11,13 +11,13 @@
 #include "gemerror.h"
 extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST
-/* Debugger-readable native evidence: seen, mismatch, nonzero FPIAR captures.
+/* Debugger-readable evidence: seen, mismatch, nonzero FPIAR, owned copy-backs.
  * Test-only, serialized under the entry wrapper's local IRQ exclusion. */
-ULONG m68k_irq_test_state[3];
+ULONG m68k_irq_test_state[4];
 #define irq_pattern_seen m68k_irq_test_state[0]
 #define irq_pattern_bad m68k_irq_test_state[1]
 static BOOL irq_pattern_reported;
-static ULONG irq_roundtrip_seen;
+#define irq_roundtrip_seen m68k_irq_test_state[3]
 static void check_irq_pattern(const M68K_USER_IRQ_CAPTURE *c)
 {
     UWORD i;

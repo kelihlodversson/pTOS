@@ -76,6 +76,7 @@ PYCONFIG
             irq_state=$(python3 -c "print(hex(int('$irq_state',16) & 0x7fffffff))")
         fi
         managed="$managed --irq-capture-state $irq_state"
+        [ "${IRQ_COPY_PROOF:-0}" != 1 ] || managed="$managed --require-owned-irq-copy"
     fi
 
     # an image with an address space for every process has no desktop: the
