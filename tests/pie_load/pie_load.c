@@ -144,6 +144,12 @@ static void shared_vm_multiple_lifetime(void)
                 "shared resources: each remaining child independently holds source metadata");
             probes[n].gate=1;
             for(spin=0;spin<512 && !probes[n].done && !probes[n].error;spin++) (void)Syield();
+            if(!probes[n].done || probes[n].steps!=1 || probes[n].error) {
+                shared_vm_diagnostic("shared orphan index=",(long)n);
+                shared_vm_diagnostic("shared orphan done=",(long)probes[n].done);
+                shared_vm_diagnostic("shared orphan steps=",(long)probes[n].steps);
+                shared_vm_diagnostic("shared orphan error=",(long)probes[n].error);
+            }
             ptest_assert_msg(probes[n].done && probes[n].steps==1 && !probes[n].error,
                 "shared resources: each orphan executes a grandchild after ancestor retirement");
             ptest_assert_msg(Pwaitpid(probes[n].child_pid,1,0)==-33,

@@ -180,11 +180,17 @@ int main(void)
             for(spin=0;spin<512 && !probe->gate;spin++) (void)Syield();
             if(!probe->gate) {probe->error=11;Pterm(94);}
             grandchild=(BASEPAGE *)Pexec(3,SHARED_VM_TARGET,"",0);
-            if((long)grandchild<=0) {probe->error=12;Pterm(94);}
+            if((long)grandchild<=0) {probe->error=0x12000000UL|((uint32_t)(long)grandchild&0xffff);Pterm(94);}
             probe->grandchild=(uint32_t)(uintptr_t)grandchild;
             probe->grand_environment=(uint32_t)(uintptr_t)grandchild->p_env;
-            if(Pexec(4,0,grandchild,0)!=0 || Mfree(grandchild) ||
-               Mfree((void *)(uintptr_t)probe->grand_environment)) {probe->error=15;Pterm(94);}
+            {
+                long go=Pexec(4,0,grandchild,0),freed=Mfree(grandchild),
+                     env=Mfree((void *)(uintptr_t)probe->grand_environment);
+                if(go || freed || env) {
+                    probe->error=0x15000000UL|((uint32_t)go&0xff)<<16|((uint32_t)freed&0xff)<<8|((uint32_t)env&0xff);
+                    Pterm(94);
+                }
+            }
             probe->steps++;probe->done=1;Pterm(0x33);
         }
         if(_base->p_cmdlin[1]=='o' || _base->p_cmdlin[1]=='g') {
