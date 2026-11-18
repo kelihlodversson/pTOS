@@ -68,22 +68,23 @@ CPU/MMU/physical providers. Their normal/ASan/UBSan/fortified results are not
 native shared-Pexec execution evidence. No public activation, merge or Phase5
 completion follows from these incremental tests.
 
-Shared-loader stack and inherited limits (test-gated consumer)
-------------------------------------------------------------
+Shared-loader stack and inherited limits
+----------------------------------------
 Preparation snapshots the source PROCESS priority, CORE/DATA limits and effective
 stack cap. Commit assigns them without a new fallible step; aborted preparation
-does not change the staged PROCESS policy. The shared child uses its independently
-retained, guarded resident heap stack, capped by the inherited stack limit. This
-is a bounded startup extent, not an implementation of lazy growth to that cap.
-Interpreted argc/argv/AUXV construction fits within the actual body and leaves a
-resident page below it for runtime use; excessive startup data fails preparation.
+does not change the staged PROCESS policy.
 
-The inherited scalar cap does not authorize a synthetic top-of-VA stack. Shared
-children obtain backing only from their actual heap/mmap or authenticated retained
-reservations. Callback stack bounds use the actual body. Querying the stack cap
-and setting the same normalized cap succeed; relocating/resizing this sealed
-stack returns EACCDN. Nested shared launches duplicate existing reservation holds
-rather than inventing a new default-stack owner.
+Since #1018 the child starts as FreeMiNT's exec_region() starts it: at
+p_tbase, with sp = p_hitpa - 0x28 inside its TPA and the basepage at 4(sp).
+Nothing holds that stack (the THREAD records that it uses its TPA's stack
+instead of a retained stack hold), so the child's Mshrink() can release it once
+the program has set its own stack, as on TOS. The entry is not checked: an
+entry that cannot run faults in the child.
+
+The inherited scalar cap does not authorize a synthetic top-of-VA stack. Querying
+the stack cap and setting the same normalized cap succeed; resizing it returns
+EACCDN. Nested shared launches duplicate existing reservation holds rather than
+inventing a new default-stack owner.
 
 Launch cleanup and ordinary mapping ownership
 --------------------------------------------
@@ -109,7 +110,7 @@ or merely readable PTE grants new file-backing authority.
 
 Post-#966 lifetime corrections
 -----------------------------
-Retired shared stack guard/body records keep their immutable ordinary birth,
+(Before #1018, when the child had a heap stack:) retired shared stack guard/body records kept their immutable ordinary birth,
 extent and rights until the last conflicting R2 release. The existing R4 cleanup
 fence removes the exact marked metadata after its backend commit. Early failure
 before any hold uses immediate removal. Fences never become access authority.

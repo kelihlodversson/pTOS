@@ -84,18 +84,15 @@ enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
  * All preparation is no-yield and covered by the caller's cleanup scope. */
 #define SHARED_REGIONS 96
 #define SHARED_RAW 8
-#define SHARED_STACK_BYTES (64UL*1024UL)
 struct shared_exec_regions {
     KASPACE *space;
     KPROC *parent;
     KPROC_ALLOCATION_HOLD raw[SHARED_RAW];
     KASPACE_RESERVATION_HOLD logical[SHARED_REGIONS];
     UWORD nraw,nlogical;
-    VADDR stack;ULONG stack_pages;UQUAD stack_birth,guard_birth;
     KASPACE_PERMISSION_TRANSACTION *permissions;
     KASPACE_MEMBER *mapping_members; /* owns the prepared token until clone takes it */
     BOOL committed, legacy, preparing;
-    ULONG stack_bytes;
     VADDR inherited_stack,inherited_core,inherited_data;
     SBYTE inherited_priority;
 };
@@ -2336,7 +2333,7 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
      * resident stack; the old ones stay in use until retirement. */
     {
         THREAD_STARTUP_ARGS args;
-        args.entry = b->entry; args.argument = 0;
+        args.entry = b->entry; args.argument = 0; args.flags = 0;
         if (b->stack_low) {
             args.stack_base = b->stack_low; args.stack_size = (ULONG)(USER_STACK_TOP - b->stack_low);
         } else {    /* a classic PRG: the top of its TPA */
@@ -3704,7 +3701,10 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     }
 #endif
     if (kproc->legacy)
-        kproc->stack_top = hitpa & ~3UL;    /* the top of the TPA: the program sets its own stack */
+        /* In the TPA, the program sets its own stack. As FreeMiNT's
+         * exec_region() does, the initial sp (stack_top - 8) is
+         * p_hitpa - 0x28, the basepage at 4(sp). */
+        kproc->stack_top = (hitpa - 0x20) & ~3UL;
     else
         kproc->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     if (kproc->has_image)
@@ -4603,19 +4603,11 @@ void kproc_record_rsp(PD *pd, UQUAD rsp)
 UQUAD kproc_stack_bottom(PD *pd)
 {
     KPROC *k = kproc_find(pd);
-#if CONF_WITH_NATIVE_SCHED
-    if (k && k->shared_exec)
-        return k->shared_exec->stack + USER_PAGE_SIZE;
-#endif
     return k ? USER_STACK_TOP - stack_bytes(k) : 0;
 }
 UQUAD kproc_stack_top(PD *pd)
 {
     KPROC *k = kproc_find(pd);
-#if CONF_WITH_NATIVE_SCHED
-    if (k && k->shared_exec)
-        return k->shared_exec->stack + USER_PAGE_SIZE + k->shared_exec->stack_bytes;
-#endif
     return k ? USER_STACK_TOP : 0;
 }
 #endif

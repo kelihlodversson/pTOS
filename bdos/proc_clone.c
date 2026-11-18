@@ -506,6 +506,13 @@ LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *tx)
     }
     return E_OK;
 }
+#if CONF_WITH_SHARED_VM_PEXEC
+LONG proc_clone_tpa_startup_stack(PROC_CLONE_TRANSACTION *tx)
+{
+    if (!startup_target_live(tx) || !tx->loaded_shared) return EACCDN;
+    return kthread_use_tpa_stack(tx->thread) ? E_OK : EACCDN;
+}
+#endif
 
 #if CONF_WITH_IMAGE_POLICY
 LONG proc_clone_prepare_image_policy(PROC_CLONE_TRANSACTION *tx,const KPROC_IMAGE_POLICY *policy)

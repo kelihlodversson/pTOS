@@ -19,8 +19,9 @@ LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS
         args->stack_base >= USER_VA_LIMIT ||
         args->stack_size > USER_VA_LIMIT - args->stack_base)
         return EINVAL;
-    if (!aspace_translate(space, args->entry, NULL, &prot) ||
-        (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) != (ASPACE_PROT_USER | ASPACE_PROT_EXEC) ||
+    if ((!(args->flags & THREAD_STARTUP_ENTRY_UNCHECKED) &&
+         (!aspace_translate(space, args->entry, NULL, &prot) ||
+          (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) != (ASPACE_PROT_USER | ASPACE_PROT_EXEC))) ||
         !aspace_user_range_ok(space, args->stack_base, args->stack_size, TRUE)) return EIMBA;
     return E_OK;
 }

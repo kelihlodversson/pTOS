@@ -204,7 +204,6 @@ int main(void)
         struct shared_exec_regions stack_owner={0};UWORD rights=0;
         KASPACE_RESERVATION_INFO info={0};UQUAD before=free_pages;
         source.stack_size=1024UL*1024;source.shared_exec=&stack_owner;
-        stack_owner.stack=USER_HEAP_BASE;stack_owner.stack_bytes=USER_STACK_MIN;
         kproc_list=&source;
         CHECK(kproc_psetlimit(source.pd,PSETLIMIT_STACK,-1)==1024UL*1024);
         CHECK(kproc_psetlimit(source.pd,PSETLIMIT_STACK,1024UL*1024)==1024UL*1024);

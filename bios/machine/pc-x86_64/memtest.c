@@ -2733,7 +2733,7 @@ static LONG active_clone_construct(UWORD index)
     bzero(&args,sizeof(args)); args.source = source;
     args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
     args.resources = PROC_CLONE_RESOURCE_MASK;
-    startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE;
+    startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE; startup.flags = 0;
     CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
           proc_clone_retain_startup_stack(tx) == E_OK && proc_clone_prepare_outputs(tx,data+16,data+20) == E_OK,
           "prepare real active-group PROCESS/THREAD/ASPACE and execution resources");
@@ -3821,7 +3821,7 @@ static void test_clone_execution(void)
         bzero(&args,sizeof(args)); args.source = source;
         args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
         args.resources = PROC_CLONE_COPY_STANDARD_HANDLES | PROC_CLONE_COPY_CWD;
-        startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE;
+        startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE; startup.flags = 0;
         resident_generation = procmem_next_gen();
         CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
               proc_clone_retain_startup_stack(tx) == E_OK &&
@@ -4081,7 +4081,7 @@ static void test_proc_clone_startup(void)
               "caller supplies resident writable startup stack mappings");
     }
     startup.entry = (VADDR)(uintptr_t)pd;
-    startup.argument = 0xfedcba98UL; startup.stack_base = stack; startup.stack_size = 2 * PAGE;
+    startup.argument = 0xfedcba98UL; startup.stack_base = stack; startup.stack_size = 2 * PAGE; startup.flags = 0;
     rsp = ((stack + 2 * PAGE) & ~15ULL) - 8;
     CHECK(aspace_copy_to_user(backend, rsp, &old_slot, sizeof(old_slot)), "seed prospective return slot");
     bzero(&args, sizeof(args)); args.source = source;

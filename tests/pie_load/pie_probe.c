@@ -158,7 +158,7 @@ int main(void)
             probe->resize_limit=(uint32_t)Psetlimit(0x100,probe->stack_limit+4096);
             probe->started=1;
             /* Outside the inherited 1MiB top-stack reservation and the
-             * child's actual guarded heap stack. No logical owner exists. */
+             * child's TPA. No logical owner exists. */
             *(volatile uint32_t *)(uintptr_t)0x7f001000UL=0x894;
             probe->done=1;Pterm(0x55);
         }

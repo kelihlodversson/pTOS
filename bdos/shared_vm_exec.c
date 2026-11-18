@@ -38,7 +38,7 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
         stage=3;
         error=proc_clone_prepare_startup(tx,&startup);
     }
-    if(!error) {stage=4;error=proc_clone_retain_startup_stack(tx); }
+    if(!error) {stage=4;error=proc_clone_tpa_startup_stack(tx); }
     if(!error) {stage=5;error=proc_clone_observe_async(tx,&observer); }
     if(!error && ksched_cancellation_pending()) error=EACCDN;
     if(!error) {stage=6;error=proc_clone_spawn(&tx,&ids); }

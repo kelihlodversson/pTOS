@@ -47,6 +47,9 @@ struct kthread {
     KASPACE *space;             /* owning mapping reference */
     KTHREAD *process_next;      /* borrowed process membership */
     KASPACE_LEASE *stack_hold;
+#if CONF_WITH_SHARED_VM_PEXEC
+    BOOL tpa_stack;             /* 4/104: starts on its TPA's stack, held by nobody */
+#endif
     void *execution;
     void (*reclaim_execution)(void *);
     UBYTE state;
@@ -157,12 +160,24 @@ BOOL kthread_take_stack_hold(KTHREAD *thread, KASPACE_LEASE **hold)
     thread->stack_hold = *hold; *hold = NULL;
     return TRUE;
 }
+#if CONF_WITH_SHARED_VM_PEXEC
+BOOL kthread_use_tpa_stack(KTHREAD *thread)
+{
+    if (!thread || thread->state != THREAD_NEW || thread->stack_hold || thread->tpa_stack) return FALSE;
+    thread->tpa_stack = TRUE;
+    return TRUE;
+}
+#endif
 
 #if CONF_WITH_NATIVE_SCHED
 BOOL kthread_clone_run_ready(const KTHREAD *thread)
 {
     return thread && thread->identity_only && thread->state == THREAD_NEW &&
-        thread->attached && thread->stack_hold && !thread->execution &&
+        thread->attached && (thread->stack_hold
+#if CONF_WITH_SHARED_VM_PEXEC
+        || thread->tpa_stack
+#endif
+        ) && !thread->execution &&
         (kproc_thread_is_sole(thread->process, (KTHREAD *)thread) ||
          kproc_clone_sibling_ready(thread->process, (KTHREAD *)thread, thread->space));
 }

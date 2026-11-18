@@ -119,6 +119,10 @@ LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *transaction,
                                  const THREAD_STARTUP_OBSERVER *observer, void *context);
 LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *transaction);
 LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
+#if CONF_WITH_SHARED_VM_PEXEC
+/* Instead of retaining it: the prepared stack is the child's TPA top. */
+LONG proc_clone_tpa_startup_stack(PROC_CLONE_TRANSACTION *transaction);
+#endif
 #if CONF_WITH_IMAGE_POLICY
 /* Value-only policy for an empty NEW_PROCESS target. Requires prepared startup
  * and its retained initial user stack. Existing no-fail activation installs it;

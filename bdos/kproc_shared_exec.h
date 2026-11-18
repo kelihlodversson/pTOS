@@ -103,27 +103,10 @@ static LONG shared_compat_logical(struct shared_exec_regions *set,KPROC *source,
     return error;
 }
 #endif
-static void shared_retire_stack(struct shared_exec_regions *set)
-{
-    KASPACE_HEAP *heap;ULONG i,n;
-    if(!set->stack) return;
-    heap=kaspace_heap(set->space);
-    for(n=0;n<(set->guard_birth?2UL:1UL);n++) {
-        VADDR address=set->stack+(n?USER_PAGE_SIZE:0);
-        UQUAD birth=(set->guard_birth && !n)?set->guard_birth:set->stack_birth;
-        ULONG pages=set->guard_birth?(n?set->stack_pages-1:1):set->stack_pages;
-        for(i=0;i<heap->count;i++) if(heap->blocks[i].va==address && heap->blocks[i].reservation==birth) break;
-        if(i==heap->count || heap->blocks[i].pages!=pages ||
-            !kaspace_retire_heap(set->space,address,birth))
-            panic("shared exec stack lost its exact reservation");
-    }
-    set->stack=0;
-}
 static void shared_regions_release(KPROC *process,struct shared_exec_regions *set)
 {
     if(!set) return;
     if(set->committed && process->threads) panic("shared exec release while THREADs can resume");
-    shared_retire_stack(set);
     while(set->nlogical) if(!kproc_reservation_release(&set->logical[--set->nlogical]))
         panic("shared exec reservation released twice");
     kaspace_permission_finish(&set->permissions,FALSE);
@@ -262,15 +245,14 @@ BOOL kproc_shared_exec_retire_source(void *base)
     return FALSE;
 }
 #if CONF_WITH_SHARED_VM_PEXEC
-#define SHARED_TPA_SLACK (64UL*1024UL)
+#define SHARED_START_FRAME 0x28UL /* above the startup sp: return PC, basepage */
 LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *startup,
                               KASPACE_PERMISSION_TRANSACTION **permissions)
 {
     struct shared_exec_regions *set,*inherited;
     KASPACE_PROTECTION policy[PROG_MAX_SEGMENTS];
-    KASPACE_HEAP *heap;
     ULONG i;UWORD count=0;LONG error=EACCDN;BOOL legacy=FALSE;
-    VADDR body,held;UQUAD guard_birth;
+    VADDR held;
     if(!source || source->pd!=run || !target || target==source || !startup ||
         !permissions || *permissions || !source->active_space || !target->pd ||
         target->creator!=source->pd || target->started || target->completed ||
@@ -420,57 +402,20 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     }
     /* Ordinary heap/mmap lifetime is owned solely by #968 membership and
      * exact attachments, not a second R2 sweep of all visible mappings. */
-    set->stack_bytes=SHARED_STACK_BYTES;
-    if(set->stack_bytes>set->inherited_stack) set->stack_bytes=set->inherited_stack;
-    set->stack_pages=set->stack_bytes/USER_PAGE_SIZE+1;
-    set->stack=shared_failure_point()?0:kproc_uheap_alloc(source->pd,set->stack_pages*USER_PAGE_SIZE);
-    if(!set->stack) {error=ENSMEM;goto failed;}
-    heap=kaspace_heap(set->space);
-    for(i=0;i<heap->count;i++) if(heap->blocks[i].va==set->stack) break;
-    if(i==heap->count) panic("new shared exec stack missing");
-    set->stack_birth=heap->blocks[i].reservation;
-    if(shared_failure_point() || !ordinary_heap_room(source) || !(guard_birth=kaspace_reservation_next())) {error=ENSMEM;goto failed;}
-    heap=kaspace_heap(set->space); /* growth may replace the vector */
-    if(!aspace_release_lazy(kaspace_backend(set->space),set->stack,USER_PAGE_SIZE)) {error=EACCDN;goto failed;}
-    body=set->stack+USER_PAGE_SIZE;
-    memmove(&heap->blocks[i+1],&heap->blocks[i],(heap->count-i)*sizeof(heap->blocks[0]));heap->count++;
-    heap->blocks[i].va=set->stack;heap->blocks[i].pages=1;heap->blocks[i].reservation=guard_birth;
-    heap->blocks[i].flags=KASPACE_HEAP_GUARD;
-    heap->blocks[i+1].va=body;heap->blocks[i+1].pages=set->stack_pages-1;
-    set->guard_birth=guard_birth;
-    for(i=0;i<set->stack_bytes/USER_PAGE_SIZE;i++) {
-        VADDR page=body+(VADDR)i*USER_PAGE_SIZE;
-        int backed=shared_failure_point()?-1:aspace_translate(kaspace_backend(set->space),page,NULL,NULL)?1:
-            kaspace_heap_demand_page(set->space,page,ASPACE_PROT_WRITE);
-        if(backed!=1) {error=ENSMEM;goto failed;}
+    /* Started as FreeMiNT's exec_region() does: at p_tbase, read once here,
+     * with the basepage at 4(sp) and sp = p_hitpa - 0x28, in the TPA. The
+     * child normally moves to its own stack and Mshrink()s that tail away,
+     * so nothing holds it. A p_tbase that is not executable is not refused
+     * here: the child faults on it, as it would on FreeMiNT. */
+    {
+        VADDR top=((VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_hitpa)-0x20)&~(VADDR)1;
+        VADDR base=(top-SHARED_START_FRAME)&~(VADDR)(CONF_PCLONE_STACK_ALIGNMENT-1);
+        if(base<(VADDR)(uintptr_t)target->user_start) {error=EIMBA;goto failed;}
+        startup->entry=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_tbase);
+        startup->argument=(VADDR)(uintptr_t)target->pd;
+        startup->stack_base=base;startup->stack_size=(ULONG)(top-base);
+        startup->flags=THREAD_STARTUP_ENTRY_UNCHECKED;
     }
-    SHARED_TRY(shared_logical(set,source,set->stack,USER_PAGE_SIZE,0));
-    SHARED_TRY(shared_logical(set,source,body,set->stack_bytes,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
-    /* The classic PRG entry, which receives the basepage: a staged PRG's
-     * TEXT after the basepage, else the caller's p_tbase, read once here. */
-    if(legacy) startup->entry=(VADDR)(uintptr_t)target->user_start+sizeof(PD);
-    else {
-        VADDR entry=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_tbase);
-        BOOL in_tpa=FALSE;
-#if KPROC_LEGACY_PRG
-        in_tpa=target->legacy && entry>=(VADDR)(uintptr_t)target->user_start+sizeof(PD) &&
-            entry<(VADDR)(uintptr_t)target->user_start+held && !(entry&1);
-#endif
-        if(!in_tpa && !kproc_validate_user_exec(entry)) {error=EACCDN;goto failed;}
-        startup->entry=entry;
-    }
-    startup->argument=(VADDR)(uintptr_t)target->pd;
-    startup->stack_base=body;startup->stack_size=set->stack_bytes;
-#if KPROC_LEGACY_PRG
-    /* The child runs on the stack above, not at the top of its TPA, so a
-     * pTOS-aware startup does not Mshrink() it (libcmini's minimain.c), and
-     * each staged PRG would keep up to KPROC_LEGACY_TPA_MAX of the window.
-     * Give the unheld tail back now, as its startup would on TOS, keeping
-     * some heap room above the image. Infallible: only a refused shrink
-     * keeps the TPA as it was. */
-    if(legacy && held+SHARED_TPA_SLACK<procmem_size(target->user_start))
-        (void)kproc_shrink_tpa(source->pd,target->user_start,(long)(held+SHARED_TPA_SLACK));
-#endif
     set->preparing=FALSE;
     return E_OK;
 failed:
@@ -492,7 +437,7 @@ static void shared_exec_commit(KPROC *target)
 }
 #undef SHARED_RAW
 #undef SHARED_REGIONS
-#undef SHARED_STACK_BYTES
+#undef SHARED_START_FRAME
 
 #if CONF_WITH_SHARED_VM_PEXEC
 void kproc_shared_exec_finish(KPROC *process)

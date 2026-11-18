@@ -387,6 +387,7 @@ static long clone_request(uint64_t address, uint64_t size)
         startup.argument = (VADDR)(uintptr_t)args.argument;
         startup.stack_base = (VADDR)(uintptr_t)args.stack_base;
         startup.stack_size = args.stack_size;
+        startup.flags = 0;
         result =
 #if CONF_WITH_IMAGE_POLICY_TEST
             image_policy_test ? proc_clone_start_image_policy_test(&policy,&startup) :
@@ -432,6 +433,7 @@ long xclone(uint64_t address, uint64_t size)
         startup.argument = (VADDR)(uintptr_t)args.argument;
         startup.stack_base = (VADDR)(uintptr_t)args.stack_base;
         startup.stack_size = args.stack_size;
+        startup.flags = 0;
         /* This private experiment owns its own exact cleanup scope. Ordinary
          * Pclone remains inside the unchanged factory scope below. */
         return ksched_exec_handoff_test(&startup, (UWORD)(size - EXEC_HANDOFF_RUN));

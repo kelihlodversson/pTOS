@@ -751,6 +751,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             all -= 16;                  /* (alloc_tpa() adds some) */
             if (all > (LONG)sizeof(PD))
                 p = (PD *)alloc_tpa((ULONG)(uintptr_t)path, all, &max);
+            if (p)
+                max &= ~15L;            /* an aligned p_hitpa: the stack is below it */
         }
         if (p == NULL)
 #endif
@@ -987,6 +989,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         all -= 16;                  /* (alloc_tpa() adds some) */
         if (all > needed)
             p = (PD *)alloc_tpa(hdr.h01_flags, all, &max);
+        if (p)
+            max &= ~15L;                /* an aligned p_hitpa: the stack is below it */
     }
 #endif
     if (p == NULL)

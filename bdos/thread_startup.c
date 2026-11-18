@@ -71,8 +71,9 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
 #if CONF_WITH_SAVED_RETURN
         if (!error && saved) error = thread_startup_arch_saved_return(draft->image, saved);
 #endif
-        if (!error) error = kaspace_lease_acquire(space, args->entry, 1,
-            ASPACE_PROT_USER | ASPACE_PROT_EXEC, &draft->leases[0]);
+        if (!error && !(args->flags & THREAD_STARTUP_ENTRY_UNCHECKED))
+            error = kaspace_lease_acquire(space, args->entry, 1,
+                ASPACE_PROT_USER | ASPACE_PROT_EXEC, &draft->leases[0]);
         if (!error) error = kaspace_lease_acquire(space, thread_startup_arch_bridge_address(draft->bridge), 1,
             ASPACE_PROT_USER | ASPACE_PROT_EXEC, &draft->leases[1]);
         /* Entire supplied stack, including alignment discard and red zone.
@@ -155,7 +156,8 @@ LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
     {
         UWORD i;
         for (i = 0; i < 5; i++)
-            if ((i < 3 || draft->leases[i]) && !kaspace_lease_valid(draft->leases[i])) return EIMBA;
+            if (((i < 3 && (i || !(draft->args.flags & THREAD_STARTUP_ENTRY_UNCHECKED))) || draft->leases[i]) &&
+                !kaspace_lease_valid(draft->leases[i])) return EIMBA;
         for (i = 0; i < 2; i++)
             if (draft->outputs[i] && !aspace_copy_to_user_ok(kaspace_backend(draft->space),
                     draft->outputs[i], 4)) return EIMBA;

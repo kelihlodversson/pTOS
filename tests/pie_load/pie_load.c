@@ -136,9 +136,8 @@ static void shared_vm_multiple_lifetime(void)
         ptest_assert_msg((result>>16)==pid && (result&65535)==0x32,
             "shared resources: parent completes before both live children");
         shared_vm_snapshot(&snapshots[2]);
-        ptest_assert_msg(snapshots[2].count[SP_RAW_HOLDS]>snapshots[0].count[SP_RAW_HOLDS] &&
-            snapshots[2].count[SP_RETIRED_HEAP]>=snapshots[0].count[SP_RETIRED_HEAP]+2,
-            "shared resources: retired parent's exact stack births and raw owners remain retained");
+        ptest_assert_msg(snapshots[2].count[SP_RAW_HOLDS]>snapshots[0].count[SP_RAW_HOLDS],
+            "shared resources: retired parent's raw owners remain retained");
         for(n=1;n<=2;n++) {
             ptest_assert_msg(Mfree(image)==-36 && Mfree(env)==-36,
                 "shared resources: each remaining child independently holds source metadata");
@@ -433,7 +432,9 @@ static void shared_vm_preparation_sweep(void)
             ptest_assert_msg(Mfree(image)==0 && Mfree(env)==0,"shared failure sweep: caller final ownership release");
             if(result!=(interpreted?77:0)) break; /* preserve failure; later prefixes cannot run */
         }
-        ptest_assert_msg(step<256 && last>16,"shared failure sweep: all finite meaningful acquisition prefixes executed");
+        /* 11 points since the child starts on its TPA's stack (#1018), not
+         * on a heap stack the preparation allocated and backed */
+        ptest_assert_msg(step<256 && last>8,"shared failure sweep: all finite meaningful acquisition prefixes executed");
         shared_vm_diagnostic(interpreted?"shared interpreted preparation points=":"shared static preparation points=",last);
     }
     conws("native shared-VM exhaustive preparation prefixes and exact rollback conservation: tested\r\n");
@@ -777,42 +778,55 @@ static void shared_vm_staged_retirement(void)
 /* MiNTLib's tfork(): Pexec(5) makes a basepage, p_tbase is set to a
  * function of this program, and Pexec(4/104) starts it as a distinct
  * PROCESS sharing this address space, with the basepage as its argument
- * (#1018). An entry outside executable memory is refused. */
+ * (#1018). As on FreeMiNT, an entry that cannot run is not refused: the
+ * child faults on it and the fault is its exit status. */
 static volatile long tfork_seen;
 static void tfork_entry(BASEPAGE *bp)
 {
     tfork_seen=(long)bp;
     Pterm(0x2a);
 }
+static long shared_vm_tfork_run(int mode,void (*entry)(BASEPAGE *),BASEPAGE **made)
+{
+    BASEPAGE *bp=(BASEPAGE *)Pexec(5,0,"",0);
+    long result;
+    *made=NULL;
+    ptest_assert_msg((long)bp>0,"shared tfork: mode 5 basepage");
+    if((long)bp<=0) return (long)bp;
+    *made=bp;
+    bp->p_tbase=entry?(char *)(uintptr_t)entry:(char *)0x10;
+    result=Pexec(mode,0,bp,0);
+    if(mode==104 && result>0) {
+        long waited=Pwaitpid(result,0,0);
+        ptest_assert_msg((waited>>16)==result,"shared tfork: 104 child PID through the canonical wait");
+        ptest_assert_msg(Pwaitpid(result,1,0)==-33,"shared tfork: one public reap");
+        result=waited&65535;
+    }
+    return result;
+}
 static void shared_vm_tfork(void)
 {
-    static long data_word;
     unsigned i;
     for(i=0;i<2;i++) {
-        BASEPAGE *bp=(BASEPAGE *)Pexec(5,0,"",0);
-        char *env;long result;
-        ptest_assert_msg((long)bp>0,"shared tfork: mode 5 basepage");
-        if((long)bp<=0) continue;
-        env=bp->p_env;tfork_seen=0;
-        bp->p_tbase=(char *)(uintptr_t)&data_word;
-        ptest_assert_msg(Pexec(i?104:4,0,bp,0)==-36,"shared tfork: non-executable p_tbase refused");
-        bp->p_tbase=(char *)(uintptr_t)tfork_entry;
-        result=Pexec(i?104:4,0,bp,0);
-        if(i && result>0) {
-            long waited=Pwaitpid(result,0,0);
-            ptest_assert_msg((waited>>16)==result && (waited&65535)==0x2a,
-                "shared tfork: 104 child PID/status through the canonical wait");
-            ptest_assert_msg(Pwaitpid(result,1,0)==-33,"shared tfork: one public reap");
-        } else ptest_assert_msg(!i && result==0x2a,"shared tfork: mode 4 runs to its exit status");
-        ptest_assert_msg(tfork_seen==(long)bp,"shared tfork: entered at p_tbase with its basepage, shared data");
-        ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: caller still owns basepage and environment");
+        int mode=i?104:4;
+        BASEPAGE *bp;char *env;long result;
+        result=shared_vm_tfork_run(mode,NULL,&bp);
+        shared_vm_diagnostic("shared tfork bad entry status=",result);
+        ptest_assert_msg(result>=0 && !(result&0xff) && (result>>8)!=0,
+            "shared tfork: an entry that cannot run faults in the child");
+        if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: faulted basepage stays the caller's"); }
+        tfork_seen=0;
+        result=shared_vm_tfork_run(mode,tfork_entry,&bp);
+        ptest_assert_msg(result==0x2a,"shared tfork: 4/104 run to the child's exit status");
+        ptest_assert_msg(bp && tfork_seen==(long)bp,"shared tfork: entered at p_tbase with its basepage, shared data");
+        if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: caller still owns basepage and environment"); }
     }
     conws("native shared-VM tfork mode-5 basepage at p_tbase: tested\r\n");
 }
 /* A loader's pattern on TOS: Pexec(5/7) makes a basepage and TPA, the
  * loader puts the program's code in that TPA and starts it with Pexec(4),
- * 104 or 6. The child is entered at p_tbase with the PRG protocol: A0=0
- * and the basepage at 4(sp) (#1018). */
+ * 104 or 6. The child is entered at p_tbase as FreeMiNT does: A0=0, the
+ * basepage at 4(sp) and sp at p_hitpa - 0x28, in the TPA (#1018). */
 extern const char loaded_prg[],loaded_prg_end[];
 __asm__(
     "    .text\n"
@@ -827,9 +841,15 @@ __asm__(
     "    lea     loaded_prg(%pc),%a2\n"
     "    cmpa.l  8(%a1),%a2\n"           /* p_tbase */
     "    bne.s   1f\n"
+    "    moveq   #0x14,%d1\n"
+    "    move.l  %sp,0x100+0x64(%a1)\n"     /* for the caller's diagnostics */
+    "    move.l  %sp,%d0\n"
+    "    addi.l  #0x28,%d0\n"
+    "    cmp.l   4(%a1),%d0\n"            /* sp = p_hitpa - 0x28, as on FreeMiNT */
+    "    bne.s   1f\n"
     "    moveq   #0x13,%d1\n"
-    "    move.l  %a1,0x100+64(%a1)\n"   /* the TPA is the child's to write */
-    "    cmpa.l  0x100+64(%a1),%a1\n"
+    "    move.l  %a1,0x100+0x60(%a1)\n"   /* the TPA is the child's to write */
+    "    cmpa.l  0x100+0x60(%a1),%a1\n"
     "    bne.s   1f\n"
     "    moveq   #0x2b,%d1\n"
     "1:  move.w  %d1,-(%sp)\n"
@@ -852,13 +872,16 @@ static void shared_vm_loaded_prg(void)
         bp->p_tbase=text;bp->p_tlen=size;
         bp->p_dbase=text+size;bp->p_dlen=0;
         bp->p_bbase=text+size;bp->p_blen=0x40;
+        *(long *)((char *)bp+0x100+0x64)=0;
         result=Pexec(modes[i],0,bp,0);
         if(modes[i]==104 && result>0) {
             long waited=Pwaitpid(result,0,0);
             ptest_assert_msg((waited>>16)==result && (waited&65535)==0x2b,
                 "loaded PRG: 104 child entered with the PRG protocol");
         } else {
-            if(result!=0x2b) { conws("loaded PRG result: ");
+            if(result!=0x2b) { shared_vm_diagnostic("loaded PRG hitpa=",(long)bp->p_hitpa);
+                shared_vm_diagnostic("loaded PRG sp=",*(long *)((char *)bp+0x100+0x64));
+                conws("loaded PRG mode ");Cconout('0'+modes[i]%10);conws(" result: ");
                 {unsigned n;for(n=0;n<8;n++) Cconout("0123456789abcdef"[((unsigned long)result>>(28-4*n))&15]);} conws("\r\n"); }
             ptest_assert_msg(result==0x2b,"loaded PRG: 4/6 child entered with the PRG protocol");
         }

@@ -11,7 +11,11 @@ typedef struct { THREAD_STARTUP_STACK syscall, scheduler; } THREAD_STARTUP_STACK
 typedef struct {
     VADDR entry, argument, stack_base;
     ULONG stack_size;
+    UWORD flags;
 } THREAD_STARTUP_ARGS;
+/* The entry need not be executable: like FreeMiNT's Pexec(4/104), a bad
+ * entry faults in the started THREAD instead of failing the start. */
+#define THREAD_STARTUP_ENTRY_UNCHECKED 1
 /* All arguments are normalized kernel values, not a user structure. Requires
  * resident mappings; backing/COW must be completed before prepare. It never
  * faults in or writes user memory. Retains ASPACE

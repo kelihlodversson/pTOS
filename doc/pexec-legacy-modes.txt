@@ -45,20 +45,29 @@ On MMU ARM and x32 the staged modes are refused with EINVFN before the
 arguments are read (bdos/uaccess.c) and again at the GEMDOS entry
 (xexec()), so no image is allocated and no ownership moves.
 
-Shared-VM 4/104 starts a staged mode-3 PRG at its loader-recorded text
-(user_start + sizeof(PD)), and a basepage the caller made with mode 5/7 at
-its p_tbase. On the m68k MMU kernels mode 5/7 gives a program basepage the
-classic TPA (the free memory, up to 1 MiB), so a loader can put code in it,
-point p_tbase there and start it with 4, 104 or 6, as on TOS; the TPA up to
-the end of the text, data and bss the caller states (at least the basepage)
-is held and made executable for the child, and the rest stays the child's to
-Mshrink(). A p_tbase outside the TPA, as MiNTLib's tfork() uses, must already
-be executable in the shared address space (EACCDN otherwise). Every entry
-gets the PRG protocol: A0 = 0 and the basepage at 4(sp). The child runs on
-a kernel-allocated stack, so pTOS-aware startup code does not Mshrink() its
-TPA: a successful start gives a staged PRG's TPA back down to its image
-(basepage, text, data, bss) plus 64 KiB, which is also all the shared-VM
-preparation holds.
+FreeMiNT (sys/k_exec.c, sys_pexec() and exec_region()) is the reference
+for how 4/6/104/106 start a basepage. Every start enters at p_tbase with
+A0 = 0, sp = p_hitpa - 0x28 inside the TPA and the basepage at 4(sp); the
+program sets its own stack and Mshrink()s the rest, as on TOS. Modes 4 and
+104 start a PROCESS sharing the caller's address space (4 waits for it, 104
+returns its PID); 6 and 106 start one with an address space of its own,
+which takes the basepage over.
+
+The basepage may come from mode 3 (a PRG) or from mode 5/7. On the m68k MMU
+kernels mode 5/7 gives a program basepage the classic TPA (the free memory,
+up to 1 MiB, its end aligned), so a loader can put code in it, point
+p_tbase there and start it. For such a basepage the shared-VM preparation
+holds the TPA up to the end of the text, data and bss the caller states (at
+least the basepage) and makes it executable; for a staged PRG it holds the
+loaded image. Nothing holds the TPA above that, where the startup stack is,
+so the child's Mshrink() can release it. A p_tbase that cannot run is not
+refused: as on FreeMiNT, the child faults on it and the fault is its exit
+status. MiNTLib's tfork() points p_tbase at a function of the caller.
+
+Unlike FreeMiNT, a basepage starts once: the staged basepage becomes the
+child, so a second 4/104 of it is refused (EIMBA), as is the caller's own
+basepage or a running one. Each start forking a new PROCESS from a
+caller-owned basepage, as FreeMiNT does, is a follow-up.
 
 Non-MMU ARM is to be deprecated and is left unchecked: it has no user/kernel
 boundary, so it keeps the staged modes exactly as before and does not tell
