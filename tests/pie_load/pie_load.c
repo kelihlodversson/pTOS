@@ -856,6 +856,24 @@ __asm__(
     "    move.w  #0x4c,-(%sp)\n"
     "    trap    #1\n"
     "loaded_prg_end:\n");
+/* The message names the mode, the status (0x11 A0, 0x12 p_tbase, 0x14 sp,
+ * 0x13 TPA write) and the sp the child saw, for a CI log that shows only
+ * failed assertions. */
+static const char *loaded_prg_failure(int mode,long status,long sp)
+{
+    static char text[96];
+    static const char hex[]="0123456789abcdef";
+    char *out=text;const char *in;unsigned n;
+    for(in="loaded PRG: mode ";*in;) *out++=*in++;
+    if(mode>=100) *out++='1',*out++='0';
+    *out++='0'+mode%10;
+    for(in=" child entered with the PRG protocol, status ";*in;) *out++=*in++;
+    for(n=0;n<8;n++) *out++=hex[((unsigned long)status>>(28-4*n))&15];
+    for(in=" sp ";*in;) *out++=*in++;
+    for(n=0;n<8;n++) *out++=hex[((unsigned long)sp>>(28-4*n))&15];
+    *out=0;
+    return text;
+}
 static void shared_vm_loaded_prg(void)
 {
     static const short modes[] = { 4, 104, 6 };
@@ -877,13 +895,10 @@ static void shared_vm_loaded_prg(void)
         if(modes[i]==104 && result>0) {
             long waited=Pwaitpid(result,0,0);
             ptest_assert_msg((waited>>16)==result && (waited&65535)==0x2b,
-                "loaded PRG: 104 child entered with the PRG protocol");
+                loaded_prg_failure(104,waited,*(long *)((char *)bp+0x100+0x64)));
         } else {
-            if(result!=0x2b) { shared_vm_diagnostic("loaded PRG hitpa=",(long)bp->p_hitpa);
-                shared_vm_diagnostic("loaded PRG sp=",*(long *)((char *)bp+0x100+0x64));
-                conws("loaded PRG mode ");Cconout('0'+modes[i]%10);conws(" result: ");
-                {unsigned n;for(n=0;n<8;n++) Cconout("0123456789abcdef"[((unsigned long)result>>(28-4*n))&15]);} conws("\r\n"); }
-            ptest_assert_msg(result==0x2b,"loaded PRG: 4/6 child entered with the PRG protocol");
+            ptest_assert_msg(result==0x2b,loaded_prg_failure(modes[i],result,
+                modes[i]==6?0:*(long *)((char *)bp+0x100+0x64)));
         }
         if(modes[i]!=6) ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"loaded PRG: caller still owns basepage and environment");
     }

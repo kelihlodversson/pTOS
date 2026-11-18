@@ -12,6 +12,7 @@
 #include "process_completion.h"
 #include "biosext.h"
 #include "kprint.h"
+#include "aspace32.h"
 extern PD *run;
 LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
 {
@@ -41,6 +42,10 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
     if(!error) {stage=4;error=proc_clone_tpa_startup_stack(tx); }
     if(!error) {stage=5;error=proc_clone_observe_async(tx,&observer); }
     if(!error && ksched_cancellation_pending()) error=EACCDN;
+    /* As FreeMiNT's exec_region() does (cpushi of the text): code the
+     * caller put in the TPA went in through the data side, so publish it
+     * before the child's first fetch (68040/68060 copyback caches). */
+    if(!error) aspace_hw_code_changed();
     if(!error) {stage=6;error=proc_clone_spawn(&tx,&ids); }
     if(!error) kproc_shared_exec_finish(target);
 done:
