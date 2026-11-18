@@ -121,6 +121,20 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sectio
     -Ibios/machine/pc-x86_64 -Ibios/arch/x86_64 -Ibios -Iutil \
     tests/x32_irq_capture.c -Wl,--gc-sections -o "$work/irq-capture"
 "$work/irq-capture"
+# Exercise the actual CPU storage declaration from two translation units.
+# Partitioned LTO must resolve the run alias after LTRANS; normal/ASan builds
+# must keep their single complete CPU global without a pointer-sized alias.
+for alias_mode in ordinary lto; do
+    alias_flags=
+    if [ "$alias_mode" = lto ]; then
+        alias_flags='-flto=4 -flto-partition=max -DPTOS_LTO_RUN_ALIAS -Wl,--defsym,run=boot_cpu'
+    fi
+    ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function \
+        -ffunction-sections -fdata-sections $alias_flags \
+        -iquote include -I"$work" -Iinclude/arch/x86_64 -iquote bdos -iquote fs \
+        tests/sched_cpu_alias.c tests/sched_run_abi.c -Wl,--gc-sections -o "$work/cpu-alias"
+    "$work/cpu-alias"
+done
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
     -iquote bdos/arch/x86_64 tests/thread_startup.c bdos/thread_startup.c bdos/kaspace.c \

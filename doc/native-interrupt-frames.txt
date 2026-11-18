@@ -411,7 +411,7 @@ B2 architecture preparation follow-up (no deferred restart)
 -----------------------------------------------------------
 native-interrupt-restart.txt records the current per-architecture gaps, strict
 hardware-control qualification, ARM and 040 format-0 fresh copied-return probes,
-and the narrow post-#1017 scheduler resume transaction. These additions reuse
+and the narrow remaining B2 scheduler resume transaction. These additions reuse
 the existing THREAD-owned images and original IRQ epilogues; they do not change
 root's diagnostic invalidation or make an image runnable. Unsupported profiles
 retain ordinary IRQ return. Native same-entry copy-back and capture evidence

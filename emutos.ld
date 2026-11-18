@@ -19,6 +19,13 @@
 #define C_SYM0(prefix, name) C_SYM1(prefix, name)
 #define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
 
+#if CONF_WITH_NATIVE_SCHED && defined(PTOS_LTO_RUN_ALIAS)
+/* A top-level assembler .set cannot alias storage in a different LTRANS
+ * object. Resolve the frozen TOS run ABI after LTO, without a C pointer-sized
+ * alias (which would register overlapping ASan globals). */
+C_SYM(run) = C_SYM(boot_cpu);
+#endif
+
 #if !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM) && !defined(MACHINE_VIRT_M68K)
 /* Create a plain binary file, without any header (not possible on ARM).
  * MACHINE_VIRT_M68K is excluded for a different reason than the ARM

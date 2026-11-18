@@ -3,10 +3,11 @@ Phase B2 interrupted-user restart: preparation and integration boundary (#713)
 
 Source and branch
 -----------------
-Independent source: a04e35a9e0df5ac347b0b5ae6ed58f6ec2eef952, the accepted
-head of epic/889-process-scheduling when this branch was created. No unmerged
-#1017 commits are incorporated. #1017 owns managed Pexec(0), exact-child wait,
-completion claims, cancellation/orphan policy and their PROCESS state machines.
+Original source: a04e35a9e0df5ac347b0b5ae6ed58f6ec2eef952. The twelve
+architecture-preparation commits were rebased onto accepted epic head
+5169521fcb5ca1fbda19a544e4ac2de993cd9722 after #1017 merged. Its managed
+Pexec(0), exact-child wait, completion claims and cancellation/orphan policy
+are the canonical PROCESS state machines, not an outstanding dependency.
 This increment does not change those interfaces or enable production preemption.
 
 Audit of the accepted B1 foundation
@@ -47,8 +48,8 @@ changes. Diagnostic FSAVE skips data/control registers in null state and does
 not qualify busy/pending images for remote restart. Fastcall and extended
 exception formats cannot be inferred from successful ordinary RTE tests.
 
-Required post-#1017 handoff integration
---------------------------------------
+Remaining B2 handoff integration on the accepted #1017 model
+----------------------------------------------------------
 Use the existing dispatcher, task, KTHREAD, PROCESS, KASPACE and backend images.
 Add transaction metadata, not another context representation or owner registry:
 
@@ -68,7 +69,9 @@ Add transaction metadata, not another context representation or owner registry:
 4. A dedicated restricted handoff publishes the prepared return kind and parks
    A on its retained stack, outside leaf exclusion. It uses the existing root
    and runnable selection, not ksched_yield's syscall selftests/cancellation or
-   a new wait predicate. Root acknowledges A's departure before releasing its
+   another owned wait/claim protocol. A bounded always-ready bare block may
+   transport the retained outer return without installing a cancel boundary.
+   Root acknowledges A's departure before releasing its
    CPU claim; acknowledgement of diagnostic capture is not resume disposal.
 5. Let B execute. Revalidate A's owner/generation, mapping holds and restored
    architecture control context before installing its saved image. A remains
@@ -78,11 +81,21 @@ Add transaction metadata, not another context representation or owner registry:
    exit, replacement and shutdown must detach the resume operation before root
    reuse/reap, release owners only off their stacks and never revive stale IDs.
 
+Managed synchronous Pexec(0) now creates an independent PROCESS anchor and
+uses ksched_wait_exact. Callbacks, unmanaged callers and the explicit nested
+test override retain the carrier path. IRQ eligibility must authenticate the
+selected execution and loaded launcher, not infer ownership from a PD alone.
+The exact-child claim lives on the child task. Parent cancellation releases
+the claim before the parent's ordinary exit orphans that child; it must not
+dispose a child's retained IRQ operation. Pexec(200) preserves an exact
+waiter's child claim across replacement. Its execution-resource retirement
+hook must move retained IRQ owners before context erasure and put them only
+after the fresh context/startup has been installed, outside the leaf.
+
 This changes the scheduler's execution handoff/retirement contract. Integrate
-that narrow seam on top of accepted #1017 and the required B1 owner/mapping
-synchronization, rather than carrying a competing cancellation/admission state
-machine in this independent architecture branch. PROCESS creation, Pexec(0)
-and ksched_wait_exact stay with #1017. No scheduler policy changes are implied.
+only that narrow seam on top of the accepted mechanisms. PROCESS creation,
+Pexec(0) and ksched_wait_exact remain unchanged; no second cancellation,
+admission or reaping protocol is needed. No scheduler policy changes are implied.
 
 Evidence classification
 ------------------------
@@ -128,8 +141,14 @@ is exposed to user mode by this debugger evidence.
 copy-back eligibility. Their existing diagnostic capture/ordinary return stays.
 
 No preparation predicate is a runnable capability. There are no new retained
-owners or pending-return states, and no changes to native_sched.c, proc.c,
-ksched.h, PROCESS creation/wait/reaping/admission or Pexec(0). Root invalidation
+owners or pending-return states. The sole native_sched.c preparation fix gives
+the existing boot_cpu object stable hidden linkage under LTO; emutos.ld resolves
+its run alias after all LTO partitions are linked. This avoids an assembler
+.set losing its target in a different partition. LTO remains enabled, including
+for native_sched.c in the native 030 configuration. There is still one complete
+CPU storage object and
+no overlapping C alias. proc.c, ksched.h, PROCESS creation/wait/reaping/admission
+and Pexec(0) are unchanged. Root invalidation
 is unchanged. The native proof gates deliberately require separate copy-back
 markers alongside the full regression/shutdown verdicts; they are not B2's
 missing IRQ-A -> B -> A marker.

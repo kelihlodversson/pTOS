@@ -350,7 +350,7 @@ test timeout or a relaxed owner/event assertion.
 B2 interrupted-return ownership preparation
 -------------------------------------------
 See native-interrupt-restart.txt for the current architecture preparation and
-required post-#1017 resume transaction. Hardware-control equality and copied
+required remaining B2 resume transaction. Hardware-control equality and copied
 same-entry return do not supply durable mapping/stack ownership, a selected
 return kind, cancellation disposal or root/return acknowledgment. No existing
 PROCESS wait, Pexec(0) policy or cooperative admission contract is changed.
