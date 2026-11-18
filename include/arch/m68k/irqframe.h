@@ -135,10 +135,13 @@ extern ULONG m68k_irq_test_state[3];
     jsr C_SYM(m68k_capture_user_irq)
     addq.l #4,sp
 #endif
-    move.w (sp),sr
+    move.w (sp),d0 /* Original D0 remains in the MOVEM image. */
     addq.l #4,sp
     move.l (sp)+,a0
     move.l a0,usp /* Consume the user-bank prefix before restoring A0. */
+    /* Keep IPL7 until USP is valid, including the test's poisoned bank.
+     * A higher-priority IRQ must never observe that temporary state. */
+    move.w d0,sr
     movem.l (sp)+,d0-d7/a0-a6
 .endm
 #endif
