@@ -894,10 +894,12 @@ static void test_aspace(void)
     same(&s, "aspace");
 }
 
-/* A basepage as Pexec(PE_BASEPAGEFLAGS) creates it; 0 on failure. */
+/* A basepage as Pexec(PE_BASEPAGEFLAGS) creates it; 0 on failure. Also
+ * called while a ring-3 process is current (clone scenarios), so it is the
+ * kernel's own request through the self-test entry, not the GEMDOS one. */
 static PD *new_basepage(void)
 {
-    long rc = Pexec(PE_KERNEL|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", NULL);
+    long rc = xexec_selftest(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", NULL);
 
     CHECK(rc > 0, "basepage creation");     /* never a silent skip */
     return (rc > 0) ? (PD *)(uintptr_t)rc : NULL;
