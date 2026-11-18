@@ -11,6 +11,7 @@
 #include "procmem.h"
 #include "process_completion.h"
 #include "biosext.h"
+#include "kprint.h"
 extern PD *run;
 LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
 {
@@ -43,11 +44,8 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
     if(!error) {stage=6;error=proc_clone_spawn(&tx,&ids); }
     if(!error) kproc_shared_exec_finish(target);
 done:
-#if CONF_WITH_SHARED_VM_PEXEC
-    if(error) kcprintf("shared VM preparation stage=%u error=%ld\n",stage,(long)error);
-#else
+    if(error) KDEBUG(("shared VM preparation stage=%u error=%ld\n",stage,(long)error));
     UNUSED(stage);
-#endif
     proc_clone_abort(&tx);
     /* A rejected live/foreign/self target may already own a committed set.
      * Only successful preparation by this invocation grants abort authority.

@@ -619,11 +619,65 @@ if grep -q '^#define CONF_WITH_IMAGE_POLICY_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native immutable image policy capture/activation/rollback and exact resource conservation: PASS' "$suite_log"; then
     record "native immutable image policy" FAIL "configured capture/activation/rollback assertions did not execute"
 fi
-# 68k compatibility only (#1018): a staged PRG started with Pexec 4/104.
-if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
-   ! grep -aqF 'native shared-VM PRG Pexec4/104 entry, status and shared data: tested' "$suite_log"; then
-    record "native shared-Pexec PRG" FAIL "PRG assertions did not execute"
+# m68k MMU (#1018): Pexec 4/104 of a staged PRG or a caller-made basepage.
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h"; then
+    for marker in \
+        'native shared-VM Pexec4/104 execution and canonical reap: tested' \
+        'native shared-VM tfork mode-5 basepage at p_tbase: tested' \
+        'native shared-VM full-status/fault and canonical wait: tested' \
+        'native shared-VM unstarted-child source retirement: tested' \
+        'native shared-VM running orphan and nested unstarted cleanup: tested' \
+        'native shared-VM orphan grandchild execution after source retirement: tested' \
+        'native shared-VM inherited limits and exact stack authority: tested' \
+        'native shared-VM live-target and self-relaunch ownership rejection: tested' \
+        'native shared-VM PRG Pexec4/104 entry, status and shared data: tested'; do
+        if ! grep -aqF "$marker" "$suite_log"; then
+            record "native shared-Pexec execution" FAIL "missing consumer assertion: $marker"
+        fi
+    done
+    if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM PROCESS-local group cancellation and orphan survival: tested' "$suite_log"; then
+        record "native shared-Pexec group exit" FAIL "PROCESS-local group assertion did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM final-THREAD completion and competing waiter: tested' "$suite_log"; then
+        record "native shared-Pexec final THREAD" FAIL "managed lifetime assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        for marker in \
+            'native shared-VM constructor/observer/prepublication rollback and retry: tested' \
+            'native shared-VM production kernel memmove overlap: tested' \
+            'native shared-VM four-boundary resource conservation and multiple surviving orphans: tested' \
+            'native shared-VM exhaustive preparation prefixes and exact rollback conservation: tested'; do
+            if ! grep -aqF "$marker" "$suite_log"; then
+                record "native shared-Pexec ownership/cancellation" FAIL "missing consumer assertion: $marker"
+            fi
+        done
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PTHJOIN 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM Pclone and nested source convergence, wait ABIs and protected cancellation: tested' "$suite_log"; then
+        record "native shared-Pexec protected wait" FAIL "logical-owner and cancellation assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM absent file backing and resident file-COW: tested' "$suite_log"; then
+        record "native shared-Pexec file mappings" FAIL "file backing/COW assertions did not execute"
+    fi
 fi
+
+# Native revoked-result marker.
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native shared-VM private result Mprot/Munmap during wait and exact conservation: tested' "$suite_log"; then
+    record "native shared-Pexec result revocation" FAIL "configured blocked-copyout assertions did not execute"
+fi
+# End native revoked-result marker.
 
 # A managed THREAD's Pexec(0) children are anchors (#1015).
 if grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&

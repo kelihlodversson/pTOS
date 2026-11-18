@@ -2210,6 +2210,15 @@ endif
 
 TEST_PIE_FILES = pieprobe.tos
 
+ifeq ($(CONF_WITH_SHARED_VM_PEXEC),y)
+# Shared-VM Pexec 4/104 starts a staged PRG (#1018): the same probe, linked
+# as the PRG the test suite stages with mode 3.
+PIEPRG.TOS: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_PIE_FILES += PIEPRG.TOS
+TOCLEAN += PIEPRG.TOS
+endif
+
 # LOADFAIL.TOS has a valid ELF header and program-header table, but omits
 # its loadable segment.  It reaches xexec()'s post-allocation load failure
 # cleanup path, unlike a file rejected by kpgmhdrld().

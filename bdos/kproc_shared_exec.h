@@ -280,9 +280,15 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         target->legacy_text_bytes &&
         target->legacy_text_bytes<=(VADDR)(target->user_end-target->user_start)-sizeof(PD);
 #endif
-    /* #1018: a staged 68k PRG only, entered with the classic PRG convention;
-     * its text extent is the loader's trusted snapshot. */
-    if(!legacy) return EINVFN;
+    /* #1018: GO enters with the classic PRG convention, the basepage as its
+     * argument. A staged PRG (mode 3) starts at its loader-recorded text; a
+     * basepage the caller made (mode 5/7, as MiNTLib's tfork() does) at its
+     * p_tbase, which must already be executable in the shared space. */
+    if(!legacy && (target->has_image
+#if KPROC_LEGACY_PRG
+        || target->legacy_text_recorded
+#endif
+        )) return EINVFN;
     if(shared_failure_point()) return ENSMEM;
     set=kalloc(sizeof(*set));if(!set) return ENSMEM;memset(set,0,sizeof(*set));
     set->space=kaspace_share(source->active_space);set->parent=kproc_retain_live(source);
@@ -317,7 +323,7 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         SHARED_TRY(kproc_allocation_duplicate(&inherited->raw[i],&set->raw[set->nraw]));
         set->nraw++;
     }
-    {
+    if(legacy) {
 #if KPROC_LEGACY_PRG
         VADDR base=(VADDR)(uintptr_t)target->user_start;
         VADDR bytes=procmem_size(target->user_start);
@@ -387,8 +393,15 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     }
     SHARED_TRY(shared_logical(set,source,set->stack,USER_PAGE_SIZE,0));
     SHARED_TRY(shared_logical(set,source,body,set->stack_bytes,ASPACE_PROT_USER|ASPACE_PROT_WRITE));
-    /* The classic PRG entry: the TEXT after the basepage, which it receives. */
-    startup->entry=(VADDR)(uintptr_t)target->user_start+sizeof(PD);startup->argument=(VADDR)(uintptr_t)target->pd;
+    /* The classic PRG entry, which receives the basepage: a staged PRG's
+     * TEXT after the basepage, else the caller's p_tbase, read once here. */
+    if(legacy) startup->entry=(VADDR)(uintptr_t)target->user_start+sizeof(PD);
+    else {
+        VADDR entry=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_tbase);
+        if(!kproc_validate_user_exec(entry)) {error=EACCDN;goto failed;}
+        startup->entry=entry;
+    }
+    startup->argument=(VADDR)(uintptr_t)target->pd;
     startup->stack_base=body;startup->stack_size=set->stack_bytes;
     set->preparing=FALSE;
     return E_OK;
