@@ -33,6 +33,6 @@ with tempfile.TemporaryDirectory(prefix='ptos-elf-startup-') as directory:
             flags += ['-D_FORTIFY_SOURCE=3', '-fstack-protector-strong']
         backend = 'bdos/arch/x86_64/thread_startup_x32.c' if arch == 'x86_64' else 'bdos/thread_startup32.c'
         cmd = shlex.split(os.environ.get('HOSTCC', 'cc')) + ['-std=gnu90', '-O2', '-g', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections', '-Dsetjmp=fixture_setjmp', '-iquote', 'include', '-I' + str(work), '-Iinclude/arch/' + arch, '-Iinclude/machine/' + preset.removesuffix('-aspace'), '-iquote', 'bdos', '-iquote', 'bdos/arch/x86_64', '-idirafter', 'include'] + flags
-        subprocess.run(cmd + ['tests/elf_thread_startup.c', 'bdos/thread_startup.c', backend, 'bdos/thread_return.c', 'bdos/kthread_context.c', 'bdos/kaspace.c', '-Wl,--gc-sections', '-o', str(work / 'test')], check=True)
+        subprocess.run(cmd + ['tests/elf_thread_startup.c', 'bdos/thread_startup.c', backend, 'bdos/thread_return.c', 'bdos/kthread_context.c', 'bdos/kaspace.c', 'bdos/kowner.c', 'tests/kowner_model.c', '-Wl,--gc-sections', '-o', str(work / 'test')], check=True)
         subprocess.run([str(work / 'test')], check=True)
         print(f'ELF startup ({preset}, {args.mode}): PASS', flush=True)

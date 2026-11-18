@@ -26,5 +26,6 @@ with tempfile.TemporaryDirectory(prefix='ptos-fork-parent-') as directory:
     subprocess.run(cc+['-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-builtin',
         '-ffunction-sections','-fdata-sections','-fno-pie','-no-pie','-iquote','include',
         '-I'+str(work),'-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos',
-        '-iquote','fs','tests/fork_parent.c','-Wl,--gc-sections','-o',str(work/'test')], check=True)
+        '-iquote','fs','tests/fork_parent.c','bdos/kowner.c','tests/kowner_model.c',
+        '-Wl,--gc-sections','-o',str(work/'test')], check=True)
     subprocess.run([str(work/'test')], check=True)

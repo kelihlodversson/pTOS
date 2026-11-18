@@ -12,24 +12,24 @@ CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/legacy.con
     --header "$work/autoconf.h" --makefile "$work/auto.conf"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 -iquote bdos \
-    tests/kaspace_lifetime.c bdos/kaspace.c -o "$work/test"
+    tests/kaspace_lifetime.c bdos/kaspace.c bdos/kowner.c tests/kowner_model.c -o "$work/test"
 "$work/test"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 -iquote bdos \
     -iquote bdos/arch/x86_64 tests/kthread_stack.c \
-    bdos/kthread_context.c -o "$work/thread-test"
+    bdos/kthread_context.c bdos/kowner.c tests/kowner_model.c -o "$work/thread-test"
 "$work/thread-test"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
-    -Iinclude/arch/x86_64 tests/x32_irq_frame.c -o "$work/irq-frame"
+    -Iinclude/arch/x86_64 tests/x32_irq_frame.c bdos/kowner.c tests/kowner_model.c -o "$work/irq-frame"
 "$work/irq-frame"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-pie -no-pie -iquote include -I"$work" \
-    -Iinclude/arch/x86_64 tests/arm_irq_frame.c -o "$work/arm-irq-frame"
+    -Iinclude/arch/x86_64 tests/arm_irq_frame.c bdos/kowner.c tests/kowner_model.c -o "$work/arm-irq-frame"
 "$work/arm-irq-frame"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
-    -Iinclude/arch/x86_64 tests/m68k_irq_frame.c -o "$work/m68k-irq-frame"
+    -Iinclude/arch/x86_64 tests/m68k_irq_frame.c bdos/kowner.c tests/kowner_model.c -o "$work/m68k-irq-frame"
 "$work/m68k-irq-frame"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
-    -Iinclude/arch/x86_64 tests/wake_idle.c -o "$work/wake-idle"
+    -Iinclude/arch/x86_64 tests/wake_idle.c bdos/kowner.c tests/kowner_model.c -o "$work/wake-idle"
 "$work/wake-idle"
 for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
     CONFIG_= python3 - "$preset" "$work/config" <<'PY'
@@ -51,21 +51,21 @@ PY
         -c tests/sched_sequence_header.c -o "$work/sequence-header.o"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
         -I"$arch_include" -idirafter include -iquote bdos \
-        tests/kaspace_mmap_policy.c bdos/kaspace.c -o "$work/mmap-policy"
+        tests/kaspace_mmap_policy.c bdos/kaspace.c bdos/kowner.c tests/kowner_model.c -o "$work/mmap-policy"
     "$work/mmap-policy"
     echo "KASPACE mmap policy ($preset configuration, host execution): PASS"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        tests/kaspace_lease.c bdos/kaspace.c -Wl,--gc-sections -o "$work/lease"
+        tests/kaspace_lease.c bdos/kaspace.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/lease"
     "$work/lease"
     echo "KASPACE startup leases ($preset configuration, host execution): PASS"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        tests/kaspace_reservation.c -Wl,--gc-sections -o "$work/reservation"
+        tests/kaspace_reservation.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/reservation"
     "$work/reservation"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        tests/kaspace_retired_backing.c -Wl,--gc-sections -o "$work/retired-backing"
+        tests/kaspace_retired_backing.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/retired-backing"
     "$work/retired-backing"
     # The clone transaction owns real KTHREAD/KASPACE objects. This harness
     # models PROCESS resources; native x32 tests use production KPROC instead.
@@ -85,17 +85,17 @@ PYCONFIG
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
         -iquote fs tests/proc_clone.c bdos/proc_clone.c bdos/process_observer.c bdos/thread_startup.c bdos/kthread.c bdos/kaspace.c \
-        -Wl,--gc-sections -o "$work/proc-clone"
+        -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/proc-clone"
     "$work/proc-clone"
     echo "Trusted clone construction ($preset configuration, host execution): PASS"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        -iquote fs tests/clone_observer.c bdos/process_observer.c -Wl,--gc-sections -o "$work/clone-observer"
+        -iquote fs tests/clone_observer.c bdos/process_observer.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/clone-observer"
     "$work/clone-observer"
     echo "Owned clone observer ($preset configuration, host execution): PASS"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-pie -no-pie \
         -iquote include -I"$work" -I"$arch_include" -idirafter include -iquote bdos \
-        tests/sched_lifetime.c -o "$work/sched-lifetime"
+        tests/sched_lifetime.c bdos/kowner.c tests/kowner_model.c -o "$work/sched-lifetime"
     "$work/sched-lifetime"
     echo "Scheduler lifetime ($preset configuration, host execution): PASS"
 
@@ -121,7 +121,11 @@ CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -iquote bdos \
     -Ibios/machine/pc-x86_64 -Ibios/arch/x86_64 -Ibios -Iutil \
-    tests/x32_irq_capture.c -Wl,--gc-sections -o "$work/irq-capture"
+    tests/x32_irq_capture.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/irq-capture"
+${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror \
+    -iquote include -I"$work" -Iinclude/arch/x86_64 \
+    tests/kowner.c bdos/kowner.c -o "$work/owners"
+"$work/owners"
 "$work/irq-capture"
 # Exercise the actual CPU storage declaration from two translation units.
 # Partitioned LTO must resolve the run alias after LTRANS; normal/ASan builds
@@ -134,33 +138,33 @@ for alias_mode in ordinary lto; do
     ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function \
         -ffunction-sections -fdata-sections $alias_flags \
         -iquote include -I"$work" -Iinclude/arch/x86_64 -iquote bdos -iquote fs \
-        tests/sched_cpu_alias.c tests/sched_run_abi.c -Wl,--gc-sections -o "$work/cpu-alias"
+        tests/sched_cpu_alias.c tests/sched_run_abi.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/cpu-alias"
     "$work/cpu-alias"
 done
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
     -iquote bdos/arch/x86_64 tests/thread_startup.c bdos/thread_startup.c bdos/kaspace.c \
     bdos/arch/x86_64/thread_startup_x32.c bdos/thread_return.c bdos/kthread_context.c \
-    -Wl,--gc-sections -o "$work/startup"
+    -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/startup"
 "$work/startup"
 echo 'x32 startup CPU/FPU/frame planning and stack rollback (host model): PASS'
 # Completion registry tests use real KTHREAD code, with counted ownership models.
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
-    -iquote fs tests/kthread_join.c -Wl,--gc-sections -o "$work/thread-join"
+    -iquote fs tests/kthread_join.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/thread-join"
 "$work/thread-join"
 echo 'KTHREAD TID completion: late join, one reaper, claim cancellation, cycles, retirement and rollback: PASS'
 
 ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -iquote include -I"$work" -Iinclude/arch/x86_64 -idirafter include -iquote bdos \
-    -iquote bdos/arch/x86_64 -iquote fs tests/wait_cancel.c -Wl,--gc-sections -o "$work/wait-cancel"
+    -iquote bdos/arch/x86_64 -iquote fs tests/wait_cancel.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/wait-cancel"
 "$work/wait-cancel"
 echo 'Scheduler cancellation admission, nested identity and reentrant termination hook: PASS (host model)'
 
 ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie -no-pie \
     -ffunction-sections -fdata-sections -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -idirafter include -iquote bdos -iquote fs \
-    tests/sched_result_wait.c bdos/sched_lifetime.c -Wl,--gc-sections -o "$work/result-wait"
+    tests/sched_result_wait.c bdos/sched_lifetime.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/result-wait"
 "$work/result-wait"
 # Force quoted kernel headers to precede system headers: the fixture must
 # explicitly retain the hosted jump ABI under this ordering as well.
@@ -172,5 +176,5 @@ ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie
 ${HOSTCC:-cc} -std=gnu90 -O2 -Wall -Wextra -Werror -Wno-unused-function -fno-pie -no-pie \
     -ffunction-sections -fdata-sections -iquote include -I"$work" \
     -Iinclude/arch/x86_64 -idirafter include -iquote bdos -iquote fs \
-    tests/sched_process_claim.c bdos/sched_lifetime.c -Wl,--gc-sections -o "$work/process-claim"
+    tests/sched_process_claim.c bdos/sched_lifetime.c -Wl,--gc-sections bdos/kowner.c tests/kowner_model.c -o "$work/process-claim"
 "$work/process-claim"

@@ -7,6 +7,11 @@
 struct aspace;
 typedef struct kaspace KASPACE;
 typedef struct kaspace_lease KASPACE_LEASE;
+/* An in-flight user-copy fence retains storage and excludes unmap/protection
+ * changes. It grants no backing/USER access by itself; checked uaccess must
+ * materialize through the ordinary owner and validate resident rights. */
+LONG kaspace_copy_begin(KASPACE *,VADDR,VADDR,BOOL,KASPACE_LEASE **);
+BOOL kaspace_copy_valid(const KASPACE_LEASE *);
 typedef struct kaspace_scope KASPACE_SCOPE;
 typedef struct kaspace_member KASPACE_MEMBER;
 /* PROCESS lifetime membership, separate from root references and R2 holds.

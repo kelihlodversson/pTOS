@@ -80,6 +80,8 @@ struct kaspace *kthread_aspace(const KTHREAD *thread); /* borrowed */
  * A live caller/process retains resources; these records retain no heavy state. */
 LONG kthread_join_begin(KTHREAD *caller, ULONG tid);
 BOOL kthread_join_ready(void *caller);
+struct ksched_wait_observation;
+void kthread_join_observe(KTHREAD *,struct ksched_wait_observation *);
 BOOL kthread_join_status(KTHREAD *caller, UWORD *status);
 void kthread_join_cancel(KTHREAD *caller);
 void kthread_join_consume(KTHREAD *caller);

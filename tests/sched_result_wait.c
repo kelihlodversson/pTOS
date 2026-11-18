@@ -18,7 +18,10 @@ static void native_sched_irq_disable(void) { irq_flags=0; }
 static uintptr_t native_sched_masked(uintptr_t f) { return f & ~0x200UL; }
 static uintptr_t native_sched_root_stack_top(uintptr_t b,ULONG n) { return b+n-8; }
 static void native_sched_root_context(NATIVE_SCHED_CONTEXT *c,PD *p,uintptr_t t) { (void)c; (void)p; (void)t; }
-static void native_sched_save(NATIVE_SCHED_CONTEXT *c) { (void)c; abort(); }
+static BOOL probe_dispatch;
+static jmp_buf dispatch_probe;
+static void native_sched_save(NATIVE_SCHED_CONTEXT *c)
+{ (void)c;if(probe_dispatch)longjmp(dispatch_probe,1);abort(); }
 static void native_sched_restore(const NATIVE_SCHED_CONTEXT *c) { (void)c; abort(); }
 static void native_sched_idle(void) { abort(); }
 static void native_sched_enter(uintptr_t top,void (*entry)(void)) NORETURN;
@@ -67,7 +70,7 @@ int main(void)
 {
     KSCHED_ADMISSION admission={0};
     LONG output=-7;
-    unsigned mode;
+    volatile unsigned mode;
     assert(ksched_controller_install(&kernel_pd));
     scheduler.active=TRUE; execution_cpu.current=&task;
     task.program=&process_pd; task.process=&process; task.thread=&thread;
@@ -105,6 +108,24 @@ int main(void)
                task.state==TASK_BLOCKED && task.ready==ksched_waiter_ready);
         task.state=TASK_RUNNING; task.ready=NULL; task.argument=NULL; /* modeled root resume */
         ksched_waiter_detach(&retained);
+    }
+    {
+        KSCHED_CLEANUP_SCOPE cleanup={0};
+        KSCHED_WAIT_SEQUENCE source={0};
+        KSCHED_WAIT_OBSERVATION observation;
+        ksched_cleanup_begin(&cleanup);pending=TRUE;
+        ksched_sequence_observe(&source,&observation);
+        probe_dispatch=TRUE;
+        if(!setjmp(dispatch_probe)) {
+            dependency_wait_observed(always_ready,NULL,&observation);
+            abort(); /* returning CANCELLED would starve the dependency */
+        }
+        probe_dispatch=FALSE;
+        assert(task.state==TASK_BLOCKED && !task.cancel_boundary && !kowner_locked());
+        task.state=TASK_RUNNING;task.ready=NULL;task.argument=NULL;
+        ksched_cleanup_end(&cleanup);pending=FALSE;
+        irq_flags=0x200;
+        puts("Protected dependency wait admits BLOCKED despite pending cancellation: PASS (host handoff model)");
     }
     puts("Completion in check/block window retries without sleep; coincident cancellation wins without consumption: PASS (host CPU model)");
     assert(ksched_result_wait(&admission,&output,1)==E_OK && output==47 && irq_flags==0x200);

@@ -27,9 +27,30 @@ int main(void)
     own.owner=9;process_wait_release_claim(&own);
     assert(!first.synchronous_wait_process && !first.synchronous_waiter && irq_flags==0x200);
     assert(process_wait_claim_available(&first,&foreign));
+    /* The production delivery pin excludes both unrelated and exact recursive
+     * consumers, and waits for the original CPU/THREAD departure acknowledgement. */
+    own.owner=9;
+    first.execution.on_cpu=TRUE;
+    assert(!process_wait_pin(&first,&own));
+    first.execution.on_cpu=FALSE;first.thread=&thread;
+    assert(!process_wait_pin(&first,&own));
+    first.thread=NULL;first.dependents=1;
+    assert(!process_wait_pin(&first,&own));
+    first.dependents=0;
+    {
+        KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
+        assert(process_wait_pin(&first,&own));
+        assert(!process_wait_pin(&first,&own) && !process_wait_pin(&first,&foreign));
+        assert(!process_wait_claim_available(&first,&own));
+        assert(!child_deliverable(&first));
+        first.result_delivering=FALSE; /* failed output preparation, no consumption */
+        assert(process_wait_pin(&first,&own));
+        first.result_delivering=FALSE;
+        kowner_leave(&guard);
+    }
     first.state=TASK_RETIRING;assert(!process_wait_target(&first,&own));
     first.state=TASK_RESERVED;assert(!process_wait_target(&first,&own));
     first.state=TASK_UNUSED;assert(!process_wait_target(&first,&own));
-    puts("Production PROCESS wait claims: identity, unrelated-child readiness, retirement and balanced error/cancel release: PASS (host CPU model)");
+    puts("Production PROCESS wait claims: delivery pin, CPU/THREAD quiescence, recursive-consumer exclusion, identity, retirement and balanced error/cancel release: PASS (host CPU model)");
     return 0;
 }

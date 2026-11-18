@@ -21,6 +21,7 @@
 #include "portab.h"
 #include "string.h"
 #include "kheap.h"
+#include "kowner.h"
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
 #include "ksched.h"
 #include "biosext.h"
@@ -129,6 +130,7 @@ void *kalloc(ULONG size)
     UQUAD pages;
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+    kowner_assert_unlocked();
     if (ksched_test_clone_masked()) panic("allocation in clone publication exclusion");
 #endif
     if (!size)
@@ -179,6 +181,7 @@ void kfree(void *p)
     UWORD cls;
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+    kowner_assert_unlocked();
     if (ksched_test_clone_masked()) panic("free in clone publication exclusion");
 #endif
     if (!p)

@@ -43,6 +43,6 @@ with tempfile.TemporaryDirectory(prefix="ptos-image-policy-") as directory:
     subprocess.run(cc + ["-fno-builtin", "-std=gnu90", "-O2", "-g", "-Wall", "-Wextra", "-Werror",
         "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-iquote", "include", "-I" + str(work),
         "-Iinclude/arch/x86_64", "-idirafter", "include", "-iquote", "bdos", "-iquote", "fs"] + flags +
-        ["tests/image_policy.c", "bdos/kthread.c", "bdos/proc_clone.c", "bdos/process_observer.c",
+        ["tests/image_policy.c", "bdos/kthread.c", "bdos/kowner.c", "tests/kowner_model.c", "bdos/proc_clone.c", "bdos/process_observer.c",
          "-Wl,--gc-sections", "-o", str(work / "policy")], check=True)
     subprocess.run([str(work / "policy")], check=True)

@@ -1,3 +1,153 @@
+Current B1 owner synchronization work (#713)
+============================================
+
+This section supersedes the B0 implementation status in the historical audit
+below. Base: b0970a7558aaa10c21f388c733a0fd2ecaa4ce72 (merged #1022).
+B1 here means concurrency-safe resource owners and operation admission in the
+current #713 plan. Older B1a/B1b/B1c names describe the merged capture foundation.
+The architecture capture and gated delayed A -> B -> A restart remain unchanged.
+Production timer preemption, arbitrary kernel preemption and SMP stay disabled.
+
+Implementation
+--------------
+kowner.c implements explicit boot-CPU domain locks, ordered PROCESS/KTHREAD 10,
+KASPACE 20, admission/tickets 30, runqueue/publication 40. These locks own no
+resources and add no object registry. They record owning CPU, nesting, rank and
+nonrecycled scope tickets; reject inversion, stale/non-LIFO release, exhaustion
+and a foreign CPU. Same-domain recursion is metadata nesting, never permission
+for a callback. The backend saves/masks/restores local IRQ state. This is valid
+only for the existing single CPU and nonpreemptible kernel. Inter-CPU atomic
+acquisition, traversal pins and per-CPU selection remain #1019 prerequisites.
+
+PROCESS identity acquisition, membership/final completion, group-exit first
+status and TID completion/join claims use rank10. Constructors allocate first,
+then revalidate/publish metadata; completion/reference removal detaches before
+last puts. TID retirement detaches the whole matching set before a reentrant
+free. PROCESS destruction claims closing admission, then refinds the canonical
+identity after service callbacks; no live registry cursor crosses callbacks.
+Clone's existing callback-free final seal/publication retains the PROCESS domain.
+Existing managed Pexec(0), exact-child claims, cancellation and anchor semantics
+remain canonical; no new PROCESS wait/reaper mechanism is introduced.
+
+User-copy/fault operations retain PROCESS and KASPACE, register a temporary fence
+in the existing lease list, prepare backing with ordinary fault/COW providers,
+then validate identities/rights before copying. In-flight live rights differ
+from observer references and residency. Disposal/exec replacement cannot take
+the live owner during the operation. The fence excludes conflicting mapping
+changes and foreign-actor materialization/COW; it grants no backing or snapshot
+authority itself. End validates the original execution cleanup ticket before
+moving/clearing the operation and releasing resources outside metadata locks.
+Internal fault requests may name an explicitly retained PROCESS other than run;
+user-copy operations additionally require the current PROCESS. Existing resident
+copy helpers retain their preowned no-fail publication contract.
+
+Private snapshot preparation holds the existing source mutation admission and
+root reference across fallible work, with final pending-ownership revalidation
+before backend COW changes. Source copies cannot acquire a fence during that
+operation. No MMU backend, saved context or filesystem ownership is duplicated.
+
+Admission/ticket constructors revalidate retained owner state under rank10 then
+rank30 after allocation. Claims, complete/take/abandon and reference transitions
+are serialized; waiter/admission unlink and controller counts precede any final
+put. Borrowed predicate storage lives through the original execution's root
+acknowledgement. All generation accesses use rank40; compare and BLOCKED store
+share one publication transaction. PROCESS waits and joins now observe their
+canonical completion generation before predicate recheck and blocking. Durable
+false wakes retry; cancellation still wins before result delivery commit.
+
+PROCESS output delivery claims its existing stable zombie slot across fallible
+copy preparation. Recursive waiters cannot consume/recycle it. A zombie is not
+deliverable while its original CPU pin, THREAD or anchor dependents survive.
+The consumer detaches PROCESS ownership and marks RETIRING before final release,
+then clears the private slot. Join keeps its existing retained TID claim through
+copy preparation. A failed/cancelled copy leaves the result unconsumed.
+
+Allocation/free and all scheduler switch boundaries assert every owner domain
+is released. IRQ delayed-restart admission declines when an owner lock is held.
+No owner lock spans faults, user copying, filesystem operations, callbacks,
+resource destruction, readiness evaluation or continuation handoff. Filesystem
+and CUIS operation policies still use their existing epochs/in-flight contracts;
+this work does not make kernel filesystem or callback execution preemptible.
+
+Validation status
+-----------------
+Development checks are recorded here provisionally; final-source and CI evidence
+must be recorded with exact SHAs before acceptance. Hosted tests model CPU/MMU
+endpoints while executing production owners; they are not native execution.
+
+- Owner domain tests: ordered scopes, exact IRQ restoration, wrong CPU, stale
+  guard/LIFO/rank rejection, exhaustion and forbidden handoff.
+- Production TID tests: claim/retirement and reentrant free after full detach.
+- Production copy tests: mapping/disposal exclusion, lazy materialization,
+  failed copies/allocations, stale actor and exact resource conservation.
+- Existing host scheduler: completion in check/block gap, false wake, coincident
+  cancellation, exact-child identity/claim isolation and balanced error release.
+- Development Cortex-A7/PFS run: 30 tests and 5 shutdown checks passed, including
+  gated delayed IRQ restart; subsequent source changes require a final rerun.
+- CUIS host suite and standard ELF startup (all three architecture models) passed.
+- Final x32/m68k/ARM FAT/PFS, legacy/scheduler-disabled ROM, sanitizers/fortified,
+  exact source/synthetic-merge CI and independent review remain acceptance work.
+
+Independent review and corrections
+----------------------------------
+Independent scheduler ownership and MMU/resource reviews found three defects in
+this implementation, now corrected with regressions:
+- Cleanup-active observed PROCESS/TID waits must still dispatch dependencies
+  with group cancellation pending. They use raw observed blocking, preserving
+  the existing cancellation deferral contract instead of busy-retrying CANCELLED.
+- Copy fences must stop last-member mapping retirement, not only explicit
+  Munmap/Mprot. The foreign-owner test proves old rights survive, new admission
+  fails and the existing lease release triggers exactly-once retirement.
+- Destruction must close all live admission before service callbacks. The
+  closing claim sets PROCESS_DISPOSING, while identity/cleanup lookup survives.
+  Retain-live, new THREAD and copy admissions are tested at that boundary.
+
+Broader shared-interpreter ASan checks also found that full membership detach
+made later scopes reapable during the first member's cleanup. Every detached
+node now caches its already-owned KASPACE before unlock; cleanup never reads a
+scope after reaping can free it. The interpreter ASan regression passed on all
+three modeled architectures after this correction. No additional root reference
+or registry is introduced. The cleanup-scope type is shared through its own
+small header; kernel copy APIs do not pull scheduler policy declarations into
+resource headers.
+
+The native region test now exercises a real cross-page copy operation, blocked
+unmap/protection, nested checked read, permission-failure rollback, unchanged
+output and complete page retirement through actual architecture providers.
+It prints "native B1 copy operation and checked rollback: PASS". Hosted frame,
+resource and MMU endpoint models remain distinct from this native evidence.
+
+Copy operation versus sibling termination
+----------------------------------------
+An in-flight copy retains PROCESS/mapping resources; it does not own every
+sibling's continuation. Exit admission first permits the existing validated
+nonfinal THREAD handoff, then excludes the final PROCESS handoff while copies
+remain. Rejecting every sibling here sends xterm into its no-attached-THREAD
+fallback and panics. The production-owner host test holds A's copy while B
+exits normally and another sibling stops after group cancellation, checks the
+first group status cannot be overwritten, proves A's final handoff is blocked
+until copy end, then reaps all three execution owners with exact conservation.
+CPU departure itself is modeled in this targeted test; native architecture
+handoff tests remain separate evidence. A's own cleanup scope continues to
+prevent cancellation delivery during its active copy.
+
+Native 68030 ROM footprint
+-------------------------
+The full owner/admission kernel exceeds the original 256-KB 030 image. Passing
+owner/leaf guards in place avoids aggregate return/argument copies without
+removing rank, CPU, lifetime or stale-scope assertions. This saves about 2.2 KB
+in the measured native 030/LTO profile, but that image still exceeds 256 KB by
+7,528 bytes. The native Amiberry lane therefore selects the existing 512-KB
+Amiga ROM format (0x00f80000) for the same 030/MMU/cache/68882 configurations.
+The default scheduler-disabled 256-KB lanes and the 040/060 coverage stay in the
+matrix. This is a native-profile ROM footprint requirement, not a new MMU/CPU
+capability or an exception to ownership assertions. The configuration test also
+checks that ordinary amiga-aspace remains 256 KB and that 030 copied-return
+proof is still refused.
+
+Historical B0 audit follows
+===========================
+
 Native scheduler B0: ownership, exclusion and wait publication (#713)
 ====================================================================
 

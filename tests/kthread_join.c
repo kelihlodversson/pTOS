@@ -9,13 +9,28 @@
 struct kproc { unsigned refs; BOOL live; KTHREAD *threads; KASPACE *space; };
 struct kaspace { unsigned refs; };
 static unsigned allocations, frees, reclaims, fail_after;
+static KPROC *forget_owner,*forget_other;
+static BOOL reenter_free;
 void *kalloc(ULONG size)
 {
     void *p;
+    assert(!kowner_locked());
     if (fail_after && !--fail_after) return NULL;
     p=malloc(size); if (p) allocations++; return p;
 }
-void kfree(void *p) { if (p) { frees++; free(p); } }
+void kfree(void *p)
+{
+    assert(!kowner_locked());
+    if(reenter_free) {
+        struct thread_completion *record;
+        reenter_free=FALSE;
+        /* Every matching node must already be detached before any final free;
+         * an allocator callback may recursively retire the rest of the registry. */
+        for(record=completions;record;record=record->next)assert(record->process!=forget_owner);
+        kthread_forget_completions(forget_other);
+    }
+    if(p) { frees++;free(p); }
+}
 void panic(const char *fmt, ...) { (void)fmt; abort(); }
 KPROC *kproc_retain(PD *pd) { KPROC *p=(KPROC *)pd; if (p && p->live) { p->refs++; return p; } return NULL; }
 void kproc_release(KPROC *p) { if (p) { assert(p->refs); p->refs--; } }
@@ -90,7 +105,10 @@ int main(void)
     assert(!p.threads && !other.threads && p.refs==1 && other.refs==1 && space.refs==1);
     /* Completed status retains neither mappings nor live process resources. */
     assert(allocations>frees);
+    target=start(&p);finish(target,37);
+    forget_owner=&p;forget_other=&other;reenter_free=TRUE;
     kthread_forget_completions(&p); kthread_forget_completions(&other);
+    assert(!reenter_free);
     assert(allocations==frees);
     before=allocations-frees; previous=last_tid;
     fail_after=2;

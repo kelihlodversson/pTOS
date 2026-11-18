@@ -17,6 +17,7 @@ static KSCHED_ADMISSION *preparing_admission;
 void *kalloc(ULONG bytes)
 {
     void *p;
+    CHECK(!kowner_locked());
     if (fail_alloc) return NULL;
     p=malloc(bytes); if (p) allocated++;
     if (prepare_injection) {
@@ -27,7 +28,7 @@ void *kalloc(ULONG bytes)
     }
     return p;
 }
-void kfree(void *p) { CHECK(p); freed++; free(p); }
+void kfree(void *p) { CHECK(p && !kowner_locked()); freed++; free(p); }
 void panic(const char *fmt, ...)
 {
     if (expect_sequence_panic && !strcmp(fmt,"scheduler: wait sequence exhausted")) {
@@ -42,7 +43,7 @@ void procmem_pin(VADDR p,VADDR n,int d) { CHECK(p==(VADDR)(uintptr_t)&kernel_pd 
 KPROC *kproc_retain_live(KPROC *p) { if (fail_ref || !p->live) return NULL; p->refs++; return p; }
 void kproc_release(KPROC *p)
 {
-    CHECK(p && p->refs>1); p->refs--;
+    CHECK(p && p->refs>1 && !kowner_locked()); p->refs--;
     if (reentrant_release) {
         reentrant_release=FALSE;
         ksched_waiter_detach(&reentrant_neighbor);

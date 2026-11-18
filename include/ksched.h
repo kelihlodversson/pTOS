@@ -3,6 +3,7 @@
 #define KSCHED_H
 #include "portab.h"
 #include "bdosdefs.h"
+#include "kowner.h"
 /* Initial arena and maximum synchronous bootstrap batch, not a runnable-task
  * limit. Active publication grows stable slots on demand; ENSMEM is retryable. */
 #define KSCHED_LIMIT 8U
@@ -47,22 +48,7 @@ struct thread_startup_stack;
 struct proc_clone_transaction;
 struct kproc;
 struct kthread;
-/* Execution-owned cooperative cleanup scope. Zero-initialize before enter.
- * Pending queries/latches stay visible; only delivery is deferred. End validates
- * LIFO/execution ownership and never terminates. Checkpoint only after the
- * outer operation has settled all local resources. Not a fault/longjmp guard. */
-typedef struct {
-    struct kthread *thread;
-    struct kproc *process;
-    PD *caller;
-    UQUAD execution;
-    ULONG tid, depth;
-    UQUAD ticket, parent_ticket;
-    BOOL active;
-} KSCHED_CLEANUP_SCOPE;
-void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *empty);
-void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope);
-BOOL ksched_cleanup_active(void);
+#include "ksched_cleanup.h"
 /* Shared publication storage for legacy process launches and trusted clone.
  * root=TRUE prepares a synchronous admission; FALSE reserves global async
  * storage from a live caller or the current managed task.
@@ -85,7 +71,7 @@ BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 /* Backends mask dispatch/IRQs and validate that source owns the current task.
  * The compatibility controller is a pinned kernel-only basepage with no
  * PROCESS/PID; logical parent and synchronous result owners are separate. */
-typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
+typedef struct { uintptr_t flags; KOWNER_GUARD owner; } KSCHED_PUBLICATION_GUARD;
 /* Nonmasking query during serialized preparation; begin revalidates it. */
 BOOL ksched_clone_context(struct kproc *source, PD **controller);
 #if CONF_WITH_EXEC_REPLACE

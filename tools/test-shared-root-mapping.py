@@ -28,10 +28,27 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-root-') as directory:
                     '--config', str(work / 'config'), '--header', str(work / 'autoconf.h'),
                     '--makefile', str(work / 'auto.conf')], check=True)
     cc = shlex.split(os.environ.get('HOSTCC', 'cc'))
-    subprocess.run(cc + ['-fno-builtin', '-std=gnu90', '-O2', '-Wall', '-Wextra', '-Werror',
+    for fixture in ('shared_root_mapping','user_copy_owner'):
+        subprocess.run(cc + ['-fno-builtin', '-std=gnu90', '-O2', '-Wall', '-Wextra', '-Werror',
         '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections',
         '-iquote', 'include', '-I' + str(work), '-Iinclude/arch/x86_64',
         '-idirafter', 'include', '-iquote', 'bdos', '-iquote', 'fs',
-        'tests/shared_root_mapping.c', 'bdos/kthread.c',
-        '-Wl,--gc-sections', '-o', str(work / 'mapping')], check=True)
-    subprocess.run([str(work / 'mapping')], check=True)
+        'tests/'+fixture+'.c', 'bdos/kthread.c',
+        '-Wl,--gc-sections', '-o', str(work / fixture)], check=True)
+        subprocess.run([str(work / fixture)], check=True)
+
+    config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
+    assert config.syms['CONF_WITH_NATIVE_SCHED'].str_value=='y'
+    for name in ('CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP'):
+        config.syms[name].set_value(2)
+        assert config.syms[name].str_value=='y',name
+    config.write_config(str(work/'config'))
+    subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig',
+        '--config',str(work/'config'),'--header',str(work/'autoconf.h'),
+        '--makefile',str(work/'auto.conf')],check=True)
+    subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror',
+        '-fno-pie','-no-pie','-ffunction-sections','-fdata-sections',
+        '-iquote','include','-I'+str(work),'-Iinclude/arch/x86_64','-idirafter','include',
+        '-iquote','bdos','-iquote','fs','tests/user_copy_owner.c','bdos/kthread.c',
+        'bdos/kowner.c','tests/kowner_model.c','-Wl,--gc-sections','-o',str(work/'native-copy')],check=True)
+    subprocess.run([str(work/'native-copy')],check=True)

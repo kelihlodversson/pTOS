@@ -199,7 +199,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-971-moved-') as tmp:
     generic_layout=work/'progimage.c'
     generic_layout.write_text((root/'bios/progimage.c').read_text().replace(
         '#if CONF_WITH_USER_ASPACE && !defined(__x86_64__)', '#if CONF_WITH_USER_ASPACE'))
-    subprocess.run(shlex.split(os.environ.get('HOSTCC','cc'))+flags+[str(fixture),'bdos/kaspace.c']+(['bios/machine/pc-x86_64/x32image.c'] if arch=='x86_64' else [str(generic_layout)])+['lib/ldso/startup.c','-Wl,--gc-sections','-o',str(work/'control')],check=True)
+    subprocess.run(shlex.split(os.environ.get('HOSTCC','cc'))+flags+[str(fixture),'bdos/kaspace.c', 'bdos/kowner.c', 'tests/kowner_model.c']+(['bios/machine/pc-x86_64/x32image.c'] if arch=='x86_64' else [str(generic_layout)])+['lib/ldso/startup.c','-Wl,--gc-sections','-o',str(work/'control')],check=True)
     result=subprocess.run([str(work/'control')])
     print('required moved-image admission exit='+str(result.returncode))
     if result.returncode:

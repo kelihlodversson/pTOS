@@ -17,6 +17,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-amiberry-config-') as directory:
                           ('amiga-aspace040', True), ('amiga-aspace', True)]:
         config = kconfiglib.Kconfig(warn_to_stderr=False)
         config.load_config('configs/' + preset + '_defconfig')
+        if preset == 'amiga-aspace':
+            assert config.syms['CONF_AMIGA_ROM_512K'].str_value == 'n'
         config.write_config()
         os.environ['IRQ_COPY_PROOF'] = str(int(proof))
         scope = {}
@@ -30,6 +32,5 @@ with tempfile.TemporaryDirectory(prefix='ptos-amiberry-config-') as directory:
         assert configured.syms['CONF_WITH_MFASTCALL'].str_value == ('n' if proof else 'y')
         assert configured.syms['CONF_WITH_SAVED_RETURN'].str_value == ('y' if proof else 'n')
         assert configured.syms['CONF_WITH_PFORK'].str_value == 'n'
-        if proof:
-            assert configured.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'
+        assert configured.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'
 print('Amiberry native config: ordinary fastcall retained, 040 stack-ABI proof, 030 refusal: PASS (configuration only)')
