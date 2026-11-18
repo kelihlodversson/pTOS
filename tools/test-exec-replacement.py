@@ -86,6 +86,6 @@ with tempfile.TemporaryDirectory(prefix='ptos-exec-replacement-') as directory:
         '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections',
         '-iquote', 'include', '-I'+str(work), '-Iinclude/arch/x86_64',
         '-idirafter', 'include', '-iquote', 'bdos', '-iquote', 'fs',
-        'tests/exec_replacement.c', 'bdos/exec_replace.c', '-Wl,--gc-sections',
+        'tests/exec_replacement.c', 'bdos/exec_replace.c', 'bdos/kowner.c', 'tests/kowner_model.c', '-Wl,--gc-sections',
         '-o', str(work/'replacement')], check=True)
     subprocess.run([str(work/'replacement')], check=True)

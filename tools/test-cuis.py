@@ -219,7 +219,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
                 "-Wno-unused-parameter", "-Wno-unused-variable", "-Wno-cast-function-type", "-Wno-clobbered",
                 "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections",
                 "-Iinclude/arch/x86_64", "-iquote", str(rollback), "-iquote", "include", "-iquote", "include/arch/x86_64", "-iquote", "bdos",
-                "bdos/proc.c", "bdos/kfile.c", "tests/cuis/close_model.c", "-Wl,--gc-sections"]
+                "bdos/proc.c", "bdos/kfile.c", "tests/cuis/close_model.c", "bdos/kowner.c", "tests/kowner_model.c", "-Wl,--gc-sections"]
     for test in ("deferred_rollback", "deferred_exit"):
         subprocess.run(command + ["tests/cuis/" + test + ".c", "-o", str(rollback / test)], check=True)
         subprocess.run([str(rollback / test)], check=True)

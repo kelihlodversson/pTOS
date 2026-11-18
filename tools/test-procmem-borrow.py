@@ -46,6 +46,6 @@ with tempfile.TemporaryDirectory(prefix="ptos-borrow-") as directory:
             flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         elif args.mode == "fortified":
             flags += ["-D_FORTIFY_SOURCE=3", "-fstack-protector-strong"]
-        subprocess.run(cc + ["-std=gnu90", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-iquote", "include", "-I" + str(work), "-Iinclude/machine/" + machine, "-Iinclude/arch/" + arch, "-Ibios/machine/" + machine, "-Ibios/arch/" + arch, "-iquote", "bdos", "-iquote", "bios", "-iquote", "fs", "-idirafter", "include"] + flags + ["tests/procmem_borrow.c", "bdos/kaspace.c", "-Wl,--gc-sections", "-o", str(work / "borrow")], check=True)
+        subprocess.run(cc + ["-std=gnu90", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-iquote", "include", "-I" + str(work), "-Iinclude/machine/" + machine, "-Iinclude/arch/" + arch, "-Ibios/machine/" + machine, "-Ibios/arch/" + arch, "-iquote", "bdos", "-iquote", "bios", "-iquote", "fs", "-idirafter", "include"] + flags + ["tests/procmem_borrow.c", "bdos/kaspace.c", "bdos/kowner.c", "tests/kowner_model.c", "-Wl,--gc-sections", "-o", str(work / "borrow")], check=True)
         subprocess.run([str(work / "borrow")], check=True)
         print(f"Production borrow transaction ({preset}): PASS", flush=True)

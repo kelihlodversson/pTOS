@@ -526,6 +526,31 @@ LONG kproc_allocation_duplicate(const KPROC_ALLOCATION_HOLD *source,
 
 BOOL kproc_validate_user_write(VADDR address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
+#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
+/* Move-only, zero-initialized kernel operation. Prepare may fault/allocate;
+ * copy uses retained, resident rights outside all metadata locks. End settles
+ * every owner before a caller may deliver cancellation or terminate. */
+typedef struct {
+    KPROC *process;
+    KASPACE *space;
+    KASPACE_LEASE *lease;
+    PD *pd;
+    VADDR address;
+    ULONG bytes;
+    UQUAD number;
+    BOOL write,active,backing_failed;
+#if CONF_WITH_NATIVE_SCHED
+    KSCHED_CLEANUP_SCOPE cleanup;
+#endif
+} KPROC_USER_COPY;
+LONG kproc_user_copy_begin(KPROC_USER_COPY *,VADDR,ULONG,BOOL);
+BOOL kproc_user_copy_read(KPROC_USER_COPY *,void *);
+BOOL kproc_user_copy_write(KPROC_USER_COPY *,const void *);
+void kproc_user_copy_end(KPROC_USER_COPY *);
+#endif
 BOOL kproc_copy_to_user(VADDR address, const void *src, ULONG size);
 /* No demand backing, allocation, I/O or xterm. Call after ordinary preflight;
  * later mapping changes fail instead of unwinding resource-owning callers. */

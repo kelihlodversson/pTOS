@@ -6,6 +6,7 @@
 #include "procmem.h"
 #include "string.h"
 #include "kaspace.h"
+#include "kowner.h"
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
@@ -54,6 +55,8 @@ struct kaspace_lease {
     VADDR first, last; /* inclusive page addresses; no end-address overflow */
     UWORD access;
     BOOL revoked, sealed, held, stack;
+    BOOL copying; /* temporary user-copy fence, never backing or clone authority */
+    UQUAD copy_actor;
     UQUAD reservation_ticket, reservation_id, owner_number;
     UQUAD attachment_ticket; /* distinct role; never an R2 hold or access grant */
     VADDR exact_address, exact_bytes;
@@ -155,17 +158,26 @@ BOOL kaspace_mutation_reentrant(const KASPACE *space)
     return space && ((space->mutating && space->mutation_actor==actor) ||
                      (space->reaping && space->reap_actor==actor));
 }
-BOOL kaspace_mutation_begin(KASPACE *space)
+static BOOL kaspace_mutation_begin_owned(KASPACE *space)
 {
     if (kaspace_mutation_busy(space)) return FALSE;
     space->mutating=TRUE;space->mutation_actor=mapping_actor();
     return TRUE;
 }
+BOOL kaspace_mutation_begin(KASPACE *space)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    BOOL result=kaspace_mutation_begin_owned(space);
+    kowner_leave(owner_guard);
+    return result;
+}
 void kaspace_mutation_end(KASPACE *space)
 {
+    KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
     if (!space || !space->mutating || space->mutation_actor!=mapping_actor())
         panic("mapping mutation owner changed");
     space->mutating=FALSE;space->mutation_actor=0;
+    kowner_leave(guard);
 #if CONF_WITH_MMAP
     kaspace_mmap_coalesce(space);
 #endif
@@ -322,20 +334,22 @@ void kaspace_member_claim_private(KASPACE_MEMBER *member)
 
 void kaspace_member_release(KASPACE_MEMBER **members)
 {
-    KASPACE_MEMBER *member,*next,**at;
-    if (!members) return;
-    member=*members;*members=NULL; /* close owner admission before callbacks */
-    while (member) {
+    KASPACE_MEMBER *member,*retired,*next,**at;
+    KOWNER_GUARD guard;
+    if(!members)return;
+    guard=kowner_enter(KOWNER_MAPPING);
+    retired=*members;*members=NULL;
+    for(member=retired;member;member=member->owner_next) {
+        for(at=&member->scope->members;*at && *at!=member;at=&(*at)->next) { }
+        if(!*at)panic("mapping membership detached twice");
+        *at=member->next;member->identity=NULL;member->number=0;
+    }
+    kowner_leave(guard);
+    for(member=retired;member;member=next) {
         KASPACE *space=member->scope->space;
-        next=member->owner_next;
-        for (at=&member->scope->members;*at && *at!=member;at=&(*at)->next) { }
-        if (!*at) panic("mapping membership detached twice");
-        *at=member->next;
-        member->identity=NULL;member->number=0;
-        kfree(member);
-        reap_retired(space); /* detached member still owns this root reference */
+        next=member->owner_next;kfree(member);
+        reap_retired(space);
         kaspace_put(space);
-        member=next;
     }
 }
 
@@ -346,7 +360,7 @@ static UWORD fail_lease_after;
 BOOL kaspace_lease_valid(const KASPACE_LEASE *lease)
 {
     VADDR page;
-    if (!lease || lease->revoked || lease->attachment_ticket || !snapshot_live(lease)) return FALSE;
+    if (!lease || lease->copying || lease->revoked || lease->attachment_ticket || !snapshot_live(lease)) return FALSE;
     /* A revocable alias cannot become fresh ownership or a publication seal
      * after its mapping owner exits. Already durable execution views retain
      * their protected resident mappings until their own safe release. */
@@ -379,14 +393,19 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     if (!result || *result || !space || !bytes || address >= USER_VA_LIMIT ||
         bytes > USER_VA_LIMIT - address || !(access & ASPACE_PROT_USER) ||
         (access & ~(ASPACE_PROT_USER | ASPACE_PROT_WRITE | ASPACE_PROT_EXEC))) return EINVAL;
-    if (pending_overlap(space,address,bytes)) return EACCDN;
-    if (space->mutating || space->reaping) return EACCDN;
+    {
+        BOOL denied;
+        KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
+        denied=space->mutating || space->reaping || pending_overlap(space,address,bytes);
+        kowner_leave(guard);
+        if(denied)return EACCDN;
+    }
 #if CONF_WITH_X86_64_MEMTEST
     if (fail_lease_after && !--fail_lease_after) return ENSMEM;
 #endif
-    if (lease_ids == ~(UQUAD)0) return ENSMEM;
     lease = kalloc(sizeof(*lease));
     if (!lease) return ENSMEM;
+    memset(lease,0,sizeof(*lease));
     lease->reservation_ticket = lease->reservation_id = lease->owner_number = 0;
     lease->attachment_ticket=0;
     lease->owner_identity = NULL; lease->exact_address = lease->exact_bytes = 0;
@@ -401,22 +420,79 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     lease->last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
     lease->access = access;
     lease->revoked = lease->sealed = lease->held = lease->stack = FALSE;
-    if (!kaspace_lease_valid(lease)) { kfree(lease); return EIMBA; }
-    if (!kaspace_share(space)) { kfree(lease); return ENSMEM; }
-    lease->identity=++lease_ids;
-    lease->next = space->leases;
-    space->leases = lease;
-    *result = lease;
-    return E_OK;
+    {
+        LONG error=E_OK;
+        KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
+        if (space->mutating || space->reaping || pending_overlap(space,address,bytes)) error=EACCDN;
+        else if (!kaspace_lease_valid(lease)) error=EIMBA;
+        else if (lease_ids==~(UQUAD)0 || !kaspace_share(space)) error=ENSMEM;
+        else {
+            lease->identity=++lease_ids;lease->next=space->leases;
+            space->leases=lease;*result=lease;
+        }
+        kowner_leave(guard);
+        if(error)kfree(lease);
+        return error;
+    }
 }
 
-BOOL kaspace_lease_hold_private(KASPACE_LEASE *lease)
+LONG kaspace_copy_begin(KASPACE *space,VADDR address,VADDR bytes,BOOL write,KASPACE_LEASE **out)
+{
+    KASPACE_LEASE *lease;
+    LONG error=E_OK;
+    KOWNER_GUARD guard;
+    if(!space || !out || *out || !bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address)
+        return EINVAL;
+    lease=kalloc(sizeof(*lease));if(!lease)return ENSMEM;
+    memset(lease,0,sizeof(*lease));
+    lease->space=space;lease->first=address&~(VADDR)(USER_PAGE_SIZE-1);
+    lease->last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+    lease->access=ASPACE_PROT_USER|(write?ASPACE_PROT_WRITE:0);
+    lease->copying=TRUE;lease->copy_actor=mapping_actor();
+    guard=kowner_enter(KOWNER_MAPPING);
+    if(space->mutating || space->reaping || pending_overlap(space,address,bytes))error=EACCDN;
+    else if(lease_ids==~(UQUAD)0 || !kaspace_share(space))error=ENSMEM;
+    else {
+        lease->identity=++lease_ids;lease->next=space->leases;space->leases=lease;
+        *out=lease;
+    }
+    kowner_leave(guard);
+    if(error)kfree(lease);
+    return error;
+}
+BOOL kaspace_copy_valid(const KASPACE_LEASE *lease)
+{
+    VADDR page;
+    BOOL valid=FALSE;
+    KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
+    if(lease && lease->copying && !lease->revoked && lease->copy_actor==mapping_actor() &&
+       !lease->space->mutating && !lease->space->reaping) {
+        valid=TRUE;
+        for(page=lease->first;;page+=USER_PAGE_SIZE) {
+            UWORD rights;
+            if(!aspace_translate(lease->space->backend,page,NULL,&rights) ||
+               (rights&lease->access)!=lease->access) { valid=FALSE;break; }
+            if(page==lease->last)break;
+        }
+    }
+    kowner_leave(guard);
+    return valid;
+}
+
+static BOOL kaspace_lease_hold_private_owned(KASPACE_LEASE *lease)
 {
     if (!kaspace_lease_valid(lease) || lease->held ||
         !aspace_private_range_ok(lease->space->backend, lease->first,
                 lease->last - lease->first + USER_PAGE_SIZE)) return FALSE;
     lease->held = TRUE;
     return TRUE;
+}
+BOOL kaspace_lease_hold_private(KASPACE_LEASE *lease)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    BOOL result=kaspace_lease_hold_private_owned(lease);
+    kowner_leave(owner_guard);
+    return result;
 }
 
 LONG kaspace_stack_hold_acquire(KASPACE *space, VADDR address, VADDR bytes, KASPACE_LEASE **result)
@@ -469,13 +545,20 @@ LONG kaspace_stack_hold_private_copy(KASPACE *space,VADDR address,VADDR bytes,KA
 }
 #endif
 
-BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count)
+static BOOL kaspace_lease_seal_owned(KASPACE_LEASE *const *leases, UWORD count)
 {
     UWORD i;
     if (!leases || !count) return FALSE;
     for (i = 0; i < count; i++) if (!kaspace_lease_valid(leases[i])) return FALSE;
     for (i = 0; i < count; i++) leases[i]->sealed = TRUE;
     return TRUE;
+}
+BOOL kaspace_lease_seal(KASPACE_LEASE *const *leases, UWORD count)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    BOOL result=kaspace_lease_seal_owned(leases,count);
+    kowner_leave(owner_guard);
+    return result;
 }
 
 static void reap_retired(KASPACE *space);
@@ -486,8 +569,14 @@ void kaspace_lease_release(KASPACE_LEASE **handle)
     KASPACE *space;
     if (!handle || !*handle) return;
     lease = *handle; *handle = NULL; space = lease->space;
-    for (link = &space->leases; *link != lease; link = &(*link)->next) { }
-    *link = lease->next;
+    {
+        KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
+        for (link = &space->leases; *link && *link != lease; link = &(*link)->next) { }
+        if(!*link)panic("mapping lease released after retirement");
+        *link = lease->next;
+        kowner_leave(guard);
+    }
+    kowner_assert_unlocked();
     kfree(lease);
     reap_retired(space); /* this detached lease still owns its root reference */
     kaspace_put(space);
@@ -510,7 +599,7 @@ BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VAD
     *first=begin;*end=limit;return TRUE;
 }
 
-BOOL kaspace_mapping_can_change(const ASPACE *backend, VADDR address, VADDR bytes)
+static BOOL kaspace_mapping_can_change_owned(const ASPACE *backend, VADDR address, VADDR bytes)
 {
     KASPACE *space;
     KASPACE_LEASE *lease;
@@ -522,10 +611,17 @@ BOOL kaspace_mapping_can_change(const ASPACE *backend, VADDR address, VADDR byte
     if (!space) return TRUE; /* backend not yet adopted */
     if (pending_overlap(space,first,last-first+USER_PAGE_SIZE)) return FALSE;
     for (lease = space->leases; lease; lease = lease->next)
-        if ((lease->sealed || lease->held) && first <= lease->last && lease->first <= last) return FALSE;
+        if ((lease->copying || lease->sealed || lease->held) && first <= lease->last && lease->first <= last) return FALSE;
     return TRUE;
 }
-BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
+BOOL kaspace_mapping_can_change(const ASPACE *backend, VADDR address, VADDR bytes)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    BOOL result=kaspace_mapping_can_change_owned(backend,address,bytes);
+    kowner_leave(owner_guard);
+    return result;
+}
+static BOOL kaspace_mapping_change_owned(ASPACE *backend, VADDR address, VADDR bytes)
 {
     KASPACE *space;
     KASPACE_LEASE *lease;
@@ -538,6 +634,13 @@ BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
     for (lease = space->leases; lease; lease = lease->next)
         if (!lease->attachment_ticket && first <= lease->last && lease->first <= last) lease->revoked = TRUE;
     return TRUE;
+}
+BOOL kaspace_mapping_change(ASPACE *backend, VADDR address, VADDR bytes)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    BOOL result=kaspace_mapping_change_owned(backend,address,bytes);
+    kowner_leave(owner_guard);
+    return result;
 }
 /* Retirement may widen a destruction fence, never an owner's backing
  * authority. Page materialization uses the immutable exact hold, rounded only
@@ -619,7 +722,7 @@ static BOOL pending_backing_allowed(KASPACE *space,VADDR address,VADDR bytes,UWO
     }
 }
 
-BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
+static BOOL kaspace_materialization_change_owned(ASPACE *backend, VADDR address,
                                    VADDR bytes, UWORD rights)
 {
     KASPACE *space;
@@ -634,6 +737,10 @@ BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
     for (lease=space->leases;lease;lease=lease->next) {
         if (lease->attachment_ticket) continue;
         if (first > lease->last || lease->first > last) continue;
+        if(lease->copying) {
+            if((rights&lease->access)!=lease->access || lease->copy_actor!=mapping_actor())return FALSE;
+            continue; /* This operation supplies no materialization authority. */
+        }
         if (lease->retire_bytes &&
             !reservation_backing_contains(lease,first,last)) {
             /* This overlap is only a cleanup fence. It supplies no rights,
@@ -655,14 +762,22 @@ BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
     /* Physical translations can change; unsealed alias snapshots are revoked.
      * Reservation holds retain logical birth/rights, never a physical alias. */
     for (lease=space->leases;lease;lease=lease->next)
-        if (!lease->attachment_ticket && !lease->reservation_ticket && !lease->retire_bytes &&
+        if (!lease->copying && !lease->attachment_ticket && !lease->reservation_ticket && !lease->retire_bytes &&
             first <= lease->last && lease->first <= last)
             lease->revoked=TRUE;
     return TRUE;
 }
+BOOL kaspace_materialization_change(ASPACE *backend, VADDR address,
+                                   VADDR bytes, UWORD rights)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    BOOL result=kaspace_materialization_change_owned(backend,address,bytes,rights);
+    kowner_leave(owner_guard);
+    return result;
+}
 
 #if CONF_WITH_PRIVATE_CLONE
-BOOL kaspace_cow_change(ASPACE *backend, VADDR address, VADDR bytes)
+static BOOL kaspace_cow_change_owned(ASPACE *backend, VADDR address, VADDR bytes)
 {
     KASPACE *space;
     KASPACE_LEASE *lease;
@@ -682,7 +797,10 @@ BOOL kaspace_cow_change(ASPACE *backend, VADDR address, VADDR bytes)
         }
     }
     for (lease = space->leases; lease; lease = lease->next)
-        if (!lease->attachment_ticket && first <= lease->last && lease->first <= last && (lease->sealed || !lease->held))
+        if(lease->copying) {
+            if(first<=lease->last && lease->first<=last && lease->copy_actor!=mapping_actor())return FALSE;
+        }
+        else if (!lease->attachment_ticket && first <= lease->last && lease->first <= last && (lease->sealed || !lease->held))
             return FALSE;
         else if (lease->private_snapshot && !snapshot_live(lease) &&
                  first<=lease->last && lease->first<=last) {
@@ -701,13 +819,27 @@ BOOL kaspace_cow_change(ASPACE *backend, VADDR address, VADDR bytes)
         }
     return TRUE;
 }
+BOOL kaspace_cow_change(ASPACE *backend, VADDR address, VADDR bytes)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    BOOL result=kaspace_cow_change_owned(backend,address,bytes);
+    kowner_leave(owner_guard);
+    return result;
+}
 #endif
 
 static UQUAD reservation_ids, reservation_tickets;
-UQUAD kaspace_reservation_next(void)
+static UQUAD kaspace_reservation_next_owned(void)
 {
     if (reservation_ids == ~(UQUAD)0) return 0;
     return ++reservation_ids;
+}
+UQUAD kaspace_reservation_next(void)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    UQUAD result=kaspace_reservation_next_owned();
+    kowner_leave(owner_guard);
+    return result;
 }
 
 static BOOL scope_owned(KASPACE_SCOPE *scope,UQUAD number,void *identity)
@@ -730,7 +862,8 @@ BOOL kaspace_private_source_owned(const KASPACE *space,UQUAD number,const void *
             if (member->number!=number || member->identity!=identity) return FALSE;
     }
     for (lease=space->leases;lease;lease=lease->next)
-        if (lease->attachment_ticket && !lease->revoked &&
+        if(lease->copying)return FALSE;
+        else if (lease->attachment_ticket && !lease->revoked &&
             (lease->owner_number!=number || lease->owner_identity!=identity)) return FALSE;
     return TRUE;
 }
@@ -1654,22 +1787,32 @@ KASPACE *kaspace_adopt(ASPACE *backend)
     space->retiring_committed=space->reaping=FALSE;
     space->mutating=FALSE;
     space->mutation_actor=space->reap_actor=0;
-    space->next = spaces;
-    spaces = space;
     space->heap.blocks = NULL;
     space->heap.count = space->heap.capacity = 0;
 #if CONF_WITH_MMAP
     space->mmap.regions = NULL;
     space->mmap.bytes = 0;
 #endif
+    {
+        KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
+        space->next=spaces;spaces=space;
+        kowner_leave(guard);
+    }
     return space;
 }
 
-KASPACE *kaspace_share(KASPACE *space)
+static KASPACE *kaspace_share_owned(KASPACE *space)
 {
     if (!space || space->refs == (ULONG)0xffffffffUL) return NULL;
     space->refs++;
     return space;
+}
+KASPACE *kaspace_share(KASPACE *space)
+{
+    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_MAPPING);
+    KASPACE * result=kaspace_share_owned(space);
+    kowner_leave(owner_guard);
+    return result;
 }
 
 ASPACE *kaspace_backend(const KASPACE *space)
@@ -1820,13 +1963,17 @@ void kaspace_shutdown_file_mappings(void)
 
 void kaspace_put(KASPACE *space)
 {
-    if (!space) return;
-    if (--space->refs) return;
+    KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
+    if (!space) { kowner_leave(guard);return; }
+    if(!space->refs)panic("ASPACE reference underflow");
+    if (--space->refs) { kowner_leave(guard);return; }
     {
         KASPACE **link;
         for (link = &spaces; *link; link = &(*link)->next)
             if (*link == space) { *link = space->next; break; }
     }
+    kowner_leave(guard);
+    kowner_assert_unlocked();
     aspace_destroy(space->backend);
 #if CONF_WITH_PRIVATE_CLONE
     while (space->leases) {
@@ -1941,13 +2088,17 @@ static LONG clone_captures(const KASPACE *source,KASPACE *copy)
 }
 #endif
 
-LONG kaspace_clone(const KASPACE *source, KASPACE **result)
+static LONG clone_prepared(const KASPACE *source, KASPACE **result)
 {
 #if CONF_WITH_PRIVATE_CLONE
     KASPACE *copy;
     LONG error = ENSMEM;
     if (!source || !result || *result) return EINVAL;
-    if (kaspace_mutation_busy(source)) return EACCDN;
+    {
+        const KASPACE_LEASE *lease;
+        for(lease=source->leases;lease;lease=lease->next)
+            if(lease->copying)return EACCDN;
+    }
     /* A surviving subrange hold does not own the rest of a consumed snapshot
      * cleanup fence. Keep COW usable for that hold, but do not copy the whole
      * backend until final retirement removes the unowned resident leaves. */
@@ -1989,10 +2140,18 @@ LONG kaspace_clone(const KASPACE *source, KASPACE **result)
 #endif
     error=clone_captures(source,copy);
     if (error) goto failed;
+    /* Revalidate after all allocation/backing callbacks. The source mutation
+     * admission prevents mapping changes; retired owner scopes still revoke
+     * the operation before any backend write-protection. */
+    if(pending_overlap((KASPACE *)source,0,USER_VA_LIMIT)) { error=EACCDN;goto failed; }
     /* All generic allocations precede backend source write-protection. */
     error = aspace_clone(source->backend, &copy->backend);
     if (error) goto failed;
-    copy->next = spaces; spaces = copy;
+    {
+        KOWNER_GUARD guard=kowner_enter(KOWNER_MAPPING);
+        copy->next=spaces;spaces=copy;
+        kowner_leave(guard);
+    }
     copy->resident_permissions_tightened=source->resident_permissions_tightened;
     *result = copy;
     return E_OK;
@@ -2018,12 +2177,39 @@ failed:
 #endif
 }
 
+LONG kaspace_clone(const KASPACE *source,KASPACE **result)
+{
+#if CONF_WITH_PRIVATE_CLONE
+    KASPACE *held=NULL;
+    KASPACE_LEASE *lease;
+    LONG error;
+    KOWNER_GUARD guard;
+    if(!source || !result || *result)return EINVAL;
+    guard=kowner_enter(KOWNER_MAPPING);
+    for(lease=source->leases;lease && !lease->copying;lease=lease->next) { }
+    if(!lease && !kaspace_mutation_busy(source) &&
+       !pending_overlap((KASPACE *)source,0,USER_VA_LIMIT)) {
+        held=kaspace_share((KASPACE *)source);
+        if(held && !kaspace_mutation_begin(held))panic("clone mapping admission changed");
+    }
+    kowner_leave(guard);
+    if(!held)return EACCDN;
+    error=clone_prepared(source,result);
+    kaspace_mutation_end(held);
+    kaspace_put(held);
+    return error;
+#else
+    return clone_prepared(source,result);
+#endif
+}
+
 #if CONF_WITH_NATIVE_SCHED
 #include "kaspace_permission.h"
 #endif
 
 #if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
 #include "shared_pexec_test.h"
+
 void kaspace_shared_snapshot(const ASPACE *current,SHARED_PEXEC_SNAPSHOT *out)
 {
     const KASPACE *space;

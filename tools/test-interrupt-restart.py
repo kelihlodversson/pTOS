@@ -45,6 +45,6 @@ with tempfile.TemporaryDirectory(prefix='ptos-irq-restart-') as directory:
     subprocess.run(shlex.split(os.environ.get('HOSTCC', 'cc')) + flags + [
         '-iquote', 'include', '-I' + str(work), '-Iinclude/arch/x86_64',
         '-idirafter', 'include', '-iquote', 'bdos', '-iquote', 'fs',
-        'tests/interrupt_restart.c', 'bdos/kaspace.c', '-Wl,--gc-sections',
+        'tests/interrupt_restart.c', 'bdos/kaspace.c', 'bdos/kowner.c', 'tests/kowner_model.c', '-Wl,--gc-sections',
         '-o', str(work / 'test')], check=True)
     subprocess.run([str(work / 'test')], check=True)

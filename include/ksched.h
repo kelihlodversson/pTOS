@@ -3,6 +3,7 @@
 #define KSCHED_H
 #include "portab.h"
 #include "bdosdefs.h"
+#include "kowner.h"
 /* Initial arena and maximum synchronous bootstrap batch, not a runnable-task
  * limit. Active publication grows stable slots on demand; ENSMEM is retryable. */
 #define KSCHED_LIMIT 8U
@@ -85,7 +86,7 @@ BOOL ksched_startup_reclaimable(const struct thread_startup_draft *);
 /* Backends mask dispatch/IRQs and validate that source owns the current task.
  * The compatibility controller is a pinned kernel-only basepage with no
  * PROCESS/PID; logical parent and synchronous result owners are separate. */
-typedef struct { uintptr_t flags; } KSCHED_PUBLICATION_GUARD;
+typedef struct { uintptr_t flags; KOWNER_GUARD owner; } KSCHED_PUBLICATION_GUARD;
 /* Nonmasking query during serialized preparation; begin revalidates it. */
 BOOL ksched_clone_context(struct kproc *source, PD **controller);
 #if CONF_WITH_EXEC_REPLACE
