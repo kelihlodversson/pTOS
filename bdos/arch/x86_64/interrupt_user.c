@@ -71,13 +71,15 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     capture->sequence++;
     capture->valid=TRUE;
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
+    /* Keep the diagnostic image, but an unsupported proof must neither alter
+     * IRQ return nor leave a pattern count that makes root demand copy-back. */
+    if (!x86_irq_return_controls_valid(&binding.controls)) return;
     check_irq_pattern(&capture->image);
     /* Restricted proof BEFORE dispatch/callbacks: no yield, reference release,
      * mapping change or GS/FS/TSS change can intervene. The original IRQ stack
      * remains owned and live. Never use a prior capture after a scheduling or
      * callback boundary. Unsupported/delayed restore remains unavailable. */
-    if (capture->image.r15==0x7130000000713015ULL &&
-        x86_irq_return_controls_valid(&binding.controls)) {
+    if (capture->image.r15==0x7130000000713015ULL) {
         X86_USER_IRQ_FRAME *destination=(X86_USER_IRQ_FRAME *)(uintptr_t)frame;
         UWORD byte;
         if (!x86_irq_same_entry_valid(capture,frame,&binding,execution->identity,

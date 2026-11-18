@@ -9,6 +9,7 @@
 #include "../bdos/arch/x86_64/interrupt_user.c"
 #define CHECK(x) do { if (!(x)) abort(); } while (0)
 void panic(const char *format, ...) { (void)format; abort(); }
+int kprintf(const char *format, ...) { (void)format; abort(); }
 PD *run;
 static KTHREAD_CONTEXT execution;
 static BOOL owned=TRUE;
@@ -77,6 +78,7 @@ int main(void)
     x86_64_capture_user_irq(&f);
     CHECK(c->valid && !x86_irq_return_controls_valid(&c->binding.controls));
     CHECK(!memcmp(&f,&before,sizeof(f))); /* Unsupported profile returns normally, no poison/panic. */
+    x86_64_irq_capture_report(); /* Nor may a later root report panic or demand proof. */
     puts("x32 capture producer: copied frame, same-entry eligibility, unchanged IRQ source, binding rejection and sequence exhaustion: PASS (CPU queries modeled)");
     return 0;
 }

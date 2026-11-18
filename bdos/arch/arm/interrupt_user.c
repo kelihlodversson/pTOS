@@ -76,8 +76,9 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     capture->sequence++;
     capture->valid=TRUE;
 #if CONF_WITH_EXIT_HANDOFF_TEST
+    if (!arm_irq_return_controls_valid(&capture->image,&binding)) return;
     check_irq_pattern(&capture->image);
-    if (capture->image.r[12]==0x71307132UL && arm_irq_return_controls_valid(&capture->image,&binding)) {
+    if (capture->image.r[12]==0x71307132UL) {
         ARM_USER_IRQ_FRAME *destination=(ARM_USER_IRQ_FRAME *)(uintptr_t)frame;
         UWORD i;
         if (!arm_irq_same_entry_valid(capture,frame,&binding,execution->identity,
