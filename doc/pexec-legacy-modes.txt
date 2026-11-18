@@ -67,7 +67,7 @@ status. MiNTLib's tfork() points p_tbase at a function of the caller.
 Unlike FreeMiNT, a basepage starts once: the staged basepage becomes the
 child, so a second 4/104 of it is refused (EIMBA), as is the caller's own
 basepage or a running one. Each start forking a new PROCESS from a
-caller-owned basepage, as FreeMiNT does, is a follow-up.
+caller-owned basepage, as FreeMiNT does, is #1032.
 
 Non-MMU ARM is to be deprecated and is left unchecked: it has no user/kernel
 boundary, so it keeps the staged modes exactly as before and does not tell
