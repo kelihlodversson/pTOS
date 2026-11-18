@@ -103,7 +103,36 @@ int main(void)
     CHECK(kproc_user_copy_begin(&copy,address+USER_PAGE_SIZE,sizeof(input),TRUE)==E_OK);
     CHECK(kaspace_copy_valid(copy.lease)); /* lazy materialization under the copy fence */
     kproc_user_copy_end(&copy);
+    /* The closing claim precedes service callbacks. A callback cannot reopen
+     * live operation admission after destruction checked the in-flight count. */
+    CHECK(kproc_claim_destroy(&child)==process);
+    CHECK(!kproc_retain_live(process) && !kproc_thread_start_allowed(process));
+    CHECK(!kthread_create(&child));
+    CHECK(kproc_user_copy_begin(&copy,address,sizeof(input),TRUE)==EACCDN);
+    CHECK(!process->user_copies && !copy.active);
+    process->destroying_pd=NULL;process->file_cleanup_started=FALSE;
+    process->disposal_state=PROCESS_LIVE; /* fixture returns before actual teardown */
     CHECK(kproc_munmap(&child,address,2*USER_PAGE_SIZE)==E_OK);
+    {
+        int foreign_identity;
+        KASPACE_MEMBER *member=NULL;
+        unsigned released=backend.releases;
+        address=kproc_mmap(&child,0,USER_PAGE_SIZE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,0,0);
+        CHECK(address>0);
+        CHECK(kaspace_member_new(space,777,&foreign_identity,&member)==E_OK);
+        kaspace_mmap(space)->regions->scope=member->scope;
+        CHECK(kproc_user_copy_begin(&copy,address,sizeof(input),TRUE)==E_OK);
+        kaspace_member_release(&member); /* the last foreign mapping owner */
+        CHECK(backend.releases==released && aspace_translate(&backend,address,NULL,NULL));
+        CHECK(kaspace_copy_valid(copy.lease) && kproc_user_copy_write(&copy,&input));
+        {
+            KPROC_USER_COPY denied={0};
+            CHECK(kproc_user_copy_begin(&denied,address,sizeof(input),FALSE)==EACCDN);
+        }
+        kproc_user_copy_end(&copy);
+        CHECK(backend.releases==released+1 && !aspace_translate(&backend,address,NULL,NULL));
+        CHECK(!kaspace_mmap(space)->regions && !process->user_copies);
+    }
     kproc_destroy(&child);kaspace_put(space);
     CHECK(allocations==frees);
     puts("PROCESS user-copy operations: independent rights, lazy backing, unmap/teardown exclusion, checked failures and exact conservation: PASS (MMU model)");

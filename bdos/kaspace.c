@@ -22,6 +22,7 @@ struct kaspace_scope {
 };
 struct kaspace_member {
     KASPACE_SCOPE *scope;
+    KASPACE *retiring_space; /* cached before scopes become reapable */
     UQUAD number;
     void *identity; /* borrowed canonical identity; detached before KPROC wipe */
     KASPACE_MEMBER *next, *owner_next;
@@ -343,10 +344,11 @@ void kaspace_member_release(KASPACE_MEMBER **members)
         for(at=&member->scope->members;*at && *at!=member;at=&(*at)->next) { }
         if(!*at)panic("mapping membership detached twice");
         *at=member->next;member->identity=NULL;member->number=0;
+        member->retiring_space=member->scope->space;
     }
     kowner_leave(guard);
     for(member=retired;member;member=next) {
-        KASPACE *space=member->scope->space;
+        KASPACE *space=member->retiring_space;
         next=member->owner_next;kfree(member);
         reap_retired(space);
         kaspace_put(space);
@@ -1496,7 +1498,7 @@ static BOOL retirement_unblocked(KASPACE *space,VADDR address,VADDR bytes)
     VADDR first=address&~(VADDR)(USER_PAGE_SIZE-1);
     VADDR last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
     for (lease=space->leases;lease;lease=lease->next)
-        if (first<=lease->last && lease->first<=last && (lease->sealed || lease->held) &&
+        if (first<=lease->last && lease->first<=last && (lease->copying || lease->sealed || lease->held) &&
             !(lease->retire_bytes && !lease->reservation_ticket)) return FALSE;
     return TRUE;
 }

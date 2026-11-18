@@ -2896,6 +2896,9 @@ static KPROC *kproc_claim_destroy(PD *pd)
     if(process && (process->destroying_pd==pd || process->user_copies))process=NULL;
     if(process) {
         if(process->threads)panic("kproc_destroy: attached non-runnable threads");
+        /* Close live retain/THREAD admission before the first service callback.
+         * Observer identity and cleanup lookup remain available until detach. */
+        process->disposal_state=PROCESS_DISPOSING;
         process->destroying_pd=pd;
         process->file_cleanup_started=TRUE;
     }
@@ -6858,7 +6861,8 @@ static LONG user_operation_begin(KPROC_USER_COPY *copy,PD *pd,VADDR address,ULON
     copy->backing_failed=FALSE;
     guard=kowner_enter(KOWNER_PROCESS);
     copy->process=kproc_find(pd);
-    if(!copy->process || copy->process->user_copies==~(ULONG)0 ||
+    if(!copy->process || copy->process->destroying_pd || copy->process->file_cleanup_started ||
+       copy->process->user_copies==~(ULONG)0 ||
        !kproc_retain_live(copy->process)) { copy->process=NULL;error=EACCDN; }
     else {
         copy->process->user_copies++;
@@ -6938,7 +6942,7 @@ void kproc_user_copy_end(KPROC_USER_COPY *copy)
     ksched_cleanup_end(&retirement);
 #endif
 }
-static LONG copy_user(VADDR address,void *destination,const void *source,ULONG bytes,BOOL write,BOOL fatal)
+static LONG copy_user_operation(VADDR address,void *destination,const void *source,ULONG bytes,BOOL write,BOOL fatal)
 {
     KPROC_USER_COPY copy={0};
     LONG error;
@@ -6970,9 +6974,9 @@ static BOOL ordinary_copy_error(LONG error)
     return FALSE;
 }
 BOOL kproc_copy_from_user(void *dst,VADDR address,ULONG bytes)
-{ return bytes && ordinary_copy_error(copy_user(address,dst,NULL,bytes,FALSE,TRUE)); }
+{ return bytes && ordinary_copy_error(copy_user_operation(address,dst,NULL,bytes,FALSE,TRUE)); }
 BOOL kproc_copy_to_user(VADDR address,const void *src,ULONG bytes)
-{ return bytes && ordinary_copy_error(copy_user(address,NULL,src,bytes,TRUE,TRUE)); }
+{ return bytes && ordinary_copy_error(copy_user_operation(address,NULL,src,bytes,TRUE,TRUE)); }
 /* Back-only preparation grants no persistent copy rights. Consumers retaining
  * a result across callbacks use KPROC_USER_COPY through their final commit. */
 LONG kproc_back_user_write_checked(VADDR address,ULONG bytes)
@@ -6985,9 +6989,9 @@ LONG kproc_back_user_write_checked(VADDR address,ULONG bytes)
     return error;
 }
 LONG kproc_copy_from_user_checked(void *dst,VADDR address,ULONG bytes)
-{ return copy_user(address,dst,NULL,bytes,FALSE,FALSE); }
+{ return copy_user_operation(address,dst,NULL,bytes,FALSE,FALSE); }
 LONG kproc_copy_to_user_checked(VADDR address,const void *src,ULONG bytes)
-{ return copy_user(address,NULL,src,bytes,TRUE,FALSE); }
+{ return copy_user_operation(address,NULL,src,bytes,TRUE,FALSE); }
 
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size)
 {

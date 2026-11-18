@@ -2445,6 +2445,15 @@ KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *
     return wait_observed(ready,argument,observation);
 }
 
+static KSCHED_WAIT_RESULT dependency_wait_observed(BOOL (*ready)(void *),void *argument,
+                                                    const KSCHED_WAIT_OBSERVATION *observation)
+{
+    /* Protected cleanup cannot terminate. Preserve its dependency progress
+     * even when group cancellation is already pending; never busy-retry it. */
+    if(ksched_cleanup_active())
+        return block_observed(ready,argument,observation)?KSCHED_WAIT_READY:KSCHED_WAIT_UNMANAGED;
+    return ksched_wait_cancelable_observed(ready,argument,observation);
+}
 static BOOL cancellation_wait(BOOL (*ready)(void *), void *argument)
 {
     /* Cancellation cannot execute while this owner has cleanup tickets.
@@ -2565,7 +2574,7 @@ LONG ksched_join(ULONG tid, UQUAD address)
         KSCHED_WAIT_RESULT waited;
         kthread_join_observe(caller,&observation);
         if(kthread_join_ready(caller))break;
-        waited=ksched_wait_cancelable_observed(kthread_join_ready,caller,&observation);
+        waited=dependency_wait_observed(kthread_join_ready,caller,&observation);
         native_sched_irq_restore(flags);
 #if CONF_WITH_PTERMGRP
         if(waited==KSCHED_WAIT_CANCELLED)ksched_cancel_point();
@@ -3001,7 +3010,7 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
             error=enter_root(FALSE,child_ready,&wait);
             if(error) { if(exact) process_wait_release_claim(&wait);return error; }
         } else {
-            KSCHED_WAIT_RESULT blocked=ksched_wait_cancelable_observed(child_ready,&wait,&observation);
+            KSCHED_WAIT_RESULT blocked=dependency_wait_observed(child_ready,&wait,&observation);
             native_sched_irq_restore(flags);
             if(blocked==KSCHED_WAIT_UNMANAGED) {
                 if(exact)process_wait_release_claim(&wait);

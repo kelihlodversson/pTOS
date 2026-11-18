@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
         '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
         '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
-        'tests/process_observer.c','bdos/process_observer.c','-Wl,--gc-sections','-o',str(work/'observer')],check=True)
+        'tests/process_observer.c','bdos/process_observer.c','bdos/kowner.c','tests/kowner_model.c','-Wl,--gc-sections','-o',str(work/'observer')],check=True)
     subprocess.run([str(work/'observer')],check=True)
     subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror',
         '-fno-pie','-no-pie','-ffunction-sections','-fdata-sections',
@@ -48,6 +48,6 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
         '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
         '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
-        'tests/process_observer.c','bdos/process_observer.c','bdos/fshand.c',
+        'tests/process_observer.c','bdos/process_observer.c','bdos/kowner.c','tests/kowner_model.c','bdos/fshand.c',
         '-Wl,--gc-sections','-o',str(work/'native-owner')],check=True)
     subprocess.run([str(work/'native-owner')],check=True)

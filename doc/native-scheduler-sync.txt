@@ -88,6 +88,35 @@ endpoints while executing production owners; they are not native execution.
 - Final x32/m68k/ARM FAT/PFS, legacy/scheduler-disabled ROM, sanitizers/fortified,
   exact source/synthetic-merge CI and independent review remain acceptance work.
 
+Independent review and corrections
+----------------------------------
+Independent scheduler ownership and MMU/resource reviews found three defects in
+this implementation, now corrected with regressions:
+- Cleanup-active observed PROCESS/TID waits must still dispatch dependencies
+  with group cancellation pending. They use raw observed blocking, preserving
+  the existing cancellation deferral contract instead of busy-retrying CANCELLED.
+- Copy fences must stop last-member mapping retirement, not only explicit
+  Munmap/Mprot. The foreign-owner test proves old rights survive, new admission
+  fails and the existing lease release triggers exactly-once retirement.
+- Destruction must close all live admission before service callbacks. The
+  closing claim sets PROCESS_DISPOSING, while identity/cleanup lookup survives.
+  Retain-live, new THREAD and copy admissions are tested at that boundary.
+
+Broader shared-interpreter ASan checks also found that full membership detach
+made later scopes reapable during the first member's cleanup. Every detached
+node now caches its already-owned KASPACE before unlock; cleanup never reads a
+scope after reaping can free it. The interpreter ASan regression passed on all
+three modeled architectures after this correction. No additional root reference
+or registry is introduced. The cleanup-scope type is shared through its own
+small header; kernel copy APIs do not pull scheduler policy declarations into
+resource headers.
+
+The native region test now exercises a real cross-page copy operation, blocked
+unmap/protection, nested checked read, permission-failure rollback, unchanged
+output and complete page retirement through actual architecture providers.
+It prints "native B1 copy operation and checked rollback: PASS". Hosted frame,
+resource and MMU endpoint models remain distinct from this native evidence.
+
 Historical B0 audit follows
 ===========================
 

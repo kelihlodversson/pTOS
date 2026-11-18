@@ -28,6 +28,33 @@
 extern PD *run;
 #define REQUIRE(c) do { if (!(c)) panic("native region ownership: %s",#c); } while (0)
 #define PAGE USER_PAGE_SIZE
+#if CONF_WITH_MMAP
+/* Actual PROCESS, page tables and user-copy providers; no test-only syscall. */
+static void owner_copy_operation(void)
+{
+    KPROC_USER_COPY copy={0};
+    LONG address=kproc_mmap(run,0,2*PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,0,0);
+    ULONG input=0x713b1001,output=0;
+    VADDR crossing;
+    ASPACE *backend=kproc_user_aspace(run);
+    REQUIRE(address>0 && backend);
+    crossing=(VADDR)address+PAGE-2;
+    REQUIRE(kproc_user_copy_begin(&copy,crossing,sizeof(input),TRUE)==E_OK);
+    REQUIRE(kproc_munmap(run,address,2*PAGE)==EACCDN);
+    REQUIRE(kproc_mprot(run,address,2*PAGE,PROT_READ)==EACCDN);
+    REQUIRE(kproc_user_copy_write(&copy,&input));
+    REQUIRE(kproc_copy_from_user_checked(&output,crossing,sizeof(output))==E_OK && output==input);
+    kproc_user_copy_end(&copy);
+    REQUIRE(kproc_mprot(run,address+PAGE,PAGE,PROT_READ)==E_OK);
+    REQUIRE(kproc_user_copy_begin(&copy,crossing,sizeof(input),TRUE)==EIMBA && !copy.active);
+    output=0;
+    REQUIRE(kproc_copy_from_user_checked(&output,crossing,sizeof(output))==E_OK && output==input);
+    REQUIRE(kproc_munmap(run,address,2*PAGE)==E_OK);
+    REQUIRE(!aspace_translate(backend,address,NULL,NULL) &&
+            !aspace_translate(backend,address+PAGE,NULL,NULL));
+    kcprintf("native B1 copy operation and checked rollback: PASS\n");
+}
+#endif
 #define REGION_FILE_TEST (CONF_WITH_MMAP && !CONF_WITH_PLUGGABLE_FS && \
     (CONF_WITH_KCALL || CONF_WITH_VDI_SCALABLE_FONTS || CONF_WITH_ELF_SHARED))
 #if REGION_FILE_TEST
@@ -373,6 +400,9 @@ void kproc_region_selftest(void)
     procmem_stats(&before); records=kproc_count();
     source=kproc_retain(run); REQUIRE(source);
     borrow_rollback();
+#if CONF_WITH_MMAP
+    owner_copy_operation();
+#endif
     retired_backing_bounds(source);
     held_staging_discard(source);
     held_clone_compat_retirement(source);

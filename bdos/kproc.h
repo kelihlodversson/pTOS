@@ -528,7 +528,7 @@ BOOL kproc_validate_user_write(VADDR address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
 #if CONF_WITH_USER_ASPACE
 #if CONF_WITH_NATIVE_SCHED
-#include "ksched.h"
+#include "ksched_cleanup.h"
 #endif
 /* Move-only, zero-initialized kernel operation. Prepare may fault/allocate;
  * copy uses retained, resident rights outside all metadata locks. End settles
