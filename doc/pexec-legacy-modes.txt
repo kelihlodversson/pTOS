@@ -112,6 +112,9 @@ C  obsolete, deleted
      thread_startup ELF initial-SP entry, kproc_shared_exec_initial_sp(),
      interpreted staging (kproc_shared_interp.h) and its RELRO tightening
      (aspace_protect_relro(), kaspace_relro_change()).
+   - ld.so runtime ownership for shared-VM ELF peers: PTOS_RUNTIME_OWNERSHIP,
+     MAP_PTOS_RUNTIME, the KASPACE runtime scopes and their per-PROCESS
+     runtime_scope; every mapping is now in the PROCESS allocation scope.
    - CUIS_CHILD_BIND and kproc_child_image_pid(): binding an unlaunched
      staged image to a CUIS child; its only producers were x32 modes 3/5.
    - Positive tests and fixtures for the above (see the PR).
