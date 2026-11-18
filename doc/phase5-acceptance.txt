@@ -98,7 +98,8 @@ Private protected-query diagnostic copyout after its blocking mode4 execution:
   non-consumption contract, which remains unchanged. No output lease is implied
   by preflight and no new pin, rollback or second reap is introduced.
 Independent CUIS CH_EXIT and GUI shell/controller/deferred completion:
-  gated tests/cuis/gem_exit.c plus required test-mmap-boot marker; positive
+  gated tests/cuis/gem_exit.c plus required test-mmap-boot marker (its
+  staged-mode synchronous checks were removed with those modes in #1018); positive
   full MEMTEST/GEM/form/input CI step is distinct from gate-off compatibility.
 Static/standard interpreted ELF, PRG/fastcall,0/3/6/100/106, nested/deferred/
 observed and ROM/non-MMU execution; missing/malformed interpreter/executable:

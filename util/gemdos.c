@@ -35,7 +35,7 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
     LONG    *temp;
     PD      *pd;
 
-    ret = Pexec(PE_KERNEL|PE_LOAD, pname, "", NULL);
+    ret = Pexec(PE_KERNEL_TAG|PE_LOAD, pname, "", NULL);
     if (ret < 0L)
         return -1;
 

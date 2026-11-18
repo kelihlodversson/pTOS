@@ -238,11 +238,11 @@ struct kproc {
     KASPACE *pending_space; /* owning reference while the image is loaded */
                                 /* at load time, with its image in it; the launch adopts it */
     BOOL lost;                  /* ... and the launch failed after adopting it: nothing to launch */
-    struct uheap_block {        /* loader staging and legacy returned-image blocks */
+    struct uheap_block {        /* legacy per-process heap ledger (#1018: unused) */
         VADDR va;               /* sorted by address */
         ULONG pages;
-        UBYTE kind;             /* UH_MALLOC here is only legacy PE_GO give-back */
-        PD *pd;                 /* UH_LOADED: the process it is loaded for */
+        UBYTE kind;             /* only UH_MALLOC remains */
+        PD *pd;
         UQUAD reservation;      /* immutable staged/image allocation birth */
         UQUAD shared_generation; /* exact source-owned PD allocation incarnation */
     } *heap;

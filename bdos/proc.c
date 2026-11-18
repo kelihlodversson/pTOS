@@ -575,7 +575,9 @@ static BOOL pexec_public_mode(WORD flag)
 }
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
-    WORD kernel = flag & PE_KERNEL;
+    /* Only a kernel with user address spaces honours PE_KERNEL; elsewhere
+     * the bit is not part of any mode and the call fails as before. */
+    WORD kernel = CONF_WITH_USER_ASPACE ? (flag & PE_KERNEL) : 0;
     /* Refused before any argument is used: no image, no ownership change. */
     if (kernel) {
 #if CONF_WITH_USER_ASPACE
@@ -668,7 +670,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #if CONF_WITH_NATIVE_SCHED
     LONG scheduled_result;
 #endif
-    BOOL kernel = (flag & PE_KERNEL) != 0;
+    BOOL kernel = CONF_WITH_USER_ASPACE && (flag & PE_KERNEL) != 0;
     long needed;
     FH fh;
 #if CONF_WITH_BINFMT
@@ -694,7 +696,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     UNUSED(directory);
 #endif
 
-    flag &= ~PE_KERNEL;
+    if (kernel) flag &= ~PE_KERNEL;
 #if !CONF_WITH_LEGACY_PEXEC && !CONF_WITH_USER_ASPACE
     UNUSED(kernel);
 #endif

@@ -300,12 +300,10 @@ static long pexec_ok(const long *pw)
 
     /* #1018: the kernel's own requests (PE_KERNEL) carry kernel pointers and
      * never come from a process with a user address space. */
-    if (mode & PE_KERNEL) {
 #if CONF_WITH_USER_ASPACE
-        if (kproc_user_aspace(run)) return EINVFN;
+    if (mode & PE_KERNEL)
+        return kproc_user_aspace(run) ? EINVFN : E_OK;
 #endif
-        return E_OK;
-    }
 #if CONF_WITH_STAGED_PEXEC
 #if CONF_WITH_USER_ASPACE && !(CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC)
     /* Production gate: no staged-image access before capability acceptance. */

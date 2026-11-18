@@ -128,6 +128,8 @@ not used by this metadata policy. No nheap, pending, lender, give-back, multi-TH
 admission restriction is removed here. The verified moved-image negative
 control and missing complete owned-image contract remain recorded on #971.
 
+(#1018 removed the moved image, its loader primitives and this control; the
+paragraph below records what it established at the time.)
 The committed tools/test-private-image-admission.py control runs actual
 kproc_load_alloc(), kproc_set_moved_image(), move_loaded_image(), MMU transfer
 and protection before checking private-runtime admission. An empty sole source

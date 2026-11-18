@@ -334,7 +334,7 @@ static void start_external_cli(char *env)
 /*
  * Runs the built-in EmuCON, an x32 program embedded in this image
  * (cli/arch/x86_64/emucon_image.c), as an ordinary ring-3 process: a
- * basepage and environment from Pexec(PE_KERNEL|PE_BASEPAGEFLAGS), the image
+ * basepage and environment from Pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS), the image
  * attached to its kernel record so launching maps its segments as private
  * pages of the process's own address space, then the normal launch.  It
  * enters at the image's own entry point with RDI = basepage and RSI =
@@ -343,7 +343,7 @@ static void start_external_cli(char *env)
  */
 void start_builtin_cli(char *env)
 {
-    PD *pd = (PD *) trap1_pexec(PE_KERNEL|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
+    PD *pd = (PD *) trap1_pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
     long rc;
 
     if ((long)pd <= 0 && (long)pd >= -256) {    /* a GEMDOS error code */
@@ -356,7 +356,7 @@ void start_builtin_cli(char *env)
     } else {
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         kcprintf("EmuCON: starting the x32 image in ring 3\n");
-        rc = Pexec(PE_KERNEL|PE_GOTHENFREE, "", (char *)pd, env);
+        rc = Pexec(PE_KERNEL_TAG|PE_GOTHENFREE, "", (char *)pd, env);
         if (rc < 0)
             kcprintf("EmuCON: cannot start (%ld)\n", rc);
     }
@@ -877,7 +877,7 @@ static void bootstrap(void)
     nf_getbootstrap_args(args, sizeof(args));
 
     /* allocate space */
-    pd = (PD *) Pexec(PE_KERNEL|PE_BASEPAGEFLAGS, (char*)PF_STANDARD, args, default_env);
+    pd = (PD *) Pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char*)PF_STANDARD, args, default_env);
 
     /* get the TOS executable from the emulator */
     length = nf_bootstrap(pd->p_lowtpa + sizeof(PD), pd->p_hitpa - pd->p_lowtpa);
@@ -887,7 +887,7 @@ static void bootstrap(void)
         goto err;
 
     /* relocate the loaded executable */
-    r = Pexec(PE_KERNEL|PE_RELOCATE, (char *)length, (char *)pd, default_env);
+    r = Pexec(PE_KERNEL_TAG|PE_RELOCATE, (char *)length, (char *)pd, default_env);
     if (r != (LONG)pd)
         goto err;
 
@@ -895,7 +895,7 @@ static void bootstrap(void)
     bootdev = nf_getbootdrive();
 
     /* execute the relocated process */
-    Pexec(PE_KERNEL|PE_GO, "", (char *)pd, default_env);
+    Pexec(PE_KERNEL_TAG|PE_GO, "", (char *)pd, default_env);
 
 err:
     Mfree(pd->p_env); /* Mfree() the environment */
@@ -1217,10 +1217,10 @@ void biosmain(void)
 #elif CONF_WITH_USER_ASPACE
         start_builtin_cli(default_env);
 #else
-        PD *pd = (PD *) trap1_pexec(PE_KERNEL|PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
+        PD *pd = (PD *) trap1_pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) coma_start);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
-        Pexec(PE_KERNEL|PE_GOTHENFREE, "", (char *)pd, default_env);
+        Pexec(PE_KERNEL_TAG|PE_GOTHENFREE, "", (char *)pd, default_env);
 #endif
     }
 #endif
@@ -1259,7 +1259,7 @@ void biosmain(void)
          * like Atari TOS, we pass the default environment
          */
         PD *pd;
-        pd = (PD *) Pexec(PE_KERNEL|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
+        pd = (PD *) Pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", default_env);
 #if ARCH_X86_64
         {
             extern void mark_kernel_code_pd(PD *pd);
@@ -1268,7 +1268,7 @@ void biosmain(void)
 #endif
         pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *) exec_os);
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
-        Pexec(PE_KERNEL|PE_GO, "", (char *)pd, default_env);
+        Pexec(PE_KERNEL_TAG|PE_GO, "", (char *)pd, default_env);
     }
 #if CONF_WITH_CLI && CONF_EXTERNAL_CLI
     else {

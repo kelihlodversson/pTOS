@@ -16,13 +16,20 @@ native launch API. pTOS has not released 1.0 and makes a clean break:
                      allocation
   5 / 7 (basepage)   platform gate only         unchecked        EINVFN
   4 / 6 / 104 / 106  platform gate only; the    unchecked        EINVFN
-                     classic PRG entry. MMU:
-                     4/104 start a distinct
-                     PROCESS sharing the
-                     caller's address space
+                     classic PRG entry. With    (4/6; no
+                     the native scheduler       104/106)
+                     (virt-m68k-aspace): 4/104
+                     start a distinct PROCESS
+                     sharing the caller's
+                     address space
                      (CONF_WITH_SHARED_VM_PEXEC,
-                     production); non-MMU/ROM:
-                     in place, as on TOS
+                     production), 106 is the
+                     async GO. ROM/non-MMU:
+                     4/6 in place as on TOS,
+                     104/106 EINVFN as upstream.
+                     MMU without the scheduler
+                     (amiga-aspace): ring-3 4
+                     and 104/106 are EINVFN
   50 (PE_RELOCATE)   kernel only (NatFeats bootstrap)
 
 Targetless modes (5/7/4/6/104/106) carry no executable pathname, so neither
@@ -37,6 +44,10 @@ allocation is rolled back on failure.
 On MMU ARM and x32 the staged modes are refused with EINVFN before the
 arguments are read (bdos/uaccess.c) and again at the GEMDOS entry
 (xexec()), so no image is allocated and no ownership moves.
+
+Shared-VM 4/104 starts only a staged mode-3 PRG, at its loader-recorded text
+(user_start + sizeof(PD)); a mode-5/7 basepage made by the caller is refused
+there (EINVFN) and is started with mode 6 instead.
 
 Non-MMU ARM is to be deprecated and is left unchecked: it has no user/kernel
 boundary, so it keeps the staged modes exactly as before and does not tell
@@ -55,7 +66,11 @@ reentrant launch's exit code to the right call site. They therefore use the
 same dispatcher with PE_KERNEL set in the mode (include/bdosdefs.h). A
 process with a user address space can never make such a request (refused in
 uaccess.c and xexec()); a kernel without address spaces has no user/kernel
-boundary to enforce. PE_KERNEL requests never stage into a caller's heap and
+boundary to enforce, so there the bit is never put in the mode word
+(PE_KERNEL_TAG, include/config.h): FreeMiNT, Hatari's GEMDOS hook and other
+trap #1 filters see the TOS modes they know, and a program setting the bit
+gets EINVFN as before. The one consequence is that the AES accessory load is
+then an ordinary mode 3, PRG-only on m68k. PE_KERNEL requests never stage into a caller's heap and
 never move ownership to a user caller: the caller has no address space. On an
 address-space kernel a PE_KERNEL load (the x86-64 self-test harness) stages
 the image into the new process's own address space.
