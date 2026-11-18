@@ -24,6 +24,9 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+long xexec_selftest(WORD, char *, char *, char *);
+#endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.

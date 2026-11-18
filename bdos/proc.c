@@ -604,6 +604,15 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* exec_common() learns whether this is the kernel's own request. */
     return exec_common(flag|kernel,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
 }
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+/* The region self-test is kernel code running on behalf of a managed process
+ * (bdos/region_selftest.c): its requests are the kernel's own, although run
+ * has a user address space. Never reachable from a GEMDOS trap. */
+long xexec_selftest(WORD flag, char *path, char *tail, char *env)
+{
+    return exec_common(flag|PE_KERNEL,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
+}
+#endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)

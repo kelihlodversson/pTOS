@@ -150,14 +150,14 @@ static void borrow_rollback(void)
      * subsequent failed TPA construction. It is reclaimed through the normal
      * canonical discard path before measuring failed loader transactions. */
     {
-        LONG pd=xexec(PE_KERNEL|PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty);
+        LONG pd=xexec_selftest(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty);
         REQUIRE(pd>0);proc_discard_scheduled((PD *)(uintptr_t)pd);
     }
     for(mode=0;mode<2;mode++) {
         PROCMEM_STATS start,finish;
         procmem_stats(&start);kheap_stats(&meta);free_ram=REGION_FREE_RAM();tables=aspace_table_pages(backend);
         aspace_test_borrow_failure(backend,mode);
-        REQUIRE(xexec(PE_KERNEL|PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty)==ENSMEM);
+        REQUIRE(xexec_selftest(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty)==ENSMEM);
         REQUIRE(aspace_test_borrow_pending(backend)==-1);
         aspace_test_borrow_failure(backend,-1);
         procmem_stats(&finish);kheap_stats(&after_meta);
