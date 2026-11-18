@@ -393,11 +393,11 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
     PD *pd;     /* this is the BDOS PD structure, not the AESPD */
 
     /* Create a basepage with the standard Pexec() */
-    pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
+    pd = (PD *) Pexec(PE_KERNEL|PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
     pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)entry);
 
     /* Run the program with dos_exec() for AES reentrancy issues */
-    return dos_exec(PE_GOTHENFREE, NULL, (const char *)pd, NULL);
+    return dos_exec(PE_KERNEL|PE_GOTHENFREE, NULL, (const char *)pd, NULL);
 }
 
 

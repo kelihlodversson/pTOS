@@ -283,10 +283,12 @@ static long env_ok(long v)
 
 /*
  * Pexec(mode, path, tail, env): which arguments are pointers depends on the
- * mode.  Modes 0 and 3 load a file (path is a string); 5 and 7 only create a
- * basepage (the path slot holds flags); 6 launches a basepage the caller
- * made, which is looked up in the kernel's own records and never dereferenced
- * here. Mode 4 is temporarily unavailable to user-address-space callers.
+ * mode.  Modes 0, 100 and 200 load a file (path is a string). On m68k the
+ * historical staged modes remain (doc/pexec-legacy-modes.txt): 3 loads a PRG
+ * (path is a string); 5 and 7 only create a basepage (the path slot holds
+ * flags); 4/6/104/106 launch a basepage the caller made, which is looked up
+ * in the kernel's own records and never dereferenced here. ARM and x32 refuse
+ * those modes before any pointer is looked at.
  * The tail is copied from the user and must end (with its NUL) within
  * PDCLSIZE bytes, as the kernel adds a terminator of its own after the copy;
  * the environment, if given, is a list of strings ending with a double NUL.
@@ -296,11 +298,20 @@ static long pexec_ok(const long *pw)
     WORD mode = (WORD)pw[1];
     long rc;
 
+    /* #1018: the kernel's own requests (PE_KERNEL) carry kernel pointers and
+     * never come from a process with a user address space. */
+    if (mode & PE_KERNEL) {
+#if CONF_WITH_USER_ASPACE
+        if (kproc_user_aspace(run)) return EINVFN;
+#endif
+        return E_OK;
+    }
+#if CONF_WITH_LEGACY_PEXEC
 #if CONF_WITH_USER_ASPACE && !(CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST)
     /* Production gate: no staged-image access before capability acceptance. */
     if (mode == PE_GO && kproc_user_aspace(run)) return EINVFN;
 #endif
-    if (mode == 4 || mode == 6
+    if (mode == PE_GO || mode == PE_GOTHENFREE
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
         || mode == 104
 #endif
@@ -310,13 +321,17 @@ static long pexec_ok(const long *pw)
     ) {
         ULONG bp;
 
-        /* the basepage is found in the kernel's records (x86-64) and never
+        /* the basepage is found in the kernel's records and never
          * dereferenced here, but it cannot be null or beyond 32 bits */
         if (!uaddr(pw[3], &bp) || !bp)
             return EIMBA;
         return E_OK;
     }
-    if (mode == 0 || mode == 3
+#endif
+    if (mode == PE_LOADGO
+#if CONF_WITH_LEGACY_PEXEC
+        || mode == PE_LOAD
+#endif
 #if CONF_WITH_NATIVE_SCHED
         || mode == PE_ASYNC_LOADGO
 #endif
@@ -327,7 +342,9 @@ static long pexec_ok(const long *pw)
         rc = str_ok(pw[2], UA_PATH_MAX);
         if (rc)
             return rc;
-    } else if (mode != 5 && mode != 7) {
+    }
+#if CONF_WITH_LEGACY_PEXEC
+    else if (mode != PE_BASEPAGE && mode != PE_BASEPAGEFLAGS) {
 #if CONF_WITH_USER_ASPACE
         /* the kernel's own modes (PE_RELOCATE) are not for the user */
         return EINVFN;
@@ -335,6 +352,10 @@ static long pexec_ok(const long *pw)
         return E_OK;                    /* not a mode: the call says EINVFN */
 #endif
     }
+#else
+    else
+        return EINVFN;                  /* not a mode of this platform */
+#endif
     rc = str_ok(pw[3], UA_TAIL_MAX);
     if (rc)
         return rc;

@@ -103,14 +103,16 @@ void mark_kernel_code_pd(PD *p)
     kernel_code_pd = p;
 }
 
-/* Pexec() from a process with an address space of its own (see
- * doc/x86_64-address-space.txt, "Basepages in ring 3"): the caller owns what
- * it creates, and may only launch what the kernel made for it. */
+/* A process with an address space of its own owns what it creates, and
+ * frees nothing else (see doc/x86_64-address-space.txt, "Basepages in
+ * ring 3"). */
 static BOOL caller_has_aspace(void)
 {
     return kproc_user_aspace(run) != NULL;
 }
 
+#if CONF_WITH_LEGACY_PEXEC
+/* 68k staged modes: the caller may only launch what the kernel made for it. */
 static LONG check_launch(PD *p)
 {
     return caller_has_aspace() ? kproc_check_launch(p, run) : E_OK;
@@ -122,13 +124,7 @@ static void hand_over(PD *p)
     if (caller_has_aspace())
         kproc_hand_over(run, p);
 }
-
-/* Preserve the legacy give-back path for kernel/ROM compatibility. User
- * address-space callers cannot request PE_GO until shared-VM mode 4 exists. */
-static void give_back_image(PD *p, BOOL give_back)
-{
-    kproc_set_give_back(p, give_back);
-}
+#endif
 
 /*
  * Per-launch setup that can fail for lack of memory, done where Pexec()
@@ -566,8 +562,29 @@ static WORD envsize(char *env)
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
     ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
+/* #1018: the public modes of this platform. The historical staged modes are
+ * 68k compatibility (doc/pexec-legacy-modes.txt); ARM and x32 keep only
+ * Pexec(0/100/200) until #1008. Unknown modes fail in exec_common(). */
+static BOOL pexec_public_mode(WORD flag)
+{
+#if CONF_WITH_LEGACY_PEXEC
+    UNUSED(flag);
+    return TRUE;
+#else
+    return flag == PE_LOADGO || flag == PE_ASYNC_LOADGO || flag == PE_EXEC_REPLACE;
+#endif
+}
 long xexec(WORD flag, char *path, char *tail, char *env)
 {
+    WORD kernel = flag & PE_KERNEL;
+    /* Refused before any argument is used: no image, no ownership change. */
+    if (kernel) {
+#if CONF_WITH_USER_ASPACE
+        if (kproc_user_aspace(run)) return EINVFN;
+#endif
+        flag &= ~PE_KERNEL;
+    } else if (!pexec_public_mode(flag))
+        return EINVFN;
 #if CONF_WITH_PEXEC200
     if (flag == PE_EXEC_REPLACE) return proc_exec_replace(path, tail, env);
 #endif
@@ -585,7 +602,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         return error < 0 ? error : result;
     }
 #endif
-    return exec_common(flag,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
+    /* exec_common() learns whether this is the kernel's own request. */
+    return exec_common(flag|kernel,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
 }
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
@@ -642,6 +660,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #if CONF_WITH_NATIVE_SCHED
     LONG scheduled_result;
 #endif
+    BOOL kernel = (flag & PE_KERNEL) != 0;
     long needed;
     FH fh;
 #if CONF_WITH_BINFMT
@@ -667,6 +686,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     UNUSED(directory);
 #endif
 
+    flag &= ~PE_KERNEL;
+#if !CONF_WITH_LEGACY_PEXEC
+    UNUSED(kernel);
+#endif
 #if CONF_WITH_EXEC_REPLACE
     if (replacement && (flag != PE_LOAD ||
                         kproc_exec_replacement_validate(replacement))) return EACCDN;
@@ -736,12 +759,12 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #else
         (void)init_pd_files(p);
 #endif
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC
         hand_over(p);
 #endif
 
         return (long)p;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_LEGACY_PEXEC
     case 104: /* Test kernels only until native/owner activation acceptance. */
 #if CONF_WITH_SHARED_VM_PEXEC_TEST
         return caller_has_aspace() ? proc_shared_vm_exec((PD *)tail,TRUE) : EINVFN;
@@ -754,15 +777,16 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         rc = check_launch(p);
         if (rc) return rc;
         if (!kproc_create(p)) return ENSMEM;
-        give_back_image(p, FALSE);
         return ksched_spawn(p);
+#endif
+#if CONF_WITH_NATIVE_SCHED
     case PE_ASYNC_LOADGO:
         if (!ksched_async_allowed()) return EINVFN;
         break;
 #endif
     case PE_GOTHENFREE:
         p = (PD *) tail;
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC
         rc = check_launch(p);
         if (rc)
             return rc;
@@ -772,7 +796,6 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         if (!kproc_create(p))
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
-        give_back_image(p, FALSE);      /* (a PE_GO that failed before may have asked) */
 #if CONF_WITH_NATIVE_SCHED
         if (schedule_launch(p)) return run_scheduled(p, TRUE);
 #endif
@@ -784,8 +807,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         set_owner(USERPTR_TO_PTR(p->p_env), p);
         FALLTHROUGH;
     case PE_GO:
-#if CONF_WITH_USER_ASPACE
-        /* Ring-3 mode 4 will return as shared-VM Pexec in #894. Refuse it
+#if CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC
+        /* Ring-3 mode 4 is shared-VM Pexec (#894), still test-only. Refuse it
          * before touching the staged image or changing any ownership. */
         if (flag == PE_GO && caller_has_aspace()) {
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC_TEST
@@ -796,14 +819,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         }
 #endif
         p = (PD *) tail;
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC
         if (flag == PE_GO && (rc = check_launch(p)) != E_OK)
             return rc;
 #endif
         if (flag == PE_GO && !kproc_create(p))
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
-        give_back_image(p, flag == PE_GO);
 #if CONF_WITH_NATIVE_SCHED
         if (schedule_launch(p)) return run_scheduled(p, FALSE);
 #endif
@@ -834,8 +856,14 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
          * never execute this statement in the first place.
          */
         return run->p_dreg[0];
-    case PE_LOADGO:
     case PE_LOAD:
+#if CONF_WITH_USER_ASPACE && !CONF_WITH_LEGACY_PEXEC
+        /* Only Pexec(200) stages an image here; a kernel with address spaces
+         * has no AES accessory loader (doc/pexec-legacy-modes.txt). */
+        if (!replacement) return EINVFN;
+#endif
+        break;
+    case PE_LOADGO:
         break;
     default:
         return EINVFN;
@@ -853,9 +881,6 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
      * the ordinary loader may still return via bdosmain.c's disk longjmp
      * when interpreter support is disabled.
      */
-#if CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
-    elf_set_load_into_caller(flag == PE_LOAD && !replacement);
-#endif
 #if CONF_WITH_BINFMT
     rc = binfmt_load_header(path, tail, env ? env : (char *)
 #if CONF_WITH_PRIVATE_CLONE
@@ -882,6 +907,18 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         KDEBUG(("BDOS xexec: kpgmhdrld returned %ld (0x%lx)\n",rc,rc));
         return rc;
     }
+#if CONF_WITH_LEGACY_PEXEC
+    /* #1018: public mode 3 names an executable and loads a PRG only. An
+     * ELF, or an interpreter that resolved to one, is refused here, before
+     * an environment or TPA is allocated or any ownership is recorded. */
+    if (flag == PE_LOAD && !kernel && !replacement && !kpgm_is_prg()) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
+        xclose(fh);
+        return EPLFMT;
+    }
+#endif
 
     /* allocate the environment first, depending on memory policy */
     env_ptr = alloc_env(hdr.h01_flags, env);
@@ -1093,7 +1130,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #else
     if (!replacement) (void)init_pd_files(cur_p);
 #endif
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC
     if (flag == PE_LOAD && !replacement)
         hand_over(cur_p);
 #endif
@@ -1592,7 +1629,6 @@ static void proc_go(PD *p, WORD entry_type)
 LONG proc_prepare_scheduled(PD *p)
 {
     if (!kproc_unlaunched(p)) return EIMBA;
-    give_back_image(p, FALSE);
     return kproc_prepare_async(p,run,ksched_controller_pd()) ? E_OK : ENSMEM;
 }
 LONG proc_start_scheduled(PD *p, BOOL take_ownership)
@@ -1623,7 +1659,6 @@ LONG proc_prepare_accessory(PD *p)
 {
     if (!kproc_unlaunched(p))
         return EIMBA;
-    give_back_image(p, FALSE);
     return kproc_prepare_user(p, run) ? E_OK : ENSMEM;
 }
 

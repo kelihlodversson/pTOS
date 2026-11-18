@@ -175,13 +175,23 @@ config CONF_WITH_NATIVE_SCHED
       Scheduling is cooperative and does not require CUIS or external libaes.
 
 
+config CONF_WITH_LEGACY_PEXEC
+    def_bool ARCH_M68K
+    help
+      The historical staged-execution Pexec modes 3 (load only, PRG targets
+      only), 5/7 (create a basepage) and 4/6/104/106 (start one with the
+      classic PRG entry). They are 68k TOS/FreeMiNT compatibility: ARM and
+      x32 refuse them with EINVFN and do not carry their machinery
+      (doc/pexec-legacy-modes.txt).
+
 config CONF_WITH_SHARED_VM_PEXEC_TEST
     bool "Native shared-VM Pexec acceptance tests (experimental)"
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC
     default n
     help
-      Test-only modes4/104 while independent ownership/runtime acceptance is
-      pending. No shipped preset selects it. Does not enable fork or preemption.
+      Test-only m68k modes 4/104 of a staged PRG while independent
+      ownership/runtime acceptance is pending. No shipped preset selects it.
+      Does not enable fork or preemption.
 
 # Hidden until explicit public activation review. No preset may select this.
 config CONF_WITH_PROCESS_EXEC

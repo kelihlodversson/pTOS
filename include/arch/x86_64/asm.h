@@ -31,7 +31,7 @@
 #define PE_BASEPAGE   5
 #define PE_GOTHENFREE 6
 #define PE_BASEPAGEFLAGS 7
-#define PE_RELOCATE   50    /* required for NatFeats support only, not in Atari TOS */
+#define PE_KERNEL     0x4000    /* the kernel's own requests: include/bdosdefs.h */
 
 /*
  * bios/arch/x86_64/trap.c: the kernel-mode (no privilege transition)
