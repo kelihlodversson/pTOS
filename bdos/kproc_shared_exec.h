@@ -189,7 +189,6 @@ LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
 #endif
             ))
             DEPENDENCY(shared_logical(set,source,USER_STACK_TOP-stack_bytes(source),stack_bytes(source),ASPACE_PROT_USER));
-        DEPENDENCY(shared_source_images(set,source));
     }
     if(source->has_image) {
         for(i=0;i<source->layout.nseg;i++) if(source->layout.seg[i].memsz)

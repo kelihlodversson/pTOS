@@ -231,7 +231,6 @@ LONG fs_set_process_directory(char *directory, PD *process)
     CHECK(run == &parent && pending_request == &pending);
     return observer_mode ? directory_error : EPTHNF;
 }
-void elf_set_load_into_caller(BOOL wanted) { CHECK(!wanted); }
 void proc_align_stack(PD *p) { CHECK(p == &image); }
 void invalidate_instruction_cache(const UBYTE *address, ULONG length) { }
 
@@ -265,7 +264,6 @@ void ksched_nested_enter(PD *p) { abort(); }
 void ksched_nested_cancel(PD *p) { CHECK(p == &image); }
 void kproc_set_creator(PD *p, PD *caller) { abort(); }
 void kproc_hand_over(PD *caller, PD *p) { abort(); }
-void kproc_set_give_back(PD *p, BOOL give_back) { abort(); }
 void kproc_set_parent(PD *p, PD *caller) { abort(); }
 void *kproc_clone_startup(PD *p) { abort(); }
 UQUAD kproc_ancestors_va(PD *p) { abort(); }

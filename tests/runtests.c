@@ -18,10 +18,6 @@ void pclone_run_staged_tests(void);
 long pclone_run_anchored_probe(void);
 #endif
 
-#if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
-void shared_vm_run_managed_tests(void);
-#endif
-
 #if defined(__mc68000__) && defined(TEST_IS_PRG)
 /*
  * A classic PRG keeps its stack in its TPA, by default libcmini's MINKEEP
@@ -39,13 +35,6 @@ long _stksize = 32L * 1024;
 int main(void)
 {
     int failures;
-#if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
-    if ((unsigned char)_base->p_cmdlin[0]==11 && !memcmp(_base->p_cmdlin+1,"--shared-vm",11)) {
-        ptest_log_append();
-        shared_vm_run_managed_tests();
-        failures=ptest_failures();ptest_log_flush();Pterm(failures);return failures;
-    }
-#endif
 #if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     int worker = (unsigned char)_base->p_cmdlin[0] == 7 &&
                  !memcmp(_base->p_cmdlin + 1, "--clone", 7);

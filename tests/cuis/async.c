@@ -58,10 +58,10 @@ static LONG waitpid(LONG pid, LONG flags, UQUAD usage)
 }
 int main(int argc, char **argv, char **envp)
 {
-    LONG session, pid, me, parent, status, base;
+    LONG session, pid, me, parent, status;
     PROBE_PACKET packet;
     LONG children[12];
-    ULONG usage[2], i, j, child_env;
+    ULONG usage[2], i, j;
     char command[20];
     (void)envp;
     CHECK(argc == 2);
@@ -111,13 +111,10 @@ int main(int argc, char **argv, char **envp)
     CHECK(waitpid(-1, 1, ~0ULL) == EFILNF);
     CHECK(waitpid(-1, 4, 0) == EINVAL);
     CHECK(waitpid(0, 0, 0) == EINVFN); /* process groups are not implemented */
-    CHECK(call(0x4b, 104, 0, 0, 0) ==
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-          EIMBA);
-#else
-          EINVFN);
-#endif
-    CHECK(call(0x4b, 106, 0, 0, 0) == EIMBA);
+    /* #1018: x32 has no staged Pexec modes */
+    CHECK(call(0x4b, 104, 0, 0, 0) == EINVFN);
+    CHECK(call(0x4b, 106, 0, 0, 0) == EINVFN);
+    CHECK(call(0x4b, 3, (uintptr_t)argv[0], (uintptr_t)"", 0) == EINVFN);
 #if CONF_WITH_USER_CALLBACKS && CONF_WITH_X32_VDI
     {
         VDI_SERVICE_WORKSTATION ws;
@@ -143,18 +140,7 @@ int main(int argc, char **argv, char **envp)
 #endif
     for (i = 0; i < 5; i++) {
         tail(command, i == 1 ? '1' : i == 2 ? '2' : '0', session, me);
-        if (i == 4) {
-            base = call(0x4b, 3, (uintptr_t)argv[0], (uintptr_t)command, (uintptr_t)environment);
-            CHECK(base > 0);
-            child_env = (ULONG)(uintptr_t)USERPTR_TO_PTR(((PD *)(uintptr_t)(ULONG)base)->p_env);
-            CHECK(call(0x17d, (ULONG)base, sizeof(PD), 0, 0) == E_OK);
-            pid = call(0x4b, 106, 0, (ULONG)base, 0);
-            CHECK(pid > 0);
-            CHECK(call(0x17d, (ULONG)base, sizeof(PD), 1, 0) == EINVAL);
-            CHECK(call(0x17d, child_env, 2, 1, 0) == EINVAL);
-            CHECK(call(0x49, (ULONG)base, 0, 0, 0) == EACCDN);
-            CHECK(call(0x4b, 106, 0, (ULONG)base, 0) == EIMBA);
-        } else pid = spawn(argv[0], command);
+        pid = spawn(argv[0], command);
         CHECK(pid > 0 && pid != me);
         CHECK(waitpid(pid, 1, ~0ULL) == 0); /* Child has not run yet. */
         CHECK(waitpid(me, 1, 0) == EFILNF);
@@ -171,13 +157,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(waitpid(pid, 1, 0) == EFILNF);
     }
     tail(command, '0', session, me);
-    for (i = 0; i < 11; i++) { children[i] = spawn(argv[0], command); CHECK(children[i] > 0); }
-    /* Mode 106 follows the same growable reservation path as ordinary async
-     * load-go. Its image is consumed only after all preparation succeeds. */
-    base = call(0x4b, 3, (uintptr_t)argv[0], (uintptr_t)command, (uintptr_t)environment);
-    CHECK(base > 0);
-    children[11] = call(0x4b, 106, 0, (ULONG)base, 0);
-    CHECK(children[11] > 0);
+    for (i = 0; i < 12; i++) { children[i] = spawn(argv[0], command); CHECK(children[i] > 0); }
     for (i = 0; i < 12; i++) {
         status = call(0x109, ~0ULL, ~0ULL, ~0ULL, ~0ULL);
         CHECK(status > 0 && (status & 0xffff) == 0x34);
@@ -191,14 +171,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_packet_read(session, &packet) == sizeof(PROBE_PACKET));
     }
     {
-        static const char empty_tail[] = { 0, 0 };
         static const char nested_tail[] = { 1, 'o', 0 };
-        /* The legacy static image path moves PE_LOAD pages out of the
-         * caller's heap; it must work alongside PT_INTERP launch. */
-        base = call(0x4b, 3, (uintptr_t)"C:\\X32HELLO.TOS", (uintptr_t)empty_tail, (uintptr_t)environment);
-        CHECK(base > 0);
-        pid = call(0x4b, 106, 0, (ULONG)base, 0);
-        CHECK(pid > 0 && waitpid(pid, 0, 0) == (LONG)((ULONG)pid << 16));
         CHECK(call(0x4b, 0, (uintptr_t)argv[0], (uintptr_t)nested_tail, (uintptr_t)environment) == 0);
         CHECK(call(0xff, 0, 0, 0, 0) == E_OK);
         CHECK(probe_packet_wait(session, 10) == CUIS_READY_TIMER);

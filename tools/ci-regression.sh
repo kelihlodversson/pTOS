@@ -119,8 +119,10 @@ if os.environ.get('EXEC_HANDOFF_TEST') == '1':
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
 if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
+    # 68k compatibility only (#1018); the symbol depends on M68K.
     config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'
+if os.environ.get('SHARED_VM_PEXEC_TEST') == '1' or os.environ.get('EXEC_STAGING_PROFILE') == '1':
     for required in ('CONF_WITH_IMAGE_POLICY', 'CONF_WITH_IMAGE_POLICY_TEST'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
@@ -160,7 +162,7 @@ if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ]; then
             exit 2
         }
     done
-    echo 'positive shared-Pexec effective gates: shared/interpreter/mmap/private-test/scheduler/clone=1'
+    echo 'positive shared-Pexec effective gates: shared/mmap/private-test/scheduler/clone=1'
 fi
 make $make_args test-dir
 

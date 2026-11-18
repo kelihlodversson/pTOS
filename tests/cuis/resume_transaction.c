@@ -61,7 +61,7 @@ static int resume_transaction_checks(void)
         test_children[0].parent=run; test_children[0].pid=10;
         test_children[0].reaped=test_children[0].started=FALSE; test_children[0].status=0;
         token=cuis_child_service(CUIS_CHILD_WATCH,resume_handle,CUIS_CHILD_RESERVE,0,0);
-        CHECK(token>0 && cuis_child_service(CUIS_CHILD_WATCH,resume_handle,CUIS_CHILD_BIND,token,CHILD_IMAGE(10))==0);
+        CHECK(token>0 && CHILD_BIND(resume_handle,token,10)==0);
         CHECK(cuis_input_config(CUIS_INPUT_INTERVAL,resume_handle,1000,1,0,0,0)==1000);
         CHECK(cuis_input_config(CUIS_INPUT_BUTTON,resume_handle,1,1,2,0,0)==0);
         resume_client->recent_count=0; input_sleeps=0; input_packet_mode=2; child_idle_at=2;

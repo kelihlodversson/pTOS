@@ -364,7 +364,13 @@ UQUAD kproc_ref_number(const KPROC *process)
 {
     return process == (KPROC *)&first ? 0x100000001ULL : 0x200000001ULL;
 }
-WORD kproc_pid(PD *pd) { return pd == &first ? 1 : 2; }
+/* child_completion.c's CHILD_IMAGE(pid) basepages are low page numbers. */
+WORD kproc_pid(PD *pd)
+{
+    uintptr_t page = (uintptr_t)pd;
+    if (page && page < 0x100000 && !(page & 4095)) return (WORD)(page / 4096);
+    return pd == &first ? 1 : 2;
+}
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "observer_wait.c"
 #include "windows.c"

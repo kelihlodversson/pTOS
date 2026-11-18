@@ -144,10 +144,10 @@ jobs:
             /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py --relro --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-elf-startup.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-elf-bootstrap.py --mode "$mode"
-            /tmp/elf-shared-venv/bin/python tools/test-shared-interp.py --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-kproc-runtime.py --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-kproc-runtime.py --image-policy --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --mode "$mode"
             /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --shared --mode "$mode"
-            /tmp/elf-shared-venv/bin/python tools/test-shared-interp.py --image-policy --mode "$mode"
             for preset in pc-x86_64 virt-arm-aspace virt-m68k-aspace; do
               /tmp/elf-shared-venv/bin/python tools/test-private-image-admission.py --preset "$preset" --mode "$mode"
             done
@@ -262,7 +262,7 @@ jobs:
           make -j2
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
-      - name: Boot-test positive shared-Pexec PROCESS results and independent CUIS observation
+      - name: Boot-test private clone, image policy and independent CUIS observation
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
           CONFIG_= python - <<'PY'
@@ -270,14 +270,13 @@ jobs:
           config = kconfiglib.Kconfig()
           config.load_config()
           for name in ("CONF_WITH_NATIVE_SCHED", "CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP",
-                       "CONF_WITH_PRIVATE_CLONE", "CONF_WITH_PRIVATE_CLONE_TEST", "CONF_WITH_SHARED_VM_PEXEC_TEST",
+                       "CONF_WITH_PRIVATE_CLONE", "CONF_WITH_PRIVATE_CLONE_TEST",
                        "CONF_WITH_IMAGE_POLICY", "CONF_WITH_IMAGE_POLICY_TEST"):
               config.syms[name].set_value(2)
               assert config.syms[name].str_value == "y", name
           config.write_config()
           PY
           make -j2 all x32test x32-vdi-import-test
-          grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1$' obj/autoconf.h
           MMAP_BOOT_TIMEOUT=300 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
       - name: Boot-test ownership with eager managed scheduling
@@ -545,7 +544,9 @@ jobs:
         env:
           EXEC_REPLACEMENT_TEST: '1'
           EXEC_HANDOFF_TEST: '1'
-          SHARED_VM_PEXEC_TEST: '1'
+          EXEC_STAGING_PROFILE: '1'
+          # 68k compatibility only (#1018): ARM/x32 have no shared-VM Pexec.
+          SHARED_VM_PEXEC_TEST: ${{ matrix.arch == 'm68k' && '1' || '0' }}
           SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
         run: tools/ci-regression.sh "${{ matrix.machine }}"
 
@@ -692,9 +693,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf }
-          - { arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm }
-          - { arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm }
+          # 68k compatibility only (#1018)
           - { arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc }
           - { arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc }
     steps:

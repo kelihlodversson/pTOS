@@ -58,7 +58,6 @@ int kcprintf(const char *format, ...)
     return 0;
 }
 
-void elf_set_load_into_caller(BOOL enabled) { (void)enabled; }
 
 LONG elf_pgmhdrld(FH handle, PGMHDR01 *header, BOOL *foreign_format)
 {

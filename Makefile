@@ -1923,6 +1923,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
               $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),-DTEST_WITH_SHARED_VM_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_LEGACY_PEXEC)),-DTEST_WITH_LEGACY_PEXEC) \
               $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_REPLACEMENT_TEST)),-DTEST_WITH_EXEC_REPLACEMENT_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_HANDOFF_TEST)),-DTEST_WITH_EXEC_HANDOFF_TEST) \
@@ -2362,16 +2363,10 @@ PROCXIT.TOS: $(TEST_STARTUP) obj/process_transport_child.o $(LIBCMINI_LIB)
 TEST_PROCESS_EXEC_FILES = PROCXIT.TOS
 endif
 
-# Explicit shared-Pexec test kernels exercise standard ELF interpreter entry.
-# This adds fixtures only; no shipped preset selects the test gate.
-ifdef CONF_WITH_SHARED_VM_PEXEC_TEST
+# The x32 ldso_dynamic failure fixtures (a missing or bad library, a missing
+# interpreter) and the nested ordinary isolated launch they exercise.
 ifdef CONF_WITH_ELF_SHARED
-LDSO_TEST_APP += obj/ldso/runtime/SHRINT.ELF
-obj/ldso/runtime/SHRINT.ELF: obj/ldso/test/soapp-pie.elf
-	@mkdir -p $(@D)
-	cp $< $@
 ifdef ARCH_X86_64
-# The existing runtime fixture exercises a nested ordinary isolated launch.
 LDSO_TEST_APP += obj/ldso/runtime/LDSOAPP.ELF obj/ldso/runtime/NEEDMISS.ELF \
                  obj/ldso/runtime/NEEDBAD.ELF obj/ldso/runtime/NOINTRP.ELF
 obj/ldso/runtime/NEEDMISS.ELF: obj/ldso/test/needmiss.elf
@@ -2397,7 +2392,6 @@ $(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO: obj/ldso/test/librt.so
 $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO: obj/ldso/test/libdyn.so
 	@mkdir -p $(@D)
 	cp $< $@
-endif
 endif
 endif
 

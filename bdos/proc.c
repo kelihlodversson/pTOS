@@ -685,7 +685,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
 
     flag &= ~PE_KERNEL;
-#if !CONF_WITH_LEGACY_PEXEC
+#if !CONF_WITH_LEGACY_PEXEC && !CONF_WITH_USER_ASPACE
     UNUSED(kernel);
 #endif
 #if CONF_WITH_EXEC_REPLACE
@@ -856,9 +856,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return run->p_dreg[0];
     case PE_LOAD:
 #if CONF_WITH_USER_ASPACE && !CONF_WITH_LEGACY_PEXEC
-        /* Only Pexec(200) stages an image here; a kernel with address spaces
-         * has no AES accessory loader (doc/pexec-legacy-modes.txt). */
-        if (!replacement) return EINVFN;
+        /* Only Pexec(200) and the kernel itself stage an image here. A
+         * kernel request has no address space to load into: the image is
+         * the new process's own (doc/pexec-legacy-modes.txt). */
+        if (!replacement && !kernel) return EINVFN;
 #endif
         break;
     case PE_LOADGO:

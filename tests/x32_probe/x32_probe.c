@@ -23,8 +23,8 @@
  *      (already running) basepage a second time with PE_GO and PE_GOTHENFREE,
  *      and to use the kernel-internal Pexec mode 50: all must be refused;
  *      exits with 0 if they were
- *   g  basepages (#416): mode 4 is rejected without consuming the basepage;
- *      mode 6 validates it and runs its code, then consumes its allocations.
+ *   g  the staged and basepage Pexec modes (3/4/5/6/7/104/106) are refused
+ *      with EINVFN before their arguments are read (#1018)
  *   n  run another program from inside this one, twice: Pexec(PE_LOADGO) of
  *      C:\X32HELLO.TOS, which must exit with 0, after which this process
  *      must still be able to make system calls; exits with 0 if so, 0x100 if
@@ -50,9 +50,7 @@
  *   d  the search state of a DTA is the kernel's: a tampered DTA (an unmounted
  *      drive, a wild cluster) cannot crash Fsnext(); a DTA never searched with
  *      has no more files (#437)
- *   l  Pexec(PE_LOAD) of C:\\X32HELLO.TOS and PE_GOTHENFREE of its basepage; exits
- *      with 0, 0x100 if the file is not there
- *   y  a child (tail F) must not be able to Mfree this process's basepage
+ *   y  a child (tail F) must not be able to Mfree a block this process holds
  *   w  walk the chain of ancestor basepages (p_parent): exits with 0x100 + the
  *      number of links, or 0x7f if a link is malformed (#416)
  *   v  like n, but the child (tail "w") must see one more ancestor than this
@@ -86,11 +84,6 @@ typedef unsigned int u32;
 #define ENSMEM (-39)
 #define EINVFN (-32)
 #define EACCDN (-36)
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-#define MODE4_INVALID_IMAGE EIMBA
-#else
-#define MODE4_INVALID_IMAGE EINVFN
-#endif
 #define BIOS   13
 #define XBIOS  14
 
@@ -473,7 +466,6 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static const unsigned char argv_tail[] = { 127, 0 };
         const char *path = "C:\\DYNTEST.TOS";
         s64 child;
-        u32 child_env;
         int cycle;
 
         static const char *const bad_files[] = {
@@ -496,36 +488,22 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                      (s64)(unsigned long)args, (s64)(unsigned long)env);
         if (child != 37)
             pterm(0x300 | ((int)child & 0xff));
-        /* A staged image may be discarded without ever entering userspace. */
-        child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
-                     (s64)(unsigned long)args, (s64)(unsigned long)env);
-        if (child <= 0)
+        /* #1018: the staged modes are not part of the x32 ABI. They are
+         * refused before any argument is read. */
+        if (sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+                 (s64)(unsigned long)args, (s64)(unsigned long)env) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 6, 0, 0x1000, 0) != EINVFN)
             pterm(5);
-        child_env = ((volatile u32 *)(unsigned long)child)[11];
-        if (gemdos(0x49, child, 0) || gemdos(0x49, child_env, 0))
-            pterm(6);
         for (cycle = 0; cycle < 2; cycle++) {
             child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
                          (s64)(unsigned long)args, (s64)(unsigned long)env);
             if (child != 37)
                 pterm(0x100 | ((int)child & 0xff));
-            child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
+            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
                          (s64)(unsigned long)argv_tail, (s64)(unsigned long)extended);
-            if (child <= 0)
+            if (child != 37)
                 pterm(2);
-            /* Editing the public entry cannot redirect a staged interpreter.
-             * Its startup vectors are private snapshots, too. */
-            child_env = ((volatile u32 *)(unsigned long)child)[11];
-            ((volatile u32 *)(unsigned long)child)[2] = 0;
-            ((volatile unsigned char *)(unsigned long)child)[0x80] = 0;
-            *(volatile char *)(unsigned long)child_env = '|';
-            if (sys4(GEMDOS, 0x4b, 6, 0, child, 0) != 37)
-                pterm(3);
         }
-        child = sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
-                     (s64)(unsigned long)args, (s64)(unsigned long)env);
-        if (child <= 0 || sys4(GEMDOS, 0x4b, 6, 0, child, 0) != 37)
-            pterm(7);
         pterm(0);
         break;
     }
@@ -656,11 +634,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 #if CONF_WITH_X32_VDI
             if (rc != 0)
                 pterm(0x100 + i);
-            rc = sys4(GEMDOS, 0x4b, 3, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0);
-            if (rc <= 0)
+            if (sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0) != 0)
                 pterm(0x110 + i);
-            if (sys4(GEMDOS, 0x4b, 6, 0, rc, 0) != 0)
-                pterm(0x120 + i);
 #else
             if (rc != -66)             /* EPLFMT: optional import unavailable */
                 pterm(0x100 + i);
@@ -746,8 +721,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys(BIOS, 5, 0x102, 0x500000, 0) != EACCDN)
             bad |= 1;                   /* Setexc(etv_term, user address) */
         /* this very (running) basepage a second time, and mode 50 */
-        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != MODE4_INVALID_IMAGE ||
-            sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EIMBA ||
+        if (sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
+            sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", (s64)basepage, 0) != EINVFN ||
             sys4(GEMDOS, 0x4b, 50, 0, 0, 0) != EINVFN)
             bad |= 32;
         /* Ssystem() writing through a pointer into the kernel's system
@@ -815,93 +790,16 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'g': {
-        /* Mode 4 is rejected before inspecting a basepage; mode 6 retains
-         * the normal validation and consuming execution semantics. */
-        static const unsigned char code[] = {
-            0x48, 0xb8, 0x4c, 0, 0, 0, 1, 0, 0, 0,
-            0xbf, 0x42, 0, 0, 0, 0x31, 0xf6, 0x31, 0xd2,
-            0x4d, 0x31, 0xd2, 0x0f, 0x05, 0xeb, 0xfe
-        };
-        static volatile u32 forged[64];
-        const s64 none = (s64)(int)(unsigned long)"";
-        volatile u32 *bp;
-        s64 bp_addr, bp2_addr, env;
-        u32 hitpa;
+        /* #1018: the staged and basepage modes are not part of the x32 ABI.
+         * Each is refused with EINVFN before any argument is read: the
+         * pointers below are unmapped and must never be dereferenced. */
+        static const int modes[] = { 3, 4, 5, 6, 7, 104, 106 };
+        const s64 unmapped = 0x1000;
         unsigned i;
 
-        bp_addr = sys4(GEMDOS, 0x4b, 5, 0, none, 0);
-        if (bp_addr <= 0 || bp_addr > 0x7fffffffLL) pterm(1);
-        bp = (volatile u32 *)(unsigned long)bp_addr;
-        bp[1] = bp[0] + 0x7f1;
-        for (i = 0; i < sizeof(code); i++) ((volatile unsigned char *)bp)[0x100+i] = code[i];
-        bp[2] = (u32)bp_addr + 0x100;
-        env = bp[11]; hitpa = bp[1];
-        for (i = 0; i < 64; i++) forged[i] = bp[i];
-        if (sys4(GEMDOS, 0x4b, 4, none, (s64)(int)(unsigned long)forged, 0) != MODE4_INVALID_IMAGE ||
-            sys4(GEMDOS, 0x4b, 104, 0, bp_addr, 0) != EINVFN ||
-            sys4(GEMDOS, 0x4b, 6, none, (s64)(int)(unsigned long)forged, 0) != EIMBA)
-            bad |= 8;
-        bp[11] = 0x1000;
-        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != -66) bad |= 16;
-        bp[11] = (u32)env;
-        bp[1] = 0xfffff000u;
-        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != -66) bad |= 16;
-        bp[1] = hitpa;
-        bp[2] = 0x1000;
-        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != -66) bad |= 16;
-        bp[2] = (u32)bp_addr + 0x100;
-        if (sys4(GEMDOS, 0x4b, 4, none, bp_addr, 0) != EINVFN || bp[0] != (u32)bp_addr)
-            bad |= 32;
-        if (sys4(GEMDOS, 0x4b, 6, none, bp_addr, 0) != 0x42) bad |= 64;
-        if (gemdos(0x49, bp_addr, 0) == 0 || gemdos(0x49, env, 0) == 0) bad |= 128;
-        bp2_addr = sys4(GEMDOS, 0x4b, 7, 0, none, 0);
-        if (bp2_addr <= 0) {
-            bad |= 256;
-        } else {
-            env = ((volatile u32 *)(unsigned long)bp2_addr)[11];
-            if (sys4(GEMDOS, 0x4b, 6, none, env, 0) != EIMBA) bad |= 512;
-            if (gemdos(0x49, bp2_addr, 0) || gemdos(0x49, env, 0)) bad |= 1024;
-        }
-        pterm(bad);
-        break;
-    }
-    case 'z': {
-        /* Pexec() running out of loan slots half way (the environment is
-         * lent, the TPA cannot be) must give back what it had got: eight
-         * basepages fill the table, freeing one TPA leaves one slot */
-        s64 bpa[8], envs[8], rc, renv;
-        int k, n;
-
-        for (n = 0; n < 8; n++) {
-            bpa[n] = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
-            if (bpa[n] <= 0)
-                break;
-            envs[n] = *(volatile u32 *)(unsigned long)(bpa[n] + 0x2c);
-        }
-        if (n == 8) {
-            if (gemdos(0x49, bpa[7], 0) != 0)
-                bad |= 1;
-            for (k = 0; k < 3; k++)
-                if (sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0) != ENSMEM)
-                    bad |= 2;
-        } else {
-            bad |= 4;                       /* the table is not what this assumes */
-        }
-        for (k = 0; k < n; k++) {
-            if (gemdos(0x49, envs[k], 0) != 0)
-                bad |= 8;
-            if (k < 7 && gemdos(0x49, bpa[k], 0) != 0)
-                bad |= 8;
-        }
-        /* all returned: a basepage is available again */
-        rc = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
-        if (rc <= 0) {
-            bad |= 16;
-        } else {
-            renv = *(volatile u32 *)(unsigned long)(rc + 0x2c);
-            if (gemdos(0x49, renv, 0) != 0 || gemdos(0x49, rc, 0) != 0)
-                bad |= 32;
-        }
+        for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
+            if (sys4(GEMDOS, 0x4b, modes[i], unmapped, unmapped, unmapped) != EINVFN)
+                bad |= 1 << i;
         pterm(bad);
         break;
     }
@@ -1259,36 +1157,34 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys4(GEMDOS, 0x4b, 0, unmapped, P(""), 0) != EIMBA) bad |= 128;
         if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), unmapped, 0) != EIMBA) bad |= 128;
         if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), P(""), unmapped) != EIMBA) bad |= 128;
-        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), unmapped) != EIMBA) bad |= 128;
-        if (sys4(GEMDOS, 0x4b, 5, 0, unmapped, 0) != EIMBA) bad |= 128;
+        /* #1018: the basepage modes are not part of the x32 ABI; refused
+         * before the (unmapped) arguments are read */
+        if (sys4(GEMDOS, 0x4b, 5, unmapped, unmapped, unmapped) != EINVFN) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != EINVFN) bad |= 128;
+        if (sys4(GEMDOS, 0x4b, 6, 0, 0, 0) != EINVFN) bad |= 128;
         /* the tail must end within 128 bytes (the kernel adds a NUL after the
-         * copy); an empty environment is two NULs, and both must be readable */
+         * copy); an empty environment is two NULs, and both must be readable.
+         * An accepted launch runs X32HELLO.TOS's plain entry check (exit 0);
+         * EFILNF also shows the arguments passed validation. */
+#define LAUNCH(tail, env) sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), (tail), (env))
+#define ACCEPTED(rc) ((rc) == 0 || (rc) == -33)
         for (k = 0; k < (int)sizeof(tail128); k++)
             tail128[k] = 'A';
-        if (sys4(GEMDOS, 0x4b, 5, 0, P(tail128), 0) != ERANGE) bad |= 512;
-        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), ro + 0xfff) != EIMBA) bad |= 512;
+        if (LAUNCH(P(tail128), 0) != ERANGE) bad |= 512;
+        if (LAUNCH(P(""), ro + 0xfff) != EIMBA) bad |= 512;
         /* an environment too long for envsize()'s WORD count */
         for (k = 0; k < (int)sizeof(bigenv); k++)
             bigenv[k] = 'A';
-        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv)) != ERANGE) bad |= 512;
+        if (LAUNCH(P(""), P(bigenv)) != ERANGE) bad |= 512;
         /* the limit: 32766 bytes including the two NULs that end it */
-        for (k = 0; k < (int)sizeof(bigenv); k++)
-            bigenv[k] = 'A';
         bigenv[32764] = 0;
         bigenv[32765] = 0;                  /* 32766 bytes: just fits */
-        rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv));
-        if (rc <= 0) {
-            bad |= 512;
-        } else {
-            s64 e3 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
-
-            if (gemdos(0x49, e3, 0) != 0 || gemdos(0x49, rc, 0) != 0)
-                bad |= 512;
-        }
+        rc = LAUNCH(P(""), P(bigenv));
+        if (!ACCEPTED(rc)) bad |= 512;
         bigenv[32764] = 'A';
         bigenv[32765] = 0;
         bigenv[32766] = 0;                  /* 32767 bytes: one too many */
-        if (sys4(GEMDOS, 0x4b, 5, 0, P(""), P(bigenv)) != ERANGE) bad |= 512;
+        if (LAUNCH(P(""), P(bigenv)) != ERANGE) bad |= 512;
         /* a leading NUL is not the end of an environment: envsize() goes on
          * until two NULs in a row, so the bytes after it must be readable
          * (here "\0X" at the very end of the stack mapping) */
@@ -1297,23 +1193,12 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 
             top[0] = 0;
             top[1] = 'X';
-            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffffeLL) != EIMBA) bad |= 512;
-        }
-        /* ... and a valid empty environment ("\0\0") on the last two bytes of
-         * the mapping is accepted: nothing past it is read */
-        {
-            volatile unsigned char *top = (volatile unsigned char *)0x7ffffffeUL;
-
+            if (LAUNCH(P(""), 0x7ffffffeLL) != EIMBA) bad |= 512;
+            /* ... and a valid empty environment ("\0\0") on the last two
+             * bytes of the mapping is accepted: nothing past it is read */
             top[1] = 0;
-            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffffeLL);
-            if (rc <= 0) {
-                bad |= 512;
-            } else {
-                s64 e2 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
-
-                if (gemdos(0x49, e2, 0) != 0 || gemdos(0x49, rc, 0) != 0)
-                    bad |= 512;
-            }
+            rc = LAUNCH(P(""), 0x7ffffffeLL);
+            if (!ACCEPTED(rc)) bad |= 512;
         }
         /* an odd-sized environment is copied rounded up to an even size: the
          * byte after its last NUL is read too ("A\0\0" ends the mapping) */
@@ -1323,25 +1208,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             top[0] = 'A';
             top[1] = 0;
             top[2] = 0;
-            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffffdLL) != EIMBA) bad |= 512;
+            if (LAUNCH(P(""), 0x7ffffffdLL) != EIMBA) bad |= 512;
             /* the same, with the byte after it inside the mapping: accepted */
             top = (volatile unsigned char *)0x7ffffff0UL;
             top[0] = 'A';
             top[1] = 0;
             top[2] = 0;
-            rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0x7ffffff0LL);
-            if (rc <= 0) {
-                bad |= 512;
-            } else {
-                s64 e2 = *(volatile u32 *)(unsigned long)(rc + 0x2c);
-
-                if (gemdos(0x49, e2, 0) != 0 || gemdos(0x49, rc, 0) != 0)
-                    bad |= 512;
-            }
+            rc = LAUNCH(P(""), 0x7ffffff0LL);
+            if (!ACCEPTED(rc)) bad |= 512;
         }
-        /* a launch of a basepage needs one: null is refused up front */
-        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != MODE4_INVALID_IMAGE) bad |= 512;
-        if (sys4(GEMDOS, 0x4b, 6, 0, 0, 0) != EIMBA) bad |= 512;
         /* no environment given: the caller's own is inherited through its
          * basepage's p_env, which it can have rewritten */
         {
@@ -1349,22 +1224,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             u32 saved = me[11];
 
             me[11] = 0x30000000u;
-            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0) != EIMBA) bad |= 512;
+            if (LAUNCH(P(""), 0) != EIMBA) bad |= 512;
             me[11] = 0x84u;
-            if (sys4(GEMDOS, 0x4b, 5, 0, P(""), 0) != EIMBA) bad |= 512;
+            if (LAUNCH(P(""), 0) != EIMBA) bad |= 512;
             me[11] = saved;
         }
-        /* mode 5's second argument is flags, not a pointer: kernel-looking
-         * values there are fine (and a basepage comes back) */
-        rc = sys4(GEMDOS, 0x4b, 5, 0, P(""), 0);
-        if (rc <= 0) {
-            bad |= 256;
-        } else {
-            s64 env = *(volatile u32 *)(unsigned long)(rc + 0x2c);
-
-            if (gemdos(0x49, env, 0) != 0 || gemdos(0x49, rc, 0) != 0)
-                bad |= 256;
-        }
+        rc = LAUNCH(P(""), 0);
+        if (!ACCEPTED(rc)) bad |= 256;
+#undef LAUNCH
+#undef ACCEPTED
         pterm(bad);
         break;
     }
@@ -1452,118 +1320,16 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(bad);
         break;
     }
-    case 'l': {
-        /* PE_LOAD of a program, then PE_GOTHENFREE of the basepage it gives.
-         * The program is in this process's own heap until then: it can be
-         * read and patched, and the patch is what runs (#434) */
-        static const char patch_tail[] = { 1, 'P', 0 };
-        s64 bpa, rc;
-        volatile u32 *bpp, *w;
-        u32 first, last;
-
-        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)patch_tail, 0);
-        bpp = (volatile u32 *)(unsigned long)bpa;
-        if (bpa == -33)
-            pterm(0x100);
-        if (bpa <= 0)
-            pterm(0x200 | (int)(-bpa & 0xff));
-        if (bpp[0] != (u32)bpa)
-            bad |= 2;                       /* p_lowtpa */
-        if (bpp[2] < 0x10000000 || bpp[2] >= 0x3f000000)
-            bad |= 8;                       /* its entry point is in this process's heap */
-        if (bpp[1] - bpp[0] > 0x1000)
-            bad |= 16;                      /* and its TPA is the basepage and little else */
-        /* its initialised data, found by value, patched */
-        first = (bpp[4] - bpp[3]) & ~3u;            /* p_dbase - p_tlen: where the image starts */
-        last = bpp[6] + bpp[7];                     /* p_bbase + p_blen */
-        for (w = (volatile u32 *)(unsigned long)first; (unsigned long)w < last; w++)
-            if (*w == 0x11111111u) {
-                *w = 0x22222222u;
-                break;
-            }
-        if ((unsigned long)w >= last)
-            bad |= 32;                      /* not found */
-        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
-        if (rc != 0)
-            bad |= 4;                       /* the program's own exit code: it saw the patch */
-        pterm(bad);
-        break;
-    }
-    case 'G': case 'H': {
-        /* The production gate rejects mode4; positive test kernels execute
-         * it. A failed mode4 still permits the same image's consuming mode6. */
-        static const char patch_tail[] = { 1, 'P', 0 };
-        s64 bpa, env, rc, ordinary, launch_image, expected, gap = 0;
-        volatile u32 *bpp, *w;
-        u32 first, last;
-        if (tail[0] == 'H') {
-            gap = gemdos(0x48, 0x10000, 0);
-            if (gap <= 0) pterm(64);
-        }
-        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)patch_tail, 0);
-        if (bpa == -33) { if (gap) gemdos(0x49, gap, 0); pterm(0x100); }
-        if (bpa <= 0) { if (gap) gemdos(0x49, gap, 0); pterm(0x200 | (int)(-bpa & 0xff)); }
-        bpp = (volatile u32 *)(unsigned long)bpa;
-        env = bpp[11];
-        first = (bpp[4] - bpp[3]) & ~3u;
-        last = bpp[6] + bpp[7];
-        ordinary = gemdos(0x48, 4096, 0);
-        if (ordinary <= 0 || ((u32)ordinary < last && (u32)ordinary + 4096 > first))
-            bad |= 256;
-        if (ordinary > 0 && gemdos(0x49, ordinary, 0) != 0) bad |= 256;
-        for (w = (volatile u32 *)(unsigned long)first; (unsigned long)w < last; w++)
-            if (*w == 0x11111111u) { *w = 0x22222222u; break; }
-        if ((unsigned long)w >= last) bad |= 32;
-        if (gap && gemdos(0x49, gap, 0) != 0) bad |= 128;
-        launch_image=bpa;expected=EINVFN;
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-        expected=0;
-        if (tail[0]=='H') {
-#if CONF_WITH_PRIVATE_CLONE_TEST
-            if (gemdos(GEMDOS_PCLONE,0,0xc8940901UL)) bad |= 512;
-            expected=ENSMEM;
-#else
-            launch_image=0;expected=EIMBA;
-#endif
-        }
-#endif
-        rc = sys4(GEMDOS, 0x4b, 4, (s64)(int)(unsigned long)"", launch_image, 0);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
-        if (tail[0]=='H' && gemdos(GEMDOS_PCLONE,0,0xc8940900UL)) bad |= 512;
-#endif
-        if (rc != expected || bpp[0] != (u32)bpa || (unsigned long)w >= last ||
-            *w != 0x22222222u) bad |= 4;
-        if (tail[0] == 'H') {
-            if (sys4(GEMDOS, 0x4b, 6, 0, bpa, 0) != 0) bad |= 8;
-        } else {
-            if (gemdos(0x49, bpa, 0) != 0 || gemdos(0x49, env, 0) != 0) bad |= 8;
-            if (gemdos(0x49, first & ~0xfffu, 0) == 0) bad |= 16;
-        }
-        pterm(bad);
-        break;
-    }
     case 'B': {
-        /* PE_LOAD of a program bigger than the image window: it goes into
-         * this process's heap whole, and runs when launched */
+        /* a program bigger than the image window (a 6 MiB bss) is loaded
+         * whole and runs: both ends of its bss are there and zero (#434) */
         static const char big_tail[] = { 1, 'B', 0 };
-        s64 bpa, rc;
-        volatile u32 *bpp;
+        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32BIG.TOS",
+                      (s64)(int)(unsigned long)big_tail, 0);
 
-        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32BIG.TOS",
-                   (s64)(int)(unsigned long)big_tail, 0);
-        bpp = (volatile u32 *)(unsigned long)bpa;
-        if (bpa == -33)
+        if (rc == -33)
             pterm(0x100);
-        if (bpa <= 0)
-            pterm(0x200 | (int)(-bpa & 0xff));
-        if (bpp[7] < 0x600000)
-            bad |= 2;                       /* p_blen: the 6 MiB bss is there */
-        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
-        if (rc != 0)
-            bad |= 4;
-        pterm(bad);
+        pterm(rc == 0 ? 0 : 4);
         break;
     }
     case 'D': {
@@ -1580,7 +1346,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (rc == -33)
             pterm(0x100);
         mine = 0x1234;
-        rc2 = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32TRUNC.TOS",
+        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32TRUNC.TOS",
                    (s64)(int)(unsigned long)link_tail, 0);
         rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
                    (s64)(int)(unsigned long)link_tail, 0);
@@ -1591,10 +1357,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     }
     case 'y': {
         /* a child must not free what its parent holds: the child (tail F and
-         * the address in hex) tries to Mfree this process's basepage */
+         * the address in hex) tries to Mfree a block this process holds */
         static char ftail[12] = { 9, 'F' };
-        s64 bpa = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
-        s64 rc, envp;
+        s64 bpa = gemdos(0x48, 4096, 0);    /* Malloc() */
+        s64 rc;
         int k;
 
         if (bpa <= 0)
@@ -1608,8 +1374,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             pterm(0x100);
         if (rc != 0)
             bad |= 1;                       /* the child's Mfree was refused */
-        envp = *(volatile u32 *)(unsigned long)(bpa + 0x2c);
-        if (gemdos(0x49, bpa, 0) != 0 || gemdos(0x49, envp, 0) != 0)
+        if (gemdos(0x49, bpa, 0) != 0)
             bad |= 2;                       /* still ours to free */
         pterm(bad);
         break;
@@ -1651,10 +1416,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 'a': {
         /* a program linked for another address is moved into the image
          * window and relocated, an unaligned absolute address in an
-         * instruction included (#433): once started by mode 0, once loaded
-         * by PE_LOAD and then launched */
+         * instruction included (#433) */
         static const char reloc_tail[] = { 1, 'a', 0 };
-        s64 rc, bpa;
+        s64 rc;
 
         rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
                   (s64)(int)(unsigned long)reloc_tail, 0);
@@ -1662,13 +1426,6 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             pterm(0x100);
         if (rc != 0)
             pterm(1);
-        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32RELOC.TOS",
-                   (s64)(int)(unsigned long)reloc_tail, 0);
-        if (bpa <= 0)
-            pterm(2);
-        rc = sys4(GEMDOS, 0x4b, 6, (s64)(int)(unsigned long)"", bpa, 0);
-        if (rc != 0)
-            pterm(4);
         /* linked for another address without its relocations: refused, with
          * EPLFMT, instead of run with every absolute address wrong */
         rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32NOREL.TOS",
@@ -1787,53 +1544,6 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
                    (s64)(int)(unsigned long)area_tail, 0);
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
               (rc4 == 0 ? 0 : 8));
-        break;
-    }
-    case 'F': {
-        /* what is not Malloc() memory takes the ordinary path with the same
-         * narrowed pointer: a basepage this process made (Pexec mode 5) is
-         * freed through a pointer with other bits in the upper half (#434) */
-        s64 bpa = sys4(GEMDOS, 0x4b, 5, 0, (s64)(int)(unsigned long)"", 0);
-
-        if (bpa <= 0)
-            pterm(1);
-        pterm(sys4(GEMDOS, 0x49, bpa | 0xffff00000000LL, 0, 0, 0) == 0 ? 0 : 2);
-        break;
-    }
-    case 'L': {
-        /* the program PE_LOAD put in this process's heap is not Malloc()
-         * memory: Mfree() leaves it alone; freeing the basepage unlaunched
-         * gives it back (#434) */
-        s64 a, bpa, b, gap;
-        volatile u32 *bpp;
-        u32 image;
-
-        a = sys4(GEMDOS, 0x48, 3 * 4096, 0, 0, 0);
-        bpa = sys4(GEMDOS, 0x4b, 3, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)"", 0);
-        if (bpa == -33)
-            pterm(0x100);
-        if (a <= 0 || bpa <= 0)
-            pterm(1);
-        bpp = (volatile u32 *)(unsigned long)bpa;
-        image = (bpp[4] - bpp[3]) & ~0xfffu;        /* the image's first page */
-        if (image != (u32)a + 3 * 4096)
-            bad |= 2;                       /* first fit: right after the first block */
-        if (sys4(GEMDOS, 0x4a, 0, a, 4096, 0) != 0)
-            bad |= 32;
-        gap = sys4(GEMDOS, 0x48, 2 * 4096, 0, 0, 0);
-        if (gap != a + 4096)
-            bad |= 64; /* first fit reuses the tail without overlapping the image */
-        if (sys4(GEMDOS, 0x49, image, 0, 0, 0) != -40)
-            bad |= 4;                       /* Mfree() leaves it alone */
-        if (sys4(GEMDOS, 0x49, bpa, 0, 0, 0) != 0)
-            bad |= 8;                       /* free the basepage */
-        b = sys4(GEMDOS, 0x48, 4096, 0, 0, 0);
-        if (b != image)
-            bad |= 16;                      /* and the address space is free again */
-        if (gap > 0 && sys4(GEMDOS, 0x49, gap, 0, 0, 0) != 0)
-            bad |= 128;
-        pterm(bad);
         break;
     }
     case 'u':

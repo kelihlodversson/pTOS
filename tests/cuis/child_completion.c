@@ -12,15 +12,10 @@ static void child_idle_hook(void)
         cuis_child_completed(&first,10,0x0400);
     }
 }
+/* A launched child's basepage, as spawn binds it; session.c's kproc_pid()
+ * maps these page numbers back to the PID. */
 #define CHILD_IMAGE(pid) ((ULONG)(pid) * 4096UL)
-LONG kproc_child_image_pid(PD *pd, PD *caller)
-{
-    int i;
-    for (i = 0; i < 3; i++)
-        if (test_children[i].parent == caller && (uintptr_t)pd == CHILD_IMAGE(test_children[i].pid) && !test_children[i].started)
-            return test_children[i].pid;
-    return EIMBA;
-}
+#define CHILD_BIND(s,t,pid) cuis_child_bind_spawn((ULONG)(s),(ULONG)(t),(PD *)(uintptr_t)CHILD_IMAGE(pid))
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage)
 {
     int i;
@@ -44,7 +39,7 @@ static void child_copy_hook(void)
         CHILD_W(child_session,CUIS_CHILD_CANCEL,child_token,0);
         test_children[0].started = FALSE;
         child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
-        CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(10));
+        CHILD_BIND(child_session,child_token,10);
         test_children[0].started = TRUE;
         cuis_child_completed(&first,10,0x0400);
     } else if (mode == 2) cuis_process_exit(run);
@@ -75,12 +70,13 @@ static int child_completion_checks(void)
     test_children[0].parent = &first; test_children[0].pid = 10;
     test_children[1].parent = &first; test_children[1].pid = 11;
     test_children[2].parent = &second; test_children[2].pid = 12;
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(12)) == EIMBA);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,1ULL << 32) == EINVAL);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(10)) == E_OK && cuis_child_pid_reserved(10));
+    /* Action 1 bound an unlaunched staged image; it went with the x32
+     * staged Pexec modes (#1018). */
+    CHECK(CHILD_W(child_session,1,child_token,CHILD_IMAGE(10)) == EINVAL);
+    CHECK(CHILD_BIND(child_session,child_token,10) == E_OK && cuis_child_pid_reserved(10));
     tokens[0] = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,tokens[0],CHILD_IMAGE(10)) == EACCDN);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,tokens[0],CHILD_IMAGE(11)) == E_OK);
+    CHECK(CHILD_BIND(child_session,tokens[0],10) == EACCDN);
+    CHECK(CHILD_BIND(child_session,tokens[0],11) == E_OK);
     CHECK(CHILD_R(child_session) == 0 && !child_reaps);
     /* Exit ordering, not reservation order, determines the notification head. */
     test_children[0].started = test_children[1].started = TRUE;
@@ -119,7 +115,7 @@ static int child_completion_checks(void)
      * without waiting for the click interval/another mouse packet. */
     test_children[0].reaped = test_children[0].started = FALSE; test_children[0].status = 0;
     child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(10)) == E_OK);
+    CHECK(CHILD_BIND(child_session,child_token,10) == E_OK);
     pointer_buttons = 0; input_pointer_source = pointer_suppressed = pointer_legacy_drag = FALSE;
     window = cuis_window_service(CUIS_WINDOW_CREATE,0,0,300,300,0);
     CHECK(window >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0) == E_OK);
@@ -137,14 +133,9 @@ static int child_completion_checks(void)
     CHECK(cuis_session_wait(child_session,0,CUIS_READY_BUTTON,0,0,0) == CUIS_READY_BUTTON);
     CHECK(cuis_input_config(CUIS_INPUT_RESULT,child_session,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK && copied[1] == 2);
     CHECK(!client->button_resume_active);
-    /* A running/reaped child cannot be attached after the fact. */
-    test_children[0].started = TRUE;
-    child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(10)) == EIMBA);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_CANCEL,child_token,0) == E_OK);
     test_children[0].reaped = test_children[0].started = FALSE;
     child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(10)) == E_OK);
+    CHECK(CHILD_BIND(child_session,child_token,10) == E_OK);
     test_children[0].started = TRUE; cuis_child_completed(&first,10,0x0400);
     CHECK(CHILD_R(child_session) == status);
     /* Replacing the same PID/status while copying must invalidate the old token. */
@@ -153,7 +144,7 @@ static int child_completion_checks(void)
     CHECK(CHILD_P(child_session,status,0x10000,16) == E_OK && child_reaps == 2);
     test_children[0].reaped = test_children[0].started = FALSE;
     child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
-    CHECK(CHILD_W(child_session,CUIS_CHILD_BIND,child_token,CHILD_IMAGE(10)) == E_OK);
+    CHECK(CHILD_BIND(child_session,child_token,10) == E_OK);
     test_children[0].started = TRUE; cuis_child_completed(&first,10,0x0400);
     child_copy_mode = 2;
     CHECK(CHILD_P(child_session,status,0x10000,16) == EACCDN && !cuis_child_pid_reserved(10));
@@ -344,7 +335,7 @@ static int button_resume_checks(void)
         test_children[0].parent = run; test_children[0].pid = 10;
         test_children[0].reaped = test_children[0].started = FALSE; test_children[0].status = 0;
         token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
-        CHECK(cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_BIND,token,CHILD_IMAGE(10)) == E_OK);
+        CHECK(CHILD_BIND(session,token,10) == E_OK);
         client->recent_count = 0;
         CHECK(cuis_input_config(CUIS_INPUT_BUTTON,session,1,1,2,0,0) == E_OK);
         input_sleeps = 0; input_packet_mode = 2; child_idle_at = 2;
