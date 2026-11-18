@@ -667,6 +667,9 @@ timerc_end:
         // exception stack frame pointing to a pseudo-VBL routine. In that case,
         // the RTE below jumps to that pseudo-VBL. Then that one will return to
         // our caller with RTE.
+#if CONF_WITH_IRQ_RESTART_TEST && REAL_TIMER_C_HANDLER
+        M68K_IRQ_RESTART_RETURN
+#endif
         rte
 
 #if CONF_WITH_MFP_RS232

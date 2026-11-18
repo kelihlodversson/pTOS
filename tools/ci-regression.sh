@@ -103,6 +103,10 @@ config.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
 assert config.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
 assert config.syms['CONF_WITH_PTERMGRP'].str_value == 'y'
 assert config.syms['CONF_WITH_PTHJOIN'].str_value == 'y'
+if os.environ.get('IRQ_RESTART_TEST') == '1':
+    config.syms['CONF_WITH_MMAP'].set_value(2)
+    config.syms['CONF_WITH_IRQ_RESTART_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
 if config.syms['ARCH_X86_64'].str_value != 'y':
     config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'

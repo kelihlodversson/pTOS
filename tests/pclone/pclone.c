@@ -1695,6 +1695,7 @@ static void test_group_exit(void)
 #include "public_contract.h"
 #include "mapping_lifetime.h"
 #include "process_files.h"
+#include "irq_restart.h"
 
 static void test_runnable(void)
 {
@@ -1857,6 +1858,9 @@ static void test_runnable(void)
 #endif
 #endif
     test_lifecycle();
+#if defined(TEST_WITH_IRQ_RESTART)
+    test_irq_restart();
+#endif
     for (cycle = 0; cycle < 3; cycle++)
         ptest_assert_msg(Mfree(runnable_stacks[cycle]) == 0,"clone stack hold released after root reap");
     ptest_assert_msg(Prusage(usage) == 0 && usage[4] == baseline_pages,

@@ -781,6 +781,10 @@ C_SYM(arm_dispatch_irq):
     FPU_PUSH_ALL r0        /* the interrupted code's FPU state */
 #endif
     bl     C_SYM(raspi_int_handler)
+#if CONF_WITH_IRQ_RESTART_TEST
+    mov    r0,sp
+    bl     C_SYM(arm_restart_user_irq)
+#endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
     ARM_IRQ_POP_CAPTURE
 #else

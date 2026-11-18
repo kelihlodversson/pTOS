@@ -77,6 +77,10 @@ static inline BOOL x86_irq_return_controls_valid(const X86_IRQ_CONTROLS *c)
         (!c->ds || c->ds==X86_64_USER_DATA_SEL) && (!c->es || c->es==X86_64_USER_DATA_SEL);
 }
 void x86_64_irq_read_controls(X86_IRQ_CONTROLS *controls);
+#if CONF_WITH_IRQ_RESTART_TEST
+void x86_64_irq_restore_user_segments(const X86_IRQ_CONTROLS *controls);
+void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame);
+#endif
 /* Trusted kernel image only: this never touches user memory or walks mappings.
  * FXSAVE covers the enabled x87/MMX/SSE state; OSXSAVE/AVX is not enabled here. */
 static inline BOOL x86_irq_user_valid(const X86_USER_IRQ_FRAME *f,

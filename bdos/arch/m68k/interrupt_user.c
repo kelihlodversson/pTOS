@@ -26,7 +26,11 @@ static void check_irq_pattern(const M68K_USER_IRQ_CAPTURE *c)
     const M68K_USER_IRQ_FRAME *f=&c->image;
     if (f->d[7]!=0x71307137UL) return;
     irq_pattern_seen++;
+#if CONF_WITH_IRQ_RESTART_TEST
+    if (f->d[0]>40000000UL) irq_pattern_bad=TRUE;
+#else
     if (f->d[0]>4000000UL) irq_pattern_bad=TRUE;
+#endif
     for (i=1;i<7;i++) if (f->d[i]!=0x71307130UL) irq_pattern_bad=TRUE;
     for (i=0;i<6;i++) if (f->a[i]!=0x71307130UL) irq_pattern_bad=TRUE;
     if (c->binding.fpu_type) {
@@ -121,6 +125,9 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     capture->tid=tid; capture->cpu=execution->owner_cpu;
     capture->sequence++;
     capture->valid=TRUE;
+#if CONF_WITH_IRQ_RESTART_TEST
+    interrupt_restart_user_capture(execution);
+#endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
     check_irq_pattern(capture);
     if (capture->image.d[7]==0x71307137UL &&
@@ -141,4 +148,44 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     }
 #endif
 }
+#if CONF_WITH_IRQ_RESTART_TEST
+static BOOL restart_binding(KASPACE *space,M68K_USER_IRQ_FRAME *frame,M68K_IRQ_BINDING *b)
+{
+    b->model=mcpu;b->fpu_type=fputype;
+    if (b->model!=40 || !m68k_irq_fpu_supported(b->model,b->fpu_type)) return FALSE;
+    b->root=aspace_hw_current();b->expected_root=aspace_root(kaspace_backend(space));
+    b->frame_address=(uintptr_t)frame;
+    read_control(b);
+    return m68k_process_irq_stack(run,&b->stack_base,&b->stack_top);
+}
+ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame)
+{
+    KTHREAD_CONTEXT *execution;
+    KASPACE *space;
+    ULONG tid;
+    M68K_USER_IRQ_CAPTURE *c;
+    M68K_IRQ_BINDING b;
+    if ((frame->sr&0x3000) || (frame->format_vector&0xf000)) return 0;
+    execution=ksched_interrupt_target(run,&space,&tid);
+    if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return 0;
+    c=&execution->interrupted_user;
+    /* This prefix was freshly reconstructed after device-register restore.
+     * Compare it to the entry-owned copy; never dereference the discarded
+     * entry prefix after a handler, nor recapture after the handoff. */
+    if (!restart_binding(space,frame,&b) ||
+        !m68k_irq_same_entry_valid(c,frame,&b,execution->identity,c->sequence,tid,
+                                  execution->owner_cpu,USER_VA_LIMIT) ||
+        !interrupt_restart_admit(execution,c->sequence,frame->pc,frame->usp)) return 0;
+    (void)interrupt_restart_suspend(execution);
+    if (!interrupt_restart_return_valid(execution) || !restart_binding(space,frame,&b) ||
+        memcmp(&b,&c->binding,sizeof(b)) || !m68k_irq_user_valid(&c->image,&b,USER_VA_LIMIT) ||
+        !m68k_irq_return_controls_valid(&b) || !m68k_irq_fpu_idle(&b,&c->fpu) ||
+        memcmp(frame,&c->image,sizeof(*frame))) panic("IRQ restart: m68k retained return binding changed");
+    *(volatile ULONG *)&frame->d[1]=0;
+    memcpy(frame,&c->image,sizeof(*frame));
+    interrupt_restart_ack(execution);
+    /* The outer assembly epilogue restores FPU after this final C return. */
+    return fputype ? (ULONG)(uintptr_t)&c->fpu : 0;
+}
+#endif
 #endif

@@ -112,6 +112,9 @@ static inline BOOL m68k_irq_same_entry_valid(const M68K_USER_IRQ_CAPTURE *c,
 }
 struct _pd;
 void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame);
+#if CONF_WITH_IRQ_RESTART_TEST
+ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame);
+#endif
 BOOL m68k_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
 #if CONF_WITH_EXIT_HANDOFF_TEST
 void m68k_irq_capture_report(void);
@@ -144,5 +147,45 @@ extern volatile ULONG m68k_irq_test_state[4];
     move.w d0,sr
     movem.l (sp)+,d0-d7/a0-a6
 .endm
+#if CONF_WITH_IRQ_RESTART_TEST
+/* Run only after the device epilogue restores its registers and acknowledges
+ * hardware. Rebuild a fresh full prefix: the entry capture's prefix is gone. */
+.macro M68K_IRQ_RESTART_RETURN
+    movem.l d0-d7/a0-a6,-(sp)
+    move.l usp,a0
+    move.l a0,-(sp)
+    subq.l #4,sp
+    move.w sr,(sp)
+    ori.w #0x0700,sr
+    lea 4(sp),a0
+#if CONF_WITH_MFASTCALL
+    jsr C_SYM(m68k_restart_user_irq)
+#else
+    move.l a0,-(sp)
+    jsr C_SYM(m68k_restart_user_irq)
+    addq.l #4,sp
+#endif
+#if CONF_WITH_SAVED_RETURN
+    /* Restore FPU after the LAST C call, then only integer epilogue/RTE. */
+    tst.l d0
+    jeq .Lirq_restart_no_fpu\@
+#if CONF_WITH_MFASTCALL
+    move.l d0,a0
+    jsr C_SYM(m68k_fpu_restore_complete)
+#else
+    move.l d0,-(sp)
+    jsr C_SYM(m68k_fpu_restore_complete)
+    addq.l #4,sp
+#endif
+.Lirq_restart_no_fpu\@:
+#endif
+    move.w (sp),d0
+    addq.l #4,sp
+    move.l (sp)+,a0
+    move.l a0,usp
+    move.w d0,sr
+    movem.l (sp)+,d0-d7/a0-a6
+.endm
+#endif
 #endif
 #endif

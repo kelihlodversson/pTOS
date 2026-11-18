@@ -5,6 +5,7 @@
 #include "emutos.h"
 #include "native_sched_backend.h"
 #include "procmem.h"
+#include "interrupt_restart.h"
 #if ARCH_X86_64 && CONF_WITH_USER_ASPACE
 #include "arch/x86_64/irqframe.h"
 #elif ARCH_ARM && CONF_WITH_USER_ASPACE
@@ -22,7 +23,7 @@ typedef struct {
     uintptr_t top;
 } KTHREAD_STACK;
 
-typedef struct {
+typedef struct kthread_context {
     UQUAD identity;
     BOOL on_cpu; /* cleared only after verified scheduler-root handoff */
     UWORD owner_cpu;
@@ -30,8 +31,11 @@ typedef struct {
     KTHREAD_STACK syscall_stack; /* transferred once to the existing launcher */
     NATIVE_SCHED_CONTEXT cpu;
     jmp_buf resume;
+#if CONF_WITH_IRQ_RESTART_TEST
+    IRQ_RESTART irq_restart;
+#endif
 #if ARCH_X86_64 && CONF_WITH_USER_ASPACE
-    X86_USER_IRQ_CAPTURE interrupted_user; /* preallocated; no detached IRQ lifetime */
+    X86_USER_IRQ_CAPTURE interrupted_user; /* preallocated image; pending authority is separate */
 #elif ARCH_ARM && CONF_WITH_USER_ASPACE
     ARM_USER_IRQ_CAPTURE interrupted_user;
 #elif ARCH_M68K && CONF_WITH_USER_ASPACE

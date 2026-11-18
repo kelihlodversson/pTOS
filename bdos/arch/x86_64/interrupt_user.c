@@ -70,6 +70,9 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     capture->tid=tid; capture->cpu=execution->owner_cpu;
     capture->sequence++;
     capture->valid=TRUE;
+#if CONF_WITH_IRQ_RESTART_TEST
+    interrupt_restart_user_capture(execution);
+#endif
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
     /* Keep the diagnostic image, but an unsupported proof must neither alter
      * IRQ return nor leave a pattern count that makes root demand copy-back. */
@@ -96,4 +99,43 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     }
 #endif
 }
+#if CONF_WITH_IRQ_RESTART_TEST
+void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
+{
+    KTHREAD_CONTEXT *execution;
+    KASPACE *space;
+    ULONG tid;
+    X86_USER_IRQ_CAPTURE *c;
+    X86_IRQ_BINDING b;
+    if (frame->cs!=X86_64_USER_CODE_SEL) return;
+    execution=ksched_interrupt_target(run,&space,&tid);
+    if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return;
+    c=&execution->interrupted_user;
+    b.cr3=x86_64_read_cr3(); b.expected_cr3=aspace_root(kaspace_backend(space));
+    b.syscall_top=x86_64_get_kernel_stack(); b.irq_top=x86_64_get_irq_stack();
+    b.frame_address=(UQUAD)(uintptr_t)frame;
+    x86_64_irq_read_controls(&b.controls);
+    if (!x86_irq_same_entry_valid(c,frame,&b,execution->identity,c->sequence,tid,
+                                 execution->owner_cpu,USER_VA_LIMIT) ||
+        !interrupt_restart_admit(execution,c->sequence,(VADDR)frame->rip,(VADDR)frame->rsp)) return;
+    (void)interrupt_restart_suspend(execution);
+    /* Native context restoration selected A's CR3/TSS/GS phase. Restore its
+     * supported segment image before validating the exact final binding. */
+    x86_64_irq_restore_user_segments(&c->binding.controls);
+    b.cr3=x86_64_read_cr3(); b.expected_cr3=aspace_root(kaspace_backend(space));
+    b.syscall_top=x86_64_get_kernel_stack(); b.irq_top=x86_64_get_irq_stack();
+    x86_64_irq_read_controls(&b.controls);
+    if (!interrupt_restart_return_valid(execution) ||
+        b.cr3!=c->binding.cr3 || b.expected_cr3!=c->binding.expected_cr3 ||
+        b.syscall_top!=c->binding.syscall_top || b.irq_top!=c->binding.irq_top ||
+        !x86_irq_user_valid(&c->image,&b,USER_VA_LIMIT) ||
+        memcmp(frame,&c->image,sizeof(*frame))) panic("IRQ restart: x32 retained return binding changed");
+    /* This corruption occurs only AFTER real B user execution was observed.
+     * A's native GPR/FXSAVE probe fails unless the frozen owned image wins. */
+    *(volatile UQUAD *)&frame->rax=0;
+    memset(frame->fx+160,0,256);
+    memcpy(frame,&c->image,sizeof(*frame));
+    interrupt_restart_ack(execution);
+}
+#endif
 #endif

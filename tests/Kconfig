@@ -39,4 +39,15 @@ config CONF_WITH_X32_DESKTOP_TEST
       Console return and missing-desktop fallback support both external
       and embedded EmuCON.
 
+config CONF_WITH_IRQ_RESTART_TEST
+    bool "Test retained hardware user interruption across another THREAD"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE && CONF_WITH_PCLONE && CONF_WITH_PRIVATE_CLONE_TEST
+    depends on CONF_WITH_MMAP && CONF_WITH_PTHJOIN
+    default n
+    help
+      Private test-only preparation arms one retained user-return operation.
+      A genuine eligible device IRQ can park it at the verified outer return,
+      run another THREAD, then restore the owned architectural frame. No timer
+      quantum, public opcode or production preemption policy is enabled.
+
 endmenu

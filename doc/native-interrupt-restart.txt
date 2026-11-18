@@ -150,8 +150,8 @@ is exposed to user mode by this debugger evidence.
 030/060 copied restart, busy/pending/foreign FPU frames and fastcall are refused by
 copy-back eligibility. Their existing diagnostic capture/ordinary return stays.
 
-No preparation predicate is a runnable capability. There are no new retained
-owners or pending-return states. The sole native_sched.c preparation fix gives
+No architecture-preparation predicate is a runnable capability. PR #1020 has
+no new retained owners or pending-return states. The sole native_sched.c preparation fix gives
 the existing boot_cpu object stable hidden linkage under LTO; emutos.ld resolves
 its run alias after all LTO partitions are linked. This avoids an assembler
 .set losing its target in a different partition. LTO remains enabled, including
@@ -162,3 +162,89 @@ and Pexec(0) are unchanged. Root invalidation
 is unchanged. The native proof gates deliberately require separate copy-back
 markers alongside the full regression/shutdown verdicts; they are not B2's
 missing IRQ-A -> B -> A marker.
+
+
+Restricted retained handoff prototype (separate follow-up to #1020)
+-----------------------------------------------------------------
+CONF_WITH_IRQ_RESTART_TEST defaults off. It is a regression-only transport,
+not public Pfork/Pvfork, a timer quantum or production preemption policy.
+The implementation adds transaction metadata to the existing KTHREAD_CONTEXT;
+it reuses its architecture image, task, launcher and dispatcher. It adds no
+PROCESS reaper, wait claim, context representation or ownership registry.
+
+Process-context preparation acquires existing private executable and stack
+leases. Both retain the KASPACE; their resident minimum rights are checked
+without faulting. The task's existing EXECUTING KTHREAD pins its PROCESS,
+context and launcher stack throughout the bare always-ready block. Prepare
+publishes only after identity/residency revalidation and owns every failure
+prefix. The private selectors have no public syscall or executable ABI.
+
+ARMED -> FROZEN occurs only after a genuine outer USER hardware IRQ and device
+work have completed. The real original stack bytes and CPU/control binding
+must match the captured image before departure. The root's existing handoff
+acknowledgment changes FROZEN -> SUSPENDED before releasing on_cpu. Diagnostic
+validity is still cleared. The task stays nonterminal; cancel_boundary remains
+false and no exact-child wait claim is created or consumed.
+
+Selection alone is not B2 proof: a different execution must reach a real USER
+IRQ or architecture-authenticated USER trap after A departs. Monotonic boot-CPU
+selection and user-observation stamps qualify the ordered A -> B -> A witness.
+When A is selected, its ownership and durable mappings are checked again.
+RETURNING is mandatory even if no witness was observed: every completed
+transport must restore architectural state. Acknowledgment grants ACKED only
+with a real witness; otherwise it returns to ARMED. A private fault-injection
+mode suppresses proof credit while requiring an actual root handoff, so native
+register/FPU probes exercise this otherwise easy-to-miss restoration path.
+
+x32 rebinds supported selectors/bases after every handoff, then validates CR3,
+TSS/syscall stack and controls before the real FXRSTOR/GPR/IRETQ. ARM restores
+banked IRQ SP/LR/SPSR using register-only mode changes, preserves SVC SP, then
+restores USER banks and the original RFE frame. m68k reconstructs its complete
+prefix after device register restore, revalidates format/model/root/control,
+and restores complete FPU after the last C call, then USP under IPL7 and RTE.
+No SVC frame is reinterpreted as IRQ; no discarded m68k entry prefix is reused.
+
+Pending cancellation refuses new IRQ admission. Cancellation observed after
+B marks the operation ABORTED on A's restored launcher stack and invokes the
+existing ksched_cancel_point/xterm path. The existing PROCESS group status is
+the only status latch. Leases stay attached until root reclaims the stopped
+execution, after departure acknowledgment. Ordinary ARMED/ACKED exits use the
+same off-stack disposal. Replacement moves the old leases before context
+reset and releases them only after the fresh context/startup is installed.
+FROZEN/SUSPENDED/RETURNING retirement fails closed rather than freeing a live
+stack. All final puts are outside IRQ capture and runqueue leaf exclusion.
+
+This is the narrow generic seam that belongs in the follow-up: CPU observation
+stamps, root acknowledgment metadata, off-stack execution disposal and moved
+replacement retirement. #1017 PROCESS creation, Pexec(0), exact-child claim,
+parent cancellation/orphan and completion state machines are unchanged.
+
+Tests separate capture-only/ordinary return (FINISH=1), uncredited actual
+transport (FINISH=EAGAIN), and real A hardware IRQ -> B USER -> A saved-return
+credit (FINISH=0). Original and alternate GPR/FPU/control patterns exercise
+PROCESS peers, same-PROCESS THREADs and independent private roots. The native
+retirement fixture checks ARMED exit, ACKED exit without finish and B-triggered
+group cancellation while A is suspended: status61 wins and A never reaches the
+USER instruction following its register probe. Writable COW stack pages are
+resolved before the exact retirement baselines. Both ownership-failure
+prefixes and duplicate abort are checked. Missing central/retirement markers
+fail the production runner even if immediate copy-back passes.
+
+The hosted fixture executes production interrupt_restart.c and KASPACE leases
+with modeled CPU/dispatcher/PROCESS identities and MMU endpoints. It covers
+64 repeated cycles, allocation failures, exact reference/allocation balance,
+nonresident and stale identity refusal, no-peer return, cancellation and moved
+replacement retirement. It is not native architectural restart evidence.
+
+Initial reconciled native proofs passed x32 desktop/CUIS26/0, Cortex-A7 FAT29/0,
+and m68k040 FAT PRG+ELF28/0, with five shutdown checks each, ordered restart and
+armed/ACKED/cancelled retirement markers. Host normal, fortified and ASan/UBSan
+pass; local LSan cannot run under the container's ptrace environment (native
+CI is needed for leak detection). Exact-source reruns after the extra no-credit
+probe, FAT/PFS, pinned Amiberry/Hatari deferred proof and complete follow-up CI
+remain required. Neither #1020's green CI nor this prototype completes B2.
+
+Unsupported profiles remain unchanged: x32 TLS/XSAVE/AVX; ARM Thumb/Jazelle/IT,
+FIQ, unsupported MMU or VFP restart states; m68k non-format0, 030/060 delayed
+return, fastcall and busy/pending/foreign FPU. Unsupported USER IRQs return
+normally. Arbitrary kernel/callback/nested frames never gain restart authority.
