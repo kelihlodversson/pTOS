@@ -260,7 +260,7 @@ void kproc_region_selftest(void)
     KPROC_ALLOCATION_HOLD raw={{0}}, raw_copy={{0}};
     KASPACE_RESERVATION_INFO info;
     KASPACE_RESERVATION_HOLD base={0}, environment={0}, environment_other={0}, stack={0}, copy={0}, image={0};
-    KASPACE_RESERVATION_HOLD broad={0},data={0};
+    KASPACE_RESERVATION_HOLD data={0};
     PROG_LAYOUT layout;
     VADDR image_address;
     ULONG records, value=0x8941234UL;
@@ -324,18 +324,13 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_reservation_duplicate(&environment,&environment_other)==E_OK);
     REQUIRE(kproc_allocation_hold(pd,env,procmem_gen(env),0,2,ASPACE_PROT_USER,&raw)==E_OK);
     REQUIRE(!procmem_free(env));
-    /* Broad READ first must not hide RX/RW subrange permissions. */
-    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(pd,image_address,2*PAGE,info.identity,ASPACE_PROT_USER,&broad)==E_OK);
+    /* Each loaded segment keeps its own rights: RX text, RW data. A range
+     * spanning both is not one reservation of a loaded image. */
+    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)!=E_OK);
     REQUIRE(kproc_reservation_info(pd,image_address,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,image_address,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_EXEC,&image)==E_OK);
     REQUIRE(kproc_reservation_info(pd,image_address+PAGE,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,image_address+PAGE,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&data)==E_OK);
-    REQUIRE(kproc_reservation_release(&broad));
-    /* And the opposite order must preserve the same rights. */
-    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(pd,image_address,2*PAGE,info.identity,ASPACE_PROT_USER,&broad)==E_OK);
-    REQUIRE(kproc_reservation_release(&broad));
     REQUIRE(kproc_reservation_info(pd,stack_page,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,stack_page,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&stack)==E_OK);
 #if CONF_WITH_MMAP
