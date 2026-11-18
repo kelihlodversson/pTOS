@@ -262,6 +262,7 @@ BOOL kproc_shared_exec_retire_source(void *base)
     return FALSE;
 }
 #if CONF_WITH_SHARED_VM_PEXEC
+#define SHARED_TPA_SLACK (64UL*1024UL)
 LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *startup,
                               KASPACE_PERMISSION_TRANSACTION **permissions)
 {
@@ -425,6 +426,16 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     }
     startup->argument=(VADDR)(uintptr_t)target->pd;
     startup->stack_base=body;startup->stack_size=set->stack_bytes;
+#if KPROC_LEGACY_PRG
+    /* The child runs on the stack above, not at the top of its TPA, so a
+     * pTOS-aware startup does not Mshrink() it (libcmini's minimain.c), and
+     * each staged PRG would keep up to KPROC_LEGACY_TPA_MAX of the window.
+     * Give the unheld tail back now, as its startup would on TOS, keeping
+     * some heap room above the image. Infallible: only a refused shrink
+     * keeps the TPA as it was. */
+    if(legacy && held+SHARED_TPA_SLACK<procmem_size(target->user_start))
+        (void)kproc_shrink_tpa(source->pd,target->user_start,(long)(held+SHARED_TPA_SLACK));
+#endif
     set->preparing=FALSE;
     return E_OK;
 failed:
