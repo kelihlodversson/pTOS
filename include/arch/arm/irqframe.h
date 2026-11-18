@@ -27,6 +27,7 @@ typedef char arm_irq_cpsr[offsetof(ARM_USER_IRQ_FRAME,cpsr)==ARM_IRQ_CPSR ? 1:-1
 typedef char arm_irq_size[sizeof(ARM_USER_IRQ_FRAME)==ARM_IRQ_BYTES ? 1:-1];
 typedef struct {
     ULONG root, expected_root, sctlr, ttbcr, dacr, context_id, fpexc;
+    ULONG ttbr0, ttbr1, cpacr;
     uintptr_t stack_base, stack_top, frame_address;
 } ARM_IRQ_BINDING;
 static inline BOOL arm_irq_user_valid(const ARM_USER_IRQ_FRAME *f,
@@ -48,6 +49,43 @@ typedef struct {
     UWORD cpu;
     BOOL valid;
 } ARM_USER_IRQ_CAPTURE;
+/* Architecture preparation only, not a runnable-continuation capability.
+ * The supported return profile is little-endian A32/short descriptors/D32,
+ * with VFP enabled and no pending exception/restart state. */
+static inline BOOL arm_irq_return_controls_valid(const ARM_USER_IRQ_FRAME *f,
+                                                const ARM_IRQ_BINDING *b)
+{
+#if FPU_ALL_BYTES == 264
+    return (f->cpsr & (0x01000000UL | 0x0600fc00UL | 0x200UL | 0x3fUL)) == 0x10 &&
+        (b->sctlr & (1UL | (1UL<<25) | (1UL<<30))) == 1 &&
+        b->ttbcr == 1 && (b->ttbr0 & ~0x1fffUL) == b->root &&
+        (b->ttbr1 & ~0x3fffUL) && (b->cpacr & 0x00f00000UL) == 0x00f00000UL &&
+        b->fpexc == 0x40000000UL;
+#else
+    (void)f; (void)b;
+    return FALSE; /* Other ARM/FPU configurations need their own native proof. */
+#endif
+}
+/* The original, still-live IRQ image is the freshness witness. This must not
+ * be weakened into a delayed-resume API by dropping its byte comparison. */
+static inline BOOL arm_irq_same_entry_valid(const ARM_USER_IRQ_CAPTURE *c,
+    const ARM_USER_IRQ_FRAME *original, const ARM_IRQ_BINDING *b,
+    UQUAD execution, UQUAD sequence, ULONG tid, UWORD cpu, ULONG limit)
+{
+    const ARM_IRQ_BINDING *s=&c->binding;
+    const UBYTE *a=(const UBYTE *)&c->image, *o=(const UBYTE *)original;
+    ULONG i;
+    if (!c->valid || !execution || c->execution!=execution || !sequence || c->sequence!=sequence ||
+        c->tid!=tid || c->cpu!=cpu || b->frame_address!=(uintptr_t)original ||
+        s->root!=b->root || s->expected_root!=b->expected_root || s->sctlr!=b->sctlr ||
+        s->ttbcr!=b->ttbcr || s->dacr!=b->dacr || s->context_id!=b->context_id ||
+        s->fpexc!=b->fpexc || s->ttbr0!=b->ttbr0 || s->ttbr1!=b->ttbr1 || s->cpacr!=b->cpacr ||
+        s->stack_base!=b->stack_base || s->stack_top!=b->stack_top || s->frame_address!=b->frame_address ||
+        !arm_irq_user_valid(original,b,limit) || !arm_irq_user_valid(&c->image,b,limit) ||
+        !arm_irq_return_controls_valid(&c->image,b)) return FALSE;
+    for(i=0;i<sizeof(*original);i++) if(a[i]!=o[i]) return FALSE;
+    return TRUE;
+}
 struct _pd;
 void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame);
 BOOL arm_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
@@ -79,6 +117,10 @@ void arm_irq_capture_report(void);
 .endm
 .macro ARM_IRQ_POP_CAPTURE
     FPU_POP_ALL r0
+    /* Consume the owned user-bank prefix too. IRQ and SVC continuations are
+     * distinct: RFE below still consumes PC/SPSR from this IRQ's SRS pair. */
+    ldmia sp,{r13-r14}^
+    nop
     add sp,sp,#24
     ldmfd sp!, {r0-r12,lr}
 .endm

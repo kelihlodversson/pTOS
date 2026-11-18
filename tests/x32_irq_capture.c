@@ -18,6 +18,11 @@ ASPACE_ROOT aspace_root(const ASPACE *space) { (void)space; return 0x1000; }
 UQUAD x86_64_read_cr3(void) { return root; }
 UQUAD x86_64_get_kernel_stack(void) { return top-8; }
 UQUAD x86_64_get_irq_stack(void) { return top; }
+void x86_64_irq_read_controls(X86_IRQ_CONTROLS *c)
+{
+    memset(c,0,sizeof(*c)); c->cr0=0x80000001ULL; c->cr4=1ULL<<9;
+    c->efer=0xc01; c->entry_record=c->kernel_gs_base=0xffff800000100000ULL;
+}
 int main(void)
 {
     X86_USER_IRQ_FRAME f={0}, before;
@@ -34,6 +39,15 @@ int main(void)
     CHECK(!memcmp(&c->image,&f,sizeof(f)) && !memcmp(&f,&before,sizeof(f)));
     CHECK(c->binding.frame_address==(uintptr_t)&f && c->binding.cr3==0x1000);
     CHECK(x86_irq_same_entry_valid(c,&f,&c->binding,123,1,17,0,USER_VA_LIMIT));
+    {
+        X86_IRQ_BINDING changed=c->binding;
+        changed.controls.cr4^=1ULL<<7;
+        CHECK(!x86_irq_same_entry_valid(c,&f,&changed,123,1,17,0,USER_VA_LIMIT));
+        changed=c->binding; changed.controls.fs_base=1;
+        CHECK(!x86_irq_same_entry_valid(c,&f,&changed,123,1,17,0,USER_VA_LIMIT));
+        changed=c->binding; changed.controls.in_syscall=TRUE;
+        CHECK(!x86_irq_same_entry_valid(c,&f,&changed,123,1,17,0,USER_VA_LIMIT));
+    }
     CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,124,1,17,0,USER_VA_LIMIT));
     CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,123,2,17,0,USER_VA_LIMIT));
     CHECK(!x86_irq_same_entry_valid(c,&f,&c->binding,123,1,18,0,USER_VA_LIMIT));

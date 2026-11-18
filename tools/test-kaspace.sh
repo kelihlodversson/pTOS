@@ -20,7 +20,7 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 tests/x32_irq_frame.c -o "$work/irq-frame"
 "$work/irq-frame"
-${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-pie -no-pie -iquote include -I"$work" \
     -Iinclude/arch/x86_64 tests/arm_irq_frame.c -o "$work/arm-irq-frame"
 "$work/arm-irq-frame"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \

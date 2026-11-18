@@ -8,7 +8,7 @@
 #define CHECK(x) do { if (!(x)) abort(); } while (0)
 int main(void)
 {
-    ARM_USER_IRQ_FRAME f={0};
+    static ARM_USER_IRQ_FRAME f;
     ARM_IRQ_BINDING b={0};
     CHECK(ARM_IRQ_BYTES==352 && sizeof(f)==352);
     b.root=b.expected_root=0x10000;
@@ -32,6 +32,39 @@ int main(void)
     b.frame_address-=8; CHECK(!arm_irq_user_valid(&f,&b,0x80000000)); b.frame_address+=8;
     b.stack_base=b.frame_address+8; CHECK(!arm_irq_user_valid(&f,&b,0x80000000));
     b.stack_base=0x81000000; CHECK(arm_irq_user_valid(&f,&b,0x80000000));
+    b.sctlr=1; b.ttbcr=1; b.ttbr0=b.root; b.ttbr1=0x20000;
+    b.cpacr=0x00f00000; b.fpexc=0x40000000;
+    CHECK(arm_irq_return_controls_valid(&f,&b));
+    f.cpsr|=1UL<<24; CHECK(!arm_irq_return_controls_valid(&f,&b)); f.cpsr=0x10;
+    f.cpsr|=1UL<<10; CHECK(!arm_irq_return_controls_valid(&f,&b)); f.cpsr=0x10;
+    f.cpsr|=1UL<<25; CHECK(!arm_irq_return_controls_valid(&f,&b)); f.cpsr=0x10;
+    b.fpexc|=0x80000000UL; CHECK(!arm_irq_return_controls_valid(&f,&b)); b.fpexc=0x40000000;
+    b.fpexc|=0x10000000UL; CHECK(!arm_irq_return_controls_valid(&f,&b)); b.fpexc=0x40000000;
+    b.sctlr=0; CHECK(!arm_irq_return_controls_valid(&f,&b)); b.sctlr=1;
+    b.sctlr|=1UL<<25; CHECK(!arm_irq_return_controls_valid(&f,&b)); b.sctlr=1;
+    b.ttbcr|=0x80000000UL; CHECK(!arm_irq_return_controls_valid(&f,&b)); b.ttbcr=1;
+    b.ttbr0+=0x2000; CHECK(!arm_irq_return_controls_valid(&f,&b)); b.ttbr0=b.root;
+    b.cpacr=0; CHECK(!arm_irq_return_controls_valid(&f,&b)); b.cpacr=0x00f00000;
+    {
+        ARM_USER_IRQ_CAPTURE c={0};
+        ARM_IRQ_BINDING changed;
+        b.frame_address=(uintptr_t)&f; b.stack_base=b.frame_address-0x1000;
+        b.stack_top=b.frame_address+sizeof(f); f.svc_sp=b.stack_top;
+        /* Non-PIE static fixture keeps modeled 32-bit banked SP representable. */
+        if ((uintptr_t)f.svc_sp==b.stack_top) {
+            c.image=f; c.binding=b; c.valid=TRUE; c.execution=9; c.sequence=3; c.tid=7;
+            CHECK(arm_irq_same_entry_valid(&c,&f,&b,9,3,7,0,0x80000000));
+            CHECK(!arm_irq_same_entry_valid(&c,&f,&b,10,3,7,0,0x80000000));
+            CHECK(!arm_irq_same_entry_valid(&c,&f,&b,9,4,7,0,0x80000000));
+            CHECK(!arm_irq_same_entry_valid(&c,&f,&b,9,3,8,0,0x80000000));
+            CHECK(!arm_irq_same_entry_valid(&c,&f,&b,9,3,7,1,0x80000000));
+            changed=b; changed.dacr^=1;
+            CHECK(!arm_irq_same_entry_valid(&c,&f,&changed,9,3,7,0,0x80000000));
+            f.r[12]++; CHECK(!arm_irq_same_entry_valid(&c,&f,&b,9,3,7,0,0x80000000)); f.r[12]--;
+            f.vfp[2]++; CHECK(!arm_irq_same_entry_valid(&c,&f,&b,9,3,7,0,0x80000000)); f.vfp[2]--;
+            c.valid=FALSE; CHECK(!arm_irq_same_entry_valid(&c,&f,&b,9,3,7,0,0x80000000));
+        } else abort();
+    }
     puts("ARM IRQ frame offsets, user/banked validation and MMU/stack binding: PASS (host synthetic inputs)");
     return 0;
 }

@@ -60,6 +60,7 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     binding.syscall_top=x86_64_get_kernel_stack();
     binding.irq_top=x86_64_get_irq_stack();
     binding.frame_address=(UQUAD)(uintptr_t)frame;
+    x86_64_irq_read_controls(&binding.controls);
     capture=&execution->interrupted_user;
     capture->valid=FALSE;
     if (!x86_irq_user_valid(frame,&binding,USER_VA_LIMIT) || capture->sequence==~(UQUAD)0) return;

@@ -165,6 +165,24 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  */
 /* The loaded swap state belongs to this CPU alongside its entry stack slots. */
 
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#include "arch/x86_64/irqframe.h"
+void x86_64_irq_read_controls(X86_IRQ_CONTROLS *c)
+{
+    /* Device IRQ entry does not SWAPGS: a genuine outer user IRQ has the
+     * user GS half loaded and the CPU entry record in KERNEL_GS_BASE. */
+    __asm__ volatile ("mov %%cr0,%0; mov %%cr4,%1" : "=r"(c->cr0), "=r"(c->cr4));
+    c->efer=x86_64_rdmsr(0xc0000080UL);
+    c->fs_base=x86_64_rdmsr(0xc0000100UL);
+    c->gs_base=x86_64_rdmsr(0xc0000101UL);
+    c->kernel_gs_base=x86_64_rdmsr(0xc0000102UL);
+    c->entry_record=(UQUAD)(uintptr_t)&percpu;
+    __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
+        : "=m"(c->ds), "=m"(c->es), "=m"(c->fs), "=m"(c->gs));
+    c->in_syscall=percpu.syscall_gs_swapped;
+}
+#endif
+
 #if CONF_WITH_SAVED_RETURN
 #include "../../../bdos/syscall_return.h"
 #include "../../../bdos/kproc.h"

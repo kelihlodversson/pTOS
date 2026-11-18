@@ -9,7 +9,7 @@
 #include "biosext.h"
 extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST
-static ULONG irq_pattern_seen;
+static ULONG irq_pattern_seen, irq_roundtrip_seen;
 static BOOL irq_pattern_bad, irq_pattern_reported;
 static void check_irq_pattern(const ARM_USER_IRQ_FRAME *f)
 {
@@ -33,6 +33,8 @@ void arm_irq_capture_report(void)
     if (!irq_pattern_seen || irq_pattern_reported) return;
     irq_pattern_reported=TRUE;
     kprintf("native ARM interrupted-user integer/VFP/banked capture: PASS\r\n");
+    if (!irq_roundtrip_seen) panic("ARM owned IRQ round trip not exercised");
+    kprintf("native ARM fresh owned IRQ image round trip: PASS\r\n");
 }
 #endif
 void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
@@ -54,6 +56,9 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     __asm__ volatile ("mrc p15,0,%0,c2,c0,2" : "=r"(binding.ttbcr));
     __asm__ volatile ("mrc p15,0,%0,c3,c0,0" : "=r"(binding.dacr));
     __asm__ volatile ("mrc p15,0,%0,c13,c0,1" : "=r"(binding.context_id));
+    __asm__ volatile ("mrc p15,0,%0,c2,c0,0" : "=r"(binding.ttbr0));
+    __asm__ volatile ("mrc p15,0,%0,c2,c0,1" : "=r"(binding.ttbr1));
+    __asm__ volatile ("mrc p15,0,%0,c1,c0,2" : "=r"(binding.cpacr));
 #ifdef __ARM_PCS_VFP
     __asm__ volatile ("vmrs %0,fpexc" : "=r"(binding.fpexc));
 #else
@@ -72,6 +77,28 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     capture->valid=TRUE;
 #if CONF_WITH_EXIT_HANDOFF_TEST
     check_irq_pattern(&capture->image);
+    if (capture->image.r[12]==0x71307132UL && arm_irq_return_controls_valid(&capture->image,&binding)) {
+        ARM_USER_IRQ_FRAME *destination=(ARM_USER_IRQ_FRAME *)(uintptr_t)frame;
+        ULONG clear_bank[2]={0,0};
+        UWORD i;
+        if (!arm_irq_same_entry_valid(capture,frame,&binding,execution->identity,
+                capture->sequence,tid,execution->owner_cpu,USER_VA_LIMIT))
+            panic("ARM copied IRQ image ownership mismatch");
+        /* Proof is deliberately confined to this entry, before the handler.
+         * Poison integer/VFP saved bytes; real POP/RFE must consume the copy. */
+        *(volatile ULONG *)&destination->r[0]=0;
+#if FPU_ALL_BYTES == 264
+        for(i=2;i<FPU_ALL_BYTES/4;i++) ((volatile ULONG *)destination->vfp)[i]=0;
+#else
+        (void)i;
+#endif
+        __asm__ volatile ("" ::: "memory");
+        memcpy(destination,&capture->image,sizeof(*destination));
+        /* The epilogue must consume copied user SP/LR instead of relying on
+         * their untouched banked hardware values. IRQs remain masked. */
+        __asm__ volatile ("ldmia %0,{sp,lr}^; nop" :: "r"(clear_bank) : "memory");
+        irq_roundtrip_seen++;
+    }
 #endif
 }
 #endif
