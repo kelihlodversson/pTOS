@@ -2332,7 +2332,10 @@ static void task_entry(void)
     {
         KERNEL_TASK *owner = completion_task(task);
         if (owner->process_completed || refused) {
+            RUNQUEUE_GUARD guard=runqueue_enter();
             owner->state = owner->asynchronous && owner->parent ? TASK_ZOMBIE : TASK_DONE;
+            ksched_wake_sequence(&process_events);
+            runqueue_leave(guard);
             /* Status and resources are finalized; wait visibility precedes
              * generic observer readiness. A refused launch is abandoned. */
             if (owner->process_completed) kproc_publish_observers(owner->process);
@@ -2344,11 +2347,17 @@ static void task_entry(void)
                     owner->signal ? (UWORD)owner->signal << 8 : (UWORD)owner->result);
 #endif
         } else if (owner == task) {
+            RUNQUEUE_GUARD guard=runqueue_enter();
             /* Initial TID has stopped, but PID/resources/children remain live.
              * Its continuation is root-reapable; the PROCESS slot is not. */
             task->state = TASK_DRAINING;
+            runqueue_leave(guard);
         }
-        if (owner != task) task->state = TASK_DONE;
+        if (owner != task) {
+            RUNQUEUE_GUARD guard=runqueue_enter();
+            task->state = TASK_DONE;
+            runqueue_leave(guard);
+        }
     }
     native_sched_save(&task->execution.cpu);
     longjmp(execution_cpu.resume, 1);
@@ -3083,8 +3092,12 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
         check_task_thread(task, 4);
         if (!kthread_reap(task->thread))
             panic("scheduler: root cannot reap unfinished thread");
-        task->thread = NULL;
-        ksched_wake_sequence(&process_events);
+        {
+            RUNQUEUE_GUARD guard=runqueue_enter();
+            task->thread = NULL;
+            ksched_wake_sequence(&process_events);
+            runqueue_leave(guard);
+        }
     }
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
     lifetime_probe_reap(task);
@@ -3095,6 +3108,7 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
         if (!anchor->dependents) panic("scheduler: anchor reference underflow");
         task->completion_owner=NULL;
         anchor->dependents--;
+        ksched_wake_sequence(&process_events);
         runqueue_leave(guard);
     }
     if (task->state == TASK_DONE && !task->dependents && task->process) {
