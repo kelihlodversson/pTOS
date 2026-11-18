@@ -861,9 +861,11 @@ __asm__(
  * failed assertions. */
 static const char *loaded_prg_failure(int mode,long status,long sp)
 {
-    static char text[96];
+    /* one buffer per mode: the test library keeps the first failing message
+     * by pointer and prints it only at the end of the test */
+    static char texts[3][96];
     static const char hex[]="0123456789abcdef";
-    char *out=text;const char *in;unsigned n;
+    char *text=texts[mode==4?0:mode==104?1:2],*out=text;const char *in;unsigned n;
     for(in="loaded PRG: mode ";*in;) *out++=*in++;
     if(mode>=100) *out++='1',*out++='0';
     *out++='0'+mode%10;
