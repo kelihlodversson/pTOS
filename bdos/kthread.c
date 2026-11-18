@@ -33,10 +33,10 @@ static BOOL completion_unlink(struct thread_completion *record);
 static void completion_put(struct thread_completion *record)
 {
     BOOL retired;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     if (!record || !record->refs) panic("invalid TID completion release");
     retired=!--record->refs;
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(retired) { kowner_assert_unlocked();kfree(record); }
 }
 #endif
@@ -95,7 +95,7 @@ static KTHREAD *create_thread(KPROC *process,KASPACE *space,BOOL identity_only)
     thread->completion->refs=1;thread->completion->thread=thread;
 #endif
     thread->state=THREAD_NEW;thread->identity_only=identity_only;
-    guard=kowner_enter(KOWNER_PROCESS);
+    kowner_enter(&guard,KOWNER_PROCESS);
     if(last_tid!=~(ULONG)0) {
         attached=kproc_thread_attach_space(process,space,thread,&thread->process,
                                            &thread->space,&thread->process_next,identity_only);
@@ -110,7 +110,7 @@ static KTHREAD *create_thread(KPROC *process,KASPACE *space,BOOL identity_only)
 #endif
         } else if(attached)kproc_thread_detach(thread->process,thread,thread->process_next);
     }
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(accepted)return thread;
     if(attached) { kaspace_put(thread->space);kproc_release(thread->process); }
 #if CONF_WITH_PTHJOIN
@@ -195,9 +195,9 @@ static BOOL kthread_start_owned(KTHREAD *thread)
 }
 BOOL kthread_start(KTHREAD *thread)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kthread_start_owned(thread);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -266,9 +266,9 @@ static BOOL kthread_exit_status_owned(const KTHREAD *thread, UWORD *status)
 }
 BOOL kthread_exit_status(const KTHREAD *thread, UWORD *status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kthread_exit_status_owned(thread,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static BOOL kthread_finish_exit_owned(KTHREAD *thread, UWORD status)
@@ -280,9 +280,9 @@ static BOOL kthread_finish_exit_owned(KTHREAD *thread, UWORD status)
 }
 BOOL kthread_finish_exit(KTHREAD *thread, UWORD status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kthread_finish_exit_owned(thread,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static BOOL kthread_finish_handoff_owned(KTHREAD *thread)
@@ -296,9 +296,9 @@ static BOOL kthread_finish_handoff_owned(KTHREAD *thread)
 }
 BOOL kthread_finish_handoff(KTHREAD *thread)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kthread_finish_handoff_owned(thread);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -311,9 +311,9 @@ static BOOL kthread_stop_owned(KTHREAD *thread)
 }
 BOOL kthread_stop(KTHREAD *thread)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kthread_stop_owned(thread);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -326,12 +326,12 @@ BOOL kthread_reap(KTHREAD *thread)
 {
     BOOL dispose;
     KPROC *process;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     if (!thread || thread->state != THREAD_STOPPED) {
-        kowner_leave(guard);return FALSE;
+        kowner_leave(&guard);return FALSE;
     }
     thread->state = THREAD_REAPING;
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if (thread->reclaim_execution)
         thread->reclaim_execution(thread->execution);
 #if CONF_WITH_FORK_CORE
@@ -345,7 +345,7 @@ BOOL kthread_reap(KTHREAD *thread)
     kaspace_put(thread->space);
 #if CONF_WITH_PTHJOIN
     kthread_join_cancel(thread);
-    guard=kowner_enter(KOWNER_PROCESS);
+    kowner_enter(&guard,KOWNER_PROCESS);
     thread->completion->thread = NULL;
     thread->completion->status = thread->has_exit ? thread->exit_status : 0;
     thread->completion->has_exit = thread->has_exit;
@@ -355,7 +355,7 @@ BOOL kthread_reap(KTHREAD *thread)
     ksched_sequence_advance(&thread->completion->changes);
     if (!thread->has_exit && completion_unlink(thread->completion))
         panic("TID completion lost its execution reference");
-    kowner_leave(guard);
+    kowner_leave(&guard);
     completion_put(thread->completion);
 #endif
     kfree(thread);
@@ -425,7 +425,7 @@ static BOOL completion_unlink(struct thread_completion *record)
 void kthread_forget_completions(KPROC *process)
 {
     struct thread_completion *record,*next,*retired=NULL;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     record=completions;
     while(record) {
         next=record->next;
@@ -434,7 +434,7 @@ void kthread_forget_completions(KPROC *process)
         }
         record=next;
     }
-    kowner_leave(guard);
+    kowner_leave(&guard);
     while(retired) { record=retired;retired=record->next;kowner_assert_unlocked();kfree(record); }
 }
 static LONG kthread_join_begin_owned(KTHREAD *caller, ULONG tid)
@@ -460,9 +460,9 @@ static LONG kthread_join_begin_owned(KTHREAD *caller, ULONG tid)
 }
 LONG kthread_join_begin(KTHREAD *caller, ULONG tid)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     LONG result=kthread_join_begin_owned(caller,tid);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static BOOL kthread_join_ready_owned(void *resource)
@@ -472,9 +472,9 @@ static BOOL kthread_join_ready_owned(void *resource)
 }
 BOOL kthread_join_ready(void *resource)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kthread_join_ready_owned(resource);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static BOOL kthread_join_status_owned(KTHREAD *caller, UWORD *status)
@@ -486,33 +486,33 @@ static BOOL kthread_join_status_owned(KTHREAD *caller, UWORD *status)
 }
 BOOL kthread_join_status(KTHREAD *caller, UWORD *status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kthread_join_status_owned(caller,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 void kthread_join_observe(KTHREAD *caller,KSCHED_WAIT_OBSERVATION *observation)
 {
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     if(!caller || !caller->joining)panic("TID observation without retained claim");
     ksched_sequence_observe(&caller->joining->changes,observation);
-    kowner_leave(guard);
+    kowner_leave(&guard);
 }
 void kthread_join_cancel(KTHREAD *caller)
 {
     struct thread_completion *record;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
-    if (!caller || !(record = caller->joining)) { kowner_leave(guard);return; }
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
+    if (!caller || !(record = caller->joining)) { kowner_leave(&guard);return; }
     if (record->claimant != caller) panic("TID join claim owner changed");
     caller->joining = NULL; record->claimant = NULL;
-    kowner_leave(guard);
+    kowner_leave(&guard);
     completion_put(record);
 }
 void kthread_join_consume(KTHREAD *caller)
 {
     BOOL retired;
     struct thread_completion *record;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     record=caller->joining;
     if (!record || record->claimant != caller || !record->ready || !record->has_exit)
         panic("invalid TID completion consume");
@@ -520,7 +520,7 @@ void kthread_join_consume(KTHREAD *caller)
     caller->joining=NULL;record->claimant=NULL;
     if(!record->refs)panic("TID claimant reference underflow");
     retired=!--record->refs;
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(retired) { kowner_assert_unlocked();kfree(record); }
 }
 #endif

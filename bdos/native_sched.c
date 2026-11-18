@@ -225,21 +225,19 @@ void ksched_set_loaded_launcher(void *launcher)
  * before multiple CPUs may mutate the queue. No callbacks/destructors/copies,
  * allocations or continuation switches are allowed inside this boundary. */
 typedef struct { uintptr_t flags; KOWNER_GUARD owner; } RUNQUEUE_GUARD;
-static RUNQUEUE_GUARD runqueue_enter(void)
+static void runqueue_enter(RUNQUEUE_GUARD *guard)
 {
-    RUNQUEUE_GUARD guard;
-    guard.flags=native_sched_irq_save();
-    if (execution_cpu.leaf_held) panic("scheduler: recursive leaf exclusion");
-    guard.owner=kowner_enter(KOWNER_RUNQUEUE);
+    guard->flags=native_sched_irq_save();
+    if(execution_cpu.leaf_held)panic("scheduler: recursive leaf exclusion");
+    kowner_enter(&guard->owner,KOWNER_RUNQUEUE);
     execution_cpu.leaf_held=TRUE;
-    return guard;
 }
-static void runqueue_leave(RUNQUEUE_GUARD guard)
+static void runqueue_leave(const RUNQUEUE_GUARD *guard)
 {
-    if (!execution_cpu.leaf_held) panic("scheduler: unbalanced leaf exclusion");
+    if(!execution_cpu.leaf_held)panic("scheduler: unbalanced leaf exclusion");
     execution_cpu.leaf_held=FALSE;
-    kowner_leave(guard.owner);
-    native_sched_irq_restore(guard.flags);
+    kowner_leave(&guard->owner);
+    native_sched_irq_restore(guard->flags);
 }
 static void runqueue_unlocked(void)
 {
@@ -287,7 +285,7 @@ void ksched_verify_switch_boundary(void)
 static void cpu_acknowledge_handoff(void)
 {
     KERNEL_TASK *task;
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     task=execution_cpu.inflight;
     if (task) {
         if (!task->execution.on_cpu || task->execution.owner_cpu!=execution_cpu.number)
@@ -302,11 +300,11 @@ static void cpu_acknowledge_handoff(void)
         execution_cpu.inflight=NULL;
     }
     execution_cpu.current=NULL;
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
 }
 static void cpu_claim_task(KERNEL_TASK *task)
 {
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     if (execution_cpu.current || execution_cpu.inflight || task->execution.on_cpu)
         panic("scheduler: duplicate CPU ownership");
     task->execution.owner_cpu=execution_cpu.number;
@@ -319,7 +317,7 @@ static void cpu_claim_task(KERNEL_TASK *task)
         execution_cpu.irq_last_selected=task->execution.identity;
     }
 #endif
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
 }
 #if CONF_WITH_IRQ_RESTART_TEST
 UQUAD ksched_irq_restart_selected(void) { return execution_cpu.irq_selected; }
@@ -338,9 +336,9 @@ void ksched_irq_restart_observe_user(UQUAD identity)
 #endif
 void ksched_shutdown_begin(void)
 {
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     scheduler.stopping=TRUE;
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
 }
 /* Permanent kernel storage, outside procmem and all PROCESS/ASPACE owners.
  * The parked CPU record keeps no PD/launcher reference; a permanent kernel
@@ -362,22 +360,22 @@ static void clear_task(KERNEL_TASK *task)
 {
     KERNEL_TASK *next;
     KSCHED_ADMISSION completion;
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     if (task->result_delivering || task->dependents || task->completion_owner || task->execution.on_cpu ||
         task->nested || task->nested_prepared)
         panic("scheduler: clearing referenced task");
     completion=task->completion;
     task->completion.identity=0;
     task->state=TASK_RESERVED; /* do not reuse while a destructor can reenter */
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
     ksched_admission_release(&completion);
-    guard=runqueue_enter();
+    runqueue_enter(&guard);
     /* Final release may reenter admission or root trimming. The reserved
      * record survives, but its successor link can legitimately change. */
     next=task->next_task;
     memset(task, 0, sizeof(*task));
     task->next_task = next;
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
 }
 static void initialize_task_table(void)
 {
@@ -423,10 +421,10 @@ static void abandon_preparation(void)
 {
     KPROC *owner;
     KSCHED_ADMISSION waiter;
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     owner=execution_cpu.entry_owner; execution_cpu.entry_owner=NULL;
     waiter=execution_cpu.waiter; execution_cpu.waiter.identity=0;
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
     ksched_admission_abandon(&waiter);
     ksched_admission_release(&waiter);
     if(owner) kproc_release(owner);
@@ -461,8 +459,8 @@ static void free_task_table(void)
     KERNEL_TASK *base, *task;
     KSCHED_ADMISSION waiter={0};
     KPROC *owner=NULL;
-    RUNQUEUE_GUARD guard=runqueue_enter();
-    if(!scheduler.tasks || !table_empty()) { runqueue_leave(guard); return; }
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
+    if(!scheduler.tasks || !table_empty()) { runqueue_leave(&guard); return; }
     base=scheduler.tasks;
     scheduler.tasks=scheduler.next=NULL;
     scheduler.active=FALSE;
@@ -470,7 +468,7 @@ static void free_task_table(void)
         waiter=execution_cpu.waiter; execution_cpu.waiter.identity=0;
         owner=execution_cpu.entry_owner; execution_cpu.entry_owner=NULL;
     }
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
     /* Globally unreachable before any release/free can reenter admission.
      * No cursor into the live runqueue is carried across a destructor. */
     for (task=base;task;task=task->next_task)
@@ -491,17 +489,17 @@ static void trim_unused_records(void)
 {
     KERNEL_TASK **link=&scheduler.tasks[KSCHED_LIMIT-1].next_task;
     while(*link) {
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         KERNEL_TASK *task=*link;
         if(task->state==TASK_UNUSED && !task->thread && !task->process && !task->dependents &&
             !task->completion_owner && !task->completion.identity && !task->execution.on_cpu) {
             if(scheduler.next==task) scheduler.next=task->next_task ? task->next_task : scheduler.tasks;
             *link=task->next_task;
-            runqueue_leave(guard);
+            runqueue_leave(&guard);
             kfree(task);
         } else {
             link=&task->next_task;
-            runqueue_leave(guard);
+            runqueue_leave(&guard);
         }
     }
 }
@@ -1743,13 +1741,13 @@ void ksched_nested_enter(PD *pd)
         kproc_live_pd(frame->process) != pd || kproc_live_pd(frame->enclosing_process) != run)
         panic("scheduler: nested association changed before entry");
     if (!kthread_start(frame->thread)) panic("scheduler: nested identity cannot start");
-    guard = runqueue_enter();
+    runqueue_enter(&guard);
     frame->enclosing_launcher = execution_cpu.loaded_launcher;
     frame->outer = task->nested;
     task->nested_prepared = NULL;
     frame->state = NESTED_ACTIVE;
     task->nested = frame;
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     nested_probe.entered++;
     nested_probe.last_pid = (ULONG)kproc_pid(pd);
@@ -1779,10 +1777,10 @@ BOOL ksched_nested_leave(KPROC *process)
         run != frame->enclosing || kproc_live_pd(frame->enclosing_process) != run ||
         execution_cpu.loaded_launcher != frame->enclosing_launcher)
         panic("scheduler: nested exit restored the wrong enclosing execution");
-    guard = runqueue_enter();
+    runqueue_enter(&guard);
     task->nested = frame->outer;
     frame->outer = NULL;
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
     if (ksched_exit_thread(run) != frame->enclosing_thread ||
         kthread_process(frame->enclosing_thread) != frame->enclosing_process)
         panic("scheduler: enclosing THREAD lost across nested execution");
@@ -2134,10 +2132,10 @@ BOOL ksched_pid_reserved(WORD pid)
 #endif
     {
         BOOL found=FALSE;
-        KOWNER_GUARD guard=kowner_enter(KOWNER_RUNQUEUE);
+        KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
         if(scheduler.active)for(task=scheduler.tasks;task;task=task->next_task)
             if(task->state!=TASK_UNUSED && task->pid==pid) { found=TRUE;break; }
-        kowner_leave(guard);
+        kowner_leave(&guard);
         return found;
     }
 }
@@ -2159,7 +2157,7 @@ void ksched_exiting(PD *pd, UWORD result)
     {
         KPROC *owner=NULL;
         KSCHED_ADMISSION waiter={0};
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         if (execution_cpu.waiter_attached && exiting && exiting==execution_cpu.entry_owner) {
             execution_cpu.waiter_attached=FALSE;
             memset(execution_cpu.waiter_resume,0,sizeof(execution_cpu.waiter_resume));
@@ -2167,7 +2165,7 @@ void ksched_exiting(PD *pd, UWORD result)
             owner=execution_cpu.entry_owner; execution_cpu.entry_owner=NULL;
             waiter=execution_cpu.waiter; execution_cpu.waiter.identity=0;
         }
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
         if (owner) kproc_release(owner);
         ksched_admission_release(&waiter);
     }
@@ -2332,10 +2330,10 @@ static void task_entry(void)
     {
         KERNEL_TASK *owner = completion_task(task);
         if (owner->process_completed || refused) {
-            RUNQUEUE_GUARD guard=runqueue_enter();
+            RUNQUEUE_GUARD guard; runqueue_enter(&guard);
             owner->state = owner->asynchronous && owner->parent ? TASK_ZOMBIE : TASK_DONE;
             ksched_wake_sequence(&process_events);
-            runqueue_leave(guard);
+            runqueue_leave(&guard);
             /* Status and resources are finalized; wait visibility precedes
              * generic observer readiness. A refused launch is abandoned. */
             if (owner->process_completed) kproc_publish_observers(owner->process);
@@ -2347,16 +2345,16 @@ static void task_entry(void)
                     owner->signal ? (UWORD)owner->signal << 8 : (UWORD)owner->result);
 #endif
         } else if (owner == task) {
-            RUNQUEUE_GUARD guard=runqueue_enter();
+            RUNQUEUE_GUARD guard; runqueue_enter(&guard);
             /* Initial TID has stopped, but PID/resources/children remain live.
              * Its continuation is root-reapable; the PROCESS slot is not. */
             task->state = TASK_DRAINING;
-            runqueue_leave(guard);
+            runqueue_leave(&guard);
         }
         if (owner != task) {
-            RUNQUEUE_GUARD guard=runqueue_enter();
+            RUNQUEUE_GUARD guard; runqueue_enter(&guard);
             task->state = TASK_DONE;
-            runqueue_leave(guard);
+            runqueue_leave(&guard);
         }
     }
     native_sched_save(&task->execution.cpu);
@@ -2369,11 +2367,11 @@ static void task_entry(void)
 static BOOL block_admit(KERNEL_TASK *task, BOOL (*ready)(void *), void *argument,
                         const KSCHED_WAIT_OBSERVATION *observation)
 {
-    KOWNER_GUARD publication=kowner_enter(KOWNER_RUNQUEUE);
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    KOWNER_GUARD publication; kowner_enter(&publication,KOWNER_RUNQUEUE);
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     if (ksched_sequence_changed(observation)) {
-        runqueue_leave(guard);
-        kowner_leave(publication);
+        runqueue_leave(&guard);
+        kowner_leave(&publication);
         return FALSE;
     }
     task->ready=ready;
@@ -2381,8 +2379,8 @@ static BOOL block_admit(KERNEL_TASK *task, BOOL (*ready)(void *), void *argument
     if (observation) task->observation=*observation;
     else { task->observation.source=NULL; task->observation.value=0; }
     task->state=TASK_BLOCKED;
-    runqueue_leave(guard);
-    kowner_leave(publication);
+    runqueue_leave(&guard);
+    kowner_leave(&publication);
     return TRUE;
 }
 static BOOL block_observed(BOOL (*ready)(void *), void *argument,
@@ -2395,12 +2393,12 @@ static BOOL block_observed(BOOL (*ready)(void *), void *argument,
     native_sched_save(&task->execution.cpu);
     if (!setjmp(task->execution.resume)) longjmp(execution_cpu.resume, 1);
     {
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         task->ready = NULL;
         task->argument = NULL;
         task->observation.source=NULL;
         task->observation.value=0;
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
     }
     return TRUE;
 }
@@ -2426,17 +2424,17 @@ static KSCHED_WAIT_RESULT wait_observed(BOOL (*ready)(void *), void *argument,
 #if CONF_WITH_PTERMGRP
     if (ksched_cancellation_pending()) return KSCHED_WAIT_CANCELLED;
     {
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         task->cancel_boundary = TRUE;
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
     }
 #endif
     block_observed(ready, argument, observation);
 #if CONF_WITH_PTERMGRP
     {
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         task->cancel_boundary = FALSE;
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
     }
     if (ksched_cancellation_pending()) return KSCHED_WAIT_CANCELLED;
 #else
@@ -2869,9 +2867,9 @@ static void process_wait_release_claim_owned(const CHILD_WAIT *wait)
 }
 static void process_wait_release_claim(const CHILD_WAIT *wait)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_RUNQUEUE);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_RUNQUEUE);
     process_wait_release_claim_owned(wait);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
 }
 static BOOL child_deliverable(const KERNEL_TASK *task)
 {
@@ -2901,9 +2899,9 @@ static BOOL child_ready_owned(void *argument)
 }
 static BOOL child_ready(void *argument)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_RUNQUEUE);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_RUNQUEUE);
     BOOL result=child_ready_owned(argument);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2931,20 +2929,20 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
     for (;;) {
         BOOL found = FALSE,contended=FALSE;
         KSCHED_WAIT_OBSERVATION observation;
-        KOWNER_GUARD scan=kowner_enter(KOWNER_RUNQUEUE);
+        KOWNER_GUARD scan; kowner_enter(&scan,KOWNER_RUNQUEUE);
         ksched_sequence_observe(&process_events,&observation);
         for (task = async_tasks(); task; task = task->next_task) {
             ULONG status;
             if(!process_wait_target(task,&wait)) continue;
             if(!process_wait_claim_available(task,&wait)) {
                 contended=TRUE;
-                if(pid>0) {kowner_leave(scan);native_sched_irq_restore(flags);return EACCDN;}
+                if(pid>0) {kowner_leave(&scan);native_sched_irq_restore(flags);return EACCDN;}
                 continue; /* wait-any can still consume an unrelated child */
             }
             found=TRUE;
             if(exact) { task->synchronous_wait_process=wait_number;task->synchronous_waiter=waiter; }
             if(!process_wait_pin(task,&wait))continue;
-            kowner_leave(scan);
+            kowner_leave(&scan);
             /* Pin the canonical zombie/slot before fallible copy. Recursive
              * waiters cannot consume it and root cannot retire its identity. */
             native_sched_irq_restore(flags);
@@ -2961,10 +2959,10 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
                 if(!copied && !kproc_user_copy_write(&copy,task->usage))copied=EIMBA;
                 kproc_user_copy_end(&copy);
                 if(copied) {
-                    RUNQUEUE_GUARD guard=runqueue_enter();
+                    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
                     task->result_delivering=FALSE;
                     ksched_wake_sequence(&process_events);
-                    runqueue_leave(guard);
+                    runqueue_leave(&guard);
 #if CONF_WITH_PTERMGRP
                     if(cancelled) {
                         if(exact)process_wait_release_claim(&wait);
@@ -2976,10 +2974,10 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
             }
             native_sched_irq_disable();
             if(task->parent!=wait.parent || task->state!=TASK_ZOMBIE) {
-                RUNQUEUE_GUARD guard=runqueue_enter();
+                RUNQUEUE_GUARD guard; runqueue_enter(&guard);
                 task->result_delivering=FALSE;
                 ksched_wake_sequence(&process_events);
-                runqueue_leave(guard);
+                runqueue_leave(&guard);
                 native_sched_irq_restore(flags);return EACCDN;
             }
             kproc_add_child_usage(run, task->usage[0]);
@@ -2993,12 +2991,12 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
                      (task->signal ? ((ULONG)task->signal << 8) : (task->result & 255));
             {
                 KPROC *retired;
-                RUNQUEUE_GUARD guard=runqueue_enter();
+                RUNQUEUE_GUARD guard; runqueue_enter(&guard);
                 retired=task->process;
                 task->parent=NULL;task->pid=0;task->process=NULL;
                 task->result_delivering=FALSE;task->state=TASK_RETIRING;
                 ksched_wake_sequence(&process_events);
-                runqueue_leave(guard);
+                runqueue_leave(&guard);
                 /* A destructor can reenter: this detached slot stays private. */
                 kproc_release(retired);
                 clear_task(task);
@@ -3008,11 +3006,11 @@ static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETIO
             return (LONG)status;
         }
         if (!found || (options & 1)) {
-            kowner_leave(scan);
+            kowner_leave(&scan);
             native_sched_irq_restore(flags);
             return found ? 0 : contended ? EACCDN : EFILNF;
         }
-        kowner_leave(scan);
+        kowner_leave(&scan);
         if (!ksched_spawn_allowed()) {
             LONG error;
             native_sched_irq_restore(flags);
@@ -3093,23 +3091,23 @@ static BOOL reap_finished_on_root(KERNEL_TASK *task)
         if (!kthread_reap(task->thread))
             panic("scheduler: root cannot reap unfinished thread");
         {
-            RUNQUEUE_GUARD guard=runqueue_enter();
+            RUNQUEUE_GUARD guard; runqueue_enter(&guard);
             task->thread = NULL;
             ksched_wake_sequence(&process_events);
-            runqueue_leave(guard);
+            runqueue_leave(&guard);
         }
     }
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
     lifetime_probe_reap(task);
 #endif
     if (task->completion_owner && !task->thread) {
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         KERNEL_TASK *anchor=task->completion_owner;
         if (!anchor->dependents) panic("scheduler: anchor reference underflow");
         task->completion_owner=NULL;
         anchor->dependents--;
         ksched_wake_sequence(&process_events);
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
     }
     if (task->state == TASK_DONE && !task->dependents && task->process) {
         kproc_release(task->process);
@@ -3283,13 +3281,13 @@ static void scheduler_root_entry(void)
     if(table_empty()) free_task_table();
     {
         KPROC *owner;
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         execution_cpu.current=NULL;
         memset(&execution_cpu.root,0,sizeof(execution_cpu.root));
         execution_cpu.parked=TRUE; execution_cpu.entered=FALSE;
         execution_cpu.entry_ready=NULL; execution_cpu.entry_argument=NULL;
         owner=execution_cpu.entry_owner; execution_cpu.entry_owner=NULL;
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
         kproc_release(owner);
     }
     if(execution_cpu.waiter_attached) longjmp(execution_cpu.waiter_resume,1);
@@ -3311,14 +3309,14 @@ static LONG enter_root(BOOL pump,BOOL (*ready)(void *),void *argument)
         if(run && kproc_pid(run) && !execution_cpu.entry_owner) return EACCDN;
     }
     {
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     execution_cpu.pump=pump; execution_cpu.budget=0;
     for(task=scheduler.tasks;task;task=task->next_task)
         if(task->state!=TASK_UNUSED && task->state!=TASK_RESERVED && task->state!=TASK_DONE && task->state!=TASK_ZOMBIE)
             execution_cpu.budget++;
     execution_cpu.entry_ready=ready; execution_cpu.entry_argument=argument;
     execution_cpu.entered=TRUE; execution_cpu.waiter_attached=TRUE; execution_cpu.current=NULL;
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
     }
     native_sched_save(&caller); native_sched_save(&execution_cpu.root);
     native_sched_root_context(&execution_cpu.root,ksched_controller_pd(),
@@ -3333,10 +3331,10 @@ static LONG enter_root(BOOL pump,BOOL (*ready)(void *),void *argument)
     if(!execution_cpu.parked || execution_cpu.entered || execution_cpu.current || execution_cpu.inflight || execution_cpu.entry_argument || execution_cpu.entry_ready || execution_cpu.entry_owner)
         panic("scheduler: returning with retained caller attachment");
     {
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         execution_cpu.waiter_attached=FALSE;
         memset(execution_cpu.waiter_resume,0,sizeof(execution_cpu.waiter_resume));
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
     }
     native_sched_restore(&caller);
     return E_OK;
@@ -3405,14 +3403,14 @@ void ksched_task_cancel(void **slot)
 }
 static void publish_task(void **slot, TASK_STATE state)
 {
-    RUNQUEUE_GUARD guard=runqueue_enter();
+    RUNQUEUE_GUARD guard; runqueue_enter(&guard);
     KERNEL_TASK *task = *slot;
     if(scheduler.stopping) panic("scheduler: publication after shutdown");
     *slot = NULL;
     __asm__ volatile ("" ::: "memory");
     task->state = state;
     ksched_wake_sequence(&process_events);
-    runqueue_leave(guard);
+    runqueue_leave(&guard);
 }
 void ksched_task_publish(void **slot) { publish_task(slot, TASK_NEW); }
 BOOL ksched_startup_reclaimable(const THREAD_STARTUP_DRAFT *startup)
@@ -3472,8 +3470,8 @@ BOOL ksched_loaded_clone_context(KPROC *source,PD **controller)
 BOOL ksched_loaded_clone_begin(KPROC *source,PD **controller,KSCHED_PUBLICATION_GUARD *guard)
 {
     uintptr_t flags=native_sched_irq_save();
-    KOWNER_GUARD owner=kowner_enter(KOWNER_PROCESS);
-    if(!ksched_loaded_clone_context(source,controller)) {kowner_leave(owner);native_sched_irq_restore(flags);return FALSE;}
+    KOWNER_GUARD owner; kowner_enter(&owner,KOWNER_PROCESS);
+    if(!ksched_loaded_clone_context(source,controller)) {kowner_leave(&owner);native_sched_irq_restore(flags);return FALSE;}
 #if CONF_WITH_X86_64_MEMTEST
     if(clone_masked) panic("nested loaded clone publication");
     clone_masked=TRUE;
@@ -3485,9 +3483,9 @@ BOOL ksched_clone_begin(KPROC *source, PD **controller, KSCHED_PUBLICATION_GUARD
     uintptr_t flags;
     KOWNER_GUARD owner;
     flags = native_sched_irq_save();
-    owner=kowner_enter(KOWNER_PROCESS);
+    kowner_enter(&owner,KOWNER_PROCESS);
     if (!ksched_clone_context(source, controller)) {
-        kowner_leave(owner);
+        kowner_leave(&owner);
         native_sched_irq_restore(flags);
         return FALSE;
     }
@@ -3503,7 +3501,7 @@ void ksched_clone_end(const KSCHED_PUBLICATION_GUARD *guard)
     if (!clone_masked) panic("clone publication exclusion already released");
     clone_masked = FALSE;
 #endif
-    kowner_leave(guard->owner);
+    kowner_leave(&guard->owner);
     native_sched_irq_restore(guard->flags);
 }
 void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STARTUP_DRAFT *startup,
@@ -3520,12 +3518,12 @@ void ksched_clone_commit(void *slot, KPROC *process, KTHREAD *thread, THREAD_STA
         if (!ksched_spawn_allowed() || execution_cpu.current->process != process || !syscall_stack || !syscall_stack->physical)
             panic("sibling publication context changed");
         {
-        RUNQUEUE_GUARD guard=runqueue_enter();
+        RUNQUEUE_GUARD guard; runqueue_enter(&guard);
         task->completion_owner = completion_task(execution_cpu.current);
         if (task->completion_owner->dependents==~(ULONG)0)
             panic("scheduler: unprepared anchor reference");
         task->completion_owner->dependents++;
-        runqueue_leave(guard);
+        runqueue_leave(&guard);
         }
         task->asynchronous = TRUE; /* root recycles TID slots, never zombies */
         task->execution.syscall_stack.physical = syscall_stack->physical;

@@ -40,9 +40,9 @@ static BOOL ksched_controller_install_owned(PD *pd)
 }
 BOOL ksched_controller_install(PD *pd)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     BOOL result=ksched_controller_install_owned(pd);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static PD *ksched_controller_pd_owned(void)
@@ -53,9 +53,9 @@ static PD *ksched_controller_pd_owned(void)
 }
 PD *ksched_controller_pd(void)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     PD * result=ksched_controller_pd_owned();
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static ADMISSION *lookup(const KSCHED_ADMISSION *handle)
@@ -73,16 +73,16 @@ LONG ksched_admission_create(KPROC *owner,UWORD count,KSCHED_ADMISSION *out)
     KOWNER_GUARD process_guard,guard;
     if (!out || out->identity || !count || count>KSCHED_LIMIT) return EINVAL;
     if (!ksched_controller_pd()) return EACCDN;
-    guard=kowner_enter(KOWNER_ADMISSION);
+    kowner_enter(&guard,KOWNER_ADMISSION);
     if(last_admission==~0ULL)error=ERANGE;
     else if(controller.references==0xffffffffUL)error=EACCDN;
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(error)return error;
     p=kalloc(sizeof(*p)); if (!p) return ENSMEM;
     memset(p,0,sizeof(*p));
     if (owner && !(retained=kproc_retain_live(owner))) { kfree(p); return EACCDN; }
-    process_guard=kowner_enter(KOWNER_PROCESS);
-    guard=kowner_enter(KOWNER_ADMISSION);
+    kowner_enter(&process_guard,KOWNER_PROCESS);
+    kowner_enter(&guard,KOWNER_ADMISSION);
     if (last_admission==~0ULL) error=ERANGE;
     else if (!controller.pd || controller.references==0xffffffffUL || out->identity ||
              (retained && !kproc_live_pd(retained))) error=EACCDN;
@@ -93,7 +93,7 @@ LONG ksched_admission_create(KPROC *owner,UWORD count,KSCHED_ADMISSION *out)
         p->next=admissions; admissions=p;
         out->identity=p->identity;
     }
-    kowner_leave(guard);kowner_leave(process_guard);
+    kowner_leave(&guard);kowner_leave(&process_guard);
     if (error) { kfree(p); if (retained) kproc_release(retained); }
     return error;
 }
@@ -105,11 +105,11 @@ static BOOL ksched_admission_retain_owned(const KSCHED_ADMISSION *source,KSCHED_
 }
 BOOL ksched_admission_retain(const KSCHED_ADMISSION *source,KSCHED_ADMISSION *out)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     BOOL result=ksched_admission_retain_owned(source,out);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 void ksched_admission_release(KSCHED_ADMISSION *handle)
@@ -118,7 +118,7 @@ void ksched_admission_release(KSCHED_ADMISSION *handle)
     UQUAD identity;
     KOWNER_GUARD guard;
     if (!handle) return;
-    guard=kowner_enter(KOWNER_ADMISSION);
+    kowner_enter(&guard,KOWNER_ADMISSION);
     identity=handle->identity; handle->identity=0;
     for (link=&admissions;*link;link=&(*link)->next) if ((*link)->identity==identity) {
         ADMISSION *p=*link;
@@ -130,7 +130,7 @@ void ksched_admission_release(KSCHED_ADMISSION *handle)
         }
         break;
     }
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if (retired) { KPROC *owner=retired->owner;kfree(retired);if(owner)kproc_release(owner); }
 }
 static BOOL ksched_admission_complete_owned(const KSCHED_ADMISSION *handle,UWORD index,LONG status)
@@ -143,11 +143,11 @@ static BOOL ksched_admission_complete_owned(const KSCHED_ADMISSION *handle,UWORD
 }
 BOOL ksched_admission_complete(const KSCHED_ADMISSION *handle,UWORD index,LONG status)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     BOOL result=ksched_admission_complete_owned(handle,index,status);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 static LONG ksched_admission_take_owned(const KSCHED_ADMISSION *handle,LONG *results,UWORD count)
@@ -164,11 +164,11 @@ static LONG ksched_admission_take_owned(const KSCHED_ADMISSION *handle,LONG *res
 }
 LONG ksched_admission_take(const KSCHED_ADMISSION *handle,LONG *results,UWORD count)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     LONG result=ksched_admission_take_owned(handle,results,count);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 static BOOL ksched_admission_ready_owned(const KSCHED_ADMISSION *handle)
@@ -180,11 +180,11 @@ static BOOL ksched_admission_ready_owned(const KSCHED_ADMISSION *handle)
 }
 BOOL ksched_admission_ready(const KSCHED_ADMISSION *handle)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     BOOL result=ksched_admission_ready_owned(handle);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 static BOOL ksched_admission_abandoned_owned(const KSCHED_ADMISSION *handle)
@@ -194,11 +194,11 @@ static BOOL ksched_admission_abandoned_owned(const KSCHED_ADMISSION *handle)
 }
 BOOL ksched_admission_abandoned(const KSCHED_ADMISSION *handle)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     BOOL result=ksched_admission_abandoned_owned(handle);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 static void ksched_admission_abandon_owned(const KSCHED_ADMISSION *handle)
@@ -208,11 +208,11 @@ static void ksched_admission_abandon_owned(const KSCHED_ADMISSION *handle)
 }
 void ksched_admission_abandon(const KSCHED_ADMISSION *handle)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     ksched_admission_abandon_owned(handle);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
 }
 static void ksched_admission_owner_exited_owned(KPROC *owner)
 {
@@ -224,11 +224,11 @@ static void ksched_admission_owner_exited_owned(KPROC *owner)
 }
 void ksched_admission_owner_exited(KPROC *owner)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     ksched_admission_owner_exited_owned(owner);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
 }
 static PD *ksched_admission_owner_pd_owned(const KSCHED_ADMISSION *handle)
 {
@@ -237,11 +237,11 @@ static PD *ksched_admission_owner_pd_owned(const KSCHED_ADMISSION *handle)
 }
 PD *ksched_admission_owner_pd(const KSCHED_ADMISSION *handle)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     PD * result=ksched_admission_owner_pd_owned(handle);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 
@@ -280,8 +280,8 @@ LONG ksched_waiter_attach(const KSCHED_ADMISSION *admission,KPROC *actor,
     if (!p) { ksched_admission_release(&held); return ENSMEM; }
     memset(p,0,sizeof(*p));
     p->actor=kproc_retain_live(actor);
-    process_guard=kowner_enter(KOWNER_PROCESS);
-    guard=kowner_enter(KOWNER_ADMISSION);
+    kowner_enter(&process_guard,KOWNER_PROCESS);
+    kowner_enter(&guard,KOWNER_ADMISSION);
     record=lookup(&held);
     if (last_waiter==~0ULL) error=ERANGE;
     else if (!record || count!=record->count || out->identity) error=EINVAL;
@@ -292,7 +292,7 @@ LONG ksched_waiter_attach(const KSCHED_ADMISSION *admission,KPROC *actor,
         p->identity=++last_waiter;p->next=result_waiters;result_waiters=p;
         out->identity=p->identity;
     }
-    kowner_leave(guard);kowner_leave(process_guard);
+    kowner_leave(&guard);kowner_leave(&process_guard);
     if (error) {
         ksched_admission_release(&held);
         if (p->actor) kproc_release(p->actor);
@@ -302,9 +302,9 @@ LONG ksched_waiter_attach(const KSCHED_ADMISSION *admission,KPROC *actor,
 }
 void *ksched_waiter_context(const KSCHED_WAITER *handle)
 {
-    KOWNER_GUARD guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_ADMISSION);
     void *context=find_waiter(handle);
-    kowner_leave(guard);return context;
+    kowner_leave(&guard);return context;
 }
 static void ksched_waiter_observe_owned(void *context, KSCHED_WAIT_OBSERVATION *observation)
 {
@@ -315,11 +315,11 @@ static void ksched_waiter_observe_owned(void *context, KSCHED_WAIT_OBSERVATION *
 }
 void ksched_waiter_observe(void *context, KSCHED_WAIT_OBSERVATION *observation)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     ksched_waiter_observe_owned(context,observation);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
 }
 static BOOL ksched_waiter_ready_owned(void *context)
 {
@@ -334,11 +334,11 @@ static BOOL ksched_waiter_ready_owned(void *context)
 }
 BOOL ksched_waiter_ready(void *context)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     BOOL result=ksched_waiter_ready_owned(context);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 static LONG ksched_waiter_take_owned(const KSCHED_WAITER *handle,KPROC *actor,ULONG tid,
@@ -352,11 +352,11 @@ static LONG ksched_waiter_take_owned(const KSCHED_WAITER *handle,KPROC *actor,UL
 LONG ksched_waiter_take(const KSCHED_WAITER *handle,KPROC *actor,ULONG tid,
                        UQUAD execution,LONG *results,UWORD count)
 {
-    KOWNER_GUARD process_guard=kowner_enter(KOWNER_PROCESS);
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD process_guard; kowner_enter(&process_guard,KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_ADMISSION);
     LONG result=ksched_waiter_take_owned(handle,actor,tid,execution,results,count);
-    kowner_leave(owner_guard);
-    kowner_leave(process_guard);
+    kowner_leave(&owner_guard);
+    kowner_leave(&process_guard);
     return result;
 }
 static void dispose_waiter(RESULT_WAITER *p)
@@ -371,17 +371,17 @@ void ksched_waiter_detach(KSCHED_WAITER *handle)
     UQUAD identity;
     KOWNER_GUARD guard;
     if (!handle) return;
-    guard=kowner_enter(KOWNER_ADMISSION);
+    kowner_enter(&guard,KOWNER_ADMISSION);
     identity=handle->identity;handle->identity=0;
     for(link=&result_waiters;*link;link=&(*link)->next)
         if((*link)->identity==identity) { retired=*link;*link=retired->next;break; }
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(retired)dispose_waiter(retired);
 }
 void ksched_waiter_retire(KPROC *actor,ULONG tid,UQUAD execution)
 {
     RESULT_WAITER **link=&result_waiters, *retired=NULL;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_ADMISSION);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_ADMISSION);
     /* Detach the whole matching set before releasing anything. A release may
      * reenter registry operations; never carry a registry link across it. */
     while (*link) {
@@ -392,7 +392,7 @@ void ksched_waiter_retire(KPROC *actor,ULONG tid,UQUAD execution)
         }
         else link=&p->next;
     }
-    kowner_leave(guard);
+    kowner_leave(&guard);
     while (retired) {
         RESULT_WAITER *p=retired; retired=p->next;
         dispose_waiter(p);

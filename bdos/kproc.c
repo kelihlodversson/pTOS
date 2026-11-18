@@ -551,16 +551,16 @@ BOOL kproc_create(PD *pd)
 {
     KPROC *process;
     BOOL created,exists;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     exists=kproc_find(pd)!=NULL;
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(exists)return TRUE;
     process=KPROC_ALLOC();if(!process)return FALSE;
     bzero(process,sizeof(*process));
-    guard=kowner_enter(KOWNER_PROCESS);
+    kowner_enter(&guard,KOWNER_PROCESS);
     exists=kproc_find(pd)!=NULL;
     created=!exists && kproc_create_owned(process,pd);
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(!created) { kowner_assert_unlocked();KPROC_FREE(process); }
     return exists || created;
 }
@@ -613,9 +613,9 @@ static KPROC *kproc_reference_owned(KPROC *process)
 }
 static KPROC *kproc_reference(KPROC *process)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     KPROC * result=kproc_reference_owned(process);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -626,9 +626,9 @@ static KPROC *kproc_retain_identity_owned(KPROC *process)
 }
 KPROC *kproc_retain_identity(KPROC *process)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     KPROC * result=kproc_retain_identity_owned(process);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
@@ -648,9 +648,9 @@ static BOOL kproc_exec_commit_begin_owned(KPROC *owner)
 }
 BOOL kproc_exec_commit_begin(KPROC *owner)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_exec_commit_begin_owned(owner);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static void kproc_exec_commit_end_owned(KPROC *owner)
@@ -660,9 +660,9 @@ static void kproc_exec_commit_end_owned(KPROC *owner)
 }
 void kproc_exec_commit_end(KPROC *owner)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     kproc_exec_commit_end_owned(owner);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
 }
 
 #endif
@@ -673,9 +673,9 @@ static KPROC *kproc_retain_owned(PD *pd)
 }
 KPROC *kproc_retain(PD *pd)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     KPROC * result=kproc_retain_owned(pd);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -744,9 +744,9 @@ static BOOL kproc_unreference(KPROC *process)
 
 void kproc_release(KPROC *process)
 {
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     BOOL retired=kproc_unreference(process);
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(retired) { kowner_assert_unlocked();KPROC_FREE(process); }
 }
 
@@ -760,9 +760,9 @@ static BOOL kproc_ref_status_owned(const KPROC *process, UWORD *status)
 }
 BOOL kproc_ref_status(const KPROC *process, UWORD *status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_ref_status_owned(process,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 #if CONF_WITH_USER_ASPACE
@@ -782,9 +782,9 @@ static UQUAD kproc_ref_exec_generation_owned(const KPROC *process)
 }
 UQUAD kproc_ref_exec_generation(const KPROC *process)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     UQUAD result=kproc_ref_exec_generation_owned(process);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 #if CONF_WITH_EXEC_REPLACE
@@ -801,9 +801,9 @@ static void kproc_exec_generation_advance_owned(KPROC *process)
 }
 void kproc_exec_generation_advance(KPROC *process)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     kproc_exec_generation_advance_owned(process);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
 }
 #endif
 static void kproc_publish_observers_owned(KPROC *process)
@@ -823,9 +823,9 @@ static void kproc_publish_observers_owned(KPROC *process)
 }
 void kproc_publish_observers(KPROC *process)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     kproc_publish_observers_owned(process);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
 }
 static BOOL kproc_ref_completion_owned(const KPROC *process, PROCESS_COMPLETION *out)
 {
@@ -856,9 +856,9 @@ static BOOL kproc_ref_completion_owned(const KPROC *process, PROCESS_COMPLETION 
 }
 BOOL kproc_ref_completion(const KPROC *process, PROCESS_COMPLETION *out)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_ref_completion_owned(process,out);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static void kproc_note_fault_owned(PD *pd, WORD signal)
@@ -869,9 +869,9 @@ static void kproc_note_fault_owned(PD *pd, WORD signal)
 }
 void kproc_note_fault(PD *pd, WORD signal)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     kproc_note_fault_owned(pd,signal);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
 }
 #endif
 static void kproc_complete_owned(PD *pd, UWORD status)
@@ -885,9 +885,9 @@ static void kproc_complete_owned(PD *pd, UWORD status)
 }
 void kproc_complete(PD *pd, UWORD status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     kproc_complete_owned(pd,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
 }
 
 #if CONF_WITH_USER_ASPACE
@@ -901,9 +901,9 @@ static KPROC *kproc_retain_live_owned(KPROC *process)
 }
 KPROC *kproc_retain_live(KPROC *process)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     KPROC * result=kproc_retain_live_owned(process);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -1151,9 +1151,9 @@ static BOOL kproc_group_status_owned(const KPROC *process, UWORD *status)
 }
 BOOL kproc_group_status(const KPROC *process, UWORD *status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_group_status_owned(process,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 static BOOL kproc_request_group_exit_owned(KPROC *process, UWORD status)
@@ -1167,9 +1167,9 @@ static BOOL kproc_request_group_exit_owned(KPROC *process, UWORD status)
 }
 BOOL kproc_request_group_exit(KPROC *process, UWORD status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_request_group_exit_owned(process,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 #endif
@@ -1235,9 +1235,9 @@ static BOOL kproc_thread_attach_space_owned(KPROC *p, KASPACE *construction_spac
 BOOL kproc_thread_attach_space(KPROC *p, KASPACE *construction_space,
     KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next, BOOL identity_only)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_thread_attach_space_owned(p,construction_space,thread,process,space,next,identity_only);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2068,9 +2068,9 @@ static BOOL kproc_begin_disposal_owned(KPROC *process, PD **pd)
 }
 BOOL kproc_begin_disposal(KPROC *process, PD **pd)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_begin_disposal_owned(process,pd);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2725,9 +2725,9 @@ static BOOL kproc_prepare_thread_exit_handoff_owned(KPROC *process, KTHREAD *thr
 }
 BOOL kproc_prepare_thread_exit_handoff(KPROC *process, KTHREAD *thread)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_prepare_thread_exit_handoff_owned(process,thread);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2754,9 +2754,9 @@ static BOOL kproc_finish_thread_handoff_owned(KPROC *process, KTHREAD *thread)
 }
 BOOL kproc_finish_thread_handoff(KPROC *process, KTHREAD *thread)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_finish_thread_handoff_owned(process,thread);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2766,9 +2766,9 @@ static BOOL kproc_exit_handoff_pending_owned(const KPROC *process)
 }
 BOOL kproc_exit_handoff_pending(const KPROC *process)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_exit_handoff_pending_owned(process);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2783,9 +2783,9 @@ static BOOL kproc_commit_exit_handoff_owned(KPROC *process, PD **pd)
 }
 BOOL kproc_commit_exit_handoff(KPROC *process, PD **pd)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_commit_exit_handoff_owned(process,pd);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2808,9 +2808,9 @@ static BOOL kproc_request_completion_owned(KPROC *process, KTHREAD *thread, UWOR
 }
 BOOL kproc_request_completion(KPROC *process, KTHREAD *thread, UWORD status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_request_completion_owned(process,thread,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2824,9 +2824,9 @@ static BOOL kproc_pending_completion_owned(const KPROC *process, UWORD *status)
 }
 BOOL kproc_pending_completion(const KPROC *process, UWORD *status)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_pending_completion_owned(process,status);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 
@@ -2862,9 +2862,9 @@ static BOOL kproc_thread_detach_owned(KPROC *process, KTHREAD *thread, KTHREAD *
 }
 BOOL kproc_thread_detach(KPROC *process, KTHREAD *thread, KTHREAD *next)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_thread_detach_owned(process,thread,next);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
     return result;
 }
 #endif
@@ -2890,7 +2890,7 @@ static void retire_process_borrows(KPROC *process)
 static KPROC *kproc_claim_destroy(PD *pd)
 {
     KPROC *process;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     process=kproc_find(pd);
 #if CONF_WITH_USER_ASPACE
     if(process && (process->destroying_pd==pd || process->user_copies))process=NULL;
@@ -2903,7 +2903,7 @@ static KPROC *kproc_claim_destroy(PD *pd)
         process->file_cleanup_started=TRUE;
     }
 #endif
-    kowner_leave(guard);
+    kowner_leave(&guard);
     return process;
 }
 void kproc_destroy(PD *pd)
@@ -2947,14 +2947,14 @@ void kproc_destroy(PD *pd)
 #endif
             {
                 KPROC **link;
-                KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+                KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
                 /* Early service callbacks can retire preceding registry nodes.
                  * Find the retained identity afresh; carry no cursor across them. */
                 for(link=&kproc_list;*link && *link!=kproc;link=&(*link)->next) { }
                 if(!*link)panic("PROCESS destroy lost lookup ownership");
                 *link=kproc->next;
                 kproc->next=retired_processes;retired_processes=kproc;
-                kowner_leave(guard);
+                kowner_leave(&guard);
             }
 #if CONF_WITH_PROCESS_FILES
             /* Close callbacks can destroy this or a preceding PROCESS. The
@@ -3042,7 +3042,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_ASPACE
                 KPROC *parent_identity;
 #endif
-                KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+                KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
                 next=kproc->next;
 #if CONF_WITH_USER_ASPACE
                 parent_identity=kproc->parent_identity;
@@ -3062,7 +3062,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_ASPACE
                 kproc->retired = TRUE;
 #endif
-                kowner_leave(guard);
+                kowner_leave(&guard);
 #if CONF_WITH_USER_ASPACE
                 kproc_release(parent_identity);
 #endif
@@ -3364,7 +3364,7 @@ BOOL kproc_unlaunched(PD *pd)
 
 void kproc_set_parent(PD *pd, PD *parent)
 {
-    KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
     KPROC *kproc=kproc_find(pd);
 #if CONF_WITH_USER_ASPACE
     KPROC *old;
@@ -3380,7 +3380,7 @@ void kproc_set_parent(PD *pd, PD *parent)
     }
 #endif
     kproc->parent=parent;
-    kowner_leave(guard);
+    kowner_leave(&guard);
 #if CONF_WITH_USER_ASPACE
     kproc_release(old);
 #endif
@@ -3431,9 +3431,9 @@ static void kproc_mark_started_owned(PD *pd)
 }
 void kproc_mark_started(PD *pd)
 {
-    KOWNER_GUARD owner_guard=kowner_enter(KOWNER_PROCESS);
+    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     kproc_mark_started_owned(pd);
-    kowner_leave(owner_guard);
+    kowner_leave(&owner_guard);
 }
 
 #if CONF_WITH_USER_ASPACE
@@ -6859,7 +6859,7 @@ static LONG user_operation_begin(KPROC_USER_COPY *copy,PD *pd,VADDR address,ULON
 #endif
     copy->active=TRUE;copy->pd=pd;copy->address=address;copy->bytes=bytes;copy->write=write;
     copy->backing_failed=FALSE;
-    guard=kowner_enter(KOWNER_PROCESS);
+    kowner_enter(&guard,KOWNER_PROCESS);
     copy->process=kproc_find(pd);
     if(!copy->process || copy->process->destroying_pd || copy->process->file_cleanup_started ||
        copy->process->user_copies==~(ULONG)0 ||
@@ -6872,7 +6872,7 @@ static LONG user_operation_begin(KPROC_USER_COPY *copy,PD *pd,VADDR address,ULON
             if(!copy->space)error=ENSMEM;
         }
     }
-    kowner_leave(guard);
+    kowner_leave(&guard);
     if(!error && copy->space)
         error=kaspace_copy_begin(copy->space,address,bytes,write,&copy->lease);
     if(!error && materialize) {
@@ -6932,10 +6932,10 @@ void kproc_user_copy_end(KPROC_USER_COPY *copy)
     memset(copy,0,sizeof(*copy)); /* unpublish before any destructor can reenter */
     kaspace_lease_release(&lease);kaspace_put(space);
     if(process) {
-        KOWNER_GUARD guard=kowner_enter(KOWNER_PROCESS);
+        KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_PROCESS);
         if(!process->user_copies)panic("PROCESS user-copy admission underflow");
         process->user_copies--;
-        kowner_leave(guard);
+        kowner_leave(&guard);
         kproc_release(process);
     }
 #if CONF_WITH_NATIVE_SCHED

@@ -47,6 +47,11 @@ import kconfiglib, os
 k=kconfiglib.Kconfig()
 k.load_config()
 assert k.syms['CONF_WITH_USER_ASPACE'].str_value == 'y'
+# The full native owner/admission kernel needs more than the 256-KB 030
+# profile. Use the existing 512-KB image format on the same CPU/MMU; ordinary
+# scheduler-disabled 256-KB lanes above remain part of the default matrix.
+k.syms['CONF_AMIGA_ROM_512K'].set_value(2)
+assert k.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'
 for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP','CONF_WITH_EXIT_HANDOFF_TEST'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name

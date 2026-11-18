@@ -18,25 +18,25 @@ typedef struct ksched_wait_observation {
 
 static inline void ksched_sequence_advance(KSCHED_WAIT_SEQUENCE *sequence)
 {
-    KOWNER_GUARD guard=kowner_enter(KOWNER_RUNQUEUE);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
     if (sequence->value == ~0ULL) panic("scheduler: wait sequence exhausted");
     sequence->value++;
-    kowner_leave(guard);
+    kowner_leave(&guard);
 }
 static inline void ksched_sequence_observe(const KSCHED_WAIT_SEQUENCE *sequence,
                                          KSCHED_WAIT_OBSERVATION *observation)
 {
-    KOWNER_GUARD guard=kowner_enter(KOWNER_RUNQUEUE);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
     observation->source = sequence;
     observation->value = sequence->value;
-    kowner_leave(guard);
+    kowner_leave(&guard);
 }
 static inline BOOL ksched_sequence_changed(const KSCHED_WAIT_OBSERVATION *observation)
 {
     BOOL changed;
-    KOWNER_GUARD guard=kowner_enter(KOWNER_RUNQUEUE);
+    KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
     changed=observation && observation->source->value != observation->value;
-    kowner_leave(guard);
+    kowner_leave(&guard);
     return changed;
 }
 #endif

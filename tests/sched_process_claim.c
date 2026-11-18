@@ -38,7 +38,7 @@ int main(void)
     assert(!process_wait_pin(&first,&own));
     first.dependents=0;
     {
-        KOWNER_GUARD guard=kowner_enter(KOWNER_RUNQUEUE);
+        KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
         assert(process_wait_pin(&first,&own));
         assert(!process_wait_pin(&first,&own) && !process_wait_pin(&first,&foreign));
         assert(!process_wait_claim_available(&first,&own));
@@ -46,7 +46,7 @@ int main(void)
         first.result_delivering=FALSE; /* failed output preparation, no consumption */
         assert(process_wait_pin(&first,&own));
         first.result_delivering=FALSE;
-        kowner_leave(guard);
+        kowner_leave(&guard);
     }
     first.state=TASK_RETIRING;assert(!process_wait_target(&first,&own));
     first.state=TASK_RESERVED;assert(!process_wait_target(&first,&own));

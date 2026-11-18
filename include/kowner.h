@@ -22,15 +22,15 @@ typedef struct {
 KOWNER_CPU *kowner_cpu(void);
 uintptr_t kowner_irq_save(void);
 void kowner_irq_restore(uintptr_t flags);
-KOWNER_GUARD kowner_enter(KOWNER_RANK rank);
-void kowner_leave(KOWNER_GUARD guard);
+void kowner_enter(KOWNER_GUARD *guard,KOWNER_RANK rank);
+void kowner_leave(const KOWNER_GUARD *guard);
 BOOL kowner_locked(void);
 BOOL kowner_holds(KOWNER_RANK rank);
 void kowner_assert_unlocked(void);
 #else
-static inline KOWNER_GUARD kowner_enter(KOWNER_RANK rank)
-{ KOWNER_GUARD guard={0};(void)rank;return guard; }
-static inline void kowner_leave(KOWNER_GUARD guard) { (void)guard; }
+static inline void kowner_enter(KOWNER_GUARD *guard,KOWNER_RANK rank)
+{ (void)guard;(void)rank; }
+static inline void kowner_leave(const KOWNER_GUARD *guard) { (void)guard; }
 static inline BOOL kowner_locked(void) { return FALSE; }
 static inline BOOL kowner_holds(KOWNER_RANK rank) { (void)rank;return FALSE; }
 static inline void kowner_assert_unlocked(void) { }

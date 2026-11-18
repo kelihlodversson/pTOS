@@ -117,6 +117,20 @@ output and complete page retirement through actual architecture providers.
 It prints "native B1 copy operation and checked rollback: PASS". Hosted frame,
 resource and MMU endpoint models remain distinct from this native evidence.
 
+Native 68030 ROM footprint
+-------------------------
+The full owner/admission kernel exceeds the original 256-KB 030 image. Passing
+owner/leaf guards in place avoids aggregate return/argument copies without
+removing rank, CPU, lifetime or stale-scope assertions. This saves about 2.2 KB
+in the measured native 030/LTO profile, but that image still exceeds 256 KB by
+7,528 bytes. The native Amiberry lane therefore selects the existing 512-KB
+Amiga ROM format (0x00f80000) for the same 030/MMU/cache/68882 configurations.
+The default scheduler-disabled 256-KB lanes and the 040/060 coverage stay in the
+matrix. This is a native-profile ROM footprint requirement, not a new MMU/CPU
+capability or an exception to ownership assertions. The configuration test also
+checks that ordinary amiga-aspace remains 256 KB and that 030 copied-return
+proof is still refused.
+
 Historical B0 audit follows
 ===========================
 
