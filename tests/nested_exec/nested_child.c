@@ -77,6 +77,7 @@ static int run_chain(const char *tail)
     chain.mode = tail[2];
     chain.flag = tail[3];
     chain.tracked = tail[4] == 'T';
+    chain.anchored = tail[4] == 'A';
     chain.ppid = (long)nested_get_hex(tail + 5, 4);
     chain.ptid = (long)nested_get_hex(tail + 9, 8);
     chain.depth = (int)nested_get_hex(tail + 17, 2);
@@ -95,12 +96,15 @@ static int run_chain(const char *tail)
      * distinct THREAD of its own, one association deeper. */
     if (pid <= 0 || pid == chain.ppid) return 90;
     if (chain.tracked && (tid <= 0 || tid == chain.ptid)) return 91;
-    if (!chain.tracked && tid != NESTED_EINVFN) return 92;
+    if (!chain.tracked && !chain.anchored && tid != NESTED_EINVFN) return 92;
+    /* An anchor (#1015) is a managed PROCESS with a THREAD of its own. */
+    if (chain.anchored && tid != NESTED_EINVFN && (tid <= 0 || tid == chain.ptid)) return 89;
     if (!identity_is(&chain, pid, tid)) return 93;
     if (!counts_are(&chain, 0)) return 94;
-    /* It stays a single-THREAD PROCESS without a scheduler anchor. */
-    if (nested_trap2(GEMDOS_PTHJOIN, tid, 0L) != NESTED_EINVFN) return 95;
-    if (nested_trap2(GEMDOS_PTERMGRP, 78L, 0L) != NESTED_EINVFN) return 96;
+    /* A nested execution stays a single-THREAD PROCESS without a scheduler
+     * anchor; an anchored one may own dependents, so is not probed here. */
+    if (!chain.anchored && nested_trap2(GEMDOS_PTHJOIN, tid, 0L) != NESTED_EINVFN) return 95;
+    if (!chain.anchored && nested_trap2(GEMDOS_PTERMGRP, 78L, 0L) != NESTED_EINVFN) return 96;
     if (Pwaitpid(-1, 1, 0) != -33L) return 97;
 
     if (chain.remaining > 0) {
@@ -175,7 +179,8 @@ int main(void)
         char next_tail[NESTED_TAIL_BYTES];
         long pid = Pgetpid(), tid = nested_query(NQ_TID);
         chain.remaining = 1; chain.mode = 't'; chain.flag = '-';
-        chain.tracked = tid > 0;
+        chain.anchored = tail[0] >= 2 && tail[2] == 'A';
+        chain.tracked = tid > 0 && !chain.anchored;
         chain.ppid = pid; chain.ptid = tid;
         chain.depth = chain.tracked ? (int)nested_query(NQ_DEPTH) + 1 : 0;
         chain.level = 1;

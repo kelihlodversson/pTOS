@@ -185,11 +185,17 @@ static void phase1_entry(void *argument)
 #endif
 }
 #include "staged_policy.h"
+#include "anchored_probe.h"
 
 int main(void)
 {
     int failures;
     ptest_log_append();
+    if(ANCHORED_PROBE_REQUESTED(_base->p_cmdlin)) {
+        long status=anchored_probe();
+        Pterm((short)status);
+        return (int)status;
+    }
     if((unsigned char)_base->p_cmdlin[0]==15 && !memcmp(_base->p_cmdlin+1,"--abi-unmanaged",15)) test_unmanaged();
     else if((unsigned char)_base->p_cmdlin[0]==12 && !memcmp(_base->p_cmdlin+1,"--abi-staged",12)) phase1_run_staged();
     else {test_image_policy();test_private_image();}

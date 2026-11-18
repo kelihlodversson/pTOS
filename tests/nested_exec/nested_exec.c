@@ -37,6 +37,7 @@ void test_nested_exec(void);
 
 #define CHAIN_LEVELS 3          /* child, grandchild, great-grandchild */
 static const char environment[2] = { 0, 0 };
+static int anchored; /* the chains run as anchors (#1015), not nested */
 
 struct counts {
     long processes, threads, spaces, kstacks, live, depth, tid;
@@ -105,6 +106,7 @@ static long run_chain(int tracked, char mode, char flag, const struct counts *ba
     chain.mode = mode;
     chain.flag = flag;
     chain.tracked = tracked;
+    chain.anchored = anchored;
     chain.ppid = Pgetpid();
     chain.ptid = base->tid;
     chain.depth = tracked ? (int)base->depth + 1 : 0;
@@ -153,6 +155,9 @@ static void test_chains(int tracked)
             snapshot(&now);
             ptest_assert_msg(same(&base, &now), "identities, address spaces and stacks return to the baseline");
             previous = leaf;
+        } else if (anchored) {
+            snapshot(&now);
+            ptest_assert_msg(same(&base, &now), "an anchored chain returns every counted resource");
         }
     }
     if (tracked) {
@@ -176,7 +181,7 @@ static void test_chains(int tracked)
             previous = leaf;
         }
     }
-    if (tracked) {
+    if (tracked || anchored) {
         snapshot(&now);
         ptest_assert_msg(same(&base, &now), "repeated chains conserve every counted resource");
     }
@@ -184,7 +189,8 @@ static void test_chains(int tracked)
 
 static void test_peers(int tracked)
 {
-    static const char peer_tail[] = "\1p", carrier_tail[] = "\1a";
+    static const char peer_tail[] = "\1p", nested_tail[] = "\1a", anchored_tail[] = "\2aA";
+    const char *carrier_tail = anchored ? anchored_tail : nested_tail;
     struct counts base, now;
     long peer, carrier, status;
 
@@ -282,29 +288,41 @@ void test_nested_exec(void)
 
     ptest_begin("nested_exec (#713)");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-    /* The refused-handoff regression keeps one launch per boot without a
+    /* A managed THREAD's Pexec(0) child is an anchor (#1015); the regression
+     * kernel keeps it on the nested carrier for the checks that follow. The
+     * refused-handoff regression keeps one launch per boot without a
      * THREAD; it may be this one. The second is then associated. */
     ptest_assert_msg(nested_query(NQ_TID) > 0, "the native driver must run as a managed THREAD");
     if (nested_query(NQ_TID) > 0) {
-        long first = Pexec(0, NESTED_CHILD, identity_tail, (void *)environment);
+        long first;
+        pclone_nest_synchronous(1);
+        first = Pexec(0, NESTED_CHILD, identity_tail, (void *)environment);
         if (first == 2) first = Pexec(0, NESTED_CHILD, identity_tail, (void *)environment);
         ptest_assert_msg(first == 1, "a managed THREAD's synchronous child is an associated THREAD");
         tracked = first == 1;
+        if (tracked) {
+            test_chains(tracked);
+            test_peers(tracked);
+            test_rollback();
+        }
+        pclone_nest_synchronous(0);
     }
 #else
     (void)identity_tail;
 #endif
-    test_chains(tracked);
-    test_peers(tracked);
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-    if (tracked) test_rollback();
-#endif
+    /* The same chains as anchored PROCESSes: every level is a managed
+     * PROCESS of its own that its launcher waits for exactly. */
+    anchored = 1;
+    test_chains(0);
+    test_peers(0);
+    anchored = 0;
     ptest_pass();
     if (!ptest_failures() && tracked) {
         conws("native nested Pexec identity/exit modes/restoration: PASS\r\n");
         conws("native nested Pexec construction rollback: PASS\r\n");
         conws("native nested Pexec resource conservation: PASS\r\n");
     }
+    if (!ptest_failures()) conws("native anchored Pexec(0) chains, exit modes and peers: PASS\r\n");
 }
 
 #else

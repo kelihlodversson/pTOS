@@ -131,7 +131,7 @@ void ksched_nested_cancel(PD *pd);
 void ksched_nested_enter(PD *pd);
 BOOL ksched_nested_leave(struct kproc *process); /* TRUE if a nested owner was restored */
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
-LONG ksched_test_nested(UWORD selector); /* counters 0-13, arm stage 0x10+n, 0x20 untracked */
+LONG ksched_test_nested(UWORD selector); /* counters 0-13, arm stage 0x10+n, 0x20 untracked, 0x22/0x23 nested Pexec(0) on/off */
 BOOL ksched_test_nested_injected(UWORD stage);
 void ksched_test_nested_published(struct kproc *process);
 #endif
@@ -216,6 +216,9 @@ LONG ksched_wait(WORD pid, WORD options, UQUAD usage);
  * No observer, registry, output pointer retained beyond the call. */
 #include "process_completion.h"
 LONG ksched_wait_completion(WORD pid,PROCESS_COMPLETION *completion);
+/* #1015: an anchored synchronous Pexec(0) waits for exactly its child. */
+LONG ksched_wait_exact(WORD pid,LONG *result);
+BOOL ksched_anchor_launch_allowed(void);
 BOOL ksched_pid_reserved(WORD pid);
 void ksched_exiting(PD *pd, UWORD status);
 /* Generic successor activation after complete teardown; identity is retained. */

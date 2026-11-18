@@ -25,4 +25,17 @@ static long pclone_trap(const void *args, unsigned long size)
     return trap_1_wll(GEMDOS_PCLONE,(long)args,(long)size);
 #endif
 }
+/* #1015: a managed THREAD's Pexec(0) child is an anchor. The regression
+ * kernels can keep it on the nested carrier, the launcher continuation the
+ * nested suites test; PCLONE_NESTED_CARRIER says whether they can. */
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#define PCLONE_NESTED_CARRIER 1
+static inline void pclone_nest_synchronous(int on)
+{
+    (void)pclone_trap(0, on ? 0xc8920722UL : 0xc8920723UL);
+}
+#else
+#define PCLONE_NESTED_CARRIER 0
+static inline void pclone_nest_synchronous(int on) { (void)on; }
+#endif
 #endif

@@ -7053,7 +7053,16 @@ void x86_64_memtest_run(void)
     test_move_private();
     test_backing_media_change();
     test_unlinked_backing();
+#if CONF_WITH_NATIVE_SCHED
+    /* The ring-3 probes test the nested carrier (#713) the kernel still uses
+     * for its own launches: keep their own Pexec(0) children on it rather
+     * than anchoring them (#1015, tested by the regression suite). */
+    (void)ksched_test_nested(0x22);
+#endif
     test_ring3();
+#if CONF_WITH_NATIVE_SCHED
+    (void)ksched_test_nested(0x23);
+#endif
 
     same(&s, "whole memtest");
     CHECK(x86_64_pmem_bad_frees() >= s.pmem_bad, "bad free counter monotonic");

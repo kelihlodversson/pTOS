@@ -995,6 +995,7 @@ static const char group_env[2]={0,0};
 static struct {
     volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done, atexit_calls;
     volatile long session, window, wait_done;
+    int anchored; /* modes 1/2: the Pexec(0) chain runs as anchors (#1015) */
     int32_t target, joiner, killer, nested, wait_child;
     unsigned char *stack[6];
 } group;
@@ -1610,7 +1611,7 @@ static void group_leader(void *arg)
 }
 static void test_group_exit(void)
 {
-    int i, mode, spin;
+    int i, mode, spin, pass, modes;
     int32_t pid,tid,peer_pid,peer_tid;
     long result;
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
@@ -1622,13 +1623,20 @@ static void test_group_exit(void)
         ptest_assert_msg((long)group.stack[i]>0,"group stack allocated");
         if ((long)group.stack[i]<=0) return;
     }
-    for (mode=0;mode<
+    modes=
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
         14
 #else
         5
 #endif
-        ;mode++) {
+        ;
+    /* Modes 1 and 2 run twice: their synchronous Pexec(0) chain first on
+     * the nested carrier, where one exists, then as anchors (#1015). */
+    for (pass=0;pass<modes+2;pass++) {
+        mode=pass<modes ? pass : pass-modes+1;
+        group.anchored=pass>=modes;
+        if ((mode==1 || mode==2) && !group.anchored && !PCLONE_NESTED_CARRIER) continue;
+        pclone_nest_synchronous((mode==1 || mode==2) && !group.anchored);
         for (i=0;i<5;i++) (void)Fdelete(files[i]);
         group.session=group.window=-1; group.wait_done=0;
         group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=group.atexit_calls=0;
@@ -1636,7 +1644,7 @@ static void test_group_exit(void)
         ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
         for (spin=0;spin<2000 && !group.requested;spin++) (void)Syield();
         ptest_assert_msg(group.requested && !group.error,"group request reached native syscall");
-        if (mode==1 || mode==2) {
+        if ((mode==1 || mode==2) && !group.anchored) {
             ptest_assert_msg(Pwaitpid(pid,1,0)==0,"nested child retains pending PROCESS until safe return");
             ptest_assert_msg(group_exists("GDEEP.ON") && !group_exists("GRET0.ON"),"nested child not unwound or killed");
             for (spin=0;spin<32;spin++) {
@@ -1652,6 +1660,15 @@ static void test_group_exit(void)
         ptest_assert_msg((result>>16)==pid && (result&65535)==(mode==4?62:mode?61:60),"group final status and one PROCESS completion");
         ptest_assert_msg(!group.returned && !group.error,"cancelled parent continuations never return to user");
         ptest_assert_msg(Pwaitpid(pid,1,0)==-33L,"group zombie consumed only once");
+        if ((mode==1 || mode==2) && group.anchored) {
+            /* The waiting THREAD was cancelled and released its claim: the
+             * chain lives on as orphans, as in FreeMiNT, and completes. */
+            ptest_assert_msg(group_exists("GDEEP.ON") && !group_exists("GRET0.ON"),
+                             "anchored group exits without waiting for its Pexec(0) chain");
+            group_mark("GGO.ON");
+            for (spin=0;spin<20000 && !group_exists("GRET2.ON");spin++) (void)Syield();
+        }
+        pclone_nest_synchronous(0);
         if (mode==1 || mode==2) ptest_assert_msg(group_exists("GRET0.ON") && group_exists("GRET1.ON") && group_exists("GRET2.ON"),"all nested PROCESSes complete normally before cancellation");
         if (mode==12) ptest_assert_msg(!group.wait_done,"admitted combined input wait is cancelled before timer commit");
         if (mode==4) ptest_assert_msg(group.atexit_calls==1,"libc exit runs atexit once before group termination");
@@ -1674,6 +1691,7 @@ static void test_group_exit(void)
 #endif
 }
 #endif
+#include "anchored_probe.h"
 #include "public_contract.h"
 #include "mapping_lifetime.h"
 #include "process_files.h"
@@ -1846,6 +1864,9 @@ static void test_runnable(void)
 }
 void pclone_run_unmanaged_tests(void);
 void pclone_run_staged_tests(void);
+long pclone_run_anchored_probe(void);
+long pclone_run_anchored_probe(void)
+{ return anchored_probe(); }
 void pclone_run_staged_tests(void)
 { phase1_run_staged(); }
 void pclone_run_unmanaged_tests(void)
@@ -2132,12 +2153,23 @@ void test_pclone(void)
             ptest_assert_msg(Fdelete("GO970.TMP") == 0 && Fdelete("EXEC200.TMP") == 0,
                              "Pexec(200) test files");
         }
-        /* The same subject as a synchronously nested child: replaced through
-         * its launcher frame, and this Pexec(0) returns its final status. */
+        /* The same subject as an anchored Pexec(0) child (#1015): replaced
+         * in its own PROCESS while this THREAD waits for exactly it. */
         ptest_log_flush();
+        ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001A",0) == 70,
+                         "anchored Pexec(0) child's Pexec(200) chain completes once");
+        ptest_assert_msg(Pwaitpid(-1,1,0) == -33L,"anchored Pexec(200) subject reaped by Pexec(0) only");
+        ptest_assert_msg(Fdelete("EXEC200.TMP") == 0,"anchored Pexec(200) test file");
+#if PCLONE_NESTED_CARRIER
+        /* And as a synchronously nested child: replaced through its
+         * launcher frame, and this Pexec(0) returns its final status. */
+        ptest_log_flush();
+        pclone_nest_synchronous(1);
         ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001N",0) == 70,
                          "nested Pexec(200) relaunch completes once through the launcher");
+        pclone_nest_synchronous(0);
         ptest_assert_msg(Fdelete("EXEC200.TMP") == 0,"nested Pexec(200) test file");
+#endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
         ptest_assert_msg(mlt_snapshot(&mlt_after)==0,"snapshot after Pexec(200) runs");
         mlt_equal(&mlt_before,&mlt_after);

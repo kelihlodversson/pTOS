@@ -393,7 +393,11 @@ EXEC200.TOS (tests/pclone/exec200_native.c, exec200_image.c) is that test. It
 runs in both the "private ELF staging" and "PROCESS descriptors" CI jobs of the
 matrix above, which require these markers:
 - "native Pexec(200) same-PROCESS executable/root replacement: PASS" (anchor);
-- "native nested Pexec(200) launcher relaunch: PASS" (nested Pexec(0) child).
+- "native Pexec(200) from an anchored Pexec(0) child: PASS" (a managed
+  THREAD's Pexec(0) child, an anchor since #1015);
+- "native nested Pexec(200) launcher relaunch: PASS" (a Pexec(0) child kept on
+  the nested carrier by the regression kernels' switch; only where
+  CONF_WITH_PRIVATE_CLONE_TEST provides it).
 
 Exact source revisions, test transcripts, CI workflow results and independent
 read-only owner assessments belong in the #970 Draft PR evidence ledger.

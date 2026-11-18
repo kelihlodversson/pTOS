@@ -704,6 +704,13 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC_TEST 1' "$top/obj/autoconf.h" &&
 fi
 # End native revoked-result marker.
 
+# A managed THREAD's Pexec(0) children are anchors (#1015).
+if grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_USER_ASPACE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native anchored Pexec(0) chains, exit modes and peers: PASS' "$suite_log"; then
+    record "native anchored Pexec(0) chains" FAIL "anchored synchronous chains did not pass"
+fi
+
 # Configured nested ownership checks must execute as managed THREADs.
 if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h"; then
@@ -817,6 +824,10 @@ case "$machine" in
             if ! grep -aq 'native Pclone ABI prefix/flags/pointers/atomic outputs: PASS' "$suite_log"; then
                 record "native Pclone ABI contract" FAIL "public trap matrix did not execute successfully"
             fi
+            if grep -q '^#define CONF_WITH_USER_ASPACE 1' "$top/obj/autoconf.h" &&
+               ! grep -aqF 'native anchored Pexec(0) child owns dependents: PASS' "$suite_log"; then
+                record "native anchored Pexec(0)" FAIL "a Pexec(0) child did not run as an anchor (#1015)"
+            fi
             if ! grep -aq 'native shared image execute policy nested/orphan: PASS' "$suite_log"; then
                 record "native shared image execute policy" FAIL "nested/orphan public clone policy did not pass"
             fi
@@ -928,6 +939,14 @@ if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
 fi
 
 if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) from an anchored Pexec(0) child: PASS' "$suite_log"; then
+    record "native anchored Pexec(200)" FAIL "an anchored Pexec(0) child was not replaced"
+fi
+
+# Only the regression kernels' nested carrier switch reaches the old path.
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PCLONE 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native nested Pexec(200) launcher relaunch: PASS' "$suite_log"; then
     record "native nested Pexec(200)" FAIL "a synchronously nested child was not replaced"

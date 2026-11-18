@@ -34,6 +34,7 @@ void pclone_run_unmanaged_tests(void)
     abort(); /* No unmanaged worker is launched by this model. */
 }
 void pclone_run_staged_tests(void) { abort(); }
+long pclone_run_anchored_probe(void) { abort(); } /* nor an anchored one */
 
 void pclone_run_managed_tests(void)
 {

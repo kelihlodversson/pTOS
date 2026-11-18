@@ -71,6 +71,9 @@ static inline long nested_query(unsigned selector)
 #else
 static inline long nested_query(unsigned selector) { (void)selector; return NESTED_EINVFN; }
 #endif
+/* #1015: keep a managed THREAD's Pexec(0) child on the nested carrier
+ * (on), or launch it as an anchor again (off); regression kernels only. */
+static inline void pclone_nest_synchronous(int on) { (void)nested_query(on ? 0x722 : 0x723); }
 
 /* Fixed-width upper-case hexadecimal, the only number format of the tails. */
 static inline void nested_put_hex(char *out, unsigned long value, int digits)
@@ -95,10 +98,12 @@ static inline unsigned long nested_get_hex(const char *in, int digits)
  *   'c' remaining mode flag tracked  ppid:4 ptid:8 depth:2 level:2
  *       processes:4 threads:4 spaces:4 kstacks:4
  * mode: leaf exit 'r' return, 't' Pterm, '0' Pterm0, 'f' fault.
- * flag: 'x' exact global counts, 'p' wait for the peer's marker, '-' neither. */
+ * flag: 'x' exact global counts, 'p' wait for the peer's marker, '-' neither.
+ * tracked: 'T' an associated nested THREAD, 'U' an untracked nested
+ * execution, 'A' an anchored PROCESS of its own (#1015). */
 #define NESTED_TAIL_BYTES 55
 struct nested_chain {
-    int remaining, depth, level, tracked;
+    int remaining, depth, level, tracked, anchored;
     char mode, flag;
     long ppid, ptid;
     long processes, threads, spaces, kstacks;
@@ -110,7 +115,7 @@ static inline void nested_chain_tail(char *tail, const struct nested_chain *chai
     tail[2] = (char)('0' + chain->remaining);
     tail[3] = chain->mode;
     tail[4] = chain->flag;
-    tail[5] = chain->tracked ? 'T' : 'U';
+    tail[5] = chain->tracked ? 'T' : chain->anchored ? 'A' : 'U';
     nested_put_hex(tail + 6, (unsigned long)chain->ppid, 4);
     nested_put_hex(tail + 10, (unsigned long)chain->ptid, 8);
     nested_put_hex(tail + 18, (unsigned long)chain->depth, 2);
