@@ -119,7 +119,7 @@ delayed restoration; higher-half kernels legitimately use DTT0. Exact format-0
 fresh copy-back qualifies 040 complete null/idle FPU through the existing
 save_complete/restore_complete helpers. It poisons GPR, USP and FPU state, then
 consumes the copied integer/USP image and returns through the original RTE.
-030/060 FPU restart, busy/pending/foreign frames and fastcall are refused by
+030/060 copied restart, busy/pending/foreign FPU frames and fastcall are refused by
 copy-back eligibility. Their existing diagnostic capture/ordinary return stays.
 
 No preparation predicate is a runnable capability. There are no new retained

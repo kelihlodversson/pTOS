@@ -96,7 +96,9 @@ static inline BOOL m68k_irq_same_entry_valid(const M68K_USER_IRQ_CAPTURE *c,
     const M68K_IRQ_BINDING *s=&c->binding;
     const UBYTE *a=(const UBYTE *)&c->image,*o=(const UBYTE *)original;
     ULONG i;
-    if (!c->valid || !execution || c->execution!=execution || !sequence || c->sequence!=sequence ||
+    /* The copied-return proof is qualified only on 040, including no-FPU.
+     * 030/060 control observations are preparation, not native copy-back proof. */
+    if (b->model!=40 || !c->valid || !execution || c->execution!=execution || !sequence || c->sequence!=sequence ||
         c->tid!=tid || c->cpu!=cpu || b->frame_address!=(uintptr_t)original ||
         s->root!=b->root || s->expected_root!=b->expected_root || s->model!=b->model ||
         s->fpu_type!=b->fpu_type || s->tc!=b->tc || s->stack_base!=b->stack_base ||
