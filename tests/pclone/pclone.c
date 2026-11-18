@@ -1048,7 +1048,7 @@ static long native_cuis6(unsigned fn, unsigned long long a, unsigned long long b
     __asm__ volatile ("syscall" : "+a"(ax) : "r"(di),"r"(si),"r"(dx),"r"(r10),"r"(r8),"r"(r9) : "rcx","r11","memory","cc");
     return (long)ax;
 }
-static struct { volatile long error, first_tick, second_tick; long session, child; } native_resume;
+static struct { volatile long error, first_tick, second_tick, released; long session, child; } native_resume;
 static void native_resume_peer(void *argument)
 {
     static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
@@ -1071,6 +1071,10 @@ static void native_resume_peer(void *argument)
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
         if (buttons&1) (void)Syield();
     } while (buttons&1);
+    /* The host's second press waits for this (via the leader's adopt
+     * marker): this loop samples the current state, not queued events, and
+     * would never see a release that a prompt second press superseded. */
+    native_resume.released=1;
     do {
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
         if (!(buttons&1)) (void)Syield();
@@ -1411,6 +1415,7 @@ static void test_native_resume(void)
     (void)Fclose(marker);
 #define RESUME_CHECK(condition, message) do { int valid=(condition); if (!valid) ok=0; ptest_assert_msg(valid,message); } while (0)
     native_resume.error=0; native_resume.child=0; native_resume.first_tick=native_resume.second_tick=0;
+    native_resume.released=0;
     native_resume.session=native_cuis(0,0,0);
     RESUME_CHECK(native_resume.session>=0,"native resume session");
     if (native_resume.session<0) return;
@@ -1435,6 +1440,10 @@ static void test_native_resume(void)
         if (buttons&1) (void)Syield();
     } while (!result && (buttons&1));
     RESUME_CHECK(result==0,"first hardware release observed");
+    /* Announce adoption only once the peer has seen the release as well
+     * (#1021); nothing yields between this marker and the resumed wait. */
+    while (!native_resume.released && !native_resume.error) (void)Syield();
+    RESUME_CHECK(!native_resume.error,"observer peer saw the first release");
     conws("CUIS resume adopt: READY\r\n");
     result=native_cuis5(32,native_resume.session,0,16|2,5000,0);
     if (result!=16) printf("native resume completion=%ld interval=%ld\r\n",result,native_cuis6(46,native_resume.session,0,0,0,0,0));
