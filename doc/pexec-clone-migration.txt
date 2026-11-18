@@ -122,7 +122,7 @@ reuse the isolated move-private mechanism on COW/shared pages for exec200.
 
 Implemented default-off shared-VM consumer (4/104)
 ------------------------------------------------
-The following policy is implemented behind CONF_WITH_SHARED_VM_PEXEC_TEST;
+The following policy is implemented behind CONF_WITH_SHARED_VM_PEXEC;
 exact whole-consumer acceptance is recorded on PR956/#894. It does not authorize production use.
 Use distinct PROCESS identities with the same retained KASPACE, not SAME_PROCESS.
 A loaded-image policy must authenticate the caller's PE_LOAD grant, retain

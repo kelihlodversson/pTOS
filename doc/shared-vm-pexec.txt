@@ -23,7 +23,7 @@ FAT26/0/PFS27/0, with five shutdown checks each. Independent review verifies
 the corrected exact backing bounds, live-ticket checks and cleanup fences
 remain unchanged. Later authored increments require their own final matrix.
 
-CONF_WITH_SHARED_VM_PEXEC_TEST defaults n; no shipped preset selects it.
+CONF_WITH_SHARED_VM_PEXEC defaults n; no shipped preset selects it.
 Ordinary ring-3 mode4/104 rejection remains unchanged. This test switch is
 not a production activation decision.
 
@@ -139,7 +139,7 @@ These are not evidence that FreeMiNT implements pTOS's mmap API: its
 sys/syscalls.master514-515 lists mmap/munmap as undefined.
 
 MAP_PTOS_RUNTIME is an explicit pTOS loader-owned lifetime annotation, admitted
-and emitted by ld.so ONLY with CONF_WITH_SHARED_VM_PEXEC_TEST. It is not an
+and emitted by ld.so ONLY with CONF_WITH_SHARED_VM_PEXEC. It is not an
 implicit change to general FreeMiNT allocations or a production ABI activation.
 Each loaded standard-entry PROCESS prepares a fresh RUNTIME scope before THREAD
 publication. Its annotated anonymous/file maps join that scope. Existing exact
