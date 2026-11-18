@@ -95,3 +95,36 @@ A return, with exact final resource baselines, proves the central B2 capability.
 Until that transaction is integrated and demonstrated on each architecture,
 B2 remains incomplete and #713 remains open. Phase C, SMP and arbitrary kernel
 preemption remain disabled.
+
+Architecture preparation implemented on this branch
+----------------------------------------------------
+x32 additionally observes CR0/CR4/EFER, DS/ES/FS/GS and both GS bases, the
+CPU entry-record address and syscall GS phase. Restricted copy-back refuses
+nonzero FS/GS TLS, FSGSBASE, OSXSAVE/AVX, disabled/emulated FPU and a swapped
+syscall context. These observations do not add TLS or a new FPU switcher.
+
+ARM observes raw TTBR0/TTBR1/CPACR alongside the existing control binding.
+Fresh copy-back requires little-endian A32 (no Thumb/Jazelle/IT), the existing
+N=1 short-descriptor profile, D32 and FPEXC.EN without pending restart state.
+The test poisons saved integer/VFP data and live user SP/LR, then restores the
+owned image and consumes its user-bank prefix through the existing IRQ POP/RFE.
+SVC frame offsets are never substituted. DACR/context/TTBR1 equality is binding
+evidence within this entry, not complete certification of remote MMU policy.
+
+m68k observes 030 TC/CRP/SRP/TT0/TT1 or 040/060 TC/URP/SRP/ITT0/ITT1/DTT0/DTT1,
+using the existing backends' exact CPU instructions without changing controls.
+030 requires its long CRP descriptor and SRE-clear profile. 040/060 require the
+existing TC and both roots. TTR values are equality-bound, not certified for
+delayed restoration; higher-half kernels legitimately use DTT0. Exact format-0
+fresh copy-back qualifies 040 complete null/idle FPU through the existing
+save_complete/restore_complete helpers. It poisons GPR, USP and FPU state, then
+consumes the copied integer/USP image and returns through the original RTE.
+030/060 FPU restart, busy/pending/foreign frames and fastcall are refused by
+copy-back eligibility. Their existing diagnostic capture/ordinary return stays.
+
+No preparation predicate is a runnable capability. There are no new retained
+owners or pending-return states, and no changes to native_sched.c, proc.c,
+ksched.h, PROCESS creation/wait/reaping/admission or Pexec(0). Root invalidation
+is unchanged. The native proof gates deliberately require separate copy-back
+markers alongside the full regression/shutdown verdicts; they are not B2's
+missing IRQ-A -> B -> A marker.

@@ -12,4 +12,5 @@ typedef char m68k_fpuctx_layout[sizeof(struct fpuctx)==324 &&
     offsetof(struct fpuctx,ctl)==216 && offsetof(struct fpuctx,regs)==228 ? 1:-1];
 void m68k_fpu_save(struct fpuctx *ctx);
 void m68k_fpu_restore(const struct fpuctx *ctx);
+void m68k_fpu_init(void);
 #endif

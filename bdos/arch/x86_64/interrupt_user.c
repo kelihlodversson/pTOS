@@ -76,7 +76,8 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
      * mapping change or GS/FS/TSS change can intervene. The original IRQ stack
      * remains owned and live. Never use a prior capture after a scheduling or
      * callback boundary. Unsupported/delayed restore remains unavailable. */
-    if (capture->image.r15==0x7130000000713015ULL) {
+    if (capture->image.r15==0x7130000000713015ULL &&
+        x86_irq_return_controls_valid(&binding.controls)) {
         X86_USER_IRQ_FRAME *destination=(X86_USER_IRQ_FRAME *)(uintptr_t)frame;
         UWORD byte;
         if (!x86_irq_same_entry_valid(capture,frame,&binding,execution->identity,
