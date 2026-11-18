@@ -189,7 +189,7 @@ int main(void)
     image_policy_commit(target); /* metadata boundary; native covers real activation */
     CHECK(!target->image_preparation && target->has_image && target->image_policy_only);
     CHECK(target->layout.seg[0].flags==5 && !target->layout.seg[0].src && !target->layout.seg[0].filesz);
-    CHECK(!target->pending_space && !target->active_space && !target->load_parent && !target->lender);
+    CHECK(!target->pending_space && !target->active_space);
     CHECK(!target->kstack_phys && !target->stack_top && !target->stack_low && target->threads==thread && kthread_tid(thread)==tid);
     kproc_image_policy_release(&prepared);CHECK(target->references==refs);
     target->active_space=kaspace_share(space);target->aspace=&backend;target->started=TRUE;

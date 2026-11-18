@@ -102,7 +102,7 @@ int main(void)
     process.pd=&pd;process.active_space=(KASPACE *)1;process.aspace=(ASPACE *)1;
     process.references=1;process.allocation_scope=(KASPACE_SCOPE *)1;
     process.heap=&image;process.nheap=1; kproc_list=&process;
-    image.va=0x10000000UL;image.pages=2;image.kind=UH_IMAGE;image.reservation=7;
+    image.va=0x10000000UL;image.pages=2;image.kind=UH_MALLOC;image.reservation=7;
     check_rights(); /* no earlier broad witness */
     assert(!kproc_uheap_alloc(&pd,USER_PAGE_SIZE) && !ordinary.count);
     kfree(ordinary.blocks);memset(&ordinary,0,sizeof(ordinary));
