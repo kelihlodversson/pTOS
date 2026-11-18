@@ -809,6 +809,63 @@ static void shared_vm_tfork(void)
     }
     conws("native shared-VM tfork mode-5 basepage at p_tbase: tested\r\n");
 }
+/* A loader's pattern on TOS: Pexec(5/7) makes a basepage and TPA, the
+ * loader puts the program's code in that TPA and starts it with Pexec(4),
+ * 104 or 6. The child is entered at p_tbase with the PRG protocol: A0=0
+ * and the basepage at 4(sp) (#1018). */
+extern const char loaded_prg[],loaded_prg_end[];
+__asm__(
+    "    .text\n"
+    "    .globl loaded_prg\n"
+    "    .globl loaded_prg_end\n"
+    "loaded_prg:\n"
+    "    moveq   #0x11,%d1\n"
+    "    cmpa.l  #0,%a0\n"
+    "    bne.s   1f\n"
+    "    moveq   #0x12,%d1\n"
+    "    movea.l 4(%sp),%a1\n"
+    "    lea     loaded_prg(%pc),%a2\n"
+    "    cmpa.l  8(%a1),%a2\n"           /* p_tbase */
+    "    bne.s   1f\n"
+    "    moveq   #0x13,%d1\n"
+    "    move.l  %a1,0x100+64(%a1)\n"   /* the TPA is the child's to write */
+    "    cmpa.l  0x100+64(%a1),%a1\n"
+    "    bne.s   1f\n"
+    "    moveq   #0x2b,%d1\n"
+    "1:  move.w  %d1,-(%sp)\n"
+    "    move.w  #0x4c,-(%sp)\n"
+    "    trap    #1\n"
+    "loaded_prg_end:\n");
+static void shared_vm_loaded_prg(void)
+{
+    static const short modes[] = { 4, 104, 6 };
+    unsigned i;
+    for(i=0;i<sizeof(modes)/sizeof(modes[0]);i++) {
+        BASEPAGE *bp=(BASEPAGE *)Pexec(i==2?7:5,0,"",0);
+        long size=loaded_prg_end-loaded_prg,result;
+        char *env,*text;
+        ptest_assert_msg((long)bp>0,"loaded PRG: mode 5/7 basepage");
+        if((long)bp<=0) continue;
+        ptest_assert_msg(bp->p_hitpa-(char *)bp>=0x1000,"loaded PRG: mode 5/7 gives a TPA to load into");
+        env=bp->p_env;text=(char *)bp+256;
+        memcpy(text,loaded_prg,size);
+        bp->p_tbase=text;bp->p_tlen=size;
+        bp->p_dbase=text+size;bp->p_dlen=0;
+        bp->p_bbase=text+size;bp->p_blen=0x40;
+        result=Pexec(modes[i],0,bp,0);
+        if(modes[i]==104 && result>0) {
+            long waited=Pwaitpid(result,0,0);
+            ptest_assert_msg((waited>>16)==result && (waited&65535)==0x2b,
+                "loaded PRG: 104 child entered with the PRG protocol");
+        } else {
+            if(result!=0x2b) { conws("loaded PRG result: ");
+                {unsigned n;for(n=0;n<8;n++) Cconout("0123456789abcdef"[((unsigned long)result>>(28-4*n))&15]);} conws("\r\n"); }
+            ptest_assert_msg(result==0x2b,"loaded PRG: 4/6 child entered with the PRG protocol");
+        }
+        if(modes[i]!=6) ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"loaded PRG: caller still owns basepage and environment");
+    }
+    conws("native shared-VM loaded mode-5/7 PRG via 4/104/6: tested\r\n");
+}
 static void shared_vm_basic(void)
 {
     unsigned i;
@@ -929,6 +986,7 @@ void test_pie_load(void)
 #endif
     shared_vm_basic();
     shared_vm_tfork();
+    shared_vm_loaded_prg();
     shared_vm_status();
     shared_vm_staged_retirement();
     shared_vm_orphan('o');

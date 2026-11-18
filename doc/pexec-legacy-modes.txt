@@ -47,8 +47,14 @@ arguments are read (bdos/uaccess.c) and again at the GEMDOS entry
 
 Shared-VM 4/104 starts a staged mode-3 PRG at its loader-recorded text
 (user_start + sizeof(PD)), and a basepage the caller made with mode 5/7 at
-its p_tbase, as MiNTLib's tfork() does; that entry must already be
-executable in the shared address space (EACCDN otherwise). The child runs on
+its p_tbase. On the m68k MMU kernels mode 5/7 gives a program basepage the
+classic TPA (the free memory, up to 1 MiB), so a loader can put code in it,
+point p_tbase there and start it with 4, 104 or 6, as on TOS; the TPA up to
+the end of the text, data and bss the caller states (at least the basepage)
+is held and made executable for the child, and the rest stays the child's to
+Mshrink(). A p_tbase outside the TPA, as MiNTLib's tfork() uses, must already
+be executable in the shared address space (EACCDN otherwise). Every entry
+gets the PRG protocol: A0 = 0 and the basepage at 4(sp). The child runs on
 a kernel-allocated stack, so pTOS-aware startup code does not Mshrink() its
 TPA: a successful start gives a staged PRG's TPA back down to its image
 (basepage, text, data, bss) plus 64 KiB, which is also all the shared-VM

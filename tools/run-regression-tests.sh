@@ -624,6 +624,7 @@ if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h"; then
     for marker in \
         'native shared-VM Pexec4/104 execution and canonical reap: tested' \
         'native shared-VM tfork mode-5 basepage at p_tbase: tested' \
+        'native shared-VM loaded mode-5/7 PRG via 4/104/6: tested' \
         'native shared-VM full-status/fault and canonical wait: tested' \
         'native shared-VM unstarted-child source retirement: tested' \
         'native shared-VM running orphan and nested unstarted cleanup: tested' \

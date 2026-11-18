@@ -333,6 +333,27 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         if(dlen<held && blen<held && image+dlen+blen<held)
             held=(image+dlen+blen+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1);
         if(held>procmem_size(target->user_start)) held=procmem_size(target->user_start);
+    } else if(target->legacy) {
+        /* A basepage from mode 5/7: the caller put the code in the TPA (or
+         * points p_tbase at its own text, as tfork() does) and stated the
+         * segments. Hold the basepage and whatever of them lies in the TPA,
+         * so the child can still Mshrink() the rest. */
+        VADDR base=(VADDR)(uintptr_t)target->user_start,size=held,end=sizeof(PD);
+        VADDR seg[3],len[3];
+        seg[0]=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_tbase);len[0]=target->pd->p_tlen;
+        seg[1]=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_dbase);len[1]=target->pd->p_dlen;
+        seg[2]=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_bbase);len[2]=target->pd->p_blen;
+        for(i=0;i<3;i++) {
+            if(seg[i]<base+sizeof(PD) || seg[i]>=base+size) continue;
+            if(len[i]>base+size-seg[i]) end=size;
+            else if(seg[i]+len[i]-base>end) end=seg[i]+len[i]-base;
+        }
+        if(USERPTR_TO_PTR(target->pd->p_tbase)) { /* entry inside the TPA counts */
+            VADDR entry=seg[0];
+            if(entry>=base+sizeof(PD) && entry<base+size && entry+2-base>end) end=entry+2-base;
+        }
+        held=(end+USER_PAGE_SIZE-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        if(held>size) held=size;
     }
 #endif
 #define SHARED_TRY(call) do {error=shared_failure_point()?ENSMEM:(call);if(error) goto failed;}while(0)
@@ -362,6 +383,15 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
         error=EINVFN;goto failed;
 #endif
     }
+#if KPROC_LEGACY_PRG
+    else if(target->legacy) {
+        /* As on TOS, what a mode 5/7 caller placed in the TPA may be run. */
+        policy[0].address=(VADDR)(uintptr_t)target->user_start;policy[0].bytes=held;
+        policy[0].rights=ASPACE_PROT_USER|ASPACE_PROT_WRITE|ASPACE_PROT_EXEC;count=1;
+        SHARED_TRY(kaspace_permission_prepare_procmem(set->space,&set->raw[0].token,
+                    policy,count,&set->permissions));
+    }
+#endif
     SHARED_TRY(shared_raw(set,source,target->env_start,target->env_gen));
     SHARED_TRY(shared_raw(set,source,source->user_start,source->tpa_gen));
     SHARED_TRY(shared_raw(set,source,source->env_start,source->env_gen));
@@ -421,7 +451,12 @@ LONG kproc_shared_exec_prepare(KPROC *source,KPROC *target,THREAD_STARTUP_ARGS *
     if(legacy) startup->entry=(VADDR)(uintptr_t)target->user_start+sizeof(PD);
     else {
         VADDR entry=(VADDR)(uintptr_t)USERPTR_TO_PTR(target->pd->p_tbase);
-        if(!kproc_validate_user_exec(entry)) {error=EACCDN;goto failed;}
+        BOOL in_tpa=FALSE;
+#if KPROC_LEGACY_PRG
+        in_tpa=target->legacy && entry>=(VADDR)(uintptr_t)target->user_start+sizeof(PD) &&
+            entry<(VADDR)(uintptr_t)target->user_start+held && !(entry&1);
+#endif
+        if(!in_tpa && !kproc_validate_user_exec(entry)) {error=EACCDN;goto failed;}
         startup->entry=entry;
     }
     startup->argument=(VADDR)(uintptr_t)target->pd;

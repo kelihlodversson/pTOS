@@ -738,6 +738,22 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             KDEBUG(("BDOS xexec: no memory for environment\n"));
             return ENSMEM;
         }
+        p = NULL;
+#if KPROC_LEGACY_PRG
+        /* #1018: a program's basepage gets the TPA TOS gives it, the free
+         * memory (at most KPROC_LEGACY_TPA_MAX), for the program it loads
+         * there and starts with mode 4/6/104/106; it Mshrink()s the rest. */
+        if (!kernel) {
+            LONG all = (LONG)procmem_largest_free();
+
+            if (all > (LONG)KPROC_LEGACY_TPA_MAX)
+                all = KPROC_LEGACY_TPA_MAX;
+            all -= 16;                  /* (alloc_tpa() adds some) */
+            if (all > (LONG)sizeof(PD))
+                p = (PD *)alloc_tpa((ULONG)(uintptr_t)path, all, &max);
+        }
+        if (p == NULL)
+#endif
         p = (PD *)alloc_tpa((ULONG)(uintptr_t)path,sizeof(PD),&max);
 
         if (p == NULL) {    /* not even enough memory for basepage */
@@ -758,6 +774,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             return ENSMEM;
         }
         p->p_flags = (ULONG)(uintptr_t)path;   /* set the flags */
+#if KPROC_LEGACY_PRG
+        if (!kernel)
+            kproc_mark_legacy(p);       /* started by the PRG protocol */
+#endif
 #if CONF_WITH_PLUGGABLE_FS || CONF_WITH_USER_ASPACE
         rc = init_pd_files(p);
         if (rc != E_OK) {
