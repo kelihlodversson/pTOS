@@ -236,7 +236,16 @@ SECTIONS
     .stack : LMA_LOW(.stack)
     {
         C_SYM(stkbot) = .;
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+        /* The boot CPU still loads its first managed program on this stack,
+         * before entering the permanent scheduler root. Native loader/error
+         * contexts (especially under LTO) exceed the legacy 2-KiB budget and
+         * otherwise overwrite TOS low memory/vectors. Reuse this stack with
+         * the existing root's 16-KiB budget; no new execution owner. */
+        . += 16K;
+#else
         . += 2K;
+#endif
          C_SYM(stktop) = .;
 #if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
     } >stram                    /* in the low memory, like the rest of it */

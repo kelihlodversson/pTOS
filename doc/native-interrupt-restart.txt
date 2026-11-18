@@ -10,6 +10,16 @@ Pexec(0), exact-child wait, completion claims and cancellation/orphan policy
 are the canonical PROCESS state machines, not an outstanding dependency.
 This increment does not change those interfaces or enable production preemption.
 
+The native m68k boot CPU retains the existing BIOS stack while loading its
+first managed program, before the separate permanent root has been entered.
+The old 2-KiB budget is insufficient on the 030 LTO native configuration:
+an instruction trace reaches SP=0x1cc below stkbot=0x800 before a BIOS trap
+dispatches through overwritten low vectors into BSS. Native MMU builds now
+reserve 16 KiB for that same BIOS stack, matching the existing root budget.
+Startup and the memory allocator use its linker bounds; the low-memory mapping
+already covers it. This adds 14 KiB of permanent kernel RAM, not another stack
+owner. Non-native stacks, ARM's separate 32-KiB stack and x32 are unchanged.
+
 Audit of the accepted B1 foundation
 -----------------------------------
 All backends have preallocated KTHREAD_CONTEXT.interrupted_user storage and
