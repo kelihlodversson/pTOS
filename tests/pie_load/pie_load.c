@@ -786,7 +786,7 @@ static void tfork_entry(BASEPAGE *bp)
     tfork_seen=(long)bp;
     Pterm(0x2a);
 }
-static long shared_vm_tfork_run(int mode,void (*entry)(BASEPAGE *),BASEPAGE **made)
+static long shared_vm_tfork_run(int mode,char *tbase,BASEPAGE **made)
 {
     BASEPAGE *bp=(BASEPAGE *)Pexec(5,0,"",0);
     long result;
@@ -794,7 +794,7 @@ static long shared_vm_tfork_run(int mode,void (*entry)(BASEPAGE *),BASEPAGE **ma
     ptest_assert_msg((long)bp>0,"shared tfork: mode 5 basepage");
     if((long)bp<=0) return (long)bp;
     *made=bp;
-    bp->p_tbase=entry?(char *)(uintptr_t)entry:(char *)0x10;
+    bp->p_tbase=tbase;
     result=Pexec(mode,0,bp,0);
     if(mode==104 && result>0) {
         long waited=Pwaitpid(result,0,0);
@@ -810,13 +810,20 @@ static void shared_vm_tfork(void)
     for(i=0;i<2;i++) {
         int mode=i?104:4;
         BASEPAGE *bp;char *env;long result;
-        result=shared_vm_tfork_run(mode,NULL,&bp);
-        shared_vm_diagnostic("shared tfork bad entry status=",result);
-        ptest_assert_msg(result>=0 && !(result&0xff) && (result>>8)!=0,
-            "shared tfork: an entry that cannot run faults in the child");
-        if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: faulted basepage stays the caller's"); }
+        {   /* unmapped, null and odd entries all start and fault, as on FreeMiNT */
+            static char *const bad[]={(char *)0x10,(char *)0,(char *)0x11};
+            unsigned b;
+            for(b=0;b<sizeof(bad)/sizeof(bad[0]);b++) {
+                result=shared_vm_tfork_run(mode,bad[b],&bp);
+                if(result<0 || (result&0xff) || !(result>>8))
+                    shared_vm_diagnostic("shared tfork bad entry status=",result);
+                ptest_assert_msg(result>=0 && !(result&0xff) && (result>>8)!=0,
+                    "shared tfork: an entry that cannot run faults in the child");
+                if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: faulted basepage stays the caller's"); }
+            }
+        }
         tfork_seen=0;
-        result=shared_vm_tfork_run(mode,tfork_entry,&bp);
+        result=shared_vm_tfork_run(mode,(char *)(uintptr_t)tfork_entry,&bp);
         ptest_assert_msg(result==0x2a,"shared tfork: 4/104 run to the child's exit status");
         ptest_assert_msg(bp && tfork_seen==(long)bp,"shared tfork: entered at p_tbase with its basepage, shared data");
         if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: caller still owns basepage and environment"); }

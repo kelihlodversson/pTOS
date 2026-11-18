@@ -619,8 +619,10 @@ if grep -q '^#define CONF_WITH_IMAGE_POLICY_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native immutable image policy capture/activation/rollback and exact resource conservation: PASS' "$suite_log"; then
     record "native immutable image policy" FAIL "configured capture/activation/rollback assertions did not execute"
 fi
-# m68k MMU (#1018): Pexec 4/104 of a staged PRG or a caller-made basepage.
-if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h"; then
+# m68k MMU (#1018): Pexec 4/104 of a staged PRG or a caller-made basepage,
+# run by pie_load, which is built only with the ELF loader (Makefile).
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h"; then
     for marker in \
         'native shared-VM Pexec4/104 execution and canonical reap: tested' \
         'native shared-VM tfork mode-5 basepage at p_tbase: tested' \
@@ -673,6 +675,7 @@ fi
 
 # Native revoked-result marker.
 if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native shared-VM private result Mprot/Munmap during wait and exact conservation: tested' "$suite_log"; then

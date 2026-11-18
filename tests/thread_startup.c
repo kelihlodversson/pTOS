@@ -136,7 +136,7 @@ int main(void)
 {
     ASPACE backend = { 42 };
     KASPACE *space = kaspace_adopt(&backend);
-    THREAD_STARTUP_ARGS args, bad;
+    THREAD_STARTUP_ARGS args = {0}, bad;
     THREAD_STARTUP_DRAFT *draft = NULL, *held;
     const X32_THREAD_STARTUP_DRAFT *image;
     unsigned i, before, copied_destroys=0;

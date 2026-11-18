@@ -12,14 +12,17 @@
 LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS *args)
 {
     UWORD prot;
-    if (!space || !args || !args->entry ||
-        args->entry % CONF_PCLONE_ENTRY_ALIGNMENT ||
+    BOOL unchecked = args && (args->flags & THREAD_STARTUP_ENTRY_UNCHECKED);
+    /* An unchecked entry (Pexec 4/104) may be any address, as on FreeMiNT:
+     * a null, odd or unmapped one faults in the started THREAD. */
+    if (!space || !args ||
+        (!unchecked && (!args->entry || args->entry % CONF_PCLONE_ENTRY_ALIGNMENT)) ||
         args->stack_base % CONF_PCLONE_STACK_ALIGNMENT ||
         args->stack_size < CONF_PCLONE_MIN_STACK ||
         args->stack_base >= USER_VA_LIMIT ||
         args->stack_size > USER_VA_LIMIT - args->stack_base)
         return EINVAL;
-    if ((!(args->flags & THREAD_STARTUP_ENTRY_UNCHECKED) &&
+    if ((!unchecked &&
          (!aspace_translate(space, args->entry, NULL, &prot) ||
           (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) != (ASPACE_PROT_USER | ASPACE_PROT_EXEC))) ||
         !aspace_user_range_ok(space, args->stack_base, args->stack_size, TRUE)) return EIMBA;
