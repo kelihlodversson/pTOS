@@ -79,7 +79,6 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     check_irq_pattern(&capture->image);
     if (capture->image.r[12]==0x71307132UL && arm_irq_return_controls_valid(&capture->image,&binding)) {
         ARM_USER_IRQ_FRAME *destination=(ARM_USER_IRQ_FRAME *)(uintptr_t)frame;
-        ULONG clear_bank[2]={0,0};
         UWORD i;
         if (!arm_irq_same_entry_valid(capture,frame,&binding,execution->identity,
                 capture->sequence,tid,execution->owner_cpu,USER_VA_LIMIT))
@@ -94,9 +93,6 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
 #endif
         __asm__ volatile ("" ::: "memory");
         memcpy(destination,&capture->image,sizeof(*destination));
-        /* The epilogue must consume copied user SP/LR instead of relying on
-         * their untouched banked hardware values. IRQs remain masked. */
-        __asm__ volatile ("ldmia %0,{sp,lr}^; nop" :: "r"(clear_bank) : "memory");
         irq_roundtrip_seen++;
     }
 #endif

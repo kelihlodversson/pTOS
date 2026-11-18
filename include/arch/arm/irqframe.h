@@ -117,6 +117,17 @@ void arm_irq_capture_report(void);
 .endm
 .macro ARM_IRQ_POP_CAPTURE
     FPU_POP_ALL r0
+#if CONF_WITH_EXIT_HANDOFF_TEST
+    /* Prove prefix consumption only AFTER device work has unwound. Never
+     * expose poisoned user SP/LR to a handler or callback. No C call/dispatch
+     * can occur between this test-only clobber and the bank restore below. */
+    mov r0,#0
+    mov r1,#0
+    stmfd sp!,{r0-r1}
+    ldmia sp,{r13-r14}^
+    nop
+    add sp,sp,#8
+#endif
     /* Consume the owned user-bank prefix too. IRQ and SVC continuations are
      * distinct: RFE below still consumes PC/SPSR from this IRQ's SRS pair. */
     ldmia sp,{r13-r14}^
