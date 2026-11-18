@@ -54,8 +54,16 @@ int main(void)
         b.stack_top=b.frame_address+sizeof(f);
         c.image=f; c.binding=b; c.valid=TRUE; c.execution=9; c.sequence=3; c.tid=7;
         CHECK(m68k_irq_same_entry_valid(&c,&f,&b,9,3,7,0,0x80000000));
-        changed=b; changed.model=60;
-        CHECK(!m68k_irq_same_entry_valid(&c,&f,&changed,9,3,7,0,0x80000000));
+        for(model=30;model<=60;model+=30) {
+            changed=b; changed.model=model;
+            if(model==30) {
+                changed.tc=0x80c07760UL; changed.roots[0]=0x7fff0003UL;
+            }
+            CHECK(m68k_irq_return_controls_valid(&changed));
+            c.binding=changed;
+            CHECK(!m68k_irq_same_entry_valid(&c,&f,&changed,9,3,7,0,0x80000000));
+        }
+        c.binding=b;
         CHECK(!m68k_irq_same_entry_valid(&c,&f,&b,10,3,7,0,0x80000000));
         CHECK(!m68k_irq_same_entry_valid(&c,&f,&b,9,4,7,0,0x80000000));
         CHECK(!m68k_irq_same_entry_valid(&c,&f,&b,9,3,8,0,0x80000000));
