@@ -39,6 +39,9 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-root-') as directory:
 
     config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
     assert config.syms['CONF_WITH_NATIVE_SCHED'].str_value=='y'
+    for name in ('CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP'):
+        config.syms[name].set_value(2)
+        assert config.syms[name].str_value=='y',name
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig',
         '--config',str(work/'config'),'--header',str(work/'autoconf.h'),

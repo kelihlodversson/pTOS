@@ -2708,7 +2708,7 @@ static BOOL sole_execution_thread(KPROC *process, KTHREAD *thread)
 
 static BOOL kproc_prepare_thread_exit_handoff_owned(KPROC *process, KTHREAD *thread)
 {
-    if (!process || process->user_copies || process->disposal_state != PROCESS_LIVE ||
+    if (!process || process->disposal_state != PROCESS_LIVE ||
         process->completed || !process->pd)
         return FALSE;
     if (thread && !sole_execution_thread(process, thread)) {
@@ -2719,7 +2719,9 @@ static BOOL kproc_prepare_thread_exit_handoff_owned(KPROC *process, KTHREAD *thr
 #endif
         return FALSE;
     }
-    if (!thread && process->threads) return FALSE;
+    /* A copy owned by another execution retains PROCESS resources, not this
+     * sibling's continuation. Only the final PROCESS handoff must wait. */
+    if (process->user_copies || (!thread && process->threads)) return FALSE;
     process->disposal_state = PROCESS_EXIT_HANDOFF;
     return TRUE;
 }

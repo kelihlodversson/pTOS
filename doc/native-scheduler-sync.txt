@@ -117,6 +117,20 @@ output and complete page retirement through actual architecture providers.
 It prints "native B1 copy operation and checked rollback: PASS". Hosted frame,
 resource and MMU endpoint models remain distinct from this native evidence.
 
+Copy operation versus sibling termination
+----------------------------------------
+An in-flight copy retains PROCESS/mapping resources; it does not own every
+sibling's continuation. Exit admission first permits the existing validated
+nonfinal THREAD handoff, then excludes the final PROCESS handoff while copies
+remain. Rejecting every sibling here sends xterm into its no-attached-THREAD
+fallback and panics. The production-owner host test holds A's copy while B
+exits normally and another sibling stops after group cancellation, checks the
+first group status cannot be overwritten, proves A's final handoff is blocked
+until copy end, then reaps all three execution owners with exact conservation.
+CPU departure itself is modeled in this targeted test; native architecture
+handoff tests remain separate evidence. A's own cleanup scope continues to
+prevent cancellation delivery during its active copy.
+
 Native 68030 ROM footprint
 -------------------------
 The full owner/admission kernel exceeds the original 256-KB 030 image. Passing

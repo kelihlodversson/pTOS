@@ -53,6 +53,10 @@ void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
 BOOL ksched_wait_ready(BOOL (*ready)(void *),void *argument)
 { return ready(argument); }
 void proc_exec_owner_exit(KPROC *p) { (void)p; }
+void proc_dispose_process(KPROC *p) { (void)p;abort(); }
+static unsigned executions_reaped;
+static void copy_execution_reap(void *resource)
+{ CHECK(resource && !kowner_locked());executions_reaped++; }
 #endif
 int main(void)
 {
@@ -133,6 +137,36 @@ int main(void)
         CHECK(backend.releases==released+1 && !aspace_translate(&backend,address,NULL,NULL));
         CHECK(!kaspace_mmap(space)->regions && !process->user_copies);
     }
+#if CONF_WITH_NATIVE_SCHED
+    {
+        int execution[3];
+        UWORD status;
+        KTHREAD *a=kthread_create(&child),*b=kthread_create(&child),*c;
+        CHECK(a && b);
+        CHECK(kthread_set_execution(a,&execution[0],copy_execution_reap));
+        CHECK(kthread_set_execution(b,&execution[1],copy_execution_reap));
+        CHECK(kthread_start(a) && kthread_start(b));
+        process->started=TRUE;process->threaded=TRUE;
+        address=kproc_mmap(&child,0,USER_PAGE_SIZE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,0,0);
+        CHECK(address>0 && kproc_user_copy_begin(&copy,address,sizeof(input),TRUE)==E_OK);
+        CHECK(kproc_prepare_thread_exit_handoff(process,b));
+        CHECK(kthread_finish_exit(b,7) && kthread_reap(b));
+        CHECK(process->user_copies==1 && process->disposal_state==PROCESS_LIVE && executions_reaped==1);
+        c=kthread_create(&child);CHECK(c);
+        CHECK(kthread_set_execution(c,&execution[2],copy_execution_reap) && kthread_start(c));
+        CHECK(kproc_request_group_exit(process,61) && kproc_request_group_exit(process,62));
+        CHECK(kproc_group_status(process,&status) && status==61 && !kthread_create(&child));
+        CHECK(kproc_prepare_thread_exit_handoff(process,c));
+        CHECK(kthread_finish_exit(c,status) && kthread_reap(c));
+        CHECK(executions_reaped==2 && !kproc_prepare_thread_exit_handoff(process,a));
+        CHECK(process->disposal_state==PROCESS_LIVE && kproc_user_copy_write(&copy,&input));
+        kproc_user_copy_end(&copy);
+        CHECK(kproc_prepare_thread_exit_handoff(process,a));
+        CHECK(kthread_finish_exit(a,status) && kthread_reap(a));
+        CHECK(!process->threads && !process->user_copies && executions_reaped==3);
+        puts("Retained copy permits ordinary/cancelled sibling stop, preserves first group status, and excludes final PROCESS handoff: PASS (production owners; CPU modeled)");
+    }
+#endif
     kproc_destroy(&child);kaspace_put(space);
     CHECK(allocations==frees);
     puts("PROCESS user-copy operations: independent rights, lazy backing, unmap/teardown exclusion, checked failures and exact conservation: PASS (MMU model)");
