@@ -22,10 +22,16 @@ with tempfile.TemporaryDirectory(prefix='ptos-irq-restart-') as directory:
     k = kconfiglib.Kconfig(warn_to_stderr=False)
     k.load_config('configs/pc-x86_64_defconfig')
     k.load_config('tools/hosted-legacy-profile.config', replace=False)
-    for name in ('NATIVE_SCHED', 'PCLONE', 'PTERMGRP', 'PRIVATE_CLONE',
+    assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
+    for name in ('NATIVE_SCHED', 'PCLONE', 'PTHJOIN', 'PTERMGRP', 'MMAP', 'PRIVATE_CLONE',
                  'PRIVATE_CLONE_TEST', 'IRQ_RESTART_TEST'):
         k.syms['CONF_WITH_' + name].set_value(2)
     assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
+    for dependency in ('CONF_WITH_MMAP', 'CONF_WITH_PTHJOIN'):
+        k.syms[dependency].set_value(0)
+        assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
+        k.syms[dependency].set_value(2)
+        assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
     k.write_config(str(work / 'config'))
     subprocess.run(['python3', 'tools/genconfig.py', '--kconfig', 'Kconfig',
                     '--config', str(work / 'config'), '--header', str(work / 'autoconf.h'),
