@@ -375,9 +375,17 @@ irq_fpu_last:
         movea.l %d1,%a4
         movea.l %d1,%a5
 #if defined(PREEMPT_PATTERN)
+#ifdef TEST_WITH_M68K_ROM
+        /* Cycle-driven ROM emulation: four windows still require a real
+         * saved IRQ / peer USER / architectural-return witness per pattern. */
+        move.l #1000000,%d0
+#else
         move.l #8000000,%d0
+#endif
 #elif defined(TEST_WITH_IRQ_RESTART)
         move.l #40000000,%d0
+#elif defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_M68K_ROM)
+        move.l #400000,%d0
 #else
         move.l #4000000,%d0
 #endif
