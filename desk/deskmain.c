@@ -438,6 +438,10 @@ static LONG desktop_set_cache(void)
 
 #if CONF_DEBUG_DESK_STACK
 extern LONG deskstackbottom[]; /* defined in deskstart.S */
+#if CONF_DEBUG_STACK_CI_END
+extern LONG aes_stack_trace_finish(void);
+static WORD stack_ci_entries;
+#endif
 
 static void display_free_stack(void)
 {
@@ -449,6 +453,10 @@ static void display_free_stack(void)
 
     kprintf("Desktop stack has %ld bytes available\n",
             (p-deskstackbottom)*sizeof(LONG));
+#if CONF_DEBUG_STACK_CI_END
+    if (++stack_ci_entries == 3)
+        Supexec((LONG)aes_stack_trace_finish);
+#endif
 }
 #else
 #define display_free_stack()

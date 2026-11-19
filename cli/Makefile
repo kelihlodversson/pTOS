@@ -25,6 +25,7 @@ include ../version.mk
 
 TARGET = emucon.tos
 ARCH ?= m68k
+M68K_LRA_FLAGS = $(if $(filter m68k-y,$(ARCH)-$(BUILD_M68K_LRA)),-mlra)
 
 # libcmini provides the C library, GEMDOS/BIOS/XBIOS bindings, and startup
 # code (crt0) for this standalone program, replacing the private trap
@@ -36,9 +37,9 @@ LIBCMINI_INC      = $(LIBCMINI_DIR)/include
 # silently relink against a libcmini.a built for the other architecture.
 # The top-level Makefile solves the same problem with a staleness-stamp
 # file instead (LIBCMINI_STAMP); a separate directory per ARCH is enough
-# here since this Makefile only ever builds one ARCH per invocation, so
-# there's nothing to compare against -- just two possible locations.
-LIBCMINI_BUILDDIR = $(abspath libcmini-build-$(ARCH))
+# here since this Makefile only ever builds one ARCH per invocation. m68k
+# LRA uses a separate directory too, so toggling it cannot reuse stale code.
+LIBCMINI_BUILDDIR = $(abspath libcmini-build-$(ARCH)$(if $(M68K_LRA_FLAGS),-lra))
 LIBCMINI_MAKE     = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) CROSSPREFIX=$(CROSS_COMPILE)
 LIBCMINI_OBJDIR   = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0     = $(LIBCMINI_OBJDIR)/minicrt0.o
@@ -72,7 +73,10 @@ LIBCMINI_DEFCONFIG = mintelf_defconfig
 # toolchain's default (non -mshort) multilib, so this program has to
 # match it or every call across the boundary into libcmini (strlen(),
 # Bconin(), ...) would use a mismatched calling convention for plain int.
-ARCH_CFLAGS = -Wa,--register-prefix-optional
+# BUILD_M68K_LRA=y is passed by the top-level build, or selected explicitly
+# for a standalone build. Keep libcmini's ABI and this program's flags.
+ARCH_CFLAGS = -Wa,--register-prefix-optional $(M68K_LRA_FLAGS)
+LIBCMINI_MAKE += ARCH_CFLAGS="$(M68K_LRA_FLAGS)"
 # The bare m68k-elf toolchain (M68K_ELF=y, from the top level Makefile) makes
 # an ELF file, which pTOS's ELF loader needs as a relocatable image, as on
 # ARM; the others make a PRG.
@@ -151,7 +155,7 @@ HEADERS = cmd.h
 # up to date, and creating it must force them to be rebuilt.  Only objects go:
 # the generated sources in ml/ do not depend on any of the three, and removing
 # them while a parallel make has already looked at their times would break it.
-STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)$(if $(filter 1,$(CLI_SSYSTEM)),-ss)
+STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)$(if $(filter 1,$(CLI_SSYSTEM)),-ss)$(if $(M68K_LRA_FLAGS),-lra)
 $(OBJECTS) version.c: $(STAMP)
 $(STAMP):
 	-rm -f ml/*.o *.o version.c $(TARGET) .arch-*
@@ -227,7 +231,7 @@ $(TARGET): $(LIBCMINI_CRT0) $(OBJECTS) $(LIBCMINI_LIB)
 clean:
 	-rm -rf ml *.o version.c .arch-*
 	-rm -f $(TARGET)
-	-rm -rf libcmini-build-m68k libcmini-build-arm
+	-rm -rf libcmini-build-m68k libcmini-build-m68k-lra libcmini-build-arm
 
 #
 # version string

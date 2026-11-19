@@ -645,6 +645,26 @@ config CPUFLAGS
 	  Passed to the compiler and to the linker to select the instruction
 	  set of the generated code.
 
+config BUILD_M68K_LRA
+	bool "Use GCC's LRA register allocator (m68k only)"
+	depends on ARCH_M68K
+	default y if BUILD_TOOLCHAIN_PTOS && \
+		(CROSS_COMPILE = "" || CROSS_COMPILE = "m68k-unknown-ptos-prgelf-") && \
+		"$(shell,sh tools/check-m68k-lra.sh)" = "y"
+	help
+	  Pass -mlra to the compiler for m68k builds, including libcmini,
+	  test programs and links that generate code with LTO. LRA usually
+	  produces smaller ROM code than the old reload allocator.
+
+	  Defaults to y only for the standard pTOS toolchain when
+	  m68k-unknown-ptos-prgelf-gcc is installed, reports GCC 16 or newer
+	  and supports -mlra. Other toolchains and nonstandard prefixes default
+	  to n; enable this manually if your compiler supports it.
+	  Use SDK 1.0.3 or newer for the m68k LRA address-displacement fix.
+
+	  Disable this option to use the compiler's default allocator.
+	  Prebuilt SDK libraries, including libgcc, are unaffected.
+
 config CONF_WITH_MFASTCALL
 	bool "Use the -mfastcall calling convention (m68k only)"
 	depends on ARCH_M68K_CLASSIC

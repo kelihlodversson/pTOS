@@ -31,7 +31,8 @@ CONFIG_ :=
 export CONFIG_
 
 KCONFIG_TOP = Kconfig
-KCONFIG_SOURCES = $(KCONFIG_TOP) $(wildcard Kconfig.*) $(wildcard */Kconfig)
+KCONFIG_SOURCES = $(KCONFIG_TOP) $(wildcard Kconfig.*) $(wildcard */Kconfig) \
+                  tools/check-m68k-lra.sh
 
 DEFCONFIG_DIR = configs
 DEFCONFIGS = $(sort $(notdir $(wildcard $(DEFCONFIG_DIR)/*_defconfig)))

@@ -50,7 +50,7 @@ C_SYM(deskstart):
 fill:
         move.l  d0,(a0)+
         cmpa.l  a0,a1
-        jge     fill
+        jgt     fill                    // deskustack is the exclusive upper bound
 #endif
 
 restart:
