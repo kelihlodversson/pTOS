@@ -103,6 +103,7 @@ static BOOL automatic_hold(KTHREAD_CONTEXT *c,VADDR pc,VADDR sp)
     KASPACE *space=NULL;
     ULONG tid=0;
     KTHREAD *thread;
+    VADDR stack_view=sp-1;
     if (!ksched_preempt_due() || !pc || !sp ||
         ksched_interrupt_target(run,&space,&tid)!=c) return FALSE;
     thread=ksched_exit_thread(run);
@@ -114,9 +115,17 @@ static BOOL automatic_hold(KTHREAD_CONTEXT *c,VADDR pc,VADDR sp)
     if (!owner_valid(c)) return FALSE;
     if (!kaspace_irq_activate(r->code,space,pc,ASPACE_PROT_USER|ASPACE_PROT_EXEC)) return FALSE;
     r->reap_pending=TRUE; /* retargeting may unblock an older source pin */
-    if (!kaspace_irq_activate(r->stack,space,sp-1,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) return FALSE;
+    if (!kaspace_irq_activate(r->stack,space,stack_view,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) {
+        /* A page-aligned USER SP can be the bottom of its resident page,
+         * with a guard below. Prefer the existing exclusive-top view, but
+         * admit that resident page when the preceding page has no authority.
+         * Both attempts use the same preallocated lease and exact rights. */
+        if ((sp&(USER_PAGE_SIZE-1)) ||
+            !kaspace_irq_activate(r->stack,space,sp,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) return FALSE;
+        stack_view=sp;
+    }
     r->code_address=pc&~(VADDR)(USER_PAGE_SIZE-1);r->code_bytes=USER_PAGE_SIZE;
-    r->stack_address=(sp-1)&~(VADDR)(USER_PAGE_SIZE-1);r->stack_bytes=USER_PAGE_SIZE;
+    r->stack_address=stack_view&~(VADDR)(USER_PAGE_SIZE-1);r->stack_bytes=USER_PAGE_SIZE;
     return TRUE;
 }
 void interrupt_restart_reap(KTHREAD_CONTEXT *c)

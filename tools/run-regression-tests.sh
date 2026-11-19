@@ -843,6 +843,10 @@ if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1' "$top/obj/autoconf.h"; then
         if ! grep -aq 'native timer ARM exclusive monitor ownership: PASS' "$suite_log"; then
             record "native timer ARM exclusives" FAIL "a THREAD consumed a peer exclusive reservation or failed to progress"
         fi
+        if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+           ! grep -aq 'native timer ARM stack boundary ownership: PASS' "$suite_log"; then
+            record "native timer ARM stack boundaries" FAIL "guarded stack-bottom and exclusive-top handoffs were not proved"
+        fi
         ;;
     esac
     if ! grep -aq 'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS' "$suite_log"; then

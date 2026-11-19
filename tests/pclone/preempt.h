@@ -20,9 +20,11 @@ struct preempt_worker {
     unsigned role;volatile unsigned error;
     volatile unsigned long *turn,*steps;
     volatile int32_t *pid,*tid;
+    void *boundary_sp;
 };
 typedef char preempt_loop_layout[offsetof(struct preempt_worker,turn)==8 &&
-                                offsetof(struct preempt_worker,steps)==12?1:-1];
+                                offsetof(struct preempt_worker,steps)==12 &&
+                                offsetof(struct preempt_worker,boundary_sp)==24?1:-1];
 static struct preempt_worker preempt_workers[2];
 static void preempt_entry(void *argument)
 {
@@ -77,6 +79,35 @@ static int preempt_run(void (*entry)(void *))
     }
     return okay;
 }
+#if defined(__arm__) && defined(TEST_WITH_MMAP)
+static void preempt_stack_boundaries(void)
+{
+    extern void preempt_guard_stack_loop(void *);
+    long area[2]={0,0};
+    unsigned i,top;
+    int okay=1;
+    for(i=0;i<2;i++) {
+        area[i]=clone_test_sys6(GEMDOS_MMAP,0,12288,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+        ptest_assert_msg(area[i]>0,"allocate guarded timer stack fixture");
+        if(area[i]<=0) {okay=0;break;}
+        *(volatile unsigned long *)(uintptr_t)(area[i]+4096)=0;
+        if(clone_test_sys6(GEMDOS_MPROT,area[i],4096,PROT_NONE,0,0,0) ||
+           clone_test_sys6(GEMDOS_MPROT,area[i]+8192,4096,PROT_NONE,0,0,0))okay=0;
+        ptest_assert_msg(okay,"guard both sides of the resident stack page");
+    }
+    if(okay)for(top=0;top<2;top++) {
+        for(i=0;i<2;i++)preempt_workers[i].boundary_sp=(void *)(uintptr_t)(area[i]+4096+top*4096);
+        if(!preempt_run(preempt_guard_stack_loop))okay=0;
+    }
+    for(i=0;i<2;i++)if(area[i]>0) {
+        int released=clone_test_sys6(GEMDOS_MUNMAP,area[i],12288,0,0,0,0)==0;
+        ptest_assert_msg(released,"retire guarded stack mapping after both owners depart");
+        if(!released)okay=0;
+    }
+    ptest_assert_msg(okay,"timer handshakes resume stack-bottom and exclusive-top USER SPs");
+    if(okay)conws("native timer ARM stack boundary ownership: PASS\r\n");
+}
+#endif
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
 static void preempt_image_patterns(void)
 {
@@ -179,6 +210,9 @@ static void preempt_private_patterns(void)
         ptest_assert_msg(child[i]>0,"public Pfork prepares independent timer/FPU context");
         if(child[i]<=0)okay=0;
     }
+    /* Discard the independently loaded pair's witnesses before either
+     * private child can enter its register observation window. */
+    (void)pclone_trap(0,0xc713c101UL);
     fd=Fcreate("PREEMPG.ON",0);
     ptest_assert_msg(fd>=0,"release both privately owned register-pattern peers");
     if(fd>=0)(void)Fclose((short)fd);else okay=0;
@@ -187,6 +221,11 @@ static void preempt_private_patterns(void)
         int success=(status>>16)==child[i] && !(status&65535);
         ptest_assert_msg(success,"timer-preempted private root preserves original/alternate GPR and FPU state");
         if(!success)okay=0;
+    }
+    {
+        long patterns=pclone_trap(0,0xc713c102UL);
+        ptest_assert_msg(patterns==3,"both private children returned from IRQ after peer USER execution");
+        if(patterns!=3)okay=0;
     }
     ptest_assert_msg(Fdelete("PREEMPG.ON")==0,"retire register-peer file gate");
     conws(okay?"native timer public-Pfork private-root GPR/FPU patterns: PASS\r\n":
@@ -384,6 +423,9 @@ static void test_preempt(void)
     int okay;
 #if defined(__arm__)
     preempt_exclusive_ownership();
+#if defined(TEST_WITH_MMAP)
+    preempt_stack_boundaries();
+#endif
 #endif
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
     preempt_image_patterns();

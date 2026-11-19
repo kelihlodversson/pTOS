@@ -19,8 +19,9 @@ static KTHREAD thread;
 static KTHREAD_CONTEXT execution;
 static BOOL target=TRUE,cleanup,cancelled,peer=TRUE,critical;
 static BOOL resident_code=TRUE,resident_stack=TRUE;
+static VADDR stack_first=STACK,stack_end=STACK+8192;
 #if CONF_WITH_NATIVE_PREEMPT
-static BOOL owned_code=TRUE;
+static BOOL owned_code=TRUE,owned_stack=TRUE;
 #endif
 static unsigned allocations,frees,destroys,fail_alloc,cancel_calls;
 static UQUAD selected=4,user_observed=3;
@@ -44,7 +45,7 @@ BOOL aspace_translate(const ASPACE *as,VADDR va,PADDR *pa,UWORD *rights)
     UWORD protection=ASPACE_PROT_USER;
     assert(as->alive);
     if(va>=CODE && va<CODE+4096 && resident_code)protection|=ASPACE_PROT_EXEC;
-    else if(va>=STACK && va<STACK+8192 && resident_stack)protection|=ASPACE_PROT_WRITE;
+    else if(va>=stack_first && va<stack_end && resident_stack)protection|=ASPACE_PROT_WRITE;
     else return FALSE;
     if(pa)*pa=va;
     if(rights)*rights=protection;
@@ -53,10 +54,10 @@ BOOL aspace_translate(const ASPACE *as,VADDR va,PADDR *pa,UWORD *rights)
 BOOL aspace_logical_protection(const ASPACE *as,VADDR va,UWORD *rights)
 { return aspace_translate(as,va,NULL,rights); }
 BOOL aspace_private_range_ok(const ASPACE *as,VADDR va,VADDR bytes)
-{ (void)as;return bytes && (va==CODE || va==STACK); }
+{ (void)as;return bytes && (va==CODE || (va>=STACK && va<STACK+8192)); }
 #if CONF_WITH_NATIVE_PREEMPT
 BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
-{ return (va!=CODE || owned_code) && aspace_private_range_ok(as,va,bytes); }
+{ return (va==CODE?owned_code:owned_stack) && aspace_private_range_ok(as,va,bytes); }
 BOOL aspace_retired_pin_overlap(const ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;(void)va;(void)bytes;return FALSE; }
 BOOL aspace_retired_pin_next(const ASPACE *as,VADDR from,VADDR *va,VADDR *bytes)
@@ -292,6 +293,32 @@ int main(void)
         }
     }
     assert(patterns==3);peer=TRUE;
+    /* A32 may keep SP at the bottom of a resident page, with a guard below.
+     * An exclusive top instead needs the resident page below SP. Both views
+     * must retain their actual page and retire after the same root ACK. */
+    for(i=0;i<4;i++) {
+        VADDR sp=i==1?STACK+8192:STACK+4096+(i==3?4:0);
+        VADDR held=i==2?STACK:STACK+4096;
+        stack_first=i==2?STACK:STACK+4096;
+        capture();execution.interrupted_user.image.rsp=sp;quantum.pending=TRUE;
+        critical=TRUE;
+        resident_stack=FALSE;
+        assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,sp));
+        resident_stack=TRUE;owned_stack=FALSE;
+        assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,sp));
+        owned_stack=TRUE;
+        assert(interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,sp));
+        assert(execution.irq_restart.stack_address==held && execution.irq_restart.stack_bytes==4096);
+        assert(!kaspace_mapping_can_change(&backend,held,4096));
+        critical=FALSE;
+        assert(interrupt_restart_suspend(&execution));
+        critical=TRUE;
+        assert(interrupt_restart_return_valid(&execution));interrupt_restart_ack(&execution);
+        critical=FALSE;interrupt_restart_user_entry();
+        assert(kaspace_mapping_can_change(&backend,held,4096));
+        assert(allocations-frees==baseline+2);
+    }
+    stack_first=STACK;
     {
         KASPACE_RESERVATION_HOLD image={0};
         KASPACE_RESERVATION_INFO info={CODE,4096,0,ASPACE_PROT_USER|ASPACE_PROT_EXEC,0};
@@ -316,11 +343,12 @@ int main(void)
     }
     /* A CPU-bound cancelled user must still reach the existing safe cancel
      * checkpoint: cancellation is not a reason to refuse automatic departure. */
+    stack_first=STACK+4096; /* cancellation must also depart from a bottom SP */
     cancelled=TRUE;ksched_quantum_reset(&quantum);freeze();
     if(!setjmp(exit_resume)) { (void)interrupt_restart_suspend(&execution);abort(); }
     assert(cancel_calls==1);
     execution.on_cpu=FALSE;interrupt_restart_dispose(&execution);execution.on_cpu=TRUE;
-    cancelled=FALSE;assert(allocations-frees==baseline);
+    cancelled=FALSE;stack_first=STACK;assert(allocations-frees==baseline);
     assert(interrupt_restart_reserve(&execution.irq_restart)==E_OK);quantum.pending=TRUE;freeze();
     assert(interrupt_restart_suspend(&execution));interrupt_restart_ack(&execution);
     kaspace_put(process.space);assert(!destroys);

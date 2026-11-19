@@ -155,8 +155,58 @@ int main(void)
     okay, message = run('wake', wake)
     check('busy-window wake verdict', okay, message)
 
+    # A completed register loop alone cannot prove either fork child was
+    # timer-preempted. Run the actual private-pair verdict with stale image
+    # witnesses, both fresh patterns, one fresh pattern, and a failed child.
+    private_probe = function(preempt, 'static void preempt_private_patterns(')
+    private_model = r'''#include <stdio.h>
+#include <string.h>
+static unsigned mode,patterns,resets,gate_bad,failures,passes,children;
+static void ptest_assert_msg(int yes,const char *s){(void)s;if(!yes)failures++;}
+static void conws(const char *s){if(strstr(s,"private-root GPR/FPU patterns: PASS"))passes++;}
+static long Pfork(void){return ++children;}
+static long Fdelete(const char *s){(void)s;return 0;}
+static long Fopen(const char *s,int flags){(void)s;(void)flags;return 1;}
+static long Fclose(short fd){(void)fd;return 0;}
+static long Fcreate(const char *s,int flags){(void)s;(void)flags;gate_bad=resets!=1;return 1;}
+static long Syield(void){return 0;}
+static void Pterm(short status){(void)status;}
+long clone_preempt_registers(void){return 0;}
+long clone_preempt_registers_alt(void){return 0;}
+long pclone_trap(const void *p,unsigned long op)
+{
+ (void)p;
+ if(op==0xc713c101UL){resets++;patterns=0;return 0;}
+ if(op==0xc713c102UL)return patterns;
+ return -32;
+}
+static long Pwaitpid(long pid,int flags,void *usage)
+{
+ (void)flags;(void)usage;
+ if(mode==1||mode==3)patterns|=1U<<(pid-1);
+ if(mode==2&&pid==1)patterns|=1;
+ return (pid<<16)|((mode==3&&pid==2)?83:0);
+}
+''' + private_probe + r'''
+int main(void)
+{
+ for(mode=0;mode<4;mode++){
+  patterns=3;resets=gate_bad=failures=passes=children=0;
+  preempt_private_patterns();
+  if((mode==1&&(failures||passes!=1||gate_bad))||
+     (mode!=1&&(!failures||passes))){
+   fprintf(stderr,"private-pair mode %u accepted stale/missing evidence: failures=%u passes=%u resets=%u patterns=%u\n",mode,failures,passes,resets,patterns);
+   return 1;
+  }
+ }
+ return 0;
+}
+'''
+    okay, message = run('private-witness', private_model)
+    check('fresh private-pair timer witnesses', okay, message)
+
 if failed:
     raise SystemExit('Native timer fixture regressions: ' + ', '.join(failed))
-print('Native timer fixtures: four helper profiles and four wake orderings: PASS (host models)')
+print('Native timer fixtures: four helper profiles, four wake orderings and four private-pair witnesses: PASS (host models)')
 if ready_checked:
     print('Native timer readiness: interrupted x32 read/modify/write retains both bits: PASS (host fault model)')

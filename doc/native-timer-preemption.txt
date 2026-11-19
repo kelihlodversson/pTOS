@@ -56,7 +56,12 @@ The slots are not extra root owners or another ownership registry.
 
 At an eligible IRQ tail, bounded metadata operations insert these preallocated
 records into the same mapping lease ledger. They hold the resident executable
-PC page and the user stack page below SP. Ownership may be an ASPACE-owned
+PC page and a resident user stack page adjacent to SP. The page below SP is
+preferred for an exclusive stack top. If an aligned SP is the bottom of its
+resident page and the preceding page is absent, guarded or unowned, that
+resident page at SP may be held with the same exact USER/logical-write rights.
+The selected page is recorded consistently for return validation/retirement.
+Ownership may be an ASPACE-owned
 leaf (including its file-cache reference), an exact live procmem pin already
 owned by that ASPACE, or the existing canonical captured-backing ledger. PRG
 code is not mistaken for a private physical allocation: the root's pin is
@@ -296,3 +301,17 @@ and early, overlapping, failed and late wake models. The former code lost a
 readiness bit, failed the no-Mmap compile and accepted a wake after the loop
 ended. These are deterministic host fixture checks, not native IRQ evidence;
 the native timer lanes still require the complete execution witnesses.
+
+The stack-bottom admission regression fails against the former sp-1-only
+selection. Production transaction models verify bottom/top/unaligned SPs,
+absent/unowned refusal, cancellation and unchanged allocation/reference counts.
+The native ARM probe puts guards on both sides of a resident page, keeps SP
+exactly at its bottom or exclusive top in a stackless assembly handshake, and
+requires repeated non-yielding PROCESS and sibling THREAD progress in both
+cases. Its own mandatory verdict cannot be replaced by an ordinary stack run.
+
+Private-Pfork register proof resets the per-CPU delayed-return witnesses before
+opening that pair's gate and requires both fresh patterns after both joins.
+Independently loaded-image witnesses cannot satisfy its verdict. Host fixture
+models reject stale bits, one fresh pattern and a failed child; only both fresh
+patterns plus successful register comparisons may produce the private PASS.

@@ -88,4 +88,41 @@ C_SYM(preempt_file_loop):
         rts
 #endif
 C_SYM(preempt_file_loop_end):
+#if defined(__arm__)
+        .arm
+        .align 2
+        .globl C_SYM(preempt_guard_stack_loop)
+/* Keep the original caller stack retained, then run the entire handshake
+ * with SP exactly at the guarded page's bottom or exclusive top. No calls,
+ * stack accesses or voluntary dispatch occur in this observation window. */
+C_SYM(preempt_guard_stack_loop):
+        push {r4-r9,lr}
+        mov r9,sp
+        ldr sp,[r0,#24]
+        mov r4,r0
+        ldr r5,[r4]
+        ldr r6,[r4,#8]
+        ldr r7,[r4,#12]
+        mov r8,#0
+5:      movw r12,#0xca00
+        movt r12,#0x3b9a
+6:      ldr r1,[r6]
+        cmp r1,r5
+        beq 7f
+        subs r12,r12,#1
+        bne 6b
+        mov r0,#1
+        str r0,[r4,#4]
+        b 8f
+7:      ldr r0,[r7,r5,lsl #2]
+        add r0,r0,#1
+        str r0,[r7,r5,lsl #2]
+        eor r0,r5,#1
+        str r0,[r6]
+        add r8,r8,#1
+        cmp r8,#16
+        blt 5b
+8:      mov sp,r9
+        pop {r4-r9,pc}
+#endif
         .section .note.GNU-stack,"",%progbits
