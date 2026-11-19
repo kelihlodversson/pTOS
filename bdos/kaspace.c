@@ -91,6 +91,7 @@ static BOOL snapshot_live(const KASPACE_LEASE *lease)
 }
 static BOOL reservation_lookup(KASPACE *space,VADDR address,VADDR bytes,
                                KASPACE_RESERVATION_INFO *result,BOOL pending);
+static BOOL independent_backing_owner(KASPACE *,VADDR,VADDR,UWORD,BOOL);
 static BOOL reservation_range_matches(KASPACE *space,UQUAD birth,VADDR address,VADDR bytes,UWORD rights)
 {
     VADDR at=address,end=address+bytes;
@@ -486,7 +487,8 @@ BOOL kaspace_irq_activate(KASPACE_LEASE *lease,KASPACE *space,VADDR address,UWOR
         !aspace_translate(space->backend,page,NULL,&logical_rights) ||
 #endif
         (logical_rights&access)!=access ||
-        !aspace_private_range_ok(space->backend,page,USER_PAGE_SIZE)) goto done;
+        (!aspace_irq_range_owned(space->backend,page,USER_PAGE_SIZE) &&
+         !independent_backing_owner(space,page,USER_PAGE_SIZE,access,TRUE))) goto done;
     /* A COW stack may be resident read-only: RTE/RFE/IRETQ does not write
      * user memory. The existing COW path retains its logical write authority. */
     /* The existing KTHREAD owns this root through execution reclamation.

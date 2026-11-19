@@ -420,6 +420,12 @@ BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes);
 /* Resident privately owned non-file-cache pages only, for execution holds.
  * Borrowed/procmem pages require another owner and are deliberately excluded. */
 BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
+#if CONF_WITH_NATIVE_PREEMPT
+/* Resident leaves or exact live procmem pins already owned by this ASPACE,
+ * including file-cache references. IRQ lifetime authority does not transfer
+ * allocation/cleanup rights, move cache pages or bless bare PD/device aliases. */
+BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes);
+#endif
 
 #if ARCH_HAS_DEMAND_PAGING
 /*

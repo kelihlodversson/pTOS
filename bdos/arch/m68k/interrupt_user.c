@@ -174,8 +174,8 @@ ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame)
      * entry prefix after a handler, nor recapture after the handoff. */
     if (!restart_binding(space,frame,&b) ||
         !m68k_irq_same_entry_valid(c,frame,&b,execution->identity,c->sequence,tid,
-                                  execution->owner_cpu,USER_VA_LIMIT) ||
-        !interrupt_restart_admit(execution,c->sequence,frame->pc,frame->usp)) return 0;
+                                  execution->owner_cpu,USER_VA_LIMIT)) return 0;
+    if (!interrupt_restart_admit(execution,c->sequence,frame->pc,frame->usp)) return 0;
     (void)interrupt_restart_suspend(execution);
     if (!interrupt_restart_return_valid(execution) || !restart_binding(space,frame,&b) ||
         memcmp(&b,&c->binding,sizeof(b)) || !m68k_irq_user_valid(&c->image,&b,USER_VA_LIMIT) ||

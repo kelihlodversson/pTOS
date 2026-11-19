@@ -454,10 +454,56 @@ static void duplicate_borrow_reference(void)
     CHECK(!pins(p) && procmem_free(p));kaspace_put(space);
 }
 
+#if CONF_WITH_NATIVE_PREEMPT
+static void interrupt_pin_authority(void)
+{
+    ASPACE *as=aspace_create();
+    KASPACE *space=kaspace_adopt(as);
+    KASPACE_LEASE *slot=NULL;
+    void *p=procmem_alloc(TEST_PAGE,0),*q=procmem_alloc(TEST_PAGE,0);
+    VADDR va=(VADDR)(uintptr_t)p;
+    UWORD rights=ASPACE_PROT_USER|ASPACE_PROT_EXEC;
+    int canonical;
+    CHECK(as && space && p && q && procmem_set_owner(p,&canonical));
+    selected_root=aspace_root(as);
+    /* A matching numeric translation without the root's retained pin is
+     * still a foreign alias. No USER frame can turn it into ownership. */
+    CHECK(aspace_map_page(as,va,procmem_phys_of(va),rights));
+    CHECK(!aspace_irq_range_owned(as,va,TEST_PAGE));
+    CHECK(aspace_map_procmem(as,va,TEST_PAGE,rights));
+    CHECK(aspace_irq_range_owned(as,va,TEST_PAGE));
+    CHECK(!aspace_private_range_ok(as,va,TEST_PAGE));
+    CHECK(aspace_map_page(as,va,procmem_phys_of((VADDR)(uintptr_t)q),rights));
+    CHECK(!aspace_irq_range_owned(as,va,TEST_PAGE));
+    CHECK(aspace_map_page(as,va,procmem_phys_of(va),rights));
+    as->pins[0].retired=TRUE;
+    CHECK(!aspace_irq_range_owned(as,va,TEST_PAGE));
+    as->pins[0].retired=FALSE;
+    CHECK(kaspace_irq_reserve(&slot)==E_OK);
+    CHECK(kaspace_irq_activate(slot,space,va,rights));
+    CHECK(!kaspace_mapping_can_change(as,va,TEST_PAGE));
+    /* Source PD allocation retirement cannot reclaim the root's pin or
+     * saved continuation. IRQ acquisition borrows no cleanup token. */
+    procmem_free_owned(&canonical,NULL);
+    CHECK(procmem_size(p) && pins(p)==1 && !procmem_owner(p));
+    CHECK(aspace_irq_range_owned(as,va,TEST_PAGE));
+    kaspace_irq_park(slot);
+    CHECK(kaspace_mapping_can_change(as,va,TEST_PAGE));
+    kaspace_lease_release(&slot);
+    aspace_unborrow(as,va,TEST_PAGE);
+    CHECK(!procmem_size(p) && !aspace_irq_range_owned(as,va,TEST_PAGE));
+    CHECK(procmem_free(q));kaspace_put(space);
+    puts("Production IRQ pins: foreign/retired/mismatched aliases refused, source-PD-first retirement, exact lease/unpin conservation: PASS");
+}
+#endif
+
 int main(void)
 {
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
     failed_ownerless();overlapping_attempts();table_failures();successful_retirement();duplicate_borrow_reference();
+#if CONF_WITH_NATIVE_PREEMPT
+    interrupt_pin_authority();
+#endif
 #if defined(TEST_SHARED_PERMISSIONS)
     shared_permission_transactions();
 #if defined(__m68k__) && CONF_WITH_PRG_LOADER

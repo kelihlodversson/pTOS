@@ -4,6 +4,25 @@
  * and the original table vector until the entire borrow succeeds. Current
  * providers allocate without yielding, callbacks or user copy; preemption/SMP
  * require the documented owner/mapping locks, not local IRQ masking. */
+#if CONF_WITH_NATIVE_PREEMPT
+/* The ASPACE already owns these exact allocator pins independently of the
+ * original PD's lifetime. An IRQ lease can fence their ordinary unborrow;
+ * it never takes the PD's allocation, R1 token or cleanup authority. Reject
+ * an untracked alias, a retired pin or a mismatching physical translation. */
+static BOOL irq_procmem_pin_owned(const ASPACE *as,VADDR page,PADDR physical)
+{
+    ULONG i;
+    if (physical!=procmem_phys_of(page)) return FALSE;
+    for(i=0;i<as->npins;i++) {
+        VADDR first,last;
+        if (as->pins[i].retired || !as->pins[i].bytes) continue;
+        first=as->pins[i].va&~(VADDR)(USER_PAGE_SIZE-1);
+        last=(as->pins[i].va+as->pins[i].bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        if (page>=first && page<=last) return TRUE;
+    }
+    return FALSE;
+}
+#endif
 BOOL aspace_map_procmem(ASPACE *as,VADDR va,VADDR bytes,UWORD prot)
 {
     VADDR page,first,end;

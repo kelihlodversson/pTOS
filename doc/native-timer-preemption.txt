@@ -56,11 +56,17 @@ The slots are not extra root owners or another ownership registry.
 
 At an eligible IRQ tail, bounded metadata operations insert these preallocated
 records into the same mapping lease ledger. They hold the resident executable
-PC page and the user stack page below SP. Logical write authority is required
+PC page and the user stack page below SP. Ownership may be an ASPACE-owned
+leaf (including its file-cache reference), an exact live procmem pin already
+owned by that ASPACE, or the existing canonical captured-backing ledger. PRG
+code is not mistaken for a private physical allocation: the root's pin is
+checked against its original physical translation, excluding retired pins
+and untracked aliases. No original PD allocation/cleanup token is borrowed.
+Logical write authority is required
 for the stack; resident COW read-only hardware protection is permitted because
 architectural return does not write user memory. The existing COW path remains
 authoritative. Admission faults no pages and copies no user bytes. Missing,
-unowned, nonprivate or unsupported mappings refuse admission safely.
+unowned or unsupported mappings refuse admission safely.
 
 While suspended these ordinary held ranges exclude unmap/protection/retirement.
 After restored-frame validation, acknowledgment unlinks the two records without
@@ -97,6 +103,14 @@ Serial execution cannot satisfy this handshake. Native runners require its
 explicit timer-progress marker. Capture-only and B2 test evidence cannot
 substitute for that production-policy proof. The PR records exact sources,
 native/host results and outstanding acceptance per configuration.
+
+The position-independent assembly variant is written to an ordinary file and
+executed through a real private RX file mapping. It runs the same handshake
+without external references or traps, requiring actual file-cache execution
+to make progress. This covers a different ownership class from private pages
+and the original PRG image's root-owned allocator pins. Production backend
+host tests separately reject bare/retired/mismatched aliases and verify source
+PD retirement while the exact existing pin retains backing, then unpin once.
 
 Keep #713 open until its complete native, lifecycle, failure/conservation and
 review matrix is accepted. This implementation is not authorization to merge

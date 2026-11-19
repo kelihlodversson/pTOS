@@ -841,6 +841,10 @@ if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1' "$top/obj/autoconf.h"; then
     if ! grep -aq 'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS' "$suite_log"; then
         record "native timer preemption" FAIL "CPU-bound PROCESS/THREAD progress without voluntary yield was not proved"
     fi
+    if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native timer file-backed executable progress without Syield: PASS' "$suite_log"; then
+        record "native file-backed timer preemption" FAIL "CPU-bound file-cache execution was not proved"
+    fi
 fi
 if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
     if ! grep -aq 'native interrupted USER A IRQ / B USER execution / saved A restart: PASS' "$suite_log"; then

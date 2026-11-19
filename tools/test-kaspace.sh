@@ -5,6 +5,7 @@ python3 tools/test-scheduler-probes.py
 python3 tools/test-amiberry-config.py
 python3 tools/test-interrupt-restart.py
 python3 tools/test-interrupt-restart.py --preempt
+python3 tools/test-procmem-borrow.py --irq
 python3 tools/test-shared-root-mapping.py
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-kaspace.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM

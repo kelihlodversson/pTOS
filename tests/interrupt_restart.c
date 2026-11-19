@@ -19,6 +19,9 @@ static KTHREAD thread;
 static KTHREAD_CONTEXT execution;
 static BOOL target=TRUE,cleanup,cancelled,peer=TRUE,critical;
 static BOOL resident_code=TRUE,resident_stack=TRUE;
+#if CONF_WITH_NATIVE_PREEMPT
+static BOOL owned_code=TRUE;
+#endif
 static unsigned allocations,frees,destroys,fail_alloc,cancel_calls;
 static UQUAD selected=4,user_observed=3;
 static ULONG current_tid=17;
@@ -51,6 +54,10 @@ BOOL aspace_logical_protection(const ASPACE *as,VADDR va,UWORD *rights)
 { return aspace_translate(as,va,NULL,rights); }
 BOOL aspace_private_range_ok(const ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;return bytes && (va==CODE || va==STACK); }
+#if CONF_WITH_NATIVE_PREEMPT
+BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
+{ return (va!=CODE || owned_code) && aspace_private_range_ok(as,va,bytes); }
+#endif
 BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;(void)va;(void)bytes;return TRUE; }
 BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
@@ -255,6 +262,25 @@ int main(void)
         assert(kaspace_mapping_can_change(&backend,STACK,1));
         assert(allocations-frees==baseline+2);
         critical=FALSE;
+    }
+    {
+        KASPACE_RESERVATION_HOLD image={0};
+        KASPACE_RESERVATION_INFO info={CODE,4096,0,ASPACE_PROT_USER|ASPACE_PROT_EXEC,0};
+        void *owner=NULL;
+        owned_code=FALSE;capture();critical=TRUE;
+        assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,STACK+4096));
+        critical=FALSE;
+        info.identity=kaspace_reservation_next();
+        assert(kaspace_reservation_hold_captured(process.space,&info,CODE,4096,info.rights,
+                                               process.number,&process,&image)==E_OK);
+        freeze();assert(interrupt_restart_suspend(&execution));
+        /* The authentic existing captured-image witness may retire first;
+         * the IRQ's bounded resident view still excludes mapping destruction. */
+        assert(kaspace_reservation_release(&image,&owner) && owner==&process);
+        assert(!kaspace_mapping_can_change(&backend,CODE,1));
+        assert(interrupt_restart_return_valid(&execution));interrupt_restart_ack(&execution);
+        assert(kaspace_mapping_can_change(&backend,CODE,1));
+        assert(allocations-frees==baseline+2);owned_code=TRUE;
     }
     /* A CPU-bound cancelled user must still reach the existing safe cancel
      * checkpoint: cancellation is not a reason to refuse automatic departure. */
