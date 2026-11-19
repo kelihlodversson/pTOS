@@ -315,3 +315,10 @@ opening that pair's gate and requires both fresh patterns after both joins.
 Independently loaded-image witnesses cannot satisfy its verdict. Host fixture
 models reject stale bits, one fresh pattern and a failed child; only both fresh
 patterns plus successful register comparisons may produce the private PASS.
+
+The nested-launch MEMTEST worker also selects that exact-join child when
+preemption is enabled. Its child must join the creator's actual TID before
+producing the expected final 0x66 status, rather than racing its 0x44 return.
+The host fixture model runs the actual publication/join/completion branches
+with a forced child-first interleaving; the old selection deterministically
+left 0x44 final. The cooperative child selection remains unchanged.

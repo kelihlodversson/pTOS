@@ -76,7 +76,8 @@ static void worker(void *argument)
     if (w->kind==6) {
         static const char empty_tail[2]={0,0};
         if(CALL(0x4b,0,"C:\\X32HELLO.TOS",empty_tail)!=0) finish(94);
-        if(create(&workers[1],3,CLONE_VM|CLONE_SAME_PROCESS)<=0) finish(93);
+        if(create(&workers[1],CONF_WITH_NATIVE_PREEMPT ? 9 : 3,
+                  CLONE_VM|CLONE_SAME_PROCESS)<=0) finish(93);
         finish(0x44);
     }
     if (w->kind==1) finish(0x1234);

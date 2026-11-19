@@ -38,10 +38,10 @@ def check(label, okay, message):
 with tempfile.TemporaryDirectory(prefix='ptos-timer-review-') as directory:
     top = Path(directory)
 
-    def run(name, source):
+    def run(name, source, flags=()):
         path, executable = top / (name + '.c'), top / name
         path.write_text(source)
-        built = subprocess.run(cc + [
+        built = subprocess.run(cc + list(flags) + [
             '-std=gnu99', '-O2', '-Wall', '-Wextra', '-Werror',
             '-iquote', str(root / 'tests/pclone'), str(path), '-o', str(executable),
         ], capture_output=True, text=True, timeout=30)
@@ -205,8 +205,89 @@ int main(void)
     okay, message = run('private-witness', private_model)
     check('fresh private-pair timer witnesses', okay, message)
 
+    # Force a timer-equivalent child-first ordering at the actual kind-6
+    # publication branch. Reuse its actual child completion/join branches;
+    # register probes and the production scheduler remain native evidence.
+    threads = (root / 'tests/x32_probe/clone_threads.c').read_text()
+    child_join = function(threads, 'if(w->kind==8 || w->kind==9)')
+    nested_parent = function(threads, 'if (w->kind==6)')
+    final_child = function(threads, 'if (w->kind==3 || w->kind==9)')
+    ordering = r'''#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#define CONF_WITH_NATIVE_PREEMPT 1
+#define CLONE_VM 1
+#define CLONE_SAME_PROCESS 2
+#define GEMDOS_PTHJOIN 0x191
+struct worker {int kind;int32_t tid;};
+static struct worker workers[2]={{6,1},{0,2}};
+static pthread_t parent_thread,child_thread;
+static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t changed=PTHREAD_COND_INITIALIZER;
+static int waiting,child_done,parent_done,last_status,joins;
+static int errors,file_handle=8;
+static __thread int current;
+static long call(unsigned fn,uintptr_t a,uintptr_t b,uintptr_t c)
+{
+ (void)b;(void)c;
+ if(fn==0x4b||fn==0x47)return 0;
+ if(fn==0x40)return 2;
+ pthread_mutex_lock(&lock);
+ if(fn==GEMDOS_PTHJOIN){
+  if(current!=2||a!=1)abort();
+  joins++;waiting=1;pthread_cond_broadcast(&changed);
+  while(!parent_done)pthread_cond_wait(&changed,&lock);
+  pthread_mutex_unlock(&lock);return 0;
+ }
+ if(fn==0x4c){
+  last_status=(int)a;
+  if(current==1)parent_done=1;else child_done=1;
+  pthread_cond_broadcast(&changed);pthread_mutex_unlock(&lock);
+  pthread_exit(0);
+ }
+ abort();
+}
+#define CALL(fn,a,b,c) call(fn,(uintptr_t)(a),(uintptr_t)(b),(uintptr_t)(c))
+static void finish(int status){CALL(0x4c,status,0,0);abort();}
+static void error(unsigned bits){errors|=bits;}
+static long create(struct worker *,int,unsigned);
+static void worker(void *argument)
+{
+ struct worker *w=argument;
+''' + child_join + nested_parent + final_child + r'''
+}
+static void *dispatch(void *argument)
+{
+ struct worker *w=argument;current=w->tid;worker(w);return 0;
+}
+static long create(struct worker *w,int kind,unsigned flags)
+{
+ (void)flags;w->kind=kind;
+ if(pthread_create(&child_thread,0,dispatch,w))abort();
+ pthread_mutex_lock(&lock);
+ /* The child gets CPU before the creator's next USER instruction. */
+ while(!waiting&&!child_done)pthread_cond_wait(&changed,&lock);
+ pthread_mutex_unlock(&lock);return w->tid;
+}
+int main(void)
+{
+ if(pthread_create(&parent_thread,0,dispatch,&workers[0]))return 2;
+ pthread_join(parent_thread,0);pthread_join(child_thread,0);
+ if(last_status!=0x66||joins!=1||errors){
+  fprintf(stderr,"nested-launch siblings completed out of order: final=%x joins=%d errors=%d\n",last_status,joins,errors);
+  return 1;
+ }
+ pthread_cond_destroy(&changed);pthread_mutex_destroy(&lock);
+ return 0;
+}
+'''
+    okay, message = run('nested-completion', ordering, ('-pthread',))
+    check('nested-launch final sibling status', okay, message)
+
 if failed:
     raise SystemExit('Native timer fixture regressions: ' + ', '.join(failed))
 print('Native timer fixtures: four helper profiles, four wake orderings and four private-pair witnesses: PASS (host models)')
+print('Native timer nested-launch fixture: child-first interleaving retains final 0x66 status: PASS (host completion model)')
 if ready_checked:
     print('Native timer readiness: interrupted x32 read/modify/write retains both bits: PASS (host fault model)')
