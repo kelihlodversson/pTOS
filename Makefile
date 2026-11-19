@@ -1806,7 +1806,9 @@ endif
 # shared_vm tests shared-VM Pexec 4/104, which only m68k MMU kernels with the
 # native scheduler have (CONF_WITH_SHARED_VM_PEXEC). It stages its probe as a
 # PRG, which the legacy m68k-elf toolchain cannot link.
-ifneq ($(CONF_WITH_SHARED_VM_PEXEC)$(BUILD_TOOLCHAIN_ELF),y)
+ifneq ($(CONF_WITH_SHARED_VM_PEXEC),y)
+TEST_SUITES := $(filter-out shared_vm,$(TEST_SUITES))
+else ifdef BUILD_TOOLCHAIN_ELF
 TEST_SUITES := $(filter-out shared_vm,$(TEST_SUITES))
 endif
 
