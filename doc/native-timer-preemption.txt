@@ -171,8 +171,10 @@ With Phase C, an admission gate prevents premature work, each mixed worker
 owns a progress cell, and concurrently incremented counters use real atomics
 (040 CAS, ARM exclusives, x32 locked update). Exact counts remain required.
 
-The m68k Phase C pattern window is eight million iterations, repeated four
-times per pattern. The existing B2 test window remains forty million. The
+The m68k Phase C pattern window is eight million iterations on QEMU and one
+million on cycle-driven ROM configurations, repeated four times per pattern.
+Their ordinary Phase C IRQ probe uses 400,000 iterations; the feature-off
+four-million and existing B2 forty-million windows remain unchanged. The
 required authenticated delayed-return witness, full register comparisons and
 independent CPU-bound handshake determine success; a shorter window cannot
 substitute an immediate return for a real peer execution.
@@ -203,3 +205,10 @@ view may resume again, but a fresh view cannot borrow its return fence as a
 new mapping owner. Production backend tests cover this authority distinction on all three
 providers. The separate mutation model and fresh-view checks both fail against
 the earlier code and pass after the correction.
+
+CUIS cancellation fixtures use a test-only read of the canonical TASK blocked
+and cancelable-boundary state before closing/cancelling an admitted wait.
+Their sibling-fault case joins the exact faulting TID before cancellation.
+A USER readiness store is not admission, and a fixed number of Syield calls
+is not a completion deadline under timer scheduling. Public GUI/wait ABIs and
+PROCESS cancellation policy are unchanged.

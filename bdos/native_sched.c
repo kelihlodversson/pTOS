@@ -362,6 +362,22 @@ BOOL ksched_preempt_due(void)
     return execution_cpu.quantum.pending || ksched_cancellation_pending();
 }
 #if CONF_WITH_PRIVATE_CLONE_TEST
+LONG ksched_preempt_test_blocked(ULONG tid)
+{
+#if CONF_WITH_PTERMGRP
+    KERNEL_TASK *task;
+    LONG result=ESRCH;
+    RUNQUEUE_GUARD guard;runqueue_enter(&guard);
+    for(task=scheduler.tasks;task;task=task->next_task)
+        if(task->thread && kthread_tid(task->thread)==tid) {
+            result=task->state==TASK_BLOCKED && task->cancel_boundary;
+            break;
+        }
+    runqueue_leave(&guard);return result;
+#else
+    UNUSED(tid);return EINVFN;
+#endif
+}
 LONG ksched_preempt_test_patterns(BOOL reset)
 {
     uintptr_t flags=native_sched_irq_save();

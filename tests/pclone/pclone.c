@@ -1100,6 +1100,18 @@ static void group_ready_bit(long bit)
     group.ready|=bit; /* one instruction on the single-CPU m68k/x32 targets */
 #endif
 }
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && defined(__x86_64__) && defined(TEST_WITH_CUIS)
+static int group_wait_admitted(void)
+{
+    unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+    while(pclone_trap((void *)(uintptr_t)group.target,0xc713c103UL)!=1) {
+        if(group.error || group.returned ||
+           (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start>=1000UL)return 0;
+        (void)Syield();
+    }
+    return 1;
+}
+#endif
 static long term_group(short status) { return trap_1_ww(GEMDOS_PTERMGRP,status); }
 static void group_mark(const char *name)
 {
@@ -1603,7 +1615,10 @@ static void group_target(void *arg)
             group.returned=1; /* pending cancellation must stop before new admission */
         }
         else if ((group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) && rc==-36L) group.wait_done=1;
-        else group.returned=1; /* cancellation must not return to user */
+        else {
+            printf("group wait mode=%ld result=%ld session=%ld window=%ld\r\n",group.mode,rc,group.session,group.window);
+            group.returned=1; /* cancellation must not return to user */
+        }
     }
 #endif
     if (group.mode==1 || group.mode==2) group_nested(arg);
@@ -1614,6 +1629,9 @@ static void group_joiner(void *arg)
     (void)arg; group_ready_bit(2);
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
     if (group.mode==12) {
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+        if(!group_wait_admitted())group.error=2;
+#endif
         *(volatile long *)0=1; /* sibling fault cannot abandon the active sampler */
         group.error=1;
     }
@@ -1646,10 +1664,20 @@ static void group_killer(void *arg)
     while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
     if (!group.mode) { for (;;) (void)Syield(); }
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+    if(group.mode>=5 && !group_wait_admitted())group.error=2;
+    if(group.mode==12) {
+        int32_t fault_status=0;
+        /* The sampler must already be admitted when its sibling faults.
+         * Join that exact sibling before sending the cancellation request. */
+        if(join_tid(group.joiner,&fault_status)!=0 || fault_status!=65535L)group.error=3;
+    }
+#endif
     if (group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) {
         if (group.mode>=10 && native_cuis5(32,group.session,0,10,0,0)!=-36L) group.error=1;
         if (group.mode==8) {
-            if (native_cuis(5,group.window,0)) group.error=1;
+            long closed=native_cuis(5,group.window,0);
+            if (closed) { printf("group window close result=%ld window=%ld\r\n",closed,group.window);group.error=1; }
         } else {
             long replacement;
             if (native_cuis(2,group.session,0)) group.error=1;
@@ -1752,7 +1780,19 @@ static void test_group_exit(void)
         group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=group.atexit_calls=0;
         ptest_assert_msg(launch_entry(group_peer,CLONE_VM,group.stack[5],&peer_pid,&peer_tid)>0,"independent shared-ASPACE peer created");
         ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        {
+            unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+            while(!group.requested && (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start<1000UL)(void)Syield();
+        }
+#else
         for (spin=0;spin<2000 && !group.requested;spin++) (void)Syield();
+#endif
+        if(!group.requested || group.error) {
+            char message[128];
+            sprintf(message,"group request mode=%d anchored=%d ready=%ld requested=%ld error=%ld returned=%ld\r\n",
+                    mode,group.anchored,group.ready,group.requested,group.error,group.returned);conws(message);
+        }
         ptest_assert_msg(group.requested && !group.error,"group request reached native syscall");
         if ((mode==1 || mode==2) && !group.anchored) {
             ptest_assert_msg(Pwaitpid(pid,1,0)==0,"nested child retains pending PROCESS until safe return");
