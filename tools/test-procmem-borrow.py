@@ -13,6 +13,7 @@ os.environ["CONFIG_"] = ""
 parser = argparse.ArgumentParser()
 parser.add_argument("presets", nargs="*", choices=["pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"])
 parser.add_argument("--permissions", action="store_true")
+parser.add_argument("--irq", action="store_true", help="resident IRQ ownership and exact procmem pins")
 parser.add_argument("--mode", choices=["normal", "asan", "fortified"], default="normal")
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="ptos-borrow-") as directory:
@@ -24,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-borrow-") as directory:
         import kconfiglib
         k = kconfiglib.Kconfig(warn_to_stderr=False)
         k.load_config(f"configs/{preset}_defconfig")
-        if args.permissions:
+        if args.permissions or args.irq:
             k.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
         k.syms["CONF_WITH_ELF_SHARED"].set_value(0)
         k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(0)
@@ -32,6 +33,10 @@ with tempfile.TemporaryDirectory(prefix="ptos-borrow-") as directory:
         k.syms["CONF_WITH_PRIVATE_CLONE"].set_value(0)
         assert k.syms["CONF_WITH_MMAP"].str_value == "n"
         assert k.syms["CONF_WITH_PRIVATE_CLONE"].str_value == "n"
+        if args.irq:
+            for feature in ('PCLONE','PTHJOIN','FORK_RETURN_TEST','NATIVE_PREEMPT'):
+                k.syms['CONF_WITH_'+feature].set_value(2)
+            assert k.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'y'
         k.write_config(str(work / "config"))
         subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig", "--config", str(work / "config"), "--header", str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")], env={**os.environ, "CONFIG_": ""}, check=True)
         flags = ([] if arch == "x86_64" else ["-DBORROW_GENERIC"]) + (["-DTEST_SHARED_PERMISSIONS"] if args.permissions else [])

@@ -28,6 +28,9 @@
 #include "xbios.h"
 #include "sound.h"
 #include "mfp.h"
+#if CONF_WITH_NATIVE_PREEMPT
+#include "ksched.h"
+#endif
 
 // ==== Definitions ==========================================================
 
@@ -187,6 +190,9 @@ void (*timer_vbl_hook)(void) = int_vbl;
 // generic timer, virt's generic timer) ends up here through vector_5ms.
 void int_timerc(void)
 {
+#if CONF_WITH_NATIVE_PREEMPT
+    ksched_preempt_tick();
+#endif
     hz_200++;
     // rotate left, as m68k's rol.w: unsigned, or the sign bit smears in and
     // the sieve ends up 0xffff, making every call the "4th" one (200 Hz VBL,

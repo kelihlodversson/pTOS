@@ -128,9 +128,12 @@ static void test_private_continuation(void)
         }
         ptest_assert_msg(pid>0 && pid!=parent,"private saved-return parent receives distinct PID");
         if(pid>0) {
-            /* No dispatch is possible between constructor publication and
-             * this nonblocking check. A completion-only vfork would fail. */
+#if !defined(TEST_WITH_NATIVE_PREEMPT)
+            /* Cooperative publication returns before child dispatch. Phase C
+             * instead proves nonblocking Pfork with its child/parent file gate;
+             * this observation could consume an already completed child. */
             ptest_assert_msg(Pwaitpid(pid,1,0)==0,"private parent returns before child completion");
+#endif
             if(cycle&1) (void)Syield(); /* child writes first */
             else { /* parent writes first */
                 local=0xaabbccddUL;private_probe.cell=0xaabbccddUL;private_probe.heap[17]=0x61;
@@ -189,9 +192,12 @@ static void captured_private_child(void *unused)
 static void captured_surviving_peer(void *unused)
 {
     long expected=PRIVATE_SNAPSHOT_LAZY|PRIVATE_SNAPSHOT_WRITE|PRIVATE_SNAPSHOT_USER;
-    int bad=0,cycle,stage;
+    int bad=0,cycle,stage,attempt;
     (void)unused;
-    if(Pgetppid()==captured_probe.creator) bad=1;
+    /* Timer dispatch may run this orphan before its creator calls Pterm.
+     * Preserve the source-first precondition explicitly before cloning. */
+    for(attempt=0;attempt<2000 && Pgetppid()==captured_probe.creator;attempt++)(void)Syield();
+    if(Pgetppid()==captured_probe.creator) {bad=1;goto completed;}
     for(cycle=0;cycle<2;cycle++) {
         struct ptos_clone_args args={0};
         volatile unsigned char *page;
@@ -242,9 +248,17 @@ static void captured_surviving_peer(void *unused)
             captured_probe.environment[0]!=captured_probe.environment_byte) bad=6;
         page[0]=0x32;
     }
+completed:
     if(bad) printf("captured snapshot failure %d\r\n",bad);
     conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
                "native captured ancestor-stack private snapshot after source exit, both write orders: PASS\r\n");
+    {
+        long fd=Fcreate("C:\\CAPDONE.DAT",0),result=bad;
+        if(fd>=0) {
+            long wrote=Fwrite((short)fd,sizeof(result),&result),closed=Fclose((short)fd);
+            if(wrote!=sizeof(result) || closed)printf("captured report fd=%ld wrote=%ld closed=%ld\r\n",fd,wrote,closed);
+        }else printf("captured report create=%ld\r\n",fd);
+    }
     Pterm(bad?74:73);
 }
 static void captured_creator(void *unused)
@@ -282,13 +296,30 @@ static void test_captured_snapshot(void)
     memset(stack,0,32768);memset(captured_probe.peer_stack,0,32768);memset(captured_probe.child_stack,0,32768);
     args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;args.entry=captured_creator;
     args.stack_base=stack;args.stack_size=32768;
+    (void)Fdelete("C:\\CAPDONE.DAT");
     child=pclone_trap(&args,0xc8920000UL|sizeof(args));
     ptest_assert_msg(child>0,"independent captured-stack source publishes");
     if(child>0) {
         status=Pwaitpid(child,0,0);
         ptest_assert_msg((status>>16)==child && (status&65535)==73,
                          "original stack owner exits before the surviving source clones");
-        (void)Syield();
+        {
+            int attempt,complete=0;
+            long result=-1;
+            /* The orphan is intentionally not this PROCESS's waitable child.
+             * Its result fence ends all fault-injection windows before this
+             * driver starts the next global allocation-failure fixture. */
+            for(attempt=0;attempt<2000;attempt++) {
+                long fd=Fopen("C:\\CAPDONE.DAT",0),bytes=0;
+                if(fd>=0) {bytes=Fread((short)fd,sizeof(result),&result);(void)Fclose((short)fd);}
+                if(bytes==sizeof(result)) {complete=1;break;}
+                (void)Syield();
+            }
+            if(!complete || result)printf("captured result complete=%d result=%lx attempts=%d\r\n",complete,(unsigned long)result,attempt);
+            ptest_assert_msg(complete && !result,"orphan completes both snapshot write orders before another fault injector starts");
+            ptest_assert_msg(Fdelete("C:\\CAPDONE.DAT")==0,"retire captured-snapshot result fence");
+            (void)Syield();
+        }
     }
     ptest_assert_msg(!Mfree(stack) && !Mfree(captured_probe.peer_stack) && !Mfree(captured_probe.child_stack),
                      "original caller can release independent fixture stack copies");
@@ -299,6 +330,12 @@ static void private_entry(void *argument)
     volatile unsigned long local=0x5a5aa5a5UL;
     int bad=0;
     (void)argument;
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    if(private_probe.mode==-1) {
+        int attempt;
+        for(attempt=0;attempt<2000 && Pgetppid()==private_probe.parent;attempt++)(void)Syield();
+    }
+#endif
     if(Pgetpid()==private_probe.parent ||
        (private_probe.mode==-1 ? Pgetppid()==private_probe.parent :
                                 Pgetppid()!=private_probe.parent) ||
@@ -583,7 +620,27 @@ static volatile struct clone_probe {
     unsigned long local;
     int mode;
     volatile long gate, done, child_pid, child_tid;
-} probe;
+} probe __attribute__((aligned(4)));
+static void probe_increment(volatile long *counter)
+{
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(__mc68000__)
+    long observed,next;
+    /* Phase C is 040-only here. CAS is indivisible, requires no USER lock
+     * across an IRQ/cancellation, and these prewarmed cells are aligned/RW. */
+    __asm__ volatile (
+        ".chip 68020\n\t"
+        "1: move.l (%3),%0\n\t"
+        "move.l %0,%1\n\t"
+        "addq.l #1,%1\n\t"
+        "cas.l %0,%1,(%3)\n\t"
+        "bne 1b"
+        : "=&d"(observed),"=&d"(next),"+m"(*counter) : "a"(counter) : "cc","memory");
+#elif defined(TEST_WITH_NATIVE_PREEMPT)
+    (void)__sync_fetch_and_add(counter,1);
+#else
+    (*counter)++;
+#endif
+}
 #if defined(__x86_64__) || (defined(__arm__) && defined(__ARM_NEON))
 extern long clone_irq_registers(void);
 #elif defined(__mc68000__)
@@ -606,7 +663,7 @@ static void runnable_entry(void *argument)
     p->local = (unsigned long)&local;
     for (i = 0; i < 12; i++) {
         if (local != 0x13579bdfUL) p->error = 1;
-        p->steps++;
+        probe_increment(&p->steps);
 #if defined(__arm__) || defined(__mc68000__)
         if (clone_registers((unsigned long)&local)) p->error |= 2;
 #else
@@ -680,7 +737,7 @@ static void gated_entry(void *argument)
 {
     volatile struct clone_probe *p = argument;
     while (!p->gate) (void)Syield();
-    p->done++;
+    probe_increment(&p->done);
 }
 /* Twelve live continuations exceed the bootstrap arena on every MMU target.
  * The trace tests actual cooperative dispatch, not a modeled ready queue. */
@@ -690,6 +747,9 @@ static struct {
     unsigned char *stack[SCHEDULE_PEERS];
     int32_t pid[SCHEDULE_PEERS], tid[SCHEDULE_PEERS];
     volatile int trace[SCHEDULE_PEERS*SCHEDULE_ROUNDS], used, error;
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    volatile int gate, progress[SCHEDULE_PEERS];
+#endif
 } schedule_probe;
 static void schedule_entry(void *argument)
 {
@@ -700,10 +760,20 @@ static void schedule_entry(void *argument)
         if ((unsigned long)&local >= (unsigned long)schedule_probe.stack[index] &&
             (unsigned long)&local < (unsigned long)(schedule_probe.stack[index]+RUNNABLE_STACK_SIZE)) break;
     if (index==SCHEDULE_PEERS) { schedule_probe.error=1; return; }
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    while (!schedule_probe.gate) (void)Syield();
+#endif
     for (round=0; round<SCHEDULE_ROUNDS; round++) {
         if (Pgetpid()!=schedule_probe.pid[index] || local!=0x13572468UL ||
             schedule_probe.used>=SCHEDULE_PEERS*SCHEDULE_ROUNDS) { schedule_probe.error=1; return; }
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        /* A timer can interrupt between observing the selected execution and
+         * its first USER store. Each worker owns its own progress cell. The
+         * feature-off test below retains the strict cooperative FIFO trace. */
+        schedule_probe.progress[index]=round+1;
+#else
         schedule_probe.trace[schedule_probe.used++]=index;
+#endif
         (void)Syield();
     }
 }
@@ -718,6 +788,10 @@ static void test_scheduler_growth(void)
     }
     for (cycle=0;cycle<2;cycle++) {
         schedule_probe.used=schedule_probe.error=0;
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        schedule_probe.gate=0;
+        for(i=0;i<SCHEDULE_PEERS;i++)schedule_probe.progress[i]=0;
+#endif
         for (i=0;i<SCHEDULE_PEERS;i++) {
             result=launch_entry(schedule_entry,CLONE_VM|(i&1?CLONE_SAME_PROCESS:0),schedule_probe.stack[i],
                                 &schedule_probe.pid[i],&schedule_probe.tid[i]);
@@ -725,14 +799,32 @@ static void test_scheduler_growth(void)
             if (result<=0) return;
             ptest_assert_msg((schedule_probe.pid[i]==Pgetpid())==(i&1),"scheduler preserves shared/distinct PID policy");
             for (j=0;j<i;j++) ptest_assert_msg(schedule_probe.tid[i]!=schedule_probe.tid[j],"unique live scheduler TIDs");
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+            for(j=0;j<=i;j++)
+                ptest_assert_msg(!schedule_probe.progress[j],"no worker advances before admission gate opens");
+#else
             ptest_assert_msg(!schedule_probe.used,"no dispatch before publication returns");
+#endif
         }
-        /* Block the parent; all twelve peers must progress in FIFO RR order. */
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        schedule_probe.gate=1;
+#endif
+        /* Block the parent; all twelve peers must progress in FIFO RR order
+         * when cooperative, or finish independently with timer dispatch. */
         for (i=0;i<SCHEDULE_PEERS;i+=2) {
             result=Pwaitpid(schedule_probe.pid[i],0,0);
             ptest_assert_msg((result>>16)==schedule_probe.pid[i] && !(result&65535),"independent PROCESS completion after fair dispatch");
         }
         (void)Syield(); (void)Syield();
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PTHJOIN)
+        for (i=1;i<SCHEDULE_PEERS;i+=2)
+            ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,schedule_probe.tid[i],0)==0,"timer-dispatched sibling retires after arena growth");
+#endif
+        ptest_assert_msg(!schedule_probe.error,"timer dispatch preserves all mixed worker identities");
+        for(i=0;i<SCHEDULE_PEERS;i++)
+            ptest_assert_msg(schedule_probe.progress[i]==SCHEDULE_ROUNDS,"all twelve mixed workers complete every round under timer dispatch");
+#else
         ptest_assert_msg(!schedule_probe.error && schedule_probe.used==SCHEDULE_PEERS*SCHEDULE_ROUNDS,"all independent and sibling continuations progress");
         for (i=0;i<SCHEDULE_PEERS*SCHEDULE_ROUNDS;i++)
             ptest_assert_msg(schedule_probe.trace[i]==i%SCHEDULE_PEERS,"one circular round-robin across arena growth");
@@ -740,6 +832,7 @@ static void test_scheduler_growth(void)
         for (i=1;i<SCHEDULE_PEERS;i+=2)
             ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,schedule_probe.tid[i],0)==0,"late sibling join after safe root reclaim");
 #endif
+#endif /* cooperative trace / timer progress */
     }
     for (i=0;i<SCHEDULE_PEERS;i++) ptest_assert_msg(Mfree(schedule_probe.stack[i])==0,"repeated fair dispatch releases stack holds");
     conws("native scheduler growth and mixed PROCESS/THREAD round-robin: tested\r\n");
@@ -994,11 +1087,31 @@ static void test_joins(void)
 static const char group_env[2]={0,0};
 static struct {
     volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done, atexit_calls;
-    volatile long session, window, wait_done;
+    volatile long session, window, wait_done, wait_entering;
     int anchored; /* modes 1/2: the Pexec(0) chain runs as anchors (#1015) */
     int32_t target, joiner, killer, nested, wait_child;
     unsigned char *stack[6];
 } group;
+static void group_ready_bit(long bit)
+{
+#if defined(TEST_WITH_NATIVE_PREEMPT) && (defined(__arm__) || defined(__x86_64__))
+    (void)__sync_fetch_and_or(&group.ready,bit);
+#else
+    group.ready|=bit; /* cooperative, or one memory-OR on the single-CPU m68k */
+#endif
+}
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && defined(__x86_64__) && defined(TEST_WITH_CUIS)
+static int group_wait_admitted(void)
+{
+    unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+    while(!group.wait_entering || pclone_trap((void *)(uintptr_t)group.target,0xc713c103UL)!=1) {
+        if(group.error || group.returned ||
+           (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start>=1000UL)return 0;
+        (void)Syield();
+    }
+    return 1;
+}
+#endif
 static long term_group(short status) { return trap_1_ww(GEMDOS_PTERMGRP,status); }
 static void group_mark(const char *name)
 {
@@ -1034,6 +1147,25 @@ static long native_cuis5(unsigned fn, long a, long b, long c, long d, long e)
     register unsigned long long r8 __asm__("r8")=(long long)e, r9 __asm__("r9")=0;
     __asm__ volatile ("syscall" : "+a"(ax) : "r"(di),"r"(si),"r"(dx),"r"(r10),"r"(r8),"r"(r9) : "rcx","r11","memory","cc");
     return (long)ax;
+}
+
+
+/* Window mutation may meet the desktop's public display lease. A timer can
+ * legally schedule this fixture inside that lease; EAGAIN is retryable. */
+static long group_window(unsigned fn,long a,long b,long c,long d,long e)
+{
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+    long result;
+    do {
+        result=native_cuis5(fn,a,b,c,d,e);
+        if(result!=-326L)return result;
+        (void)Syield();
+    }while((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start<1000UL);
+    return result;
+#else
+    return native_cuis5(fn,a,b,c,d,e);
+#endif
 }
 
 #if defined(TEST_WITH_PTHJOIN)
@@ -1483,26 +1615,29 @@ out:
 static void group_nested(void *arg);
 static void group_target(void *arg)
 {
-    (void)arg; group.ready|=1;
+    (void)arg; group_ready_bit(1);
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
     if (group.mode>=5) {
         long rc;
         group.session=native_cuis(0,0,0);
         if (group.session<0) group.error=1;
-        if (group.mode>=10) rc=native_cuis5(32,group.session,0,group.mode==13?16:group.mode==10?8:10,group.mode==12?100:0,0);
-        else if (group.mode==5) rc=native_cuis(24,group.session,3600000UL);
+        if (group.mode>=10) {group.wait_entering=1;rc=native_cuis5(32,group.session,0,group.mode==13?16:group.mode==10?8:10,group.mode==12?100:0,0);}
+        else if (group.mode==5) {group.wait_entering=1;rc=native_cuis(24,group.session,3600000UL); }
         else if (group.mode==7 || group.mode==8) {
-            group.window=native_cuis5(3,1,1,32,32,0);
-            if (group.window<0 || native_cuis(6,group.window,0)) group.error=1;
-            rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
-        } else rc=native_cuis5(32,group.session,1,1,0,0); /* pending stream readiness */
+            group.window=group_window(3,1,1,32,32,0);
+            if (group.window<0 || group_window(6,group.window,0,0,0,0)) group.error=1;
+            group.wait_entering=1;rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
+        } else {group.wait_entering=1;rc=native_cuis5(32,group.session,1,1,0,0); } /* pending stream readiness */
         if (group.mode==12 && rc==2) {
             group.wait_done=1; /* rejected legacy outcome: pending cancellation must win */
             (void)native_cuis5(32,group.session,0,8,0,0);
             group.returned=1; /* pending cancellation must stop before new admission */
         }
         else if ((group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) && rc==-36L) group.wait_done=1;
-        else group.returned=1; /* cancellation must not return to user */
+        else {
+            printf("group wait mode=%ld result=%ld session=%ld window=%ld\r\n",group.mode,rc,group.session,group.window);
+            group.returned=1; /* cancellation must not return to user */
+        }
     }
 #endif
     if (group.mode==1 || group.mode==2) group_nested(arg);
@@ -1510,9 +1645,12 @@ static void group_target(void *arg)
 }
 static void group_joiner(void *arg)
 {
-    (void)arg; group.ready|=2;
+    (void)arg; group_ready_bit(2);
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
     if (group.mode==12) {
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+        if(!group_wait_admitted())group.error=2;
+#endif
         *(volatile long *)0=1; /* sibling fault cannot abandon the active sampler */
         group.error=1;
     }
@@ -1545,10 +1683,20 @@ static void group_killer(void *arg)
     while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
     if (!group.mode) { for (;;) (void)Syield(); }
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+    if(group.mode>=5 && !group_wait_admitted())group.error=2;
+    if(group.mode==12) {
+        int32_t fault_status=0;
+        /* The sampler must already be admitted when its sibling faults.
+         * Join that exact sibling before sending the cancellation request. */
+        if(join_tid(group.joiner,&fault_status)!=0 || fault_status!=65535L)group.error=3;
+    }
+#endif
     if (group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) {
         if (group.mode>=10 && native_cuis5(32,group.session,0,10,0,0)!=-36L) group.error=1;
         if (group.mode==8) {
-            if (native_cuis(5,group.window,0)) group.error=1;
+            long closed=group_window(5,group.window,0,0,0,0);
+            if (closed) { printf("group window close result=%ld window=%ld\r\n",closed,group.window);group.error=1; }
         } else {
             long replacement;
             if (native_cuis(2,group.session,0)) group.error=1;
@@ -1576,14 +1724,14 @@ static void group_peer(void *arg)
 }
 static void group_wait_child(void *arg)
 {
-    (void)arg; group.ready|=1;
+    (void)arg; group_ready_bit(1);
     while (!group.child_go) (void)Syield();
     group.child_done=1;
     Pterm(45);
 }
 static void group_compete(void *arg)
 {
-    (void)arg; group.ready|=2;
+    (void)arg; group_ready_bit(2);
     while (!group.requested) (void)Syield();
     (void)term_group(99); /* accepted first status must remain 61 */
     group.returned=1;
@@ -1647,11 +1795,23 @@ static void test_group_exit(void)
         if ((mode==1 || mode==2) && !group.anchored && !PCLONE_NESTED_CARRIER) continue;
         pclone_nest_synchronous((mode==1 || mode==2) && !group.anchored);
         for (i=0;i<5;i++) (void)Fdelete(files[i]);
-        group.session=group.window=-1; group.wait_done=0;
+        group.session=group.window=-1; group.wait_done=group.wait_entering=0;
         group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=group.atexit_calls=0;
         ptest_assert_msg(launch_entry(group_peer,CLONE_VM,group.stack[5],&peer_pid,&peer_tid)>0,"independent shared-ASPACE peer created");
         ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        {
+            unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+            while(!group.requested && (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start<1000UL)(void)Syield();
+        }
+#else
         for (spin=0;spin<2000 && !group.requested;spin++) (void)Syield();
+#endif
+        if(!group.requested || group.error) {
+            char message[128];
+            sprintf(message,"group request mode=%d anchored=%d ready=%ld requested=%ld error=%ld returned=%ld\r\n",
+                    mode,group.anchored,group.ready,group.requested,group.error,group.returned);conws(message);
+        }
         ptest_assert_msg(group.requested && !group.error,"group request reached native syscall");
         if ((mode==1 || mode==2) && !group.anchored) {
             ptest_assert_msg(Pwaitpid(pid,1,0)==0,"nested child retains pending PROCESS until safe return");
@@ -1705,6 +1865,7 @@ static void test_group_exit(void)
 #include "mapping_lifetime.h"
 #include "process_files.h"
 #include "irq_restart.h"
+#include "preempt.h"
 
 static void test_runnable(void)
 {
@@ -1736,6 +1897,9 @@ static void test_runnable(void)
         for (page = 0; page < RUNNABLE_STACK_SIZE; page += 4096)
             runnable_stacks[cycle][page] = 0;
     }
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    test_preempt();
+#endif
 #if defined(__arm__) || defined(__mc68000__)
     {
         extern void clone_initial_entry(void *);
@@ -1798,7 +1962,9 @@ static void test_runnable(void)
         }
         ptest_assert_msg(result > 0 && result == tid && pid > 0 && pid != probe.parent,
                          "native NEW_PROCESS must publish distinct PID and positive TID");
+#if !defined(TEST_WITH_NATIVE_PREEMPT)
         ptest_assert_msg(probe.steps == 0,"child dispatched before Pclone returned");
+#endif
         waited = Pwaitpid(pid,0,0);
         ptest_assert_msg((waited >> 16) == pid,"blocked process wait must dispatch and reap clone");
         ptest_assert_msg((waited & 65535) == (mode == 1 ? 23 : mode == 2 ? 11*256 : 0),
@@ -1825,7 +1991,12 @@ static void test_runnable(void)
     result = launch_probe(CLONE_VM|CLONE_SAME_PROCESS,2,&pid,&other_tid);
     ptest_assert_msg(result == other_tid && other_tid > 0 && other_tid != tid,
                      "native siblings must have independent TIDs");
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_PTHJOIN)
+    ptest_assert_msg(join_tid(tid,0)==0 && join_tid(other_tid,0)==0,
+                     "timer-dispatched siblings complete through exact TID joins");
+#else
     for (cycle = 0; cycle < 128 && probe.steps < 24; cycle++) (void)Syield();
+#endif
     ptest_assert_msg(probe.steps == 24,"native siblings did not progress");
     /* Each increments before its final yield; let both return and root reap. */
     (void)Syield(); (void)Syield();

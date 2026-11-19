@@ -70,14 +70,14 @@ rtc_nolong:
 
 restore:
         movem.l (sp)+,d0-d2/a0-a1
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
         M68K_IRQ_RESTART_RETURN
 #endif
         rte
 
 no_tick:
         movem.l (sp)+,d0-d2/a0-a1
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
         M68K_IRQ_RESTART_RETURN
 #endif
         rte

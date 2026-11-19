@@ -817,6 +817,20 @@ BOOL aspace_private_range_ok(const ASPACE *as, UQUAD va, UQUAD bytes)
     first = va & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
     return range_is_private(as, first, (va + bytes - first + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE);
 }
+#if CONF_WITH_NATIVE_PREEMPT
+BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
+{
+    VADDR page,last;
+    if (!as || !bytes || va>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-va) return FALSE;
+    last=(va+bytes-1)&~(VADDR)(X86_64_PAGE_SIZE-1);
+    for(page=va&~(VADDR)(X86_64_PAGE_SIZE-1);;page+=X86_64_PAGE_SIZE) {
+        UQUAD *pte=x86_64_user_pte(as->pml4_phys,page);
+        if (!pte || !(*pte&PTE_PRESENT) ||
+            (!(*pte&X86_64_PTE_OWNED) && !irq_procmem_pin_owned(as,page,*pte&PTE_ADDR))) return FALSE;
+        if(page==last) return TRUE;
+    }
+}
+#endif
 
 BOOL aspace_move_private(ASPACE *from, ASPACE *to,
                                 UQUAD va, UQUAD bytes, UWORD prot)

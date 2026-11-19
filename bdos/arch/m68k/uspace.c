@@ -118,7 +118,7 @@ void m68k_gemdos_dispatch(struct uframe *f);
 void m68k_gemdos_dispatch(struct uframe *f)
 {
     WORD pw[ARG_WORDS];
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     /* This entry's real TRAP frame follows its saved USP/GPR prefix. This is
      * observation only, never an IRQ-frame or saved-return layout conversion. */
     if(!(*(const UWORD *)((const UBYTE *)f+64)&0x2000)) interrupt_restart_user_entry();

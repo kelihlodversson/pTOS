@@ -86,11 +86,14 @@ def main():
     ap.add_argument('--timeout', type=float, default=1200, help='seconds for the whole suite')
     ap.add_argument('--fpu', choices=['0','68881','68882','68040','68060'],
                     help='explicit FPU model; omitted preserves the emulator default')
+    ap.add_argument('--softfloat', action='store_true', help='accurate software FPU emulation')
     ap.add_argument('--require-nonzero-fpiar', action='store_true')
     ap.add_argument('--irq-capture-state', type=lambda value: int(value, 0),
                     help='physical debugger address of the test-only seen/error/nonzero-FPIAR ULONG array')
     ap.add_argument('--require-owned-irq-copy', action='store_true',
                     help='040 only: require the fourth kernel counter to prove fresh owned IRQ copy-back')
+    ap.add_argument('--require-native-preemption', action='store_true',
+                    help='require CPU-bound timer handoff, FPU, wake and retirement verdicts')
     ap.add_argument('--caches', action='store_true', help='CPU caches on')
     ap.add_argument('--require-managed-threads', action='store_true',
                     help='require native clone/join/group/libc exit worker verdicts')
@@ -102,6 +105,9 @@ def main():
     if a.require_owned_irq_copy and (a.cpu != '68040' or a.irq_capture_state is None or
                                      not a.require_managed_threads):
         ap.error('--require-owned-irq-copy needs 68040, --irq-capture-state and --require-managed-threads')
+
+    if a.require_native_preemption and not a.require_owned_irq_copy:
+        ap.error('--require-native-preemption needs --require-owned-irq-copy')
 
     if not os.path.exists(a.amiberry):
         sys.exit('run-amiberry-tests: no emulator at %s (doc/debugging.txt)' % a.amiberry)
@@ -123,7 +129,7 @@ def main():
     text = ''
     irq_evidence = None
     try:
-        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches, fpu=a.fpu)
+        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches, fpu=a.fpu, softfloat=a.softfloat)
         deadline = time.time() + a.timeout
         while time.time() < deadline:
             time.sleep(5)
@@ -177,6 +183,20 @@ def main():
         for marker in markers:
             if marker not in text:
                 print('run-amiberry-tests: missing managed runtime verdict: ' + marker, file=sys.stderr)
+                return 1
+    if a.require_native_preemption:
+        markers = (
+            'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS',
+            'native timer file-backed executable progress without Syield: PASS',
+            'native timer busy USER and blocked sleeper wake: PASS',
+            'native timer busy USER and mapping-owner progress/conservation: PASS',
+            'native timer independent-image/root GPR/FPU patterns: PASS',
+            'native timer original/alternate GPR/FPU delayed restoration: PASS',
+            'native timer suspended-group cancellation and exact retirement: PASS',
+        )
+        for marker in markers:
+            if marker not in text:
+                print('run-amiberry-tests: missing timer policy verdict: ' + marker, file=sys.stderr)
                 return 1
     if a.require_nonzero_fpiar and 'native m68k nonzero FPIAR: PASS' not in text:
         print('run-amiberry-tests: nonzero FPIAR was not runtime-verified', file=sys.stderr)

@@ -112,7 +112,7 @@ static inline BOOL m68k_irq_same_entry_valid(const M68K_USER_IRQ_CAPTURE *c,
 }
 struct _pd;
 void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame);
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame);
 #endif
 BOOL m68k_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
@@ -147,7 +147,7 @@ extern volatile ULONG m68k_irq_test_state[4];
     move.w d0,sr
     movem.l (sp)+,d0-d7/a0-a6
 .endm
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 /* Run only after the device epilogue restores its registers and acknowledges
  * hardware. Rebuild a fresh full prefix: the entry capture's prefix is gone. */
 .macro M68K_IRQ_RESTART_RETURN

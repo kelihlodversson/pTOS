@@ -247,3 +247,58 @@ with tempfile.TemporaryDirectory(prefix='ptos-result-revocation-probes-') as dir
                                     check=True, text=True, capture_output=True)
             assert result.stdout == ('native shared-Pexec result revocation' if mask == 7 and not present else '')
 print('Native blocked-copyout guard: 16 feature/marker cases, missing execution rejected: PASS (host shell)')
+
+# Run the complete production Phase C shell guard. Every required marker must
+# fail independently when absent; disabled feature combinations stay optional.
+start = script.index("if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1'")
+end = script.index('\nfi', start) + 3
+block = script[start:end]
+timer_markers = [
+    'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS',
+    'native timer file-backed executable progress without Syield: PASS',
+    'native timer busy USER and blocked sleeper wake: PASS',
+    'native timer public-Pfork private-root GPR/FPU patterns: PASS',
+    'native timer original/alternate GPR/FPU delayed restoration: PASS',
+    'native timer suspended-group cancellation and exact retirement: PASS',
+    'native timer independent-image/root GPR/FPU patterns: PASS',
+    'native timer busy USER and mapping-owner progress/conservation: PASS',
+]
+with tempfile.TemporaryDirectory(prefix='ptos-timer-guards-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    names = ['CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_MMAP',
+             'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PFORK', 'CONF_WITH_PTERMGRP']
+    for mask in range(32):
+        (top / 'obj/autoconf.h').write_text(''.join(
+            '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
+        for missing in [None] + list(range(len(timer_markers))):
+            log.write_text('\n'.join(m for i, m in enumerate(timer_markers) if i != missing) + '\n')
+            shell = 'top=$1; suite_log=$2\nrecord() { echo "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
+                                    check=True, text=True, capture_output=True)
+            required = bool(mask & 1) and missing is not None
+            if missing == 1:
+                required = required and bool(mask & 2)
+            elif missing in (2, 3, 4, 5, 6, 7):
+                required = required and bool(mask & 4)
+                if missing in (3, 4):
+                    required = required and bool(mask & 8)
+                elif missing == 5:
+                    required = required and bool(mask & 16)
+            assert bool(result.stdout) == required, (mask, missing, result.stdout)
+print('Production timer guards: 288 feature/marker cases, missing native proof fails: PASS (host shell)')
+
+with tempfile.TemporaryDirectory(prefix='ptos-arm-exclusive-guards-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    (top / 'obj/autoconf.h').write_text('#define CONF_WITH_NATIVE_PREEMPT 1\n')
+    for machine in ('virt-arm', 'raspi2b-aspace', 'pc-x86_64', 'virt-m68k-aspace'):
+        for present in (False, True):
+            log.write_text(timer_markers[0]+'\n'+('native timer ARM exclusive monitor ownership: PASS\n' if present else ''))
+            shell = 'top=$1; suite_log=$2; machine=$3\nrecord() { echo "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log), machine],
+                                    check=True, text=True, capture_output=True)
+            assert bool(result.stdout) == (machine in ('virt-arm', 'raspi2b-aspace') and not present)
+print('Native ARM exclusive guards: correct machines and missing reservation proof: PASS (host shell)')

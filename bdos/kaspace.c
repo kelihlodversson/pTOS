@@ -37,6 +37,9 @@ struct kaspace {
     UQUAD retiring_birth;
     VADDR retiring_address, retiring_bytes;
     BOOL retiring_committed;
+#if CONF_WITH_NATIVE_PREEMPT
+    BOOL retiring_pin; /* current job consumes existing backend pin records */
+#endif
     BOOL reaping;
     BOOL mutating;
     UQUAD mutation_actor,reap_actor;
@@ -50,11 +53,14 @@ static UQUAD lease_ids; /* Non-recycled storage identity; not an owning handle. 
 static KASPACE *spaces; /* borrowed registry; serialized with retain/release */
 struct kaspace_lease {
     UQUAD identity;
-    KASPACE *space; /* owning; list membership is non-owning */
+    KASPACE *space; /* owning except IRQ slots borrowed from their executing KTHREAD */
     VADDR first, last; /* inclusive page addresses; no end-address overflow */
     UWORD access;
     BOOL revoked, sealed, held, stack;
     BOOL copying; /* temporary user-copy fence, never backing or clone authority */
+#if CONF_WITH_NATIVE_PREEMPT
+    BOOL irq_reserved, irq_linked;
+#endif
     UQUAD copy_actor;
     UQUAD reservation_ticket, reservation_id, owner_number;
     UQUAD attachment_ticket; /* distinct role; never an R2 hold or access grant */
@@ -88,6 +94,7 @@ static BOOL snapshot_live(const KASPACE_LEASE *lease)
 }
 static BOOL reservation_lookup(KASPACE *space,VADDR address,VADDR bytes,
                                KASPACE_RESERVATION_INFO *result,BOOL pending);
+static BOOL independent_backing_owner(KASPACE *,VADDR,VADDR,UWORD,BOOL);
 static BOOL reservation_range_matches(KASPACE *space,UQUAD birth,VADDR address,VADDR bytes,UWORD rights)
 {
     VADDR at=address,end=address+bytes;
@@ -444,6 +451,97 @@ BOOL kaspace_copy_valid(const KASPACE_LEASE *lease)
     return valid;
 }
 
+#if CONF_WITH_NATIVE_PREEMPT
+LONG kaspace_irq_reserve(KASPACE_LEASE **out)
+{
+    KASPACE_LEASE *lease;
+    KOWNER_GUARD guard;
+    if (!out || *out) return EINVAL;
+    lease=kalloc(sizeof(*lease));
+    if (!lease) return ENSMEM;
+    memset(lease,0,sizeof(*lease));
+    kowner_enter(&guard,KOWNER_MAPPING);
+    if (lease_ids==~(UQUAD)0) {
+        kowner_leave(&guard);kfree(lease);return ENSMEM;
+    }
+    lease->identity=++lease_ids;
+    lease->irq_reserved=TRUE;
+    *out=lease;
+    kowner_leave(&guard);
+    return E_OK;
+}
+BOOL kaspace_irq_activate(KASPACE_LEASE *lease,KASPACE *space,VADDR address,UWORD access)
+{
+    VADDR page=address&~(VADDR)(USER_PAGE_SIZE-1);
+    UWORD resident_rights,logical_rights;
+    BOOL result=FALSE,retained;
+    KOWNER_GUARD guard;
+    kowner_enter(&guard,KOWNER_MAPPING);
+    retained=lease && lease->irq_reserved && lease->irq_linked && lease->space==space &&
+        lease->held && !lease->revoked && page>=lease->first && page<=lease->last &&
+        (lease->access&access)==access;
+    if (!lease || !lease->irq_reserved || !space ||
+        (lease->space && lease->space!=space) || address>=USER_VA_LIMIT ||
+        (access!=(ASPACE_PROT_USER|ASPACE_PROT_EXEC) &&
+         access!=(ASPACE_PROT_USER|ASPACE_PROT_WRITE)) ||
+        (!retained && pending_overlap(space,page,USER_PAGE_SIZE)) ||
+        !aspace_translate(space->backend,page,NULL,&resident_rights) ||
+        !(resident_rights&ASPACE_PROT_USER) ||
+#if CONF_WITH_PRIVATE_CLONE
+        !aspace_logical_protection(space->backend,page,&logical_rights) ||
+#else
+        !aspace_translate(space->backend,page,NULL,&logical_rights) ||
+#endif
+        (logical_rights&access)!=access ||
+        (!retained && !aspace_irq_range_owned(space->backend,page,USER_PAGE_SIZE) &&
+         !independent_backing_owner(space,page,USER_PAGE_SIZE,access,TRUE))) goto done;
+    /* A mutation owner can be parked at an existing safe checkpoint while
+     * this USER peer executes. Its busy flag must not prevent timer departure
+     * and starve that owner. Mapping exclusion stabilizes these resident
+     * queries; existing commit gates recheck held ranges before changing a
+     * leaf. No callback/yield lies between that check and the backend edit.
+     * Pending ownership still rejects fresh views above. */
+    /* A COW stack may be resident read-only: RTE/RFE/IRETQ does not write
+     * user memory. The existing COW path retains its logical write authority. */
+    /* The existing KTHREAD owns this root through execution reclamation.
+     * Do not acquire new reference rights at the first timer interruption:
+     * ordinary failure/conservation observations must remain invariant. */
+    lease->space=space;
+    lease->first=lease->last=page;lease->access=access;
+    lease->revoked=FALSE;lease->held=TRUE;
+    lease->stack=(access&ASPACE_PROT_WRITE)!=0;
+    if(!lease->irq_linked) {
+        lease->next=space->leases;space->leases=lease;lease->irq_linked=TRUE;
+    }
+    result=TRUE;
+done:
+    kowner_leave(&guard);
+    return result;
+}
+BOOL kaspace_irq_park(KASPACE_LEASE *lease)
+{
+    KASPACE_LEASE **link;
+    BOOL parked=FALSE;
+    KOWNER_GUARD guard;
+    kowner_enter(&guard,KOWNER_MAPPING);
+    if (lease && lease->irq_reserved && lease->irq_linked) {
+        for (link=&lease->space->leases;*link && *link!=lease;link=&(*link)->next) { }
+        if (!*link) panic("IRQ lease: missing active owner");
+        *link=lease->next;lease->next=NULL;
+        lease->irq_linked=FALSE;lease->held=FALSE;lease->stack=FALSE;
+        parked=TRUE;
+    }
+    /* No resource destruction or pending-map reaping on an IRQ tail. */
+    kowner_leave(&guard);
+    return parked;
+}
+void kaspace_reap_deferred(KASPACE *space)
+{
+    kowner_assert_unlocked();
+    if(space)reap_retired(space);
+}
+#endif
+
 static BOOL kaspace_lease_hold_private_owned(KASPACE_LEASE *lease)
 {
     if (!kaspace_lease_valid(lease) || lease->held ||
@@ -534,6 +632,18 @@ void kaspace_lease_release(KASPACE_LEASE **handle)
     KASPACE *space;
     if (!handle || !*handle) return;
     lease = *handle; *handle = NULL; space = lease->space;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (lease->irq_reserved) {
+        kaspace_irq_park(lease);
+        kowner_assert_unlocked();
+        kfree(lease);
+        /* kthread_reap invokes its execution reclaimer before its root put.
+         * Replacement instead retains the old root in its existing handoff
+         * transaction until these moved slots have retired. */
+        if (space) reap_retired(space);
+        return;
+    }
+#endif
     {
         KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_MAPPING);
         for (link = &space->leases; *link && *link != lease; link = &(*link)->next) { }
@@ -574,6 +684,9 @@ static BOOL kaspace_mapping_can_change_owned(const ASPACE *backend, VADDR addres
     last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
     for (space = spaces; space && space->backend != backend; space = space->next) { }
     if (!space) return TRUE; /* backend not yet adopted */
+#if CONF_WITH_NATIVE_PREEMPT
+    if(aspace_retired_pin_overlap(backend,address,bytes))return FALSE;
+#endif
     if (pending_overlap(space,first,last-first+USER_PAGE_SIZE)) return FALSE;
     for (lease = space->leases; lease; lease = lease->next)
         if ((lease->copying || lease->sealed || lease->held) && first <= lease->last && lease->first <= last) return FALSE;
@@ -648,6 +761,9 @@ static BOOL independent_backing_owner(KASPACE *space, VADDR address,
          * acquisition and keeps its logical mapping stable across COW. It
          * grants no reservation or absent-page materialization authority. */
         else if (resident && lease->held && !lease->sealed && !lease->revoked &&
+#if CONF_WITH_NATIVE_PREEMPT
+                 !lease->irq_reserved && /* a return fence is not a backing owner */
+#endif
                  !lease->reservation_ticket && !lease->reservation_id &&
                  !lease->captured && !lease->attachment_ticket &&
                  !lease->exact_bytes && !lease->retire_bytes &&
@@ -1361,7 +1477,14 @@ BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes)
             return TRUE;
         }
     }
+#if CONF_WITH_NATIVE_PREEMPT
+    /* A resident automatic IRQ view may be the only conflicting holder.
+     * Consume this exact pin's existing backend record without allocating an
+     * R2 cleanup record or borrowing another PROCESS's disposal authority. */
+    return aspace_defer_unborrow(space->backend,address,bytes);
+#else
     return FALSE;
+#endif
 }
 static BOOL retirement_unblocked(KASPACE *space,VADDR address,VADDR bytes)
 {
@@ -1381,6 +1504,18 @@ BOOL kaspace_retirement_change(ASPACE *backend,VADDR address,VADDR bytes,BOOL pr
     if (!bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address) return FALSE;
     for (space=spaces;space && space->backend!=backend;space=space->next) { }
     if (!space) return FALSE;
+#if CONF_WITH_NATIVE_PREEMPT
+    if(space->retiring_pin && !private && !space->retiring_committed &&
+       address==space->retiring_address && bytes==space->retiring_bytes &&
+       retirement_unblocked(space,address,bytes)) {
+        space->retiring_committed=TRUE;
+        first=address&~(VADDR)(USER_PAGE_SIZE-1);last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        for(lease=space->leases;lease;lease=lease->next)
+            if(!lease->attachment_ticket && !lease->held && !lease->sealed && !lease->retire_bytes &&
+               first<=lease->last && lease->first<=last)lease->revoked=TRUE;
+        return TRUE;
+    }
+#endif
     if (private && space->retiring_birth && !space->retiring_committed &&
         address==space->retiring_address && bytes==space->retiring_bytes) {
         KASPACE_RESERVATION_INFO info;
@@ -1460,6 +1595,25 @@ static void reap_retired(KASPACE *space)
                         aspace_release_lazy_retired_allowed(space->backend,region->address,region->length)) {
                         address=region->address;bytes=region->length;birth=region->reservation;break;
                     }
+            }
+#endif
+#if CONF_WITH_NATIVE_PREEMPT
+            if(!birth) {
+                VADDR from=0;
+                BOOL found=FALSE;
+                while(aspace_retired_pin_next(space->backend,from,&address,&bytes)) {
+                    if(retirement_unblocked(space,address,bytes)) {found=TRUE;break;}
+                    from=address+USER_PAGE_SIZE;
+                }
+                if(found) {
+                    space->retiring_pin=TRUE;space->retiring_committed=FALSE;
+                    space->retiring_address=address;space->retiring_bytes=bytes;
+                    aspace_unborrow_retired(space->backend,address,bytes);
+                    if(!space->retiring_committed)panic("IRQ pin retirement lost ownership");
+                    space->retiring_pin=FALSE;space->retiring_committed=FALSE;
+                    space->retiring_address=space->retiring_bytes=0;
+                    continue;
+                }
             }
 #endif
             if (!birth) break;

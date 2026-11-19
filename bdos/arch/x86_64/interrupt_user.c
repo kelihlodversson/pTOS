@@ -1,5 +1,5 @@
-/* Diagnostic capture. Test kernels additionally prove a fresh same-entry
- * copied-frame round trip; no delayed restore or scheduler handoff exists. */
+/* Authentic user IRQ capture and the shared B2 retained-return backend.
+ * Timer policy and test-only preparation are separate admission gates. */
 #include "emutos.h"
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
@@ -15,12 +15,17 @@ extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
 static ULONG irq_pattern_seen, irq_roundtrip_seen;
 static BOOL irq_pattern_bad, irq_pattern_reported;
+#if CONF_WITH_NATIVE_PREEMPT
+#define IRQ_PATTERN_COUNT 20000000
+#else
+#define IRQ_PATTERN_COUNT 2000000
+#endif
 static void check_irq_pattern(const X86_USER_IRQ_FRAME *f)
 {
     UWORD i;
     if (f->r15!=0x7130000000713015ULL) return; /* set last, cleared first by user probe */
     irq_pattern_seen++;
-    if (!(f->rflags&0x400) || f->rax!=0x7130000000713001ULL || f->rbx!=0x7130000000713002ULL || f->rcx>2000000 ||
+    if (!(f->rflags&0x400) || f->rax!=0x7130000000713001ULL || f->rbx!=0x7130000000713002ULL || f->rcx>IRQ_PATTERN_COUNT ||
         f->rdx!=0x7130000000713004ULL || f->rsi!=0x7130000000713005ULL || f->rdi!=0x7130000000713006ULL ||
         f->rbp!=0x7130000000713007ULL || f->r8!=0x7130000000713008ULL || f->r9!=0x7130000000713009ULL ||
         f->r10!=0x7130000000713010ULL || f->r11!=0x7130000000713011ULL || f->r12!=0x7130000000713012ULL ||
@@ -55,6 +60,12 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     if (frame->cs!=X86_64_USER_CODE_SEL) return; /* no kernel-frame interpretation */
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return;
+#if CONF_WITH_NATIVE_PREEMPT
+    /* Invalidate freshness even when skipping a diagnostic copy. The device
+     * tick runs later; prepare on its last quantum tick, never afterward. */
+    execution->interrupted_user.valid=FALSE;
+    if (!ksched_preempt_capture_needed()) return;
+#endif
     binding.cr3=x86_64_read_cr3();
     binding.expected_cr3=aspace_root(kaspace_backend(space));
     binding.syscall_top=x86_64_get_kernel_stack();
@@ -70,7 +81,7 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     capture->tid=tid; capture->cpu=execution->owner_cpu;
     capture->sequence++;
     capture->valid=TRUE;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     interrupt_restart_user_capture(execution);
 #endif
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
@@ -99,7 +110,7 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     }
 #endif
 }
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
 {
     KTHREAD_CONTEXT *execution;
@@ -110,6 +121,9 @@ void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
     if (frame->cs!=X86_64_USER_CODE_SEL) return;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (!ksched_preempt_due()) return;
+#endif
     c=&execution->interrupted_user;
     b.cr3=x86_64_read_cr3(); b.expected_cr3=aspace_root(kaspace_backend(space));
     b.syscall_top=x86_64_get_kernel_stack(); b.irq_top=x86_64_get_irq_stack();
@@ -132,8 +146,10 @@ void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
         memcmp(frame,&c->image,sizeof(*frame))) panic("IRQ restart: x32 retained return binding changed");
     /* This corruption occurs only AFTER real B user execution was observed.
      * A's native GPR/FXSAVE probe fails unless the frozen owned image wins. */
+#if CONF_WITH_IRQ_RESTART_TEST
     *(volatile UQUAD *)&frame->rax=0;
     memset(frame->fx+160,0,256);
+#endif
     memcpy(frame,&c->image,sizeof(*frame));
     interrupt_restart_ack(execution);
 }

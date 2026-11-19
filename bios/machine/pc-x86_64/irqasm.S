@@ -143,7 +143,7 @@ x86_64_irq_common:
 1:
 #endif
 
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
         /* Verified outer USER-return checkpoint: handlers and callback work
          * have unwound and PIC ACK is complete. Kernel IRQs remain ordinary. */
         mov     %rsp, %rdi

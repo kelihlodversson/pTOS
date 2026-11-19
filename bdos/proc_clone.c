@@ -601,6 +601,9 @@ LONG proc_clone_prepare_saved_return(PROC_CLONE_TRANSACTION *tx, const SYSCALL_R
 #endif
     return thread_startup_prepare_saved_return(tx->space, saved, &tx->startup);
 }
+#if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK
+/* Timer return capture also selects SAVED_RETURN. It does not use the
+ * syscall-return child construction helpers or enable either fork entry. */
 static LONG return_back_continuation(KASPACE *space, const SYSCALL_RETURN *saved)
 {
     LONG error = public_back_range(space, saved->mappings.entry, 1,
@@ -745,6 +748,7 @@ LONG proc_clone_fork(SYSCALL_RETURN *saved, BOOL vfork)
     return return_clone(saved, FORK_RETURN_PRIVATE | (vfork ? FORK_RETURN_VFORK : 0),
                         PROC_CLONE_COPY_STANDARD_HANDLES | PROC_CLONE_COPY_CWD | PROC_CLONE_COPY_FILES);
 }
+#endif
 #endif
 #endif
 

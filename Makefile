@@ -1920,6 +1920,9 @@ TEST_CC = $(CC)
 TEST_LIBS = $(LIBS)
 TEST_CPUFLAGS = $(CPUFLAGS)
 endif
+# ROM-window MMU backends deliberately reject private cloning in aspace_clone.
+# Phase C keeps kernel ownership counters/adapters, but its ROM user proof uses
+# independently loader-created roots rather than advertising private-fork tests.
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
               $(if $(ARCH_ARM),-mword-relocations) \
@@ -1939,8 +1942,10 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(filter y,$(CONF_WITH_EXEC_HANDOFF_TEST)),-DTEST_WITH_EXEC_HANDOFF_TEST) \
               $(if $(filter y,$(CONF_WITH_PEXEC200)),-DTEST_WITH_PEXEC200) \
               $(if $(filter y,$(CONF_WITH_PFORK)),-DTEST_WITH_PFORK) \
-              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_PRIVATE_CLONE_TEST) \
+              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),$(if $(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_M68K_ROM_WINDOW)),,-DTEST_WITH_PRIVATE_CLONE_TEST)) \
+              $(if $(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_NATIVE_PREEMPT_PROBES) \
               $(if $(filter y,$(CONF_WITH_IRQ_RESTART_TEST)),-DTEST_WITH_IRQ_RESTART) \
+              $(if $(filter y,$(CONF_WITH_NATIVE_PREEMPT)),-DTEST_WITH_NATIVE_PREEMPT) \
               $(if $(filter y,$(CONF_WITH_IMAGE_POLICY_TEST)),-DTEST_WITH_IMAGE_POLICY_TEST) \
               $(if $(filter y,$(CONF_WITH_PRIVATE_SNAPSHOT_TEST)),-DTEST_WITH_PRIVATE_SNAPSHOT) \
               $(if $(filter y,$(CONF_WITH_PROCESS_FILES_TEST)),-DTEST_WITH_PROCESS_FILES) \
@@ -1954,7 +1959,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
               $(if $(CONF_M68K_ROM_WINDOW),-DTEST_NO_RMW_FAULTS -DTEST_NO_CROSSING) \
               $(if $(CONF_WITH_MMU_PROBE),-DTEST_WITH_MMU_PROBE) \
-              $(if $(MACHINE_AMIGA),-DTEST_LOG_FILE) \
+              $(if $(or $(MACHINE_AMIGA),$(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_ATARI_HIGHER_HALF))),-DTEST_LOG_FILE) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
               $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
               $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(ARCH_X86_64)),-DTEST_WITH_ELF_SHARED)) \
@@ -1998,6 +2003,15 @@ $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 ifneq ($(filter pclone,$(TEST_SUITES)),)
 TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
+ifeq ($(CONF_WITH_NATIVE_PREEMPT),y)
+TEST_SUITE_OBJ += obj/preempt_file_loop.o obj/preempt_registers.o obj/preempt_registers_alt.o
+obj/preempt_file_loop.o: tests/pclone/preempt_loop.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
+obj/preempt_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DPREEMPT_PATTERN -c -o $@ $<
+obj/preempt_registers_alt.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DPREEMPT_PATTERN -DIRQ_ALTERNATE -c -o $@ $<
+endif
 obj/clone_irq_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
 ifeq ($(CONF_WITH_IRQ_RESTART_TEST),y)
@@ -2050,6 +2064,15 @@ FORKPAR.TOS: $(TEST_STARTUP) obj/fork_parent_native.o obj/testlib.o $(LIBCMINI_L
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/fork_parent_native.o obj/testlib.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 endif
 TOCLEAN += FORKPAR.TOS
+
+ifeq ($(CONF_WITH_NATIVE_PREEMPT),y)
+TEST_PREEMPT_FILES = PREEMPT.TOS
+obj/preempt_image.o: tests/pclone/preempt_image.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+PREEMPT.TOS: $(TEST_STARTUP) obj/preempt_image.o obj/preempt_registers.o obj/preempt_registers_alt.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/preempt_image.o obj/preempt_registers.o obj/preempt_registers_alt.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TOCLEAN += PREEMPT.TOS
 
 ifeq ($(CONF_WITH_IMAGE_POLICY_TEST),y)
 TEST_IMAGE_POLICY_FILES = IMAGEPOL.TOS
@@ -2420,7 +2443,7 @@ $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO: obj/ldso/test/libdyn.so
 endif
 endif
 
-TEST_HD_FILES = $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
+TEST_HD_FILES = $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2436,7 +2459,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 

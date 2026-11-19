@@ -19,6 +19,9 @@ static KTHREAD thread;
 static KTHREAD_CONTEXT execution;
 static BOOL target=TRUE,cleanup,cancelled,peer=TRUE,critical;
 static BOOL resident_code=TRUE,resident_stack=TRUE;
+#if CONF_WITH_NATIVE_PREEMPT
+static BOOL owned_code=TRUE;
+#endif
 static unsigned allocations,frees,destroys,fail_alloc,cancel_calls;
 static UQUAD selected=4,user_observed=3;
 static ULONG current_tid=17;
@@ -51,6 +54,14 @@ BOOL aspace_logical_protection(const ASPACE *as,VADDR va,UWORD *rights)
 { return aspace_translate(as,va,NULL,rights); }
 BOOL aspace_private_range_ok(const ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;return bytes && (va==CODE || va==STACK); }
+#if CONF_WITH_NATIVE_PREEMPT
+BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
+{ return (va!=CODE || owned_code) && aspace_private_range_ok(as,va,bytes); }
+BOOL aspace_retired_pin_overlap(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;return FALSE; }
+BOOL aspace_retired_pin_next(const ASPACE *as,VADDR from,VADDR *va,VADDR *bytes)
+{ (void)as;(void)from;(void)va;(void)bytes;return FALSE; }
+#endif
 BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;(void)va;(void)bytes;return TRUE; }
 BOOL aspace_release_lazy_retired(ASPACE *as,VADDR va,VADDR bytes)
@@ -98,6 +109,9 @@ BOOL ksched_block(BOOL (*ready)(void *),void *argument)
     execution.interrupted_user.valid=FALSE;
     execution.on_cpu=FALSE;
     critical=FALSE;
+#if CONF_WITH_NATIVE_PREEMPT
+    interrupt_restart_reap(&execution);
+#endif
     selected+=2;if(peer)user_observed++;
     execution.on_cpu=TRUE;
     return TRUE;
@@ -111,8 +125,21 @@ void ksched_cancel_point(void)
 }
 void xterm(UWORD status) { (void)status;abort(); }
 
+#if CONF_WITH_IRQ_RESTART_TEST
 static LONG operation(UQUAD selector)
 { return interrupt_restart_test((selector==IRQ_RESTART_BEGIN || selector==IRQ_RESTART_NO_CREDIT)?0x20000000UL:0,selector); }
+#endif
+#if CONF_WITH_NATIVE_PREEMPT
+#include "ksched_quantum.h"
+static KSCHED_QUANTUM quantum;
+static UWORD patterns;
+BOOL ksched_preempt_due(void) { return quantum.pending || cancelled; }
+void ksched_preempt_probe_return(UWORD pattern) { patterns|=pattern; }
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{ assert(!critical && !cleanup);cleanup=TRUE;scope->active=TRUE; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{ assert(!critical && cleanup && scope->active);cleanup=FALSE;scope->active=FALSE; }
+#endif
 static void capture(void)
 {
     X86_USER_IRQ_CAPTURE *c=&execution.interrupted_user;
@@ -126,6 +153,7 @@ static void freeze(void)
     assert(interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,STACK+4096));
     critical=FALSE;
 }
+#if CONF_WITH_IRQ_RESTART_TEST
 int main(void)
 {
     ASPACE backend={1};
@@ -196,3 +224,110 @@ int main(void)
     puts("Retained IRQ transaction: rollback, no-peer return, stale identity, cancellation, replacement and exact lease/root conservation: PASS (dispatch/CPU/PROCESS models)");
     return 0;
 }
+
+#else
+int main(void)
+{
+    ASPACE backend={1};
+    KASPACE *thread_space;
+    unsigned baseline,i;
+    process.space=kaspace_adopt(&backend);assert(process.space);
+    thread_space=kaspace_share(process.space);assert(thread_space);
+    process.number=1;process.pd=run;thread.process=&process;thread.executing=TRUE;
+    execution.identity=11;execution.on_cpu=TRUE;
+    baseline=allocations-frees;
+    for(i=1;i<=2;i++) {
+        fail_alloc=i;
+        assert(interrupt_restart_reserve(&execution.irq_restart)==ENSMEM);
+        assert(execution.irq_restart.state==IRQ_RESTART_EMPTY && allocations-frees==baseline);
+    }
+    assert(interrupt_restart_reserve(&execution.irq_restart)==E_OK);
+    assert(allocations-frees==baseline+2);
+    for(i=0;i<64;i++) {
+        unsigned tick;
+        capture();critical=TRUE;ksched_quantum_reset(&quantum);
+        execution.interrupted_user.image.r15=(i&1)?0x7240000000724015ULL:0x7130000000713015ULL;
+        peer=(i%4)!=0;
+        for(tick=0;tick<8;tick++)ksched_quantum_tick(&quantum,FALSE);
+        assert(quantum.left==KSCHED_QUANTUM_TICKS && !quantum.pending);
+        assert(!ksched_quantum_capture_needed(&quantum));
+        assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,STACK+4096));
+        for(tick=1;tick<KSCHED_QUANTUM_TICKS;tick++) {
+            assert(ksched_quantum_capture_needed(&quantum)==(quantum.left==1));
+            ksched_quantum_tick(&quantum,TRUE);assert(!quantum.pending);
+        }
+        assert(ksched_quantum_capture_needed(&quantum)); /* before expiring device tick */
+        ksched_quantum_tick(&quantum,TRUE);assert(quantum.pending);
+        assert(ksched_quantum_capture_needed(&quantum));
+        cleanup=TRUE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));cleanup=FALSE;
+        target=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));target=TRUE;
+        resident_code=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));resident_code=TRUE;
+        resident_stack=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));resident_stack=TRUE;
+        critical=FALSE;interrupt_restart_user_entry();critical=TRUE;
+        for(tick=0;tick<100;tick++)ksched_quantum_tick(&quantum,TRUE);
+        assert(!quantum.left && quantum.pending); /* unsafe IRQs never lose expiry */
+        assert(kaspace_mapping_can_change(&backend,CODE,1));
+        execution.identity++;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));execution.identity--;
+        critical=FALSE;
+        if(!(i%8))assert(kaspace_mutation_begin(process.space));
+        freeze();
+        assert(!kaspace_mapping_can_change(&backend,CODE,1));
+        assert(!kaspace_mapping_can_change(&backend,STACK,1));
+        assert(interrupt_restart_suspend(&execution)==peer);
+        critical=TRUE;
+        assert(interrupt_restart_return_valid(&execution));
+        current_tid++;assert(!interrupt_restart_return_valid(&execution));current_tid--;
+        process.number++;assert(!interrupt_restart_return_valid(&execution));process.number--;
+        interrupt_restart_ack(&execution);
+        assert(execution.irq_restart.state==IRQ_RESTART_ARMED);
+        assert(!kaspace_mapping_can_change(&backend,CODE,1));
+        assert(!kaspace_mapping_can_change(&backend,STACK,1));
+        assert(allocations-frees==baseline+2);
+        critical=FALSE;
+        if(!(i%8))kaspace_mutation_end(process.space);
+        if(i&1) {
+            interrupt_restart_user_entry();
+            assert(kaspace_mapping_can_change(&backend,CODE,1));
+            assert(kaspace_mapping_can_change(&backend,STACK,1));
+        }
+    }
+    assert(patterns==3);peer=TRUE;
+    {
+        KASPACE_RESERVATION_HOLD image={0};
+        KASPACE_RESERVATION_INFO info={CODE,4096,0,ASPACE_PROT_USER|ASPACE_PROT_EXEC,0};
+        void *owner=NULL;
+        owned_code=FALSE;capture();critical=TRUE;
+        assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,STACK+4096));
+        critical=FALSE;
+        info.identity=kaspace_reservation_next();
+        assert(kaspace_reservation_hold_captured(process.space,&info,CODE,4096,info.rights,
+                                               process.number,&process,&image)==E_OK);
+        freeze();assert(interrupt_restart_suspend(&execution));
+        /* The authentic existing captured-image witness may retire first;
+         * the IRQ's bounded resident view still excludes mapping destruction. */
+        assert(kaspace_reservation_release(&image,&owner) && owner==&process);
+        assert(!kaspace_mapping_can_change(&backend,CODE,1));
+        assert(interrupt_restart_return_valid(&execution));interrupt_restart_ack(&execution);
+        freeze();assert(interrupt_restart_suspend(&execution));
+        assert(interrupt_restart_return_valid(&execution));interrupt_restart_ack(&execution);
+        interrupt_restart_user_entry();
+        assert(kaspace_mapping_can_change(&backend,CODE,1));
+        assert(allocations-frees==baseline+2);owned_code=TRUE;
+    }
+    /* A CPU-bound cancelled user must still reach the existing safe cancel
+     * checkpoint: cancellation is not a reason to refuse automatic departure. */
+    cancelled=TRUE;ksched_quantum_reset(&quantum);freeze();
+    if(!setjmp(exit_resume)) { (void)interrupt_restart_suspend(&execution);abort(); }
+    assert(cancel_calls==1);
+    execution.on_cpu=FALSE;interrupt_restart_dispose(&execution);execution.on_cpu=TRUE;
+    cancelled=FALSE;assert(allocations-frees==baseline);
+    assert(interrupt_restart_reserve(&execution.irq_restart)==E_OK);quantum.pending=TRUE;freeze();
+    assert(interrupt_restart_suspend(&execution));interrupt_restart_ack(&execution);
+    kaspace_put(process.space);assert(!destroys);
+    execution.on_cpu=FALSE;interrupt_restart_dispose(&execution);
+    kaspace_put(thread_space);
+    assert(destroys==1 && allocations==frees);
+    puts("Automatic IRQ owner: preallocated rollback, deferred admission, 64 allocation-free cycles, stale identities, cancellation and exact conservation: PASS (CPU/dispatcher models)");
+    return 0;
+}
+#endif

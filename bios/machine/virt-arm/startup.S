@@ -633,7 +633,7 @@ C_SYM(arm_dispatch_irq):
     FPU_PUSH_ALL r0                 /* the interrupted code's FPU state */
 #endif
     bl     C_SYM(virt_int_handler)
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     mov    r0,sp
     bl     C_SYM(arm_restart_user_irq)
 #endif

@@ -582,6 +582,11 @@ C_SYM(int_timerc):
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
         M68K_IRQ_CAPTURE
 #endif
+#if CONF_WITH_NATIVE_PREEMPT
+        movem.l d0-d1/a0-a1,-(sp)
+        jsr     C_SYM(ksched_preempt_tick)
+        movem.l (sp)+,d0-d1/a0-a1
+#endif
         addq.l  #1, C_SYM(hz_200).w           // increment 200 Hz counter
 
 #ifdef __mcoldfire__
@@ -667,7 +672,7 @@ timerc_end:
         // exception stack frame pointing to a pseudo-VBL routine. In that case,
         // the RTE below jumps to that pseudo-VBL. Then that one will return to
         // our caller with RTE.
-#if CONF_WITH_IRQ_RESTART_TEST && REAL_TIMER_C_HANDLER
+#if CONF_WITH_IRQ_RESTART && REAL_TIMER_C_HANDLER
         M68K_IRQ_RESTART_RETURN
 #endif
         rte
