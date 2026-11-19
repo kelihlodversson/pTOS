@@ -72,7 +72,7 @@ def ipc(path, line, timeout=10.0):
     return data.decode(errors='replace').rstrip('\n').replace('\t', '\n')
 
 
-def start(amiberry, rom, cpu, disk=None, caches=False, cycle_exact=False, fpu=None):
+def start(amiberry, rom, cpu, disk=None, caches=False, cycle_exact=False, fpu=None, softfloat=False):
     """Start the emulator, headless, on a ROM (and an image of a hard disk),
     and wait for its IPC socket: returns (the process, the socket path, the
     directory of its configuration and log).  The socket is in a runtime
@@ -87,6 +87,10 @@ def start(amiberry, rom, cpu, disk=None, caches=False, cycle_exact=False, fpu=No
                               cycle_exact='true' if cycle_exact else 'false'))
         if fpu is not None:
             f.write("fpu_model=%s\n" % fpu)
+        if softfloat:
+            # Full extended-register/control proof needs arithmetic independent
+            # of the host FPU's precision/rounding implementation.
+            f.write("fpu_softfloat=true\n")
         if disk:
             f.write(DISK_CONFIG.format(disk=os.path.abspath(disk)))
     runtime = os.path.join(work, 'run')
@@ -129,6 +133,7 @@ def main():
     ap.add_argument('--screenshot', help='write a PNG of the screen here')
     ap.add_argument('--fpu', choices=['0','68881','68882','68040','68060'],
                     help='explicit FPU model; omitted preserves the emulator default')
+    ap.add_argument('--softfloat', action='store_true', help='accurate software FPU emulation')
     ap.add_argument('--caches', action='store_true',
                     help='CPU instruction and data caches on (off by default)')
     ap.add_argument('--cycle-exact', action='store_true')
@@ -141,7 +146,7 @@ def main():
     proc = None
     path = None
     try:
-        proc, path, work = start(a.amiberry, a.rom, a.cpu, a.disk, a.caches, a.cycle_exact, a.fpu)
+        proc, path, work = start(a.amiberry, a.rom, a.cpu, a.disk, a.caches, a.cycle_exact, a.fpu, a.softfloat)
         time.sleep(a.wait)
         if a.screenshot:
             print(ipc(path, 'SCREENSHOT\t' + os.path.abspath(a.screenshot)))

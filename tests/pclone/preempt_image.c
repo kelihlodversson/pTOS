@@ -39,5 +39,5 @@ int main(void)
         error|=role?clone_preempt_registers_alt():clone_preempt_registers();
 #endif
     }
-    return error?83:0;
+    return error?80+error:0;
 }

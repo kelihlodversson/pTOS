@@ -97,6 +97,7 @@ PYCONFIG
     [ "${NATIVE_THREADS:-0}" != 1 ] || managed="$managed --require-managed-threads"
     fpu=
     [ -z "${AMIBERRY_FPU:-}" ] || fpu="--fpu $AMIBERRY_FPU"
+    [ "${AMIBERRY_SOFTFLOAT:-0}" != 1 ] || fpu="$fpu --softfloat"
     [ "${REQUIRE_FPIAR:-0}" != 1 ] || managed="$managed --require-nonzero-fpiar"
     if ! build_target; then
         echo "::error::$name: the build failed (logs/$name.build)"

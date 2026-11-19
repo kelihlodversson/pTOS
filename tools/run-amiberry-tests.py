@@ -86,6 +86,7 @@ def main():
     ap.add_argument('--timeout', type=float, default=1200, help='seconds for the whole suite')
     ap.add_argument('--fpu', choices=['0','68881','68882','68040','68060'],
                     help='explicit FPU model; omitted preserves the emulator default')
+    ap.add_argument('--softfloat', action='store_true', help='accurate software FPU emulation')
     ap.add_argument('--require-nonzero-fpiar', action='store_true')
     ap.add_argument('--irq-capture-state', type=lambda value: int(value, 0),
                     help='physical debugger address of the test-only seen/error/nonzero-FPIAR ULONG array')
@@ -128,7 +129,7 @@ def main():
     text = ''
     irq_evidence = None
     try:
-        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches, fpu=a.fpu)
+        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches, fpu=a.fpu, softfloat=a.softfloat)
         deadline = time.time() + a.timeout
         while time.time() < deadline:
             time.sleep(5)

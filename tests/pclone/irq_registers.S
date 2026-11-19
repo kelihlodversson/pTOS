@@ -374,7 +374,9 @@ irq_fpu_last:
         movea.l %d1,%a3
         movea.l %d1,%a4
         movea.l %d1,%a5
-#if defined(TEST_WITH_IRQ_RESTART) || defined(PREEMPT_PATTERN)
+#if defined(PREEMPT_PATTERN)
+        move.l #8000000,%d0
+#elif defined(TEST_WITH_IRQ_RESTART)
         move.l #40000000,%d0
 #else
         move.l #4000000,%d0
@@ -416,42 +418,54 @@ irq_fpu_last:
         jeq 9f
         fmove.l %fpiar,%d0
         cmp.l %a6,%d0
-        jne 2f
+        jne .Lirq_bad_fpiar
 #ifdef IRQ_ALTERNATE
         fmove.l %fpcr,%d0
         cmpi.l #0x30,%d0
-        jne 2f
+        jne .Lirq_bad_fpcr
         fmove.l %fpsr,%d0
         cmpi.l #0x08000000,%d0
-        jne 2f
+        jne .Lirq_bad_fpsr
 #endif
         fmove.l %fp0,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp1,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp2,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp3,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp4,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp5,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp6,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp7,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
 9:      moveq #0,%d0
         jra 3f
 2:      moveq #1,%d0
+        jra 3f
+.Lirq_bad_fpiar:
+        moveq #2,%d0
+        jra 3f
+.Lirq_bad_fpcr:
+        moveq #3,%d0
+        jra 3f
+.Lirq_bad_fpsr:
+        moveq #4,%d0
+        jra 3f
+.Lirq_bad_fpreg:
+        moveq #5,%d0
 3:      tst.l 324(%sp)
         jeq 4f
         fmovem.x 228(%sp),%fp0-%fp7

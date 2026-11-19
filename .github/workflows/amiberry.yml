@@ -94,6 +94,7 @@ jobs:
           REQUIRE_FPIAR: '1'
           IRQ_COPY_PROOF: '1'
           NATIVE_PREEMPT: '1'
+          AMIBERRY_SOFTFLOAT: '1'
         run: |
           git show -s --format='source %H%nparents %P' HEAD
           sh tools/ci-amiberry.sh amiga-aspace040:68040

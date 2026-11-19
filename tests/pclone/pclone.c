@@ -583,7 +583,27 @@ static volatile struct clone_probe {
     unsigned long local;
     int mode;
     volatile long gate, done, child_pid, child_tid;
-} probe;
+} probe __attribute__((aligned(4)));
+static void probe_increment(volatile long *counter)
+{
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(__mc68000__)
+    long observed,next;
+    /* Phase C is 040-only here. CAS is indivisible, requires no USER lock
+     * across an IRQ/cancellation, and these prewarmed cells are aligned/RW. */
+    __asm__ volatile (
+        ".chip 68020\n\t"
+        "1: move.l (%3),%0\n\t"
+        "move.l %0,%1\n\t"
+        "addq.l #1,%1\n\t"
+        "cas.l %0,%1,(%3)\n\t"
+        "bne 1b"
+        : "=&d"(observed),"=&d"(next),"+m"(*counter) : "a"(counter) : "cc","memory");
+#elif defined(TEST_WITH_NATIVE_PREEMPT)
+    (void)__sync_fetch_and_add(counter,1);
+#else
+    (*counter)++;
+#endif
+}
 #if defined(__x86_64__) || (defined(__arm__) && defined(__ARM_NEON))
 extern long clone_irq_registers(void);
 #elif defined(__mc68000__)
@@ -606,7 +626,7 @@ static void runnable_entry(void *argument)
     p->local = (unsigned long)&local;
     for (i = 0; i < 12; i++) {
         if (local != 0x13579bdfUL) p->error = 1;
-        p->steps++;
+        probe_increment(&p->steps);
 #if defined(__arm__) || defined(__mc68000__)
         if (clone_registers((unsigned long)&local)) p->error |= 2;
 #else
@@ -680,7 +700,7 @@ static void gated_entry(void *argument)
 {
     volatile struct clone_probe *p = argument;
     while (!p->gate) (void)Syield();
-    p->done++;
+    probe_increment(&p->done);
 }
 /* Twelve live continuations exceed the bootstrap arena on every MMU target.
  * The trace tests actual cooperative dispatch, not a modeled ready queue. */
