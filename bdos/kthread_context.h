@@ -31,7 +31,7 @@ typedef struct kthread_context {
     KTHREAD_STACK syscall_stack; /* transferred once to the existing launcher */
     NATIVE_SCHED_CONTEXT cpu;
     jmp_buf resume;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     IRQ_RESTART irq_restart;
 #endif
 #if ARCH_X86_64 && CONF_WITH_USER_ASPACE

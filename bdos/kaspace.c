@@ -50,11 +50,14 @@ static UQUAD lease_ids; /* Non-recycled storage identity; not an owning handle. 
 static KASPACE *spaces; /* borrowed registry; serialized with retain/release */
 struct kaspace_lease {
     UQUAD identity;
-    KASPACE *space; /* owning; list membership is non-owning */
+    KASPACE *space; /* owning except IRQ slots borrowed from their executing KTHREAD */
     VADDR first, last; /* inclusive page addresses; no end-address overflow */
     UWORD access;
     BOOL revoked, sealed, held, stack;
     BOOL copying; /* temporary user-copy fence, never backing or clone authority */
+#if CONF_WITH_NATIVE_PREEMPT
+    BOOL irq_reserved, irq_linked;
+#endif
     UQUAD copy_actor;
     UQUAD reservation_ticket, reservation_id, owner_number;
     UQUAD attachment_ticket; /* distinct role; never an R2 hold or access grant */
@@ -444,6 +447,77 @@ BOOL kaspace_copy_valid(const KASPACE_LEASE *lease)
     return valid;
 }
 
+#if CONF_WITH_NATIVE_PREEMPT
+LONG kaspace_irq_reserve(KASPACE_LEASE **out)
+{
+    KASPACE_LEASE *lease;
+    KOWNER_GUARD guard;
+    if (!out || *out) return EINVAL;
+    lease=kalloc(sizeof(*lease));
+    if (!lease) return ENSMEM;
+    memset(lease,0,sizeof(*lease));
+    kowner_enter(&guard,KOWNER_MAPPING);
+    if (lease_ids==~(UQUAD)0) {
+        kowner_leave(&guard);kfree(lease);return ENSMEM;
+    }
+    lease->identity=++lease_ids;
+    lease->irq_reserved=TRUE;
+    *out=lease;
+    kowner_leave(&guard);
+    return E_OK;
+}
+BOOL kaspace_irq_activate(KASPACE_LEASE *lease,KASPACE *space,VADDR address,UWORD access)
+{
+    VADDR page=address&~(VADDR)(USER_PAGE_SIZE-1);
+    UWORD resident_rights,logical_rights;
+    BOOL result=FALSE;
+    KOWNER_GUARD guard;
+    kowner_enter(&guard,KOWNER_MAPPING);
+    if (!lease || !lease->irq_reserved || lease->irq_linked || !space ||
+        (lease->space && lease->space!=space) || address>=USER_VA_LIMIT ||
+        (access!=(ASPACE_PROT_USER|ASPACE_PROT_EXEC) &&
+         access!=(ASPACE_PROT_USER|ASPACE_PROT_WRITE)) || space->mutating || space->reaping ||
+        pending_overlap(space,page,USER_PAGE_SIZE) ||
+        !aspace_translate(space->backend,page,NULL,&resident_rights) ||
+        !(resident_rights&ASPACE_PROT_USER) ||
+#if CONF_WITH_PRIVATE_CLONE
+        !aspace_logical_protection(space->backend,page,&logical_rights) ||
+#else
+        !aspace_translate(space->backend,page,NULL,&logical_rights) ||
+#endif
+        (logical_rights&access)!=access ||
+        !aspace_private_range_ok(space->backend,page,USER_PAGE_SIZE)) goto done;
+    /* A COW stack may be resident read-only: RTE/RFE/IRETQ does not write
+     * user memory. The existing COW path retains its logical write authority. */
+    /* The existing KTHREAD owns this root through execution reclamation.
+     * Do not acquire new reference rights at the first timer interruption:
+     * ordinary failure/conservation observations must remain invariant. */
+    lease->space=space;
+    lease->first=lease->last=page;lease->access=access;
+    lease->revoked=FALSE;lease->held=TRUE;
+    lease->stack=(access&ASPACE_PROT_WRITE)!=0;
+    lease->next=space->leases;space->leases=lease;lease->irq_linked=TRUE;
+    result=TRUE;
+done:
+    kowner_leave(&guard);
+    return result;
+}
+void kaspace_irq_park(KASPACE_LEASE *lease)
+{
+    KASPACE_LEASE **link;
+    KOWNER_GUARD guard;
+    kowner_enter(&guard,KOWNER_MAPPING);
+    if (lease && lease->irq_reserved && lease->irq_linked) {
+        for (link=&lease->space->leases;*link && *link!=lease;link=&(*link)->next) { }
+        if (!*link) panic("IRQ lease: missing active owner");
+        *link=lease->next;lease->next=NULL;
+        lease->irq_linked=FALSE;lease->held=FALSE;lease->stack=FALSE;
+    }
+    /* No resource destruction or pending-map reaping on an IRQ tail. */
+    kowner_leave(&guard);
+}
+#endif
+
 static BOOL kaspace_lease_hold_private_owned(KASPACE_LEASE *lease)
 {
     if (!kaspace_lease_valid(lease) || lease->held ||
@@ -534,6 +608,18 @@ void kaspace_lease_release(KASPACE_LEASE **handle)
     KASPACE *space;
     if (!handle || !*handle) return;
     lease = *handle; *handle = NULL; space = lease->space;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (lease->irq_reserved) {
+        kaspace_irq_park(lease);
+        kowner_assert_unlocked();
+        kfree(lease);
+        /* kthread_reap invokes its execution reclaimer before its root put.
+         * Replacement instead retains the old root in its existing handoff
+         * transaction until these moved slots have retired. */
+        if (space) reap_retired(space);
+        return;
+    }
+#endif
     {
         KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_MAPPING);
         for (link = &space->leases; *link && *link != lease; link = &(*link)->next) { }

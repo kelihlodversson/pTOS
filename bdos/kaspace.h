@@ -12,6 +12,15 @@ typedef struct kaspace_lease KASPACE_LEASE;
  * materialize through the ordinary owner and validate resident rights. */
 LONG kaspace_copy_begin(KASPACE *,VADDR,VADDR,BOOL,KASPACE_LEASE **);
 BOOL kaspace_copy_valid(const KASPACE_LEASE *);
+#if CONF_WITH_NATIVE_PREEMPT
+/* Reserve ordinary lease storage before publication. Activation/parking only
+ * link/unlink this same ledger record, with no allocation, destruction or user
+ * access. The executing KTHREAD already retains the root until its off-stack
+ * execution reclaimer returns; IRQ slots borrow that existing reference. */
+LONG kaspace_irq_reserve(KASPACE_LEASE **);
+BOOL kaspace_irq_activate(KASPACE_LEASE *,KASPACE *,VADDR,UWORD);
+void kaspace_irq_park(KASPACE_LEASE *);
+#endif
 typedef struct kaspace_scope KASPACE_SCOPE;
 typedef struct kaspace_member KASPACE_MEMBER;
 /* PROCESS lifetime membership, separate from root references and R2 holds.

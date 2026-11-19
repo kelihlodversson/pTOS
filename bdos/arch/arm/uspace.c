@@ -85,7 +85,7 @@ void arm_gemdos_dispatch(struct uframe *f)
 {
     long pw[8];
     int i;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     if((f->spsr&0x1f)==0x10) interrupt_restart_user_entry();
 #endif
 

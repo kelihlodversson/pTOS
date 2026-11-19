@@ -1941,6 +1941,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(filter y,$(CONF_WITH_PFORK)),-DTEST_WITH_PFORK) \
               $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_PRIVATE_CLONE_TEST) \
               $(if $(filter y,$(CONF_WITH_IRQ_RESTART_TEST)),-DTEST_WITH_IRQ_RESTART) \
+              $(if $(filter y,$(CONF_WITH_NATIVE_PREEMPT)),-DTEST_WITH_NATIVE_PREEMPT) \
               $(if $(filter y,$(CONF_WITH_IMAGE_POLICY_TEST)),-DTEST_WITH_IMAGE_POLICY_TEST) \
               $(if $(filter y,$(CONF_WITH_PRIVATE_SNAPSHOT_TEST)),-DTEST_WITH_PRIVATE_SNAPSHOT) \
               $(if $(filter y,$(CONF_WITH_PROCESS_FILES_TEST)),-DTEST_WITH_PROCESS_FILES) \

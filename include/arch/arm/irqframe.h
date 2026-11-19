@@ -88,7 +88,7 @@ static inline BOOL arm_irq_same_entry_valid(const ARM_USER_IRQ_CAPTURE *c,
 }
 struct _pd;
 void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame);
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 void arm_restart_user_irq(ARM_USER_IRQ_FRAME *frame);
 #endif
 BOOL arm_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
@@ -120,7 +120,7 @@ void arm_irq_capture_report(void);
 .endm
 .macro ARM_IRQ_POP_CAPTURE
     FPU_POP_ALL r0
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     /* Only register loads in IRQ mode: its SP may legitimately be zero.
      * Keep the live SVC SP; the original SRS pair still drives RFE. */
     mov r0,sp

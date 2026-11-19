@@ -1,7 +1,7 @@
 /* One retained outer USER-return operation per existing execution context.
- * This default-off proof uses the existing dispatcher, not a timer policy. */
+ * Test preparation and automatic timer admission share the same transaction. */
 #include "emutos.h"
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 #include "interrupt_restart.h"
 #include "kthread_context.h"
 #include "kthread.h"
@@ -43,7 +43,8 @@ static BOOL holds_valid(const IRQ_RESTART *r)
 {
     return kaspace_lease_valid(r->code) && kaspace_stack_hold_space(r->stack)==r->space &&
         resident(r->space,r->code_address,r->code_bytes,ASPACE_PROT_USER|ASPACE_PROT_EXEC) &&
-        resident(r->space,r->stack_address,r->stack_bytes,ASPACE_PROT_USER|ASPACE_PROT_WRITE);
+        resident(r->space,r->stack_address,r->stack_bytes,
+                 ASPACE_PROT_USER|(r->automatic?0:ASPACE_PROT_WRITE));
 }
 static void release(IRQ_RESTART *r)
 {
@@ -69,6 +70,42 @@ void interrupt_restart_dispose(KTHREAD_CONTEXT *c)
     interrupt_restart_detach(c,&retired);
     interrupt_restart_retire(&retired);
 }
+#if CONF_WITH_NATIVE_PREEMPT
+LONG interrupt_restart_reserve(IRQ_RESTART *r)
+{
+    LONG error;
+    if (r->state!=IRQ_RESTART_EMPTY || r->code || r->stack) return EACCDN;
+    error=kaspace_irq_reserve(&r->code);
+    if (!error) error=kaspace_irq_reserve(&r->stack);
+    if (error) { release(r);return error; }
+    r->automatic=TRUE;r->state=IRQ_RESTART_ARMED;
+    return E_OK;
+}
+static BOOL automatic_hold(KTHREAD_CONTEXT *c,VADDR pc,VADDR sp)
+{
+    IRQ_RESTART *r=&c->irq_restart;
+    KASPACE *space=NULL;
+    ULONG tid=0;
+    KTHREAD *thread;
+    if (!ksched_preempt_due() || !pc || !sp ||
+        ksched_interrupt_target(run,&space,&tid)!=c) return FALSE;
+    thread=ksched_exit_thread(run);
+    if (!r->execution) {
+        r->execution=c->identity;r->tid=tid;r->cpu=c->owner_cpu;
+        r->thread=thread;r->process=kthread_process(thread);r->space=space;
+        r->process_number=kproc_ref_number(r->process);
+    }
+    if (!owner_valid(c)) return FALSE;
+    if (!kaspace_irq_activate(r->code,space,pc,ASPACE_PROT_USER|ASPACE_PROT_EXEC)) return FALSE;
+    if (!kaspace_irq_activate(r->stack,space,sp-1,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) {
+        kaspace_irq_park(r->code);return FALSE;
+    }
+    r->code_address=pc&~(VADDR)(USER_PAGE_SIZE-1);r->code_bytes=USER_PAGE_SIZE;
+    r->stack_address=(sp-1)&~(VADDR)(USER_PAGE_SIZE-1);r->stack_bytes=USER_PAGE_SIZE;
+    return TRUE;
+}
+#endif
+#if CONF_WITH_IRQ_RESTART_TEST
 static LONG prepare(KTHREAD_CONTEXT *c, KASPACE *space, ULONG tid,
                     const IRQ_RESTART_ARGS *a, UWORD fail)
 {
@@ -157,6 +194,7 @@ LONG interrupt_restart_test(UQUAD address, UQUAD selector)
     }
     return EINVFN;
 }
+#endif
 void interrupt_restart_user_capture(KTHREAD_CONTEXT *c)
 {
     IRQ_RESTART *r=&c->irq_restart;
@@ -186,7 +224,13 @@ void interrupt_restart_user_entry(void)
 BOOL interrupt_restart_admit(KTHREAD_CONTEXT *c,UQUAD sequence,VADDR pc,VADDR sp)
 {
     IRQ_RESTART *r=&c->irq_restart;
-    if (r->state!=IRQ_RESTART_ARMED || r->capture_only || !sequence || ksched_cancellation_pending() || !owner_valid(c) || ksched_cleanup_active() || !holds_valid(r) ||
+    if (r->state!=IRQ_RESTART_ARMED || r->capture_only || !sequence || ksched_cleanup_active()) return FALSE;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (r->automatic) {
+        if (!automatic_hold(c,pc,sp)) return FALSE;
+    } else
+#endif
+    if (ksched_cancellation_pending() || !owner_valid(c) || !holds_valid(r) ||
         pc<r->code_address || pc-r->code_address>=r->code_bytes ||
         sp<r->stack_address || sp-r->stack_address>=r->stack_bytes) return FALSE;
     r->capture_sequence=sequence;
@@ -241,6 +285,14 @@ void interrupt_restart_ack(KTHREAD_CONTEXT *c)
 {
     if(c->irq_restart.state!=IRQ_RESTART_RETURNING || !owner_valid(c) || ksched_cleanup_active())
         panic("IRQ restart: invalid architectural return acknowledgment");
+#if CONF_WITH_NATIVE_PREEMPT
+    if (c->irq_restart.automatic) {
+        kaspace_irq_park(c->irq_restart.stack);
+        kaspace_irq_park(c->irq_restart.code);
+        c->irq_restart.state=IRQ_RESTART_ARMED;
+        return;
+    }
+#endif
     c->irq_restart.state=c->irq_restart.peer_ran?IRQ_RESTART_ACKED:IRQ_RESTART_ARMED;
     /* Both mapping owners survive until the next ordinary finish/exit path. */
 }

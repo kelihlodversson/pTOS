@@ -1,0 +1,103 @@
+Phase C: native USER timer preemption (#713)
+============================================
+
+Integration base: 666f14e1e66714603cf54f93da510ed9c8c7cafa, after merged
+B1 #1024, B2 #1020/#1022, and Pexec cleanup #1026. The existing PROCESS,
+exact-child wait, cancellation, replacement and off-stack reaper remain the
+only owners. This adds policy to the existing dispatcher and B2 return path.
+
+Capability and accounting
+--------------------------
+CONF_WITH_NATIVE_PREEMPT is an independent default-off capability. The initial
+profiles are x32, ARMv7-A A32/D32, and 68040 MMU format-0/stack ABI. It is not a
+claim for unsupported physical CPU/FPU/control states, SMP or arbitrary kernel
+preemption. #897 owns final release-default consolidation after acceptance.
+CONF_WITH_IRQ_RESTART selects the existing backend transaction for this gate
+or the mutually exclusive B2 test transport. No private test selector is
+needed or enabled by production preemption.
+
+The existing 200 Hz system tick charges a selected RUNNING execution four
+ticks (20 ms). Time in its nonpreemptible syscall/callback also counts. Expiry
+is sticky until a scheduler dispatch gives the selected execution a fresh
+quantum. Idle/root/parked time does not spend an execution's quantum.
+The tick only changes CPU-local metadata. It does not allocate, call owner
+callbacks, acquire resources, deliver cancellation or dispatch.
+
+After the device handler ACK and callback unwind, the authentic outer USER
+IRQ tail uses B2's frame/control/stack checks. An eligible due frame parks
+through the existing root, round-robin selection, departure acknowledgment
+and architectural restore. A non-timer device IRQ can honor an already due
+timer request but cannot create a quantum expiration itself. An unsafe IRQ
+keeps its ordinary return and the pending request. An SVC/syscall frame is
+never reinterpreted as IRQ: deferred work waits for a subsequent eligible
+USER hardware IRQ (normally the next 5 ms tick after returning to USER).
+
+Cancellation can itself request automatic departure. Refusing a CPU-bound
+cancelled USER forever would defeat the existing cancellation policy. Once
+root has acknowledged departure and restored A's launcher, the existing
+ksched_cancel_point/xterm path delivers cancellation. No new group latch,
+status, wait claim, forced kernel unwind or reaper is introduced.
+
+Prepared mapping authority
+----------------------------
+Each privately reserved scheduler record allocates two reusable slots from
+the existing KASPACE lease implementation before publication. Every failed
+reservation and unpublished/terminal cleanup frees those slots. Replacement
+prepares fresh slots in its existing fallible handoff transaction, moves old
+owners before erasing the context, installs the new context, then retires old
+slots outside the leaf. No allocation occurs at interrupt capture/return.
+
+An automatic slot borrows the execution's existing strong KTHREAD -> KASPACE
+reference. kthread_reap calls reclaim_execution before kaspace_put(thread->space).
+During replacement the existing handoff instead retains old_thread_space
+until moved execution owners have retired. This avoids first-interruption
+reference-count changes inside ordinary copy/failure/conservation observations.
+The slots are not extra root owners or another ownership registry.
+
+At an eligible IRQ tail, bounded metadata operations insert these preallocated
+records into the same mapping lease ledger. They hold the resident executable
+PC page and the user stack page below SP. Logical write authority is required
+for the stack; resident COW read-only hardware protection is permitted because
+architectural return does not write user memory. The existing COW path remains
+authoritative. Admission faults no pages and copies no user bytes. Missing,
+unowned, nonprivate or unsupported mappings refuse admission safely.
+
+While suspended these ordinary held ranges exclude unmap/protection/retirement.
+After restored-frame validation, acknowledgment unlinks the two records without
+freeing storage, dropping a reference or reaping pending mappings on the IRQ
+tail. Dormant slots can be activated again. Ordinary off-stack disposal uses
+the existing lease cleanup/reaping path while its KTHREAD/handoff root lives.
+THREAD, PROCESS, ASPACE and both kernel stacks remain owned through the same
+B2 suspend/restore/cancel transaction and root-only retirement protocol.
+
+Runtime refusals and boundaries
+--------------------------------
+Existing restrictions remain: x32 TLS/XSAVE/AVX and unsupported control/GS
+phase; ARM Thumb/Jazelle/IT, FIQ and unsupported VFP/MMU state; m68k non-format0,
+030/060 delayed return, fastcall and busy/pending/foreign FPU state. A 040 ROM
+booted on another CPU does not qualify that CPU. Callback frames, borrowed
+nested launchers, owners/leaf/legacy IRQ scopes and arbitrary kernel frames
+never gain return authority. Ordinary IRQ return remains intact.
+
+Only managed native KTHREAD executions are scheduler targets. Legacy unmanaged
+caller attachments retain their existing cooperative entry contract. No new
+PROCESS scheduler, loader policy, public ABI or GUI dispatch path is added.
+
+Evidence classification
+------------------------
+The host test executes production automatic admission and real KASPACE lease
+operations with CPU/dispatcher/PROCESS/MMU endpoints modeled. It covers quantum
+expiry/defer, allocation rollback, 64 allocation-free cycles, stale owners,
+cancellation and exact retirement. It is not architectural execution proof.
+
+tests/pclone/preempt.h requires two CPU-bound workers to alternate sixteen
+times, separately for distinct PROCESSes sharing a root and sibling THREADs.
+There is no syscall, test BEGIN selector or Syield in their progress loop.
+Serial execution cannot satisfy this handshake. Native runners require its
+explicit timer-progress marker. Capture-only and B2 test evidence cannot
+substitute for that production-policy proof. The PR records exact sources,
+native/host results and outstanding acceptance per configuration.
+
+Keep #713 open until its complete native, lifecycle, failure/conservation and
+review matrix is accepted. This implementation is not authorization to merge
+or to enable unsupported configurations.

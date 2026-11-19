@@ -1705,6 +1705,7 @@ static void test_group_exit(void)
 #include "mapping_lifetime.h"
 #include "process_files.h"
 #include "irq_restart.h"
+#include "preempt.h"
 
 static void test_runnable(void)
 {
@@ -1736,6 +1737,9 @@ static void test_runnable(void)
         for (page = 0; page < RUNNABLE_STACK_SIZE; page += 4096)
             runnable_stacks[cycle][page] = 0;
     }
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    test_preempt();
+#endif
 #if defined(__arm__) || defined(__mc68000__)
     {
         extern void clone_initial_entry(void *);

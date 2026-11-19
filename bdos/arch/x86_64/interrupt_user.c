@@ -1,5 +1,5 @@
-/* Diagnostic capture. Test kernels additionally prove a fresh same-entry
- * copied-frame round trip; no delayed restore or scheduler handoff exists. */
+/* Authentic user IRQ capture and the shared B2 retained-return backend.
+ * Timer policy and test-only preparation are separate admission gates. */
 #include "emutos.h"
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
@@ -70,7 +70,7 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     capture->tid=tid; capture->cpu=execution->owner_cpu;
     capture->sequence++;
     capture->valid=TRUE;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     interrupt_restart_user_capture(execution);
 #endif
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
@@ -99,7 +99,7 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     }
 #endif
 }
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
 {
     KTHREAD_CONTEXT *execution;
@@ -132,8 +132,10 @@ void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
         memcmp(frame,&c->image,sizeof(*frame))) panic("IRQ restart: x32 retained return binding changed");
     /* This corruption occurs only AFTER real B user execution was observed.
      * A's native GPR/FXSAVE probe fails unless the frozen owned image wins. */
+#if CONF_WITH_IRQ_RESTART_TEST
     *(volatile UQUAD *)&frame->rax=0;
     memset(frame->fx+160,0,256);
+#endif
     memcpy(frame,&c->image,sizeof(*frame));
     interrupt_restart_ack(execution);
 }

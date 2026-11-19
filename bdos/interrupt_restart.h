@@ -3,7 +3,7 @@
 #define INTERRUPT_RESTART_H
 #include "portab.h"
 #include <aspace_types.h>
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 struct kthread_context;
 struct kaspace;
 struct kaspace_lease;
@@ -14,7 +14,7 @@ typedef enum { IRQ_RESTART_EMPTY, IRQ_RESTART_ARMED, IRQ_RESTART_FROZEN,
                IRQ_RESTART_ABORTED } IRQ_RESTART_STATE;
 typedef struct {
     struct kaspace_lease *code, *stack; /* owning, acquired outside IRQ */
-    struct kaspace *space; /* retained by both leases */
+    struct kaspace *space; /* test leases or the existing automatic KTHREAD own it */
     struct kthread *thread; /* task owns EXECUTING THREAD through root acknowledgment */
     struct kproc *process; /* retained by that THREAD, never a reusable PD identity */
     UQUAD execution, process_number, capture_sequence, selected, user_observed;
@@ -23,7 +23,13 @@ typedef struct {
     UWORD cpu;
     IRQ_RESTART_STATE state;
     BOOL peer_ran, capture_only, captured, suppress_credit, transported;
+    BOOL automatic; /* timer operation, with preallocated reusable leases */
 } IRQ_RESTART;
+#if CONF_WITH_NATIVE_PREEMPT
+LONG interrupt_restart_reserve(IRQ_RESTART *);
+void ksched_preempt_tick(void); /* 200 Hz IRQ: CPU metadata only */
+BOOL ksched_preempt_due(void); /* masked authenticated outer USER IRQ */
+#endif
 /* Test-only Pclone transport, not a public syscall/clone flag. */
 #define IRQ_RESTART_BEGIN  0xc713b200UL
 #define IRQ_RESTART_FINISH 0xc713b201UL

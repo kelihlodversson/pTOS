@@ -182,7 +182,7 @@ void x86_64_irq_read_controls(X86_IRQ_CONTROLS *c)
         : "=m"(c->ds), "=m"(c->es), "=m"(c->fs), "=m"(c->gs));
     c->in_syscall=percpu.syscall_gs_swapped;
 }
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 void x86_64_irq_restore_user_segments(const X86_IRQ_CONTROLS *c)
 {
     X86_IRQ_CONTROLS current;
@@ -253,7 +253,7 @@ static LONG return_probe(x86_64_trap_frame_t *f)
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     if(from_ring3) interrupt_restart_user_entry();
 #endif
     /* Stack-local policy belongs to this invocation across nested callbacks,

@@ -26,7 +26,7 @@ static void check_irq_pattern(const M68K_USER_IRQ_CAPTURE *c)
     const M68K_USER_IRQ_FRAME *f=&c->image;
     if (f->d[7]!=0x71307137UL) return;
     irq_pattern_seen++;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     if (f->d[0]>40000000UL) irq_pattern_bad=TRUE;
 #else
     if (f->d[0]>4000000UL) irq_pattern_bad=TRUE;
@@ -125,7 +125,7 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     capture->tid=tid; capture->cpu=execution->owner_cpu;
     capture->sequence++;
     capture->valid=TRUE;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     interrupt_restart_user_capture(execution);
 #endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
@@ -148,7 +148,7 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     }
 #endif
 }
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 static BOOL restart_binding(KASPACE *space,M68K_USER_IRQ_FRAME *frame,M68K_IRQ_BINDING *b)
 {
     b->model=mcpu;b->fpu_type=fputype;
@@ -181,7 +181,9 @@ ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame)
         memcmp(&b,&c->binding,sizeof(b)) || !m68k_irq_user_valid(&c->image,&b,USER_VA_LIMIT) ||
         !m68k_irq_return_controls_valid(&b) || !m68k_irq_fpu_idle(&b,&c->fpu) ||
         memcmp(frame,&c->image,sizeof(*frame))) panic("IRQ restart: m68k retained return binding changed");
+#if CONF_WITH_IRQ_RESTART_TEST
     *(volatile ULONG *)&frame->d[1]=0;
+#endif
     memcpy(frame,&c->image,sizeof(*frame));
     interrupt_restart_ack(execution);
     /* The outer assembly epilogue restores FPU after this final C return. */

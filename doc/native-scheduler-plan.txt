@@ -1,6 +1,15 @@
 Native scheduler migration and interruption contract (#713)
 ===========================================================
 
+Phase C capability
+------------------
+The independent default-off CONF_WITH_NATIVE_PREEMPT gate now drives the
+existing B1/B2 owners, dispatcher and authentic IRQ-return transaction from
+the 200 Hz timer. See native-timer-preemption.txt for the 20 ms quantum,
+automatic preallocated lease slots, deferred kernel/callback behavior and
+exact native acceptance boundary. The checkpoints below retain their
+historical cooperative meaning; they are not current timer-preemption proof.
+
 Current A2c architecture
 ------------------------
 bdos/native_sched.c owns one cooperative round-robin for x32, ARM MMU and m68k
