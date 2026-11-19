@@ -837,6 +837,49 @@ esac
 # End native initial-entry marker.
 
 
+if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1' "$top/obj/autoconf.h"; then
+    case $machine in
+    virt-arm|raspi2b-aspace)
+        if ! grep -aq 'native timer ARM exclusive monitor ownership: PASS' "$suite_log"; then
+            record "native timer ARM exclusives" FAIL "a THREAD consumed a peer exclusive reservation or failed to progress"
+        fi
+        if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+           ! grep -aq 'native timer ARM stack boundary ownership: PASS' "$suite_log"; then
+            record "native timer ARM stack boundaries" FAIL "guarded stack-bottom and exclusive-top handoffs were not proved"
+        fi
+        ;;
+    esac
+    if ! grep -aq 'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS' "$suite_log"; then
+        record "native timer preemption" FAIL "CPU-bound PROCESS/THREAD progress without voluntary yield was not proved"
+    fi
+    if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native timer file-backed executable progress without Syield: PASS' "$suite_log"; then
+        record "native file-backed timer preemption" FAIL "CPU-bound file-cache execution was not proved"
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        if ! grep -aq 'native timer busy USER and mapping-owner progress/conservation: PASS' "$suite_log"; then
+            record "native timer mapping owner" FAIL "busy USER starved a mapping owner or changed resource counts"
+        fi
+        if ! grep -aq 'native timer busy USER and blocked sleeper wake: PASS' "$suite_log"; then
+            record "native timer blocked wake" FAIL "blocked sleeper did not wake alongside CPU-bound USER"
+        fi
+        if ! grep -aq 'native timer independent-image/root GPR/FPU patterns: PASS' "$suite_log"; then
+            record "native timer independent roots" FAIL "distinct loaded roots did not preserve GPR/FPU patterns"
+        fi
+        if grep -q '^#define CONF_WITH_PFORK 1' "$top/obj/autoconf.h"; then
+            for marker in 'native timer public-Pfork private-root GPR/FPU patterns: PASS' \
+                          'native timer original/alternate GPR/FPU delayed restoration: PASS'; do
+                if ! grep -aq "$marker" "$suite_log"; then
+                    record "native timer private FPU restoration" FAIL "$marker missing"
+                fi
+            done
+        fi
+        if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+           ! grep -aq 'native timer suspended-group cancellation and exact retirement: PASS' "$suite_log"; then
+            record "native timer cancellation" FAIL "suspended USER cancellation and exact conservation were not proved"
+        fi
+    fi
+fi
 if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
     if ! grep -aq 'native interrupted USER A IRQ / B USER execution / saved A restart: PASS' "$suite_log"; then
         record "native delayed IRQ restart" FAIL "hardware A IRQ / actual B USER / saved A return was not proved"

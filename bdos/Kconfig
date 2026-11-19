@@ -170,9 +170,29 @@ config CONF_WITH_NATIVE_SCHED
       Kernel-owned cooperative native process scheduling and standard MiNT
       asynchronous launch, yield and child waits. Selected by CUIS and on by
       default in the native process profile; independent of GUI session and
-      input services. No preemption.
+      input services. Cooperative by default; the independent native USER
+      timer-preemption capability below is explicitly opt-in.
       Available on x32, ARM MMU and m68k MMU user-address-space kernels.
       Scheduling is cooperative and does not require CUIS or external libaes.
+
+config CONF_WITH_NATIVE_PREEMPT
+    bool "Timer preemption of supported native USER continuations"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+    depends on ARCH_X86_64 || (ARCH_ARM && CPU_ARMV7) || (ARCH_M68K_CLASSIC && !CONF_WITH_MFASTCALL && (MACHINE_VIRT_M68K || CONF_AMIGA_HIGHER_HALF_68040 || CONF_ATARI_HIGHER_HALF_68040))
+    default n
+    help
+      Phase C: a 20 ms quantum on the existing 200 Hz system timer, using
+      the ordinary scheduler and retained hardware IRQ return transaction.
+      Kernel, callback and nested launcher interruptions only defer work.
+      Initial profiles are x32 without TLS/XSAVE, ARMv7 A32/D32, and 68040
+      format-0 with supported idle FPU and the stack ABI. Runtime eligibility
+      still refuses unsupported controls, frames and CPU/FPU combinations;
+      selecting a 040 ROM does not qualify an actual 030 or 060 CPU.
+      Independent default-off gate pending exact-profile native acceptance
+      and #897 release configuration. This does not enable SMP.
+
+config CONF_WITH_IRQ_RESTART
+    def_bool CONF_WITH_IRQ_RESTART_TEST || CONF_WITH_NATIVE_PREEMPT
 
 
 config CONF_WITH_LEGACY_PEXEC
@@ -277,7 +297,7 @@ config CONF_WITH_SAVED_RETURN
     depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
     depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
     depends on !ARCH_ARM || CPU_ARMV7
-    default y if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK
+    default y if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK || CONF_WITH_NATIVE_PREEMPT
     help
       Internal: capture a system call's user return image so a new THREAD
       resumes after the same trap (Pfork/Pvfork and the test probe).

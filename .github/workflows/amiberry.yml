@@ -72,6 +72,41 @@ jobs:
 
       - uses: ./.github/actions/setup-amiberry
 
+  amiga-preemption:
+    name: Native 68040 timer preemption with FPU and caches
+    needs: amiberry
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+      - uses: ./.github/actions/setup-amiberry
+      - name: Install disk image tools
+        run: sudo apt-get install -y --no-install-recommends dosfstools mtools
+      - name: Run production timer policy on authentic 68040 IRQ returns
+        env:
+          NATIVE_THREADS: '1'
+          AMIBERRY_FPU: '68040'
+          REQUIRE_FPIAR: '1'
+          IRQ_COPY_PROOF: '1'
+          NATIVE_PREEMPT: '1'
+          AMIBERRY_SOFTFLOAT: '1'
+        run: |
+          git show -s --format='source %H%nparents %P' HEAD
+          sh tools/ci-amiberry.sh amiga-aspace040:68040
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: amiga-preemption-logs
+          path: |
+            logs/*
+            obj/auto.conf
+          retention-days: 14
+
   amiga-boot:
     name: Amiga ROMs and tests on Amiberry
     needs: amiberry

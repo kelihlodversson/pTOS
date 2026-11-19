@@ -17,7 +17,7 @@ static void check_irq_pattern(const ARM_USER_IRQ_FRAME *f)
     if (f->r[12]!=0x71307132UL) return; /* installed last, invalidated first */
     irq_pattern_seen++;
     for (i=0;i<12;i++)
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
         if (i==1 ? f->r[i]>40000000UL : f->r[i]!=0x71307130UL) irq_pattern_bad=TRUE;
 #else
         if (i==1 ? f->r[i]>4000000UL : f->r[i]!=0x71307130UL) irq_pattern_bad=TRUE;
@@ -73,6 +73,12 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     if ((frame->cpsr&0x1f)!=0x10) return; /* Never interpret a kernel IRQ as user. */
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return; /* Includes nested different-PROCESS launchers. */
+#if CONF_WITH_NATIVE_PREEMPT
+    /* Invalidate freshness even when skipping a diagnostic copy. The device
+     * tick runs later; prepare on its last quantum tick, never afterward. */
+    execution->interrupted_user.valid=FALSE;
+    if (!ksched_preempt_capture_needed()) return;
+#endif
     if (!read_binding(space,frame,&binding)) return;
     capture=&execution->interrupted_user;
     capture->valid=FALSE;
@@ -83,7 +89,7 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     capture->tid=tid; capture->cpu=execution->owner_cpu;
     capture->sequence++;
     capture->valid=TRUE;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     interrupt_restart_user_capture(execution);
 #endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
@@ -109,7 +115,7 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     }
 #endif
 }
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 void arm_restart_user_irq(ARM_USER_IRQ_FRAME *frame)
 {
     KTHREAD_CONTEXT *execution;
@@ -120,6 +126,9 @@ void arm_restart_user_irq(ARM_USER_IRQ_FRAME *frame)
     if ((frame->cpsr&0x1f)!=0x10) return;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (!ksched_preempt_due()) return;
+#endif
     c=&execution->interrupted_user;
     if (!read_binding(space,frame,&b) ||
         !arm_irq_same_entry_valid(c,frame,&b,execution->identity,c->sequence,tid,
@@ -130,9 +139,11 @@ void arm_restart_user_irq(ARM_USER_IRQ_FRAME *frame)
         memcmp(&b,&c->binding,sizeof(b)) || !arm_irq_user_valid(&c->image,&b,USER_VA_LIMIT) ||
         !arm_irq_return_controls_valid(&c->image,&b) || memcmp(frame,&c->image,sizeof(*frame)))
         panic("IRQ restart: ARM retained return binding changed");
+#if CONF_WITH_IRQ_RESTART_TEST
     *(volatile ULONG *)&frame->r[0]=0;
 #if FPU_ALL_BYTES
     memset(frame->vfp,0,sizeof(frame->vfp));
+#endif
 #endif
     memcpy(frame,&c->image,sizeof(*frame));
     interrupt_restart_ack(execution);

@@ -783,6 +783,22 @@ BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes)
     }
     return TRUE;
 }
+#if CONF_WITH_NATIVE_PREEMPT
+BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
+{
+    VADDR page,last;
+    if (!as || !bytes || va>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-va) return FALSE;
+    last=(va+bytes-1)&~(VADDR)(PAGE-1);
+    /* An OWNED file leaf holds its own cache-page/backing reference. Keeping
+     * that mapping in the existing lease ledger also keeps that reference. */
+    for(page=va&~(VADDR)(PAGE-1);;page+=PAGE) {
+        PADDR physical;UWORD protection,flags;
+        if (!aspace_hw_lookup(as->root,page,&physical,&protection,&flags) ||
+            (!(flags&ASPACE_LEAF_OWNED) && !irq_procmem_pin_owned(as,page,physical))) return FALSE;
+        if (page==last) return TRUE;
+    }
+}
+#endif
 
 BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR va, VADDR bytes, UWORD prot)
 {

@@ -1,7 +1,7 @@
 /* One retained outer USER-return operation per existing execution context.
- * This default-off proof uses the existing dispatcher, not a timer policy. */
+ * Test preparation and automatic timer admission share the same transaction. */
 #include "emutos.h"
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 #include "interrupt_restart.h"
 #include "kthread_context.h"
 #include "kthread.h"
@@ -13,6 +13,22 @@
 #include "gemerror.h"
 #include "biosext.h"
 #include "string.h"
+#if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+#include "tosvars.h"
+typedef struct { ULONG start,ticks; } PREEMPT_TEST_DELAY;
+static BOOL preempt_test_ready(void *argument)
+{
+    PREEMPT_TEST_DELAY *delay=argument;
+    return (ULONG)((ULONG)hz_200-delay->start)>=delay->ticks;
+}
+LONG interrupt_preempt_test_delay(ULONG ticks)
+{
+    PREEMPT_TEST_DELAY delay;
+    if (!ticks || ticks>20) return EINVAL;
+    delay.start=(ULONG)hz_200;delay.ticks=ticks;
+    return ksched_wait_cancelable(preempt_test_ready,&delay)==KSCHED_WAIT_READY?E_OK:EACCDN;
+}
+#endif
 extern PD *run;
 
 static BOOL owner_valid(KTHREAD_CONTEXT *c)
@@ -43,7 +59,8 @@ static BOOL holds_valid(const IRQ_RESTART *r)
 {
     return kaspace_lease_valid(r->code) && kaspace_stack_hold_space(r->stack)==r->space &&
         resident(r->space,r->code_address,r->code_bytes,ASPACE_PROT_USER|ASPACE_PROT_EXEC) &&
-        resident(r->space,r->stack_address,r->stack_bytes,ASPACE_PROT_USER|ASPACE_PROT_WRITE);
+        resident(r->space,r->stack_address,r->stack_bytes,
+                 ASPACE_PROT_USER|(r->automatic?0:ASPACE_PROT_WRITE));
 }
 static void release(IRQ_RESTART *r)
 {
@@ -69,6 +86,58 @@ void interrupt_restart_dispose(KTHREAD_CONTEXT *c)
     interrupt_restart_detach(c,&retired);
     interrupt_restart_retire(&retired);
 }
+#if CONF_WITH_NATIVE_PREEMPT
+LONG interrupt_restart_reserve(IRQ_RESTART *r)
+{
+    LONG error;
+    if (r->state!=IRQ_RESTART_EMPTY || r->code || r->stack) return EACCDN;
+    error=kaspace_irq_reserve(&r->code);
+    if (!error) error=kaspace_irq_reserve(&r->stack);
+    if (error) { release(r);return error; }
+    r->automatic=TRUE;r->state=IRQ_RESTART_ARMED;
+    return E_OK;
+}
+static BOOL automatic_hold(KTHREAD_CONTEXT *c,VADDR pc,VADDR sp)
+{
+    IRQ_RESTART *r=&c->irq_restart;
+    KASPACE *space=NULL;
+    ULONG tid=0;
+    KTHREAD *thread;
+    VADDR stack_view=sp-1;
+    if (!ksched_preempt_due() || !pc || !sp ||
+        ksched_interrupt_target(run,&space,&tid)!=c) return FALSE;
+    thread=ksched_exit_thread(run);
+    if (!r->execution) {
+        r->execution=c->identity;r->tid=tid;r->cpu=c->owner_cpu;
+        r->thread=thread;r->process=kthread_process(thread);r->space=space;
+        r->process_number=kproc_ref_number(r->process);
+    }
+    if (!owner_valid(c)) return FALSE;
+    if (!kaspace_irq_activate(r->code,space,pc,ASPACE_PROT_USER|ASPACE_PROT_EXEC)) return FALSE;
+    r->reap_pending=TRUE; /* retargeting may unblock an older source pin */
+    if (!kaspace_irq_activate(r->stack,space,stack_view,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) {
+        /* A page-aligned USER SP can be the bottom of its resident page,
+         * with a guard below. Prefer the existing exclusive-top view, but
+         * admit that resident page when the preceding page has no authority.
+         * Both attempts use the same preallocated lease and exact rights. */
+        if ((sp&(USER_PAGE_SIZE-1)) ||
+            !kaspace_irq_activate(r->stack,space,sp,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) return FALSE;
+        stack_view=sp;
+    }
+    r->code_address=pc&~(VADDR)(USER_PAGE_SIZE-1);r->code_bytes=USER_PAGE_SIZE;
+    r->stack_address=stack_view&~(VADDR)(USER_PAGE_SIZE-1);r->stack_bytes=USER_PAGE_SIZE;
+    return TRUE;
+}
+void interrupt_restart_reap(KTHREAD_CONTEXT *c)
+{
+    IRQ_RESTART *r=&c->irq_restart;
+    if(!r->reap_pending)return;
+    if(c->on_cpu)panic("IRQ retirement on current execution");
+    r->reap_pending=FALSE;
+    kaspace_reap_deferred(r->space);
+}
+#endif
+#if CONF_WITH_IRQ_RESTART_TEST
 static LONG prepare(KTHREAD_CONTEXT *c, KASPACE *space, ULONG tid,
                     const IRQ_RESTART_ARGS *a, UWORD fail)
 {
@@ -157,6 +226,7 @@ LONG interrupt_restart_test(UQUAD address, UQUAD selector)
     }
     return EINVFN;
 }
+#endif
 void interrupt_restart_user_capture(KTHREAD_CONTEXT *c)
 {
     IRQ_RESTART *r=&c->irq_restart;
@@ -180,13 +250,39 @@ void interrupt_restart_user_entry(void)
     ULONG tid=0;
     uintptr_t flags=native_sched_irq_save();
     KTHREAD_CONTEXT *c=ksched_interrupt_target(run,&space,&tid);
+#if CONF_WITH_NATIVE_PREEMPT
+    BOOL reap=FALSE;
+#endif
     if(c) ksched_irq_restart_observe_user(c->identity);
+#if CONF_WITH_NATIVE_PREEMPT
+    if(c && c->irq_restart.automatic && c->irq_restart.state==IRQ_RESTART_ARMED &&
+       c->irq_restart.execution && !ksched_cleanup_active() && owner_valid(c)) {
+        reap=kaspace_irq_park(c->irq_restart.stack);
+        if(kaspace_irq_park(c->irq_restart.code))reap=TRUE;
+        reap=reap || c->irq_restart.reap_pending;c->irq_restart.reap_pending=FALSE;
+    }
+#endif
     native_sched_irq_restore(flags);
+#if CONF_WITH_NATIVE_PREEMPT
+    if(reap) {
+        /* This is an authenticated ordinary USER trap with its registers
+         * saved, not an IRQ. Its live launcher/THREAD retains the root and
+         * cleanup scope while the ordinary deferred reaper runs unlocked. */
+        KSCHED_CLEANUP_SCOPE scope={0};
+        ksched_cleanup_begin(&scope);kaspace_reap_deferred(space);ksched_cleanup_end(&scope);
+    }
+#endif
 }
 BOOL interrupt_restart_admit(KTHREAD_CONTEXT *c,UQUAD sequence,VADDR pc,VADDR sp)
 {
     IRQ_RESTART *r=&c->irq_restart;
-    if (r->state!=IRQ_RESTART_ARMED || r->capture_only || !sequence || ksched_cancellation_pending() || !owner_valid(c) || ksched_cleanup_active() || !holds_valid(r) ||
+    if (r->state!=IRQ_RESTART_ARMED || r->capture_only || !sequence || ksched_cleanup_active()) return FALSE;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (r->automatic) {
+        if (!automatic_hold(c,pc,sp)) return FALSE;
+    } else
+#endif
+    if (ksched_cancellation_pending() || !owner_valid(c) || !holds_valid(r) ||
         pc<r->code_address || pc-r->code_address>=r->code_bytes ||
         sp<r->stack_address || sp-r->stack_address>=r->stack_bytes) return FALSE;
     r->capture_sequence=sequence;
@@ -241,6 +337,32 @@ void interrupt_restart_ack(KTHREAD_CONTEXT *c)
 {
     if(c->irq_restart.state!=IRQ_RESTART_RETURNING || !owner_valid(c) || ksched_cleanup_active())
         panic("IRQ restart: invalid architectural return acknowledgment");
+#if CONF_WITH_NATIVE_PREEMPT
+    if (c->irq_restart.automatic) {
+#if CONF_WITH_PRIVATE_CLONE_TEST
+        if (c->irq_restart.peer_ran) {
+#if ARCH_X86_64
+            UQUAD marker=c->interrupted_user.image.r15;
+            if (marker==0x7130000000713015ULL) ksched_preempt_probe_return(1);
+            if (marker==0x7240000000724015ULL) ksched_preempt_probe_return(2);
+#elif ARCH_ARM
+            ULONG marker=c->interrupted_user.image.r[12];
+            if (marker==0x71307132UL) ksched_preempt_probe_return(1);
+            if (marker==0x72407242UL) ksched_preempt_probe_return(2);
+#else
+            ULONG marker=c->interrupted_user.image.d[7];
+            if (marker==0x71307137UL) ksched_preempt_probe_return(1);
+            if (marker==0x72407247UL) ksched_preempt_probe_return(2);
+#endif
+        }
+#endif
+        /* Keep resident execution authority across repeated USER IRQs, even
+         * if its source owner retired while suspended. The next authenticated
+         * kernel entry parks views; no cleanup runs on this IRQ epilogue. */
+        c->irq_restart.state=IRQ_RESTART_ARMED;
+        return;
+    }
+#endif
     c->irq_restart.state=c->irq_restart.peer_ran?IRQ_RESTART_ACKED:IRQ_RESTART_ARMED;
     /* Both mapping owners survive until the next ordinary finish/exit path. */
 }

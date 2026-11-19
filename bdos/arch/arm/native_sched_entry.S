@@ -3,5 +3,8 @@
         .text
         .globl C_SYM(native_sched_enter)
 C_SYM(native_sched_enter):
+#if CONF_WITH_NATIVE_PREEMPT
+        clrex                       /* a new THREAD cannot inherit a USER reservation */
+#endif
         mov sp, r0
         bx r1

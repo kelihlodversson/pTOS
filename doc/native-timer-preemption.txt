@@ -1,0 +1,324 @@
+Phase C: native USER timer preemption (#713)
+============================================
+
+Integration base: 666f14e1e66714603cf54f93da510ed9c8c7cafa, after merged
+B1 #1024, B2 #1020/#1022, and Pexec cleanup #1026. The existing PROCESS,
+exact-child wait, cancellation, replacement and off-stack reaper remain the
+only owners. This adds policy to the existing dispatcher and B2 return path.
+
+Capability and accounting
+--------------------------
+CONF_WITH_NATIVE_PREEMPT is an independent default-off capability. The initial
+profiles are x32, ARMv7-A A32/D32, and 68040 MMU format-0/stack ABI. It is not a
+claim for unsupported physical CPU/FPU/control states, SMP or arbitrary kernel
+preemption. #897 owns final release-default consolidation after acceptance.
+CONF_WITH_IRQ_RESTART selects the existing backend transaction for this gate
+or the mutually exclusive B2 test transport. No private test selector is
+needed or enabled by production preemption.
+
+The existing 200 Hz system tick charges a selected RUNNING execution four
+ticks (20 ms). Time in its nonpreemptible syscall/callback also counts. Expiry
+is sticky until a scheduler dispatch gives the selected execution a fresh
+quantum. Idle/root/parked time does not spend an execution's quantum.
+The tick only changes CPU-local metadata. It does not allocate, call owner
+callbacks, acquire resources, deliver cancellation or dispatch.
+
+After the device handler ACK and callback unwind, the authentic outer USER
+IRQ tail uses B2's frame/control/stack checks. An eligible due frame parks
+through the existing root, round-robin selection, departure acknowledgment
+and architectural restore. A non-timer device IRQ can honor an already due
+timer request but cannot create a quantum expiration itself. An unsafe IRQ
+keeps its ordinary return and the pending request. An SVC/syscall frame is
+never reinterpreted as IRQ: deferred work waits for a subsequent eligible
+USER hardware IRQ (normally the next 5 ms tick after returning to USER).
+
+Cancellation can itself request automatic departure. Refusing a CPU-bound
+cancelled USER forever would defeat the existing cancellation policy. Once
+root has acknowledged departure and restored A's launcher, the existing
+ksched_cancel_point/xterm path delivers cancellation. No new group latch,
+status, wait claim, forced kernel unwind or reaper is introduced.
+
+Prepared mapping authority
+----------------------------
+Each privately reserved scheduler record allocates two reusable slots from
+the existing KASPACE lease implementation before publication. Every failed
+reservation and unpublished/terminal cleanup frees those slots. Replacement
+prepares fresh slots in its existing fallible handoff transaction, moves old
+owners before erasing the context, installs the new context, then retires old
+slots outside the leaf. No allocation occurs at interrupt capture/return.
+
+An automatic slot borrows the execution's existing strong KTHREAD -> KASPACE
+reference. kthread_reap calls reclaim_execution before kaspace_put(thread->space).
+During replacement the existing handoff instead retains old_thread_space
+until moved execution owners have retired. This avoids first-interruption
+reference-count changes inside ordinary copy/failure/conservation observations.
+The slots are not extra root owners or another ownership registry.
+
+At an eligible IRQ tail, bounded metadata operations insert these preallocated
+records into the same mapping lease ledger. They hold the resident executable
+PC page and a resident user stack page adjacent to SP. The page below SP is
+preferred for an exclusive stack top. If an aligned SP is the bottom of its
+resident page and the preceding page is absent, guarded or unowned, that
+resident page at SP may be held with the same exact USER/logical-write rights.
+The selected page is recorded consistently for return validation/retirement.
+Ownership may be an ASPACE-owned
+leaf (including its file-cache reference), an exact live procmem pin already
+owned by that ASPACE, or the existing canonical captured-backing ledger. PRG
+code is not mistaken for a private physical allocation: the root's pin is
+checked against its original physical translation, excluding retired pins
+and untracked aliases. No original PD allocation/cleanup token is borrowed.
+Logical write authority is required
+for the stack; resident COW read-only hardware protection is permitted because
+architectural return does not write user memory. The existing COW path remains
+authoritative. Admission faults no pages and copies no user bytes. Missing,
+unowned or unsupported mappings refuse admission safely.
+
+While suspended these ordinary held ranges exclude unmap/protection/retirement.
+After restored-frame validation, acknowledgment retains these views until the
+next authenticated ordinary USER syscall entry or retargeted capture. This
+keeps a continuation resumable even if its original source owner exits between
+successive timer returns. Reactivation of the same held page consumes no new
+mapping authority. New pages still require independently validated ownership.
+
+Source retirement marks the existing ASPACE pin as retired when no ordinary
+captured-backing cleanup record owns it. Held views delay its existing cleanup;
+they never acquire its allocation or cleanup token. The existing KASPACE
+retirement job consumes that exact pin only after all held views depart.
+Pending pins reject fresh admission and mapping mutation. Reaping runs at an
+authenticated syscall entry or off-CPU root, outside the IRQ/leaf. Ordinary
+off-stack disposal uses the same lease cleanup path while its KTHREAD/handoff
+root lives.
+THREAD, PROCESS, ASPACE and both kernel stacks remain owned through the same
+B2 suspend/restore/cancel transaction and root-only retirement protocol.
+
+Runtime refusals and boundaries
+--------------------------------
+Existing restrictions remain: x32 TLS/XSAVE/AVX and unsupported control/GS
+phase; ARM Thumb/Jazelle/IT, FIQ and unsupported VFP/MMU state; m68k non-format0,
+030/060 delayed return, fastcall and busy/pending/foreign FPU state. A 040 ROM
+booted on another CPU does not qualify that CPU. Callback frames, borrowed
+nested launchers, owners/leaf/legacy IRQ scopes and arbitrary kernel frames
+never gain return authority. Ordinary IRQ return remains intact.
+
+Only managed native KTHREAD executions are scheduler targets. Legacy unmanaged
+caller attachments retain their existing cooperative entry contract. No new
+PROCESS scheduler, loader policy, public ABI or GUI dispatch path is added.
+
+Evidence classification
+------------------------
+The host test executes production automatic admission and real KASPACE lease
+operations with CPU/dispatcher/PROCESS/MMU endpoints modeled. It covers quantum
+expiry/defer, allocation rollback, 64 allocation-free cycles, stale owners,
+cancellation and exact retirement. It is not architectural execution proof.
+
+tests/pclone/preempt.h requires two CPU-bound workers to alternate sixteen
+times, separately for distinct PROCESSes sharing a root and sibling THREADs.
+There is no syscall, test BEGIN selector or Syield in their progress loop.
+Serial execution cannot satisfy this handshake. Native runners require its
+explicit timer-progress marker. Capture-only and B2 test evidence cannot
+substitute for that production-policy proof. The PR records exact sources,
+native/host results and outstanding acceptance per configuration.
+
+The position-independent assembly variant is written to an ordinary file and
+executed through a real private RX file mapping. It runs the same handshake
+without external references or traps, requiring actual file-cache execution
+to make progress. This covers a different ownership class from private pages
+and the original PRG image's root-owned allocator pins. Production backend
+host tests separately reject bare/retired/mismatched aliases and verify source
+PD retirement while the exact existing pin retains backing, then unpin once.
+
+Keep #713 open until its complete native, lifecycle, failure/conservation and
+review matrix is accepted. This implementation is not authorization to merge
+or to enable unsupported configurations.
+
+Additional native probes require original/alternate GPR and full supported FPU
+patterns in independently forked private roots. The kernel verdict credits a
+pattern only after another THREAD has actually executed USER code before the
+saved context returns. A blocked sleeper must wake alongside a non-yielding
+worker. Group cancellation must retire a suspended continuation without USER
+re-entry and with unchanged resource counters. These are separate required
+verdicts; a successful capture or same-entry copy-back cannot satisfy them.
+
+Independent roots and ROM-window limits
+---------------------------------------
+PREEMPT.TOS is a small loader-created PROCESS, run twice with independent
+original/alternate patterns. Each reports its live PID and root before a file
+gate opens. The parent checks that both roots differ from one another and from
+its own. A test-only CPU metadata query credits each pattern only after an
+acknowledged saved IRQ return with intervening peer USER execution. Both user
+register comparisons and these delayed-return witnesses are required.
+
+The existing aspace_clone() rejects CONF_M68K_ROM_WINDOW, including Amiga and
+Atari ROM kernels. Phase C does not change that backend capability. Those lanes
+exercise independent loader roots and shared-root PROCESS/THREAD handshakes;
+they do not enable public Pfork or advertise the private-clone positive tests.
+The kernel's existing private test counters remain available for exact resource
+observations. QEMU x32/ARM/040 additionally require public-Pfork private roots.
+The ordinary 030/040/060 and scheduler-disabled ROM coverage is unchanged.
+
+Timer support now derives its internal saved-state helpers independently of
+the fork test transport/public Pfork. Selecting Phase C alone does not select
+either fork interface. The dedicated full Falcon/TT test kernel uses the
+existing -Os profile to fit its 512-KB image; Amiga already defaults to -Os.
+This does not alter the shipped ROM presets or remove any required probe.
+
+Exclusive monitors and test-client synchronization
+--------------------------------------------------
+ARMv7 exclusive monitors belong to the CPU. CLREX clears them on dispatch to a
+new/restored execution and on the IRQ return boundary. A saved USER STREX may
+fail spuriously; it must never consume a reservation left by another THREAD.
+The native probe uses separate pages for its handshake and exclusive word,
+leaves B's LDREX outstanding, then requires A's resumed STREX to fail without
+altering B's value. No syscall or voluntary yield occurs in that window.
+
+The cooperative fixtures retain strict trace checks with the timer disabled.
+With Phase C, an admission gate prevents premature work, each mixed worker
+owns a progress cell, and concurrently incremented counters use real atomics
+(040 CAS, ARM exclusives, x32 locked update). Exact counts remain required.
+
+The m68k Phase C pattern window is eight million iterations on QEMU and ROM,
+repeated four times per pattern. Ordinary IRQ probes retain four million
+iterations and the existing B2 window retains forty million. The
+required authenticated delayed-return witness, full register comparisons and
+independent CPU-bound handshake determine success; a shorter window cannot
+substitute an immediate return for a real peer execution.
+
+The Amiberry Phase C lane explicitly uses fpu_softfloat=true for full extended
+register/control preservation. Its host-native FPU mode was observed rounding
+an alternate integer upward by one during a register round trip under directed
+rounding, including with automatic departure disabled. The accurate software
+FPU mode preserves the pattern with caches off and on. Ordinary compatibility
+lanes keep their original FPU configuration; no register assertion is removed.
+
+Mapping-owner progress and backing witnesses
+---------------------------------------------
+An existing mapping mutation/reaper may yield at a safe checkpoint while a
+peer runs USER code. Its busy flag cannot exclude that peer from every later
+timer departure and thereby starve the parked owner. IRQ admission performs
+its resident/rights/ownership queries under existing mapping exclusion and
+adds held ranges to the same ledger. Backend commit gates revalidate those
+holds; current providers do not yield/call back between that check and the
+actual mapping edit. Pending ownership still refuses fresh return authority.
+A native non-yielding peer must let the existing guarded allocation owner
+resume, finish and free its allocation, with exact resource conservation.
+
+An IRQ slot is a return/disposal fence, not independent backing authority for
+another fresh slot. Canonical R2 backing witnesses remain reusable; IRQ slots
+are excluded from that search. After source-pin retirement, an already-held
+view may resume again, but a fresh view cannot borrow its return fence as a
+new mapping owner. Production backend tests cover this authority distinction on all three
+providers. The separate mutation model and fresh-view checks both fail against
+the earlier code and pass after the correction.
+
+CUIS cancellation fixtures use a test-only read of the canonical TASK blocked
+and cancelable-boundary state before closing/cancelling an admitted wait.
+Their sibling-fault case joins the exact faulting TID before cancellation.
+A USER readiness store is not admission, and a fixed number of Syield calls
+is not a completion deadline under timer scheduling. Public GUI/wait ABIs and
+PROCESS cancellation policy are unchanged.
+
+ARM USER SP and hardware interruption
+--------------------------------------
+AAPCS permits a word-aligned USER SP inside a function, requiring eight-byte
+alignment only at public call boundaries. GCC emits a three-register push in
+the busy mapping peer. Rejecting that entire loop as ineligible starved its
+parked mapping owner until the loop exhausted its budget. USER IRQ validation
+now accepts this legitimate word alignment while retaining the eight-byte
+kernel IRQ/SVC frame and all banked/control/return checks. Synthetic validation
+rejects byte/halfword alignment, and the native mapping-owner probe requires
+actual timer departure from the compiler-generated word-aligned loop.
+
+IRQ capture work and quantum prediction
+----------------------------------------
+Phase C prepares a full owned capture only when expiry/cancellation is pending
+or the remaining tick can expire the quantum. Entry precedes the handler's
+200-Hz tick, so the last tick must prepare before decrementing the counter;
+this does not delay the four-tick handoff. Other IRQs invalidate old capture
+freshness and retain ordinary return, while wake metadata is always recorded.
+The tail refuses work unless expiry/cancellation is now due. Architectural
+validation, complete supported register/FPU state and all retirement fences
+remain mandatory for every actual handoff. Feature-off B1/B2 capture is
+unchanged.
+
+Full per-IRQ capture/validation overwhelmed USER progress in the cycle-driven
+040 Hatari profile: the saved loop count kept decreasing, but the complete
+suite exceeded twenty minutes. Preparing only at the relevant quantum entry
+restored progress. The temporary shortened ROM observation windows were then
+removed; final qualification uses the original full iteration counts.
+
+TT native evidence transport
+-----------------------------
+The full Phase C suite remains enabled on both Falcon and TT. The TT's legacy
+screen reader sees only its last viewport. Recording every emulated VBL as a
+PNG also overwhelmed the native timing lane. The timer lane therefore reuses
+TEST_LOG_FILE, as Amiga already does, and clears any old log before boot. It
+requires the complete fresh file, every native verdict and an exact debugger
+observation of the source ROM's halt entry before accepting the result.
+A separate production dopanic-entry breakpoint always fails, even after a
+success summary, without relying on a rolling screen or unsupported TT
+NatFeat pointers. Both source addresses come from the image's own map. No
+CPU/FPU/cache/RAM profile or register/resource assertion is reduced. Ordinary
+TT compatibility jobs keep their existing screen reader. Hosted I/O models
+reject old logs, console-only verdicts, missing markers, bad summaries,
+crashes, wrong halt exits and final panics; they are not native CPU evidence.
+
+Eager x32 configuration
+-----------------------
+Timer return capture also selects the existing internal SAVED_RETURN helpers
+when fork is absent. The syscall-return child constructor remains compiled
+only for its actual public/test fork consumers; enabling the timer alone must
+not carry unused fork construction or require a fork test transport.
+
+The x32 timer CI lane additionally rebuilds with demand paging, Mmap, public
+fork and the private test transports disabled. The ordinary complete suite
+still requires CPU-bound PROCESS/THREAD progress without Syield and exact
+joins. Private/COW/file-mapping proofs remain in the standard demand-paged
+lane, whose full configuration and evidence are retained separately. Eager
+MEMTEST uses its existing dedicated fixture/boot harness; it is not inferred
+from a regression disk missing those probe binaries.
+
+The eager MEMTEST lane also enables the timer. Its PROCESS-wait fixture must
+observe the initial TID's actual completion and join the ordinary sibling
+before the intended final-status/fault sibling exits. A reproduced USER exit
+ordering returned the correct zero status from the ordinary sibling with no
+register errors; assuming creation order also fixed exit order was invalid.
+Exact TID joins now establish those events, concurrent counters are atomic,
+and stack disposal follows completion. Cooperative checks keep their original
+ordering. Neither PROCESS completion nor public wait policy is changed.
+
+Timer fixture review guards
+----------------------------
+Readiness bits use atomic OR on ARM and x32; volatile read/modify/write is not
+an atomic x32 publication. The m68k fixture retains its single memory-OR
+instruction. Timer snapshot helpers fall back whenever the ordinary private
+mapping helpers are absent, including private-clone tests without Mmap.
+A sleeper wake is accepted only while the non-yielding spinner still has a
+live observation window; exhausting its budget invalidates its progress.
+
+tools/test-timer-fixtures.py executes these actual fixture helpers with a
+Linux x86 fault-injected writer, all four private/Mmap helper combinations,
+and early, overlapping, failed and late wake models. The former code lost a
+readiness bit, failed the no-Mmap compile and accepted a wake after the loop
+ended. These are deterministic host fixture checks, not native IRQ evidence;
+the native timer lanes still require the complete execution witnesses.
+
+The stack-bottom admission regression fails against the former sp-1-only
+selection. Production transaction models verify bottom/top/unaligned SPs,
+absent/unowned refusal, cancellation and unchanged allocation/reference counts.
+The native ARM probe puts guards on both sides of a resident page, keeps SP
+exactly at its bottom or exclusive top in a stackless assembly handshake, and
+requires repeated non-yielding PROCESS and sibling THREAD progress in both
+cases. Its own mandatory verdict cannot be replaced by an ordinary stack run.
+
+Private-Pfork register proof resets the per-CPU delayed-return witnesses before
+opening that pair's gate and requires both fresh patterns after both joins.
+Independently loaded-image witnesses cannot satisfy its verdict. Host fixture
+models reject stale bits, one fresh pattern and a failed child; only both fresh
+patterns plus successful register comparisons may produce the private PASS.
+
+The nested-launch MEMTEST worker also selects that exact-join child when
+preemption is enabled. Its child must join the creator's actual TID before
+producing the expected final 0x66 status, rather than racing its 0x44 return.
+The host fixture model runs the actual publication/join/completion branches
+with a forced child-first interleaving; the old selection deterministically
+left 0x44 final. The cooperative child selection remains unchanged.

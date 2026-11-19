@@ -1,6 +1,11 @@
 /* Generic cooperative native scheduling, independent of GUI policy. */
 #ifndef KSCHED_H
 #define KSCHED_H
+#if CONF_WITH_NATIVE_PREEMPT
+/* Existing 200 Hz architecture timer only. Bounded CPU-local accounting;
+ * IRQ acknowledgment and the authenticated USER-return handoff stay separate. */
+void ksched_preempt_tick(void);
+#endif
 #include "portab.h"
 #include "bdosdefs.h"
 #include "kowner.h"

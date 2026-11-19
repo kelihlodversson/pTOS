@@ -8,6 +8,9 @@
 #include "ksched.h"
 #include "ksched_lifetime.h"
 #include "ksched_wake.h"
+#if CONF_WITH_NATIVE_PREEMPT
+#include "ksched_quantum.h"
+#endif
 #include "kproc.h"
 #include "native_sched_backend.h"
 #include "kthread_context.h"
@@ -157,7 +160,14 @@ typedef struct {
     void *loaded_launcher; /* CPU-loaded nested chain, saved in each execution context. */
     KERNEL_TASK *current, *inflight;
     KSCHED_WAKE_STATE wake; /* permanent CPU-owned IRQ/idle handshake */
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_NATIVE_PREEMPT
+    KSCHED_QUANTUM quantum;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    UWORD preempt_patterns;
+    BOOL preempt_patterns_reported;
+#endif
+#endif
+#if CONF_WITH_IRQ_RESTART
     UQUAD irq_selected, irq_last_selected, irq_user_observed, irq_last_user;
 #endif
     BOOL entered, pump;
@@ -293,7 +303,7 @@ static void cpu_acknowledge_handoff(void)
 #if CONF_WITH_USER_ASPACE
         task->execution.interrupted_user.valid=FALSE;
 #endif
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
         interrupt_restart_root_ack(&task->execution);
 #endif
         task->execution.on_cpu=FALSE;
@@ -310,7 +320,10 @@ static void cpu_claim_task(KERNEL_TASK *task)
     task->execution.owner_cpu=execution_cpu.number;
     task->execution.on_cpu=TRUE;
     execution_cpu.current=execution_cpu.inflight=task;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_NATIVE_PREEMPT
+    ksched_quantum_reset(&execution_cpu.quantum);
+#endif
+#if CONF_WITH_IRQ_RESTART
     if (execution_cpu.irq_last_selected!=task->execution.identity) {
         if (execution_cpu.irq_selected==~(UQUAD)0) panic("IRQ restart: selection epoch exhausted");
         execution_cpu.irq_selected++;
@@ -319,7 +332,7 @@ static void cpu_claim_task(KERNEL_TASK *task)
 #endif
     runqueue_leave(&guard);
 }
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 UQUAD ksched_irq_restart_selected(void) { return execution_cpu.irq_selected; }
 UQUAD ksched_irq_restart_user_observed(void) { return execution_cpu.irq_user_observed; }
 void ksched_irq_restart_observe_user(UQUAD identity)
@@ -333,6 +346,60 @@ void ksched_irq_restart_observe_user(UQUAD identity)
         execution_cpu.irq_last_user=identity;
     }
 }
+#endif
+#if CONF_WITH_NATIVE_PREEMPT
+void ksched_preempt_tick(void)
+{
+    KERNEL_TASK *task=execution_cpu.current;
+    /* Called only by the existing 200 Hz timer with local IRQs masked. It
+     * may interrupt kernel work: record expiry, never dispatch or inspect a
+     * borrowed kernel frame. A due request survives every refused IRQ tail. */
+    ksched_quantum_tick(&execution_cpu.quantum,
+        !scheduler.stopping && task && task->execution.on_cpu && task->state==TASK_RUNNING);
+}
+BOOL ksched_preempt_capture_needed(void)
+{
+    return ksched_quantum_capture_needed(&execution_cpu.quantum) || ksched_cancellation_pending();
+}
+BOOL ksched_preempt_due(void)
+{
+    return execution_cpu.quantum.pending || ksched_cancellation_pending();
+}
+#if CONF_WITH_PRIVATE_CLONE_TEST
+static BOOL always_ready(void *argument);
+LONG ksched_preempt_test_blocked(ULONG tid)
+{
+#if CONF_WITH_PTERMGRP
+    KERNEL_TASK *task;
+    LONG result=ESRCH;
+    RUNQUEUE_GUARD guard;runqueue_enter(&guard);
+    for(task=scheduler.tasks;task;task=task->next_task)
+        if(task->thread && kthread_tid(task->thread)==tid) {
+            /* Syield uses a cancelable always-ready wait too. It is a
+             * parked yield, not admission to the operation under test. */
+            result=task->state==TASK_BLOCKED && task->cancel_boundary &&
+                task->ready && task->ready!=always_ready;
+            break;
+        }
+    runqueue_leave(&guard);return result;
+#else
+    UNUSED(tid);return EINVFN;
+#endif
+}
+LONG ksched_preempt_test_patterns(BOOL reset)
+{
+    uintptr_t flags=native_sched_irq_save();
+    LONG result=execution_cpu.preempt_patterns;
+    if(reset) {
+        execution_cpu.preempt_patterns=0;execution_cpu.preempt_patterns_reported=FALSE;
+    }
+    native_sched_irq_restore(flags);return result;
+}
+void ksched_preempt_probe_return(UWORD pattern)
+{
+    execution_cpu.preempt_patterns|=pattern;
+}
+#endif
 #endif
 void ksched_shutdown_begin(void)
 {
@@ -369,6 +436,9 @@ static void clear_task(KERNEL_TASK *task)
     task->state=TASK_RESERVED; /* do not reuse while a destructor can reenter */
     runqueue_leave(&guard);
     ksched_admission_release(&completion);
+#if CONF_WITH_IRQ_RESTART
+    interrupt_restart_dispose(&task->execution);
+#endif
     runqueue_enter(&guard);
     /* Final release may reenter admission or root trimming. The reserved
      * record survives, but its successor link can legitimately change. */
@@ -413,6 +483,11 @@ static KERNEL_TASK *reserve_record(void)
         memset(task,0,sizeof(*task)); last->next_task=task;
     }
     clear_task(task); task->state=TASK_RESERVED;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (interrupt_restart_reserve(&task->execution.irq_restart)) {
+        clear_task(task);return NULL;
+    }
+#endif
     return task;
 }
 /* Transfer public ownership before any callback/last-reference release.
@@ -618,6 +693,9 @@ struct ksched_exec_handoff {
     KPROC_EXEC_IMAGE *bundle;
     KASPACE *target, *old_thread_space;
     BOOL rebound, committed;
+#if CONF_WITH_NATIVE_PREEMPT
+    IRQ_RESTART fresh_restart;
+#endif
 };
 
 static BOOL exec_handoff_matches(const KSCHED_EXEC_HANDOFF *tx)
@@ -664,6 +742,9 @@ static void exec_handoff_abort(KSCHED_EXEC_HANDOFF **handle)
         execution_cpu.current != tx->task || tx->task->replacement != tx ||
         ksched_context_id() != tx->execution) panic("exec handoff: foreign abort");
     *handle = NULL;
+#if CONF_WITH_NATIVE_PREEMPT
+    interrupt_restart_retire(&tx->fresh_restart);
+#endif
     thread_startup_abort(&tx->startup);
     kaspace_lease_release(&tx->hold);
     kaspace_put(tx->target);
@@ -762,6 +843,10 @@ LONG ksched_exec_handoff_test(const THREAD_STARTUP_ARGS *args, UWORD failure)
     task->replacement = tx;
     ksched_cleanup_begin(&tx->cleanup);
     if (!tx->process || !tx->space || failure == 2) { error = ENSMEM; goto failed; }
+#if CONF_WITH_NATIVE_PREEMPT
+    error=interrupt_restart_reserve(&tx->fresh_restart);
+    if (error) goto failed;
+#endif
     if (!exec_handoff_matches(tx)) goto failed;
     if (failure == 3) { error = ENSMEM; goto failed; }
     error = thread_startup_prepare_handoff(tx->space, args, &tx->startup);
@@ -879,6 +964,10 @@ LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **receipt, KPROC_EXEC_IMAGE **bu
     task->replacement = tx;
     ksched_cleanup_begin(&tx->cleanup);
     if (!tx->process || !tx->space || !tx->target || replace_injected(2)) { error = ENSMEM; goto failed; }
+#if CONF_WITH_NATIVE_PREEMPT
+    error=interrupt_restart_reserve(&tx->fresh_restart);
+    if (error) goto failed;
+#endif
     if (!exec_handoff_matches(tx)) goto failed;
     tx->startup = kproc_exec_image_take_startup(tx->bundle);
     if (!tx->startup) goto failed;
@@ -969,7 +1058,7 @@ static void exec_handoff_on_root(void)
     KSCHED_EXEC_HANDOFF *tx = execution_cpu.pending_exec;
     THREAD_STARTUP_STACK_OWNERS stacks = { {0,0}, {0,0} };
     KERNEL_TASK *task;
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     IRQ_RESTART retired_restart;
 #endif
     if (!tx) return;
@@ -1006,13 +1095,17 @@ static void exec_handoff_on_root(void)
     kthread_exec_handoff_stack(tx->thread, tx, &tx->hold, &tx->retired_hold);
     tx->retired_startup = task->startup;
     tx->retired_stack = kthread_stack_detach(&task->execution.stack);
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     /* Move execution-resource owners before erasing the context. Destructors
      * must wait until the fresh context and startup stores are installed. */
     interrupt_restart_detach(&task->execution,&retired_restart);
 #endif
     /* Never copy a jmp_buf, C continuation or old CPU return image. */
     memset(&task->execution, 0, sizeof(task->execution));
+#if CONF_WITH_NATIVE_PREEMPT
+    task->execution.irq_restart=tx->fresh_restart;
+    memset(&tx->fresh_restart,0,sizeof(tx->fresh_restart));
+#endif
     task->execution.identity = tx->next_execution;
     task->execution.stack.physical = stacks.scheduler.physical;
     task->execution.stack.top = stacks.scheduler.top;
@@ -1033,7 +1126,7 @@ static void exec_handoff_on_root(void)
     kthread_stack_release(&tx->retired_stack);
     thread_startup_reclaim(&tx->retired_startup);
     kaspace_lease_release(&tx->retired_hold);
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     interrupt_restart_retire(&retired_restart);
 #endif
     task->replacement = NULL;
@@ -2005,7 +2098,7 @@ static void reclaim_task_execution(void *resource)
 #if CONF_WITH_X86_64_MEMTEST
     x86_64_memtest_task_thread(NULL, execution->stack.physical, 7);
 #endif
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     interrupt_restart_dispose(execution);
 #endif
     kthread_stack_release(&execution->stack);
@@ -3222,6 +3315,12 @@ static void scheduler_root_entry(void)
         if (scheduler.stopping) panic("scheduler: dispatch during shutdown");
         runqueue_unlocked(); /* predicates and notifications are outside leaf exclusion */
         check_root_stack();
+#if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+        if (execution_cpu.preempt_patterns==3 && !execution_cpu.preempt_patterns_reported) {
+            execution_cpu.preempt_patterns_reported=TRUE;
+            kprintf("native timer original/alternate GPR/FPU delayed restoration: PASS\r\n");
+        }
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
         wait_probe_on_root();
 #if ARCH_X86_64
@@ -3233,8 +3332,12 @@ static void scheduler_root_entry(void)
 #endif
 #endif
         /* Reclaim only from root. Referenced slots remain stable across entries. */
-        for (task = scheduler.tasks; task; task = task->next_task)
+        for (task = scheduler.tasks; task; task = task->next_task) {
+#if CONF_WITH_NATIVE_PREEMPT
+            interrupt_restart_reap(&task->execution);
+#endif
             reap_finished_on_root(task);
+        }
         /* A leader can precede its last worker in the list. Publish/retire
          * anchors only after all stopped dependents have dropped ownership. */
         for (task = scheduler.tasks; task; task = task->next_task)

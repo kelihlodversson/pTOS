@@ -1,7 +1,18 @@
 /* The alternate object gives peer B independent GPR, FPU and control patterns. */
+#ifdef PREEMPT_PATTERN
 #ifdef IRQ_ALTERNATE
+#define clone_irq_registers clone_preempt_registers_alt
+#define clone_irq_registers_end clone_preempt_registers_alt_end
+#else
+#define clone_irq_registers clone_preempt_registers
+#define clone_irq_registers_end clone_preempt_registers_end
+#endif
+#endif
+#ifdef IRQ_ALTERNATE
+#ifndef PREEMPT_PATTERN
 #define clone_irq_registers clone_irq_registers_alt
 #define clone_irq_registers_end clone_irq_registers_alt_end
+#endif
 #define IRQ_GPR(n) 0x72400000007240##n
 #define IRQ_XMM 0x7240724072407240
 #define IRQ_WORD 0x72407240
@@ -78,7 +89,11 @@ clone_irq_registers:
         movabs $IRQ_GPR(12),%r12
         movabs $IRQ_GPR(13),%r13
         movabs $IRQ_GPR(14),%r14
+#ifdef PREEMPT_PATTERN
+        mov $20000000,%ecx
+#else
         mov $2000000,%ecx
+#endif
         std /* IRQ entry must clear DF for C, then restore the original flags */
         movabs $IRQ_GPR(15),%r15
 1:      pause
@@ -228,7 +243,7 @@ clone_irq_registers:
         mov r10,r0
         mov r11,r0
         ldr lr,=IRQ_LR
-#if defined(TEST_WITH_IRQ_RESTART)
+#if defined(TEST_WITH_IRQ_RESTART) || defined(PREEMPT_PATTERN)
         ldr r1,=40000000
 #else
         ldr r1,=4000000
@@ -359,7 +374,9 @@ irq_fpu_last:
         movea.l %d1,%a3
         movea.l %d1,%a4
         movea.l %d1,%a5
-#if defined(TEST_WITH_IRQ_RESTART)
+#if defined(PREEMPT_PATTERN)
+        move.l #8000000,%d0
+#elif defined(TEST_WITH_IRQ_RESTART)
         move.l #40000000,%d0
 #else
         move.l #4000000,%d0
@@ -401,42 +418,54 @@ irq_fpu_last:
         jeq 9f
         fmove.l %fpiar,%d0
         cmp.l %a6,%d0
-        jne 2f
+        jne .Lirq_bad_fpiar
 #ifdef IRQ_ALTERNATE
         fmove.l %fpcr,%d0
         cmpi.l #0x30,%d0
-        jne 2f
+        jne .Lirq_bad_fpcr
         fmove.l %fpsr,%d0
         cmpi.l #0x08000000,%d0
-        jne 2f
+        jne .Lirq_bad_fpsr
 #endif
         fmove.l %fp0,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp1,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp2,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp3,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp4,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp5,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp6,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
         fmove.l %fp7,%d0
         cmp.l %d7,%d0
-        jne 2f
+        jne .Lirq_bad_fpreg
 9:      moveq #0,%d0
         jra 3f
 2:      moveq #1,%d0
+        jra 3f
+.Lirq_bad_fpiar:
+        moveq #2,%d0
+        jra 3f
+.Lirq_bad_fpcr:
+        moveq #3,%d0
+        jra 3f
+.Lirq_bad_fpsr:
+        moveq #4,%d0
+        jra 3f
+.Lirq_bad_fpreg:
+        moveq #5,%d0
 3:      tst.l 324(%sp)
         jeq 4f
         fmovem.x 228(%sp),%fp0-%fp7

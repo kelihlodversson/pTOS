@@ -35,7 +35,9 @@ static inline BOOL arm_irq_user_valid(const ARM_USER_IRQ_FRAME *f,
 {
     return (f->cpsr&0x3f)==0x10 && !(f->cpsr&0x200) &&
         f->pc && f->pc<limit && !(f->pc&3) &&
-        f->user_sp && f->user_sp<limit && !(f->user_sp&7) &&
+        /* AAPCS permits word-aligned SP between public interfaces. The
+         * IRQ/SVC frame below still requires its own eight-byte alignment. */
+        f->user_sp && f->user_sp<limit && !(f->user_sp&3) &&
         f->irq_lr==f->pc && f->svc_sp==b->stack_top &&
         f->svc_lr==f->saved_svc_lr && b->root && b->root==b->expected_root &&
         b->frame_address>=b->stack_base && b->frame_address<=~(uintptr_t)0-ARM_IRQ_BYTES &&
@@ -88,7 +90,7 @@ static inline BOOL arm_irq_same_entry_valid(const ARM_USER_IRQ_CAPTURE *c,
 }
 struct _pd;
 void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame);
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
 void arm_restart_user_irq(ARM_USER_IRQ_FRAME *frame);
 #endif
 BOOL arm_process_irq_stack(struct _pd *pd, uintptr_t *base, uintptr_t *top);
@@ -119,8 +121,11 @@ void arm_irq_capture_report(void);
     bl C_SYM(arm_capture_user_irq)
 .endm
 .macro ARM_IRQ_POP_CAPTURE
+#if CONF_WITH_NATIVE_PREEMPT
+    clrex /* do not export a kernel/peer exclusive reservation through RFE */
+#endif
     FPU_POP_ALL r0
-#if CONF_WITH_IRQ_RESTART_TEST
+#if CONF_WITH_IRQ_RESTART
     /* Only register loads in IRQ mode: its SP may legitimately be zero.
      * Keep the live SVC SP; the original SRS pair still drives RFE. */
     mov r0,sp
