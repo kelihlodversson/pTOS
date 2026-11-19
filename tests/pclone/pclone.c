@@ -128,9 +128,12 @@ static void test_private_continuation(void)
         }
         ptest_assert_msg(pid>0 && pid!=parent,"private saved-return parent receives distinct PID");
         if(pid>0) {
-            /* No dispatch is possible between constructor publication and
-             * this nonblocking check. A completion-only vfork would fail. */
+#if !defined(TEST_WITH_NATIVE_PREEMPT)
+            /* Cooperative publication returns before child dispatch. Phase C
+             * instead proves nonblocking Pfork with its child/parent file gate;
+             * this observation could consume an already completed child. */
             ptest_assert_msg(Pwaitpid(pid,1,0)==0,"private parent returns before child completion");
+#endif
             if(cycle&1) (void)Syield(); /* child writes first */
             else { /* parent writes first */
                 local=0xaabbccddUL;private_probe.cell=0xaabbccddUL;private_probe.heap[17]=0x61;
@@ -189,9 +192,12 @@ static void captured_private_child(void *unused)
 static void captured_surviving_peer(void *unused)
 {
     long expected=PRIVATE_SNAPSHOT_LAZY|PRIVATE_SNAPSHOT_WRITE|PRIVATE_SNAPSHOT_USER;
-    int bad=0,cycle,stage;
+    int bad=0,cycle,stage,attempt;
     (void)unused;
-    if(Pgetppid()==captured_probe.creator) bad=1;
+    /* Timer dispatch may run this orphan before its creator calls Pterm.
+     * Preserve the source-first precondition explicitly before cloning. */
+    for(attempt=0;attempt<2000 && Pgetppid()==captured_probe.creator;attempt++)(void)Syield();
+    if(Pgetppid()==captured_probe.creator) {bad=1;goto completed;}
     for(cycle=0;cycle<2;cycle++) {
         struct ptos_clone_args args={0};
         volatile unsigned char *page;
@@ -242,9 +248,14 @@ static void captured_surviving_peer(void *unused)
             captured_probe.environment[0]!=captured_probe.environment_byte) bad=6;
         page[0]=0x32;
     }
+completed:
     if(bad) printf("captured snapshot failure %d\r\n",bad);
     conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
                "native captured ancestor-stack private snapshot after source exit, both write orders: PASS\r\n");
+    {
+        long fd=Fcreate("CAPDONE.DAT",0),result=bad;
+        if(fd>=0) {(void)Fwrite((short)fd,sizeof(result),&result);(void)Fclose((short)fd);}
+    }
     Pterm(bad?74:73);
 }
 static void captured_creator(void *unused)
@@ -282,13 +293,29 @@ static void test_captured_snapshot(void)
     memset(stack,0,32768);memset(captured_probe.peer_stack,0,32768);memset(captured_probe.child_stack,0,32768);
     args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;args.entry=captured_creator;
     args.stack_base=stack;args.stack_size=32768;
+    (void)Fdelete("CAPDONE.DAT");
     child=pclone_trap(&args,0xc8920000UL|sizeof(args));
     ptest_assert_msg(child>0,"independent captured-stack source publishes");
     if(child>0) {
         status=Pwaitpid(child,0,0);
         ptest_assert_msg((status>>16)==child && (status&65535)==73,
                          "original stack owner exits before the surviving source clones");
-        (void)Syield();
+        {
+            int attempt,complete=0;
+            long result=-1;
+            /* The orphan is intentionally not this PROCESS's waitable child.
+             * Its result fence ends all fault-injection windows before this
+             * driver starts the next global allocation-failure fixture. */
+            for(attempt=0;attempt<2000;attempt++) {
+                long fd=Fopen("CAPDONE.DAT",0),bytes=0;
+                if(fd>=0) {bytes=Fread((short)fd,sizeof(result),&result);(void)Fclose((short)fd);}
+                if(bytes==sizeof(result)) {complete=1;break;}
+                (void)Syield();
+            }
+            ptest_assert_msg(complete && !result,"orphan completes both snapshot write orders before another fault injector starts");
+            ptest_assert_msg(Fdelete("CAPDONE.DAT")==0,"retire captured-snapshot result fence");
+            (void)Syield();
+        }
     }
     ptest_assert_msg(!Mfree(stack) && !Mfree(captured_probe.peer_stack) && !Mfree(captured_probe.child_stack),
                      "original caller can release independent fixture stack copies");
@@ -299,6 +326,12 @@ static void private_entry(void *argument)
     volatile unsigned long local=0x5a5aa5a5UL;
     int bad=0;
     (void)argument;
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    if(private_probe.mode==-1) {
+        int attempt;
+        for(attempt=0;attempt<2000 && Pgetppid()==private_probe.parent;attempt++)(void)Syield();
+    }
+#endif
     if(Pgetpid()==private_probe.parent ||
        (private_probe.mode==-1 ? Pgetppid()==private_probe.parent :
                                 Pgetppid()!=private_probe.parent) ||
