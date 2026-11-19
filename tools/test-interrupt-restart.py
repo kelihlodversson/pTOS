@@ -35,9 +35,11 @@ with tempfile.TemporaryDirectory(prefix='ptos-irq-restart-') as directory:
         assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
     if args.preempt:
         k.syms['CONF_WITH_IRQ_RESTART_TEST'].set_value(0)
-        k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
+        k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(0)
+        k.syms['CONF_WITH_PFORK'].set_value(0)
         k.syms['CONF_WITH_NATIVE_PREEMPT'].set_value(2)
         assert k.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'y'
+        assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
         assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
     assert k.syms['CONF_WITH_IRQ_RESTART'].str_value == 'y'
     k.write_config(str(work / 'config'))

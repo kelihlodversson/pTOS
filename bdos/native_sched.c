@@ -362,6 +362,15 @@ BOOL ksched_preempt_due(void)
     return execution_cpu.quantum.pending || ksched_cancellation_pending();
 }
 #if CONF_WITH_PRIVATE_CLONE_TEST
+LONG ksched_preempt_test_patterns(BOOL reset)
+{
+    uintptr_t flags=native_sched_irq_save();
+    LONG result=execution_cpu.preempt_patterns;
+    if(reset) {
+        execution_cpu.preempt_patterns=0;execution_cpu.preempt_patterns_reported=FALSE;
+    }
+    native_sched_irq_restore(flags);return result;
+}
 void ksched_preempt_probe_return(UWORD pattern)
 {
     execution_cpu.preempt_patterns|=pattern;

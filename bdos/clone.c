@@ -224,6 +224,8 @@ static long clone_request(uint64_t address, uint64_t size)
         return interrupt_restart_test(address,size);
 #endif
 #if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+    if (!address && (size==IRQ_PREEMPT_TEST_RESET || size==IRQ_PREEMPT_TEST_PATTERNS))
+        return ksched_preempt_test_patterns(size==IRQ_PREEMPT_TEST_RESET);
     if (size==IRQ_PREEMPT_TEST_DELAY) return interrupt_preempt_test_delay((ULONG)address);
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST

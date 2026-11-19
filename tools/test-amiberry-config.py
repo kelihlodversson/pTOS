@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-amiberry-config-') as directory:
         configured = scope['k']
         assert configured.syms['CONF_WITH_MFASTCALL'].str_value == ('n' if proof else 'y')
         assert configured.syms['CONF_WITH_SAVED_RETURN'].str_value == ('y' if proof else 'n')
-        assert configured.syms['CONF_WITH_PFORK'].str_value == ('y' if preempt else 'n')
+        assert configured.syms['CONF_WITH_PFORK'].str_value == 'n'
         assert configured.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == ('y' if preempt else 'n')
         assert configured.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
         assert configured.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'

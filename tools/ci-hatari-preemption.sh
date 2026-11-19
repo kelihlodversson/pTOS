@@ -13,11 +13,14 @@ k.syms['OPTIMIZE_SIZE'].set_value(2)
 assert k.syms['OPTIMIZE_SIZE'].str_value == 'y'
 for name in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN',
              'CONF_WITH_PTERMGRP', 'CONF_WITH_EXIT_HANDOFF_TEST',
-             'CONF_WITH_FORK_RETURN_TEST', 'CONF_WITH_PRIVATE_CLONE',
+             'CONF_WITH_PRIVATE_CLONE',
              'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PROCESS_FILES_TEST',
-             'CONF_WITH_PFORK', 'CONF_WITH_NATIVE_PREEMPT'):
+             'CONF_WITH_NATIVE_PREEMPT'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name
+k.syms['CONF_WITH_PFORK'].set_value(0)
+k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(0)
+assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
 assert k.syms['CONF_WITH_MFASTCALL'].str_value == 'n'
 assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
 k.write_config()

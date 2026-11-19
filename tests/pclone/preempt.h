@@ -3,6 +3,17 @@
  * the alternating handshake. Both PROCESS and THREAD ownership are exercised. */
 #if defined(TEST_WITH_NATIVE_PREEMPT)
 #include <stddef.h>
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && !defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#include "../../include/mapping_lifetime_test.h"
+static long mlt_snapshot(MAPPING_LIFETIME_SNAPSHOT *snapshot)
+{ return pclone_trap(snapshot,MLT_SNAPSHOT); }
+static void mlt_print(const char *name,const MAPPING_LIFETIME_SNAPSHOT *snapshot)
+{
+    unsigned i;char text[64];conws(name);
+    for(i=0;i<MLT_FIELDS;i++) {sprintf(text," %lu",(unsigned long)snapshot->value[i]);conws(text);}
+    conws("\r\n");
+}
+#endif
 static volatile unsigned long preempt_turn,preempt_steps[2];
 struct preempt_worker {
     unsigned role;volatile unsigned error;
@@ -65,6 +76,61 @@ static int preempt_run(void (*entry)(void *))
     }
     return okay;
 }
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+static void preempt_image_patterns(void)
+{
+    long child[2],report[2][2],own_root=pclone_trap(0,0xc8920100UL),fd;
+    unsigned i,attempt;
+    int okay=1;
+    const char *files[2]={"PREEMPR0.DAT","PREEMPR1.DAT"};
+    (void)pclone_trap(0,0xc713c101UL);
+    (void)Fdelete("PREEMPG.ON");
+    for(i=0;i<2;i++)(void)Fdelete(files[i]);
+    for(i=0;i<2;i++) {
+        child[i]=Pexec(100,"PREEMPT.TOS",i?"\1" "1":"\1" "0",0);
+        ptest_assert_msg(child[i]>0,"loader publishes independent timer/FPU PROCESS");
+        if(child[i]<=0)okay=0;
+    }
+    memset(report,0,sizeof(report));
+    for(i=0;i<2;i++) {
+        fd=-1;
+        for(attempt=0;child[i]>0 && attempt<1024;attempt++) {
+            long bytes=0;
+            fd=Fopen(files[i],0);
+            if(fd>=0) {bytes=Fread((short)fd,sizeof(report[i]),report[i]);(void)Fclose((short)fd);}
+            if(bytes==sizeof(report[i]))break;
+            (void)Syield();
+        }
+        if(attempt==1024 || child[i]<=0)okay=0;
+    }
+    {
+        int distinct=own_root>0 && report[0][0]>0 && report[1][0]>0 &&
+            report[0][0]!=report[1][0] && report[0][0]!=own_root && report[1][0]!=own_root &&
+            report[0][1]==child[0] && report[1][1]==child[1];
+        ptest_assert_msg(distinct,"register peers have distinct live PROCESS and MMU roots");
+        if(!distinct)okay=0;
+    }
+    fd=Fcreate("PREEMPG.ON",0);
+    if(fd>=0)(void)Fclose((short)fd);else okay=0;
+    for(i=0;i<2;i++)if(child[i]>0) {
+        long status=Pwaitpid(child[i],0,0);
+        int success=(status>>16)==child[i] && !(status&65535);
+        ptest_assert_msg(success,"independently loaded timer peer preserves GPR/FPU patterns");
+        if(!success)okay=0;
+    }
+    {
+        long patterns=pclone_trap(0,0xc713c102UL);
+        ptest_assert_msg(patterns==3,"both hardware pattern captures returned after another THREAD ran USER");
+        if(patterns==3 && okay)
+            conws("native timer original/alternate GPR/FPU delayed restoration: PASS\r\n");
+        else okay=0;
+    }
+    for(i=0;i<2;i++)ptest_assert_msg(Fdelete(files[i])==0,"retire root identity report");
+    ptest_assert_msg(Fdelete("PREEMPG.ON")==0,"retire independent image pattern gate");
+    conws(okay?"native timer independent-image/root GPR/FPU patterns: PASS\r\n":
+               "native timer independent-image/root GPR/FPU patterns: FAIL\r\n");
+}
+#endif
 #if defined(TEST_WITH_PFORK) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static void preempt_private_patterns(void)
 {
@@ -115,7 +181,7 @@ static void preempt_private_patterns(void)
                "native timer public-Pfork private-root GPR/FPU patterns: FAIL\r\n");
 }
 #endif
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
 static volatile unsigned long preempt_wait_started,preempt_wait_woke,preempt_wait_progress;
 static void preempt_wait_spinner(void *unused)
 {
@@ -146,7 +212,7 @@ static void preempt_blocked_wakeup(void)
         conws("native timer busy USER and blocked sleeper wake: PASS\r\n");
 }
 #endif
-#if defined(TEST_WITH_PTERMGRP) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_PTERMGRP) && defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
 static volatile unsigned long preempt_cancel_started,preempt_cancel_seen,preempt_cancel_after;
 static void preempt_cancel_spinner(void *unused)
 {
@@ -206,6 +272,9 @@ static void preempt_cancel_retirement(void)
 static void test_preempt(void)
 {
     int okay;
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+    preempt_image_patterns();
+#endif
 #if defined(TEST_WITH_PFORK) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     preempt_private_patterns();
 #endif
@@ -239,7 +308,7 @@ static void test_preempt(void)
                          "file execution backing and directory ownership close independently");
     }
 #endif
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
     preempt_blocked_wakeup();
 #if defined(TEST_WITH_PTERMGRP)
     preempt_cancel_retirement();

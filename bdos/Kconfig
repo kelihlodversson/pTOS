@@ -177,7 +177,7 @@ config CONF_WITH_NATIVE_SCHED
 
 config CONF_WITH_NATIVE_PREEMPT
     bool "Timer preemption of supported native USER continuations"
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_SAVED_RETURN
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
     depends on ARCH_X86_64 || (ARCH_ARM && CPU_ARMV7) || (ARCH_M68K_CLASSIC && !CONF_WITH_MFASTCALL && (MACHINE_VIRT_M68K || CONF_AMIGA_HIGHER_HALF_68040 || CONF_ATARI_HIGHER_HALF_68040))
     default n
     help
@@ -297,7 +297,7 @@ config CONF_WITH_SAVED_RETURN
     depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
     depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
     depends on !ARCH_ARM || CPU_ARMV7
-    default y if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK
+    default y if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK || CONF_WITH_NATIVE_PREEMPT
     help
       Internal: capture a system call's user return image so a new THREAD
       resumes after the same trap (Pfork/Pvfork and the test probe).

@@ -849,6 +849,9 @@ if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1' "$top/obj/autoconf.h"; then
         if ! grep -aq 'native timer busy USER and blocked sleeper wake: PASS' "$suite_log"; then
             record "native timer blocked wake" FAIL "blocked sleeper did not wake alongside CPU-bound USER"
         fi
+        if ! grep -aq 'native timer independent-image/root GPR/FPU patterns: PASS' "$suite_log"; then
+            record "native timer independent roots" FAIL "distinct loaded roots did not preserve GPR/FPU patterns"
+        fi
         if grep -q '^#define CONF_WITH_PFORK 1' "$top/obj/autoconf.h"; then
             for marker in 'native timer public-Pfork private-root GPR/FPU patterns: PASS' \
                           'native timer original/alternate GPR/FPU delayed restoration: PASS'; do
