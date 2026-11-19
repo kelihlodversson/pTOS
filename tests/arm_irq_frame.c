@@ -23,6 +23,10 @@ int main(void)
     f.pc++; CHECK(!arm_irq_user_valid(&f,&b,0x80000000)); f.pc--;
     f.user_sp=0; CHECK(!arm_irq_user_valid(&f,&b,0x80000000)); f.user_sp=0x700000;
     f.user_sp++; CHECK(!arm_irq_user_valid(&f,&b,0x80000000)); f.user_sp--;
+    /* AAPCS requires eight bytes at public call boundaries, but permits
+     * word alignment inside a leaf. A hardware IRQ can land there. */
+    f.user_sp+=4; CHECK(arm_irq_user_valid(&f,&b,0x80000000));
+    f.user_sp+=2; CHECK(!arm_irq_user_valid(&f,&b,0x80000000)); f.user_sp-=6;
     f.irq_lr++; CHECK(!arm_irq_user_valid(&f,&b,0x80000000)); f.irq_lr--;
     /* SRS writes SVC storage: IRQ SP is captured but never used as a stack. */
     f.irq_sp=0; CHECK(arm_irq_user_valid(&f,&b,0x80000000));

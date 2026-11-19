@@ -35,7 +35,9 @@ static inline BOOL arm_irq_user_valid(const ARM_USER_IRQ_FRAME *f,
 {
     return (f->cpsr&0x3f)==0x10 && !(f->cpsr&0x200) &&
         f->pc && f->pc<limit && !(f->pc&3) &&
-        f->user_sp && f->user_sp<limit && !(f->user_sp&7) &&
+        /* AAPCS permits word-aligned SP between public interfaces. The
+         * IRQ/SVC frame below still requires its own eight-byte alignment. */
+        f->user_sp && f->user_sp<limit && !(f->user_sp&3) &&
         f->irq_lr==f->pc && f->svc_sp==b->stack_top &&
         f->svc_lr==f->saved_svc_lr && b->root && b->root==b->expected_root &&
         b->frame_address>=b->stack_base && b->frame_address<=~(uintptr_t)0-ARM_IRQ_BYTES &&

@@ -212,3 +212,14 @@ Their sibling-fault case joins the exact faulting TID before cancellation.
 A USER readiness store is not admission, and a fixed number of Syield calls
 is not a completion deadline under timer scheduling. Public GUI/wait ABIs and
 PROCESS cancellation policy are unchanged.
+
+ARM USER SP and hardware interruption
+--------------------------------------
+AAPCS permits a word-aligned USER SP inside a function, requiring eight-byte
+alignment only at public call boundaries. GCC emits a three-register push in
+the busy mapping peer. Rejecting that entire loop as ineligible starved its
+parked mapping owner until the loop exhausted its budget. USER IRQ validation
+now accepts this legitimate word alignment while retaining the eight-byte
+kernel IRQ/SVC frame and all banked/control/return checks. Synthetic validation
+rejects byte/halfword alignment, and the native mapping-owner probe requires
+actual timer departure from the compiler-generated word-aligned loop.
