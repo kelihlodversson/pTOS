@@ -3,7 +3,7 @@
         .text
         .globl C_SYM(native_sched_enter)
 C_SYM(native_sched_enter):
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_IRQ_RESTART && CPU_ARMV7
         clrex                       /* a new THREAD cannot inherit a USER reservation */
 #endif
         mov sp, r0

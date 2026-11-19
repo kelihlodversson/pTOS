@@ -157,10 +157,10 @@ def main():
     if a.require_irq_restart and (a.require_native_preemption or a.mode not in
                                   ('f030a', 'tta', 'f040a', 'tt040a')):
         ap.error('B2 requires an independent MMU shell run')
-    file_evidence = (a.require_native_preemption or a.require_irq_restart) and a.mode in ('tta', 'tt040a')
+    file_evidence = bool(a.require_irq_restart) or (a.require_native_preemption and a.mode == 'tt040a')
     if file_evidence and (a.halt is None or a.panic is None or
                           min(a.halt, a.panic) < 0x80000000 or a.halt == a.panic):
-        ap.error('TT timer evidence requires distinct higher-half source ROM --halt/--panic addresses')
+        ap.error('file evidence requires distinct higher-half source ROM --halt/--panic addresses')
 
     work = tempfile.mkdtemp(prefix='hatari-tests-')
     disk = os.path.join(work, 'test-hd.img')    # Hatari locks the file

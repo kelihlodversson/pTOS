@@ -3,15 +3,21 @@
 #ifdef IRQ_ALTERNATE
 #define clone_irq_registers clone_preempt_registers_alt
 #define clone_irq_registers_end clone_preempt_registers_alt_end
+#define clone_irq_window_begin clone_preempt_window_alt_begin
+#define clone_irq_window_end clone_preempt_window_alt_end
 #else
 #define clone_irq_registers clone_preempt_registers
 #define clone_irq_registers_end clone_preempt_registers_end
+#define clone_irq_window_begin clone_preempt_window_begin
+#define clone_irq_window_end clone_preempt_window_end
 #endif
 #endif
 #ifdef IRQ_ALTERNATE
 #ifndef PREEMPT_PATTERN
 #define clone_irq_registers clone_irq_registers_alt
 #define clone_irq_registers_end clone_irq_registers_alt_end
+#define clone_irq_window_begin clone_irq_window_alt_begin
+#define clone_irq_window_end clone_irq_window_alt_end
 #endif
 #define IRQ_GPR(n) 0x72400000007240##n
 #define IRQ_XMM 0x7240724072407240
@@ -24,6 +30,7 @@
 #define IRQ_MXCSR 0x3f80
 #define IRQ_X87_MANTISSA 0
 #define IRQ_X87_EXPONENT 0
+#define IRQ_RFLAGS 0x045
 #else
 #define IRQ_GPR(n) 0x71300000007130##n
 #define IRQ_XMM 0x7130713071307130
@@ -36,10 +43,14 @@
 #define IRQ_MXCSR 0x1f80
 #define IRQ_X87_MANTISSA 0x8000000000000000
 #define IRQ_X87_EXPONENT 0x3fff
+#define IRQ_RFLAGS 0xcd5
 #endif
 /* All-register ring-3 timer IRQ pattern, no syscall/yield during observation.
  * Does not demonstrate scheduling/preemption: a bounded busy loop only. */
 #if defined(__x86_64__)
+#if defined(TEST_WITH_IRQ_RESTART) && defined(IRQ_ALTERNATE)
+#define IRQ_MMX
+#endif
         .text
         .globl clone_irq_registers
         .type clone_irq_registers,@function
@@ -54,7 +65,16 @@ clone_irq_registers:
         fxsave (%rsp)
         fninit
         fldcw irq_control(%rip)
-#ifdef IRQ_ALTERNATE
+#ifdef IRQ_MMX
+        movq irq_xmm(%rip),%mm0
+        movq %mm0,%mm1
+        movq %mm0,%mm2
+        movq %mm0,%mm3
+        movq %mm0,%mm4
+        movq %mm0,%mm5
+        movq %mm0,%mm6
+        movq %mm0,%mm7
+#elif defined(IRQ_ALTERNATE)
         fldz
 #else
         fld1
@@ -94,11 +114,18 @@ clone_irq_registers:
 #else
         mov $2000000,%ecx
 #endif
-        std /* IRQ entry must clear DF for C, then restore the original flags */
+        pushq $IRQ_RFLAGS+2
+        popfq /* IRQ C entry clears DF; the return restores all writable test flags. */
         movabs $IRQ_GPR(15),%r15
+        .globl clone_irq_window_begin,clone_irq_window_end
+clone_irq_window_begin:
 1:      pause
         loop 1b
-        xor %r15d,%r15d /* invalidate test marker before inspecting registers */
+clone_irq_window_end:
+        mov %r15,1024(%rsp)
+        mov $0,%r15 /* invalidate the marker without changing the flags */
+        pushfq
+        pop %r15
         cmp irq_expected_rax(%rip),%rax
         jne 2f
         cmp irq_expected_rbx(%rip),%rbx
@@ -127,14 +154,27 @@ clone_irq_registers:
         jne 2f
         test %rcx,%rcx
         jne 2f
-        pushfq
-        pop %rdx
-        test $0x400,%edx
-        jz 2f
+        mov 1024(%rsp),%rdx
+        cmp irq_expected_r15(%rip),%rdx
+        jne 2f
+        and $0xcd5,%r15d
+        cmp $IRQ_RFLAGS,%r15d
+        jne 2f
         cld
         fxsave 512(%rsp)
         cmpw $IRQ_FCW,512(%rsp)
         jne 2f
+#ifdef IRQ_MMX
+        cmpb $0xff,516(%rsp)
+        jne 2f
+        lea 544(%rsp),%rdi
+        movabs $IRQ_XMM,%rdx
+        mov $8,%ecx
+5:      cmp %rdx,(%rdi)
+        jne 2f
+        add $16,%rdi
+        loop 5b
+#else
         cmpb $0x80,516(%rsp)
         jne 2f
         movabs $IRQ_X87_MANTISSA,%rdx
@@ -142,6 +182,7 @@ clone_irq_registers:
         jne 2f
         cmpw $IRQ_X87_EXPONENT,552(%rsp)
         jne 2f
+#endif
         cmpl $IRQ_MXCSR,536(%rsp)
         jne 2f
         lea 672(%rsp),%rdi
@@ -249,8 +290,11 @@ clone_irq_registers:
         ldr r1,=4000000
 #endif
         ldr r12,=IRQ_MARKER
+        .globl clone_irq_window_begin,clone_irq_window_end
+clone_irq_window_begin:
 1:      subs r1,r1,#1
         bne 1b
+clone_irq_window_end:
         str r12,[sp,#4] /* preserve marker for post-return comparison */
         mov r12,#0 /* marker invalid before scratch comparisons */
         ldr r12,=IRQ_WORD
@@ -316,6 +360,80 @@ clone_irq_registers:
         .ltorg
         .globl clone_irq_registers_end
 clone_irq_registers_end:
+#if defined(TEST_WITH_IRQ_RESTART) && !defined(IRQ_ALTERNATE)
+        .globl clone_irq_thumb,clone_irq_thumb_begin,clone_irq_thumb_end
+clone_irq_thumb:
+        adr r2,6f
+        add r2,r2,#1
+        bx r2
+        .thumb
+6:      ldr r1,=40000000
+        movs r0,#95
+clone_irq_thumb_begin:
+7:      subs r1,r1,#1
+        bne 7b
+clone_irq_thumb_end:
+        cmp r0,#95
+        bne 8f
+        movs r0,#0
+        bx lr
+8:      movs r0,#1
+        bx lr
+        .ltorg
+        .arm
+        .balign 4
+
+        .globl clone_irq_exclusive_a,clone_irq_exclusive_a_begin,clone_irq_exclusive_a_end
+clone_irq_exclusive_a:
+        push {r4,r5,lr}
+        ldrex r4,[r0]
+        mov r2,#1
+        str r2,[r1]
+        ldr r3,=40000000
+clone_irq_exclusive_a_begin:
+1:      ldr r2,[r1]
+        cmp r2,#2
+        beq 2f
+        subs r3,r3,#1
+        bne 1b
+clone_irq_exclusive_a_end:
+2:      mov r5,#9
+        strex r2,r5,[r0]
+        ldr r5,[r0]
+        mov r0,#1
+        cmp r3,#0
+        beq 3f
+        cmp r4,#0
+        bne 3f
+        cmp r2,#0
+        beq 3f
+        cmp r5,#7
+        moveq r0,#0
+3:      mov r2,#3
+        str r2,[r1]
+        pop {r4,r5,pc}
+
+        .globl clone_irq_exclusive_b,clone_irq_exclusive_b_begin,clone_irq_exclusive_b_end
+clone_irq_exclusive_b:
+        mov r2,#7
+        str r2,[r0]
+        ldrex r2,[r0]
+        mov r2,#2
+        str r2,[r1]
+        ldr r3,=40000000
+clone_irq_exclusive_b_begin:
+1:      ldr r2,[r1]
+        cmp r2,#3
+        beq 2f
+        subs r3,r3,#1
+        bne 1b
+clone_irq_exclusive_b_end:
+2:      cmp r3,#0
+        moveq r0,#1
+        movne r0,#0
+        bx lr
+        .ltorg
+#endif
 #elif defined(__mc68000__)
 #define IRQ_CAT_(a,b) a##b
 #define IRQ_CAT(a,b) IRQ_CAT_(a,b)
@@ -359,6 +477,10 @@ irq_fpu_last:
         move.l %a6,%d0
         fmove.l %d0,%fpiar /* explicit nonzero control-state pattern */
         fmove.l %fpiar,%d0
+#if defined(TEST_M68K_ROM_WINDOW) && defined(TEST_WITH_IRQ_RESTART)
+        tst.l %d0
+        jeq 2f /* pinned Atari/Amiga B2 suites require actual nonzero FPIAR */
+#endif
         movea.l %d0,%a6 /* actual FPIAR: QEMU may model only zero */
         jra 8f
 6:      suba.l %a6,%a6
@@ -388,8 +510,11 @@ irq_fpu_last:
         move.l #4000000,%d0
 #endif
         move.l #IRQ_M68K_MARKER,%d7
+        .globl IRQ_SYM(clone_irq_window_begin),IRQ_SYM(clone_irq_window_end)
+IRQ_SYM(clone_irq_window_begin):
 1:      subq.l #1,%d0
         jne 1b
+IRQ_SYM(clone_irq_window_end):
         move.l %d7,328(%sp)
         move.l #IRQ_WORD,%d7
         tst.l %d0

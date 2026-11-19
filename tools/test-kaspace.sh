@@ -29,6 +29,9 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-pie -no-pie -iquote include -I"$work" \
     -Iinclude/arch/x86_64 tests/arm_irq_frame.c bdos/kowner.c tests/kowner_model.c -o "$work/arm-irq-frame"
 "$work/arm-irq-frame"
+${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -DTEST_ARM_D16 -iquote include -I"$work" \
+    -Iinclude/arch/x86_64 tests/arm_irq_frame.c bdos/kowner.c tests/kowner_model.c -o "$work/arm-irq-d16"
+"$work/arm-irq-d16"
 ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -iquote include -I"$work" \
     -Iinclude/arch/x86_64 tests/m68k_irq_frame.c bdos/kowner.c tests/kowner_model.c -o "$work/m68k-irq-frame"
 "$work/m68k-irq-frame"

@@ -13,12 +13,17 @@ start = source.index('import kconfiglib, os')
 configure = source[start:source.index('\nPYCONFIG', start)]
 with tempfile.TemporaryDirectory(prefix='ptos-amiberry-config-') as directory:
     os.environ['KCONFIG_CONFIG'] = str(Path(directory) / 'config')
-    for preset, proof, preempt in [('amiga-aspace', False, False),
-                                    ('amiga-aspace040', False, False),
-                                    ('amiga-aspace040', True, False),
-                                    ('amiga-aspace', True, False),
-                                    ('amiga-aspace040', True, True),
-                                    ('amiga-aspace', True, True)]:
+    for preset, proof, preempt, restart, fastcall in [
+            ('amiga-aspace', False, False, False, True),
+            ('amiga-aspace040', False, False, False, True),
+            ('amiga-aspace040', True, False, False, False),
+            ('amiga-aspace', True, False, False, False),
+            ('amiga-aspace040', True, True, False, False),
+            ('amiga-aspace', True, True, False, False),
+            ('amiga-aspace', False, False, True, False),
+            ('amiga-aspace040', True, False, True, False),
+            ('amiga-aspace040', False, False, True, False),
+            ('amiga-aspace040', False, False, True, True)]:
         config = kconfiglib.Kconfig(warn_to_stderr=False)
         config.load_config('configs/' + preset + '_defconfig')
         if preset == 'amiga-aspace':
@@ -26,6 +31,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-amiberry-config-') as directory:
         config.write_config()
         os.environ['IRQ_COPY_PROOF'] = str(int(proof))
         os.environ['NATIVE_PREEMPT'] = str(int(preempt))
+        os.environ['IRQ_RESTART_TEST'] = str(int(restart))
+        os.environ['IRQ_RESTART_FASTCALL'] = str(int(fastcall))
         scope = {}
         try:
             exec(compile(configure, 'ci-amiberry.sh/PYCONFIG', 'exec'), scope)
@@ -34,10 +41,10 @@ with tempfile.TemporaryDirectory(prefix='ptos-amiberry-config-') as directory:
             continue
         assert not (proof and preset == 'amiga-aspace'), '030 copy proof accepted'
         configured = scope['k']
-        assert configured.syms['CONF_WITH_MFASTCALL'].str_value == ('n' if proof else 'y')
-        assert configured.syms['CONF_WITH_SAVED_RETURN'].str_value == ('y' if proof else 'n')
+        assert configured.syms['CONF_WITH_MFASTCALL'].str_value == ('y' if fastcall else 'n')
+        assert configured.syms['CONF_WITH_SAVED_RETURN'].str_value == ('y' if proof or (restart and not fastcall) else 'n')
         assert configured.syms['CONF_WITH_PFORK'].str_value == 'n'
         assert configured.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == ('y' if preempt else 'n')
-        assert configured.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
+        assert configured.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == ('y' if restart else 'n')
         assert configured.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'
-print('Amiberry native config: ordinary fastcall retained, 040 stack-ABI proof and timer policy, 030 refusal: PASS (configuration only)')
+print('Amiberry native config: cooperative, deferred IRQ, timer and unsupported stack/FPU profiles: PASS (configuration only)')

@@ -1,6 +1,6 @@
 /* Checks shared by every replacement image of the Pexec(200) test (#970).
  * The tail each program passes to the next one is
- *   "GEN FD PID TID ROOT0 ROOT1 PPID NESTED POS BASE"
+ *   "GEN FD PID TID ROOT0 ROOT1 PPID NESTED POS BASE PROCESS0 PROCESS1"
  * where GEN is the committed-exec generation the receiver must see, ROOT the
  * replaced program's address-space root, POS the descriptor's position and
  * BASE the replaced program's basepage. */
@@ -15,6 +15,7 @@
 
 typedef struct {
     unsigned long generation, pid, tid, root0, root1, base;
+    unsigned long process0, process1;
     long descriptor, parent, position;
     int nested;
 } EXEC200_TAIL;
@@ -39,12 +40,15 @@ static __attribute__((unused)) void exec200_verify(const char *who, EXEC200_TAIL
     if (!length || length > 125) exec200_fail(who, "command tail length", (long)length);
     memcpy(line, _base->p_cmdlin + 1, length); line[length] = 0;
     if (line[0] == 'F') line[0] = ' ';
-    if (sscanf(line, "%lu %ld %lu %lu %lu %lu %ld %d %ld %lu", &t->generation, &t->descriptor,
+    if (sscanf(line, "%lu %ld %lu %lu %lu %lu %ld %d %ld %lu %lu %lu", &t->generation, &t->descriptor,
                &t->pid, &t->tid, &t->root0, &t->root1, &t->parent, &t->nested,
-               &t->position, &t->base) != 10) exec200_fail(who, "command tail", (long)length);
+               &t->position, &t->base, &t->process0, &t->process1) != 12)
+        exec200_fail(who, "command tail", (long)length);
     if (exec200_probe(&state, EXEC_REPLACE_QUERY)) exec200_fail(who, "query", 0);
     if (state.pid != t->pid || Pgetpid() != (long)t->pid) exec200_fail(who, "same PID", Pgetpid());
     if (state.tid != t->tid) exec200_fail(who, "same TID", (long)state.tid);
+    if (state.process[0] != t->process0 || state.process[1] != t->process1)
+        exec200_fail(who, "same PROCESS identity", (long)state.process[0]);
     if (Pgetppid() != t->parent) exec200_fail(who, "same parent", Pgetppid());
     if (state.generation[0] != t->generation || state.generation[1])
         exec200_fail(who, "generation", (long)state.generation[0]);
@@ -64,10 +68,12 @@ static __attribute__((unused)) long exec200_next(const char *path, char mode, co
                                                  const char *environment)
 {
     char tail[128];
-    sprintf(tail + 1, "%s%lu %ld %lu %lu %lu %lu %ld %d %ld %lu", mode == 'F' ? "F" : "",
-            t->generation + 1, t->descriptor, t->pid, t->tid, t->root0, t->root1,
-            t->parent, t->nested, Fseek(0L, (short)t->descriptor, 1), (unsigned long)_base);
-    tail[0] = (char)strlen(tail + 1);
+    int length=snprintf(tail + 1, sizeof(tail) - 1, "%s%lu %ld %lu %lu %lu %lu %ld %d %ld %lu %lu %lu",
+            mode == 'F' ? "F" : "", t->generation + 1, t->descriptor, t->pid, t->tid, t->root0, t->root1,
+            t->parent, t->nested, Fseek(0L, (short)t->descriptor, 1), (unsigned long)_base,
+            t->process0, t->process1);
+    if (length <= 0 || length > 125) exec200_fail("image", "encode command tail", length);
+    tail[0] = (char)length;
     return Pexec(200, path, tail, environment);
 }
 #endif

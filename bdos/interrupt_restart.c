@@ -199,15 +199,18 @@ LONG interrupt_restart_test(UQUAD address, UQUAD selector)
      * gone at the later USER IRQ boundary; never bypass or alter that scope. */
     if (!c) return EINVFN;
     r=&c->irq_restart;
-    if (selector==IRQ_RESTART_QUERY)
-        return !address && owner_valid(c) ? (LONG)r->state:EACCDN;
+    if (selector==IRQ_RESTART_QUERY) {
+        if (address) return EACCDN;
+        if (r->state==IRQ_RESTART_EMPTY && !r->code && !r->stack) return IRQ_RESTART_EMPTY;
+        return owner_valid(c) ? (LONG)r->state:EACCDN;
+    }
     if (selector==IRQ_RESTART_FINISH || selector==IRQ_RESTART_ABORT) {
         LONG result;
         if (address || (r->state!=IRQ_RESTART_ARMED && r->state!=IRQ_RESTART_ACKED)) return EACCDN;
         if (!owner_valid(c)) return EACCDN;
         result=selector==IRQ_RESTART_ABORT || (r->state==IRQ_RESTART_ACKED && r->peer_ran) ? E_OK:EAGAIN;
         if (selector==IRQ_RESTART_FINISH && r->suppress_credit && !r->transported)
-            result=EINVFN; /* injected no-credit proof must actually hand off */
+            result=r->captured ? EINVFN:EACCDN; /* refusal and no IRQ are different verdicts */
         if (selector==IRQ_RESTART_FINISH && r->capture_only && r->captured && r->state==IRQ_RESTART_ARMED)
             result=1; /* explicitly capture/ordinary return, never a B2 success */
         release(r);

@@ -102,6 +102,8 @@ if os.environ.get('IRQ_RESTART_TEST') == '1':
         k.syms[name].set_value(2)
         assert k.syms[name].str_value == 'y', name
     assert k.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'n'
+    k.syms['CONF_WITH_PFORK'].set_value(0)
+    assert k.syms['CONF_WITH_PFORK'].str_value == 'n'
     assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'n'
     assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == ('n' if fastcall else 'y')
 k.write_config()

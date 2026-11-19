@@ -11,9 +11,12 @@
 #define IRT_NO_CREDIT 0xc713b205UL
 #define IRT_FAIL_CODE 0xc713b211UL
 #define IRT_FAIL_STACK 0xc713b212UL
+#define IRT_EMPTY 0
 #define IRT_ACKED 5
 
 struct irq_restart_args { uint64_t code, code_bytes, stack, stack_bytes; };
+extern char clone_irq_window_begin[],clone_irq_window_end[];
+extern char clone_irq_window_alt_begin[],clone_irq_window_alt_end[];
 
 static void irq_restart_prepare_args(struct irq_restart_args *args, uintptr_t code, uintptr_t end)
 {

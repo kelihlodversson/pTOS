@@ -205,6 +205,13 @@ int main(void)
     heap->count=heap->capacity=1;
     heap->blocks[0].va=STACK;heap->blocks[0].pages=2;heap->blocks[0].reservation=1;
     baseline=allocations-frees;
+    assert(operation(IRQ_RESTART_QUERY)==IRQ_RESTART_EMPTY);
+    assert(operation(IRQ_RESTART_NO_CREDIT)==E_OK);
+    assert(operation(IRQ_RESTART_FINISH)==EACCDN); /* no IRQ in the armed window */
+    assert(operation(IRQ_RESTART_NO_CREDIT)==E_OK);
+    capture();interrupt_restart_user_capture(&execution);
+    assert(operation(IRQ_RESTART_FINISH)==EINVFN); /* genuine capture with transport refused */
+    assert(operation(IRQ_RESTART_QUERY)==IRQ_RESTART_EMPTY && allocations-frees==baseline);
     for(i=0;i<64;i++) {
         unsigned n;
         for(n=1;n<=2;n++) {
@@ -217,6 +224,9 @@ int main(void)
         resident_code=FALSE;assert(operation(IRQ_RESTART_BEGIN)==EACCDN);resident_code=TRUE;
         resident_stack=FALSE;assert(operation(IRQ_RESTART_BEGIN)==EACCDN);resident_stack=TRUE;
         assert(operation(IRQ_RESTART_BEGIN)==E_OK && allocations-frees==baseline+2);
+        process.number++;
+        assert(operation(IRQ_RESTART_QUERY)==EACCDN); /* attached stale owner is not EMPTY */
+        process.number--;
         assert(operation(IRQ_RESTART_BEGIN)==EACCDN);
         assert(!kaspace_mapping_change(&backend,CODE,1) && !kaspace_mapping_change(&backend,STACK,1));
         capture();critical=TRUE;

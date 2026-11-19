@@ -232,7 +232,7 @@ void native_sched_save(NATIVE_SCHED_CONTEXT *context)
 void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 {
     native_sched_irq_disable();
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_IRQ_RESTART && CPU_ARMV7
     /* Exclusive monitors belong to the CPU, not the saved THREAD. A retry
      * may fail spuriously; inheriting a peer's reservation must never pass. */
     __asm__ volatile ("clrex" ::: "memory");

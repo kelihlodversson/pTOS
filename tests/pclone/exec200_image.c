@@ -19,16 +19,14 @@ static void verify_new_irq(void *unused)
 
 static void verify_irq_replacement(void)
 {
-    long memory,tid,result;
-    int32_t status=-1;
-    if (exec200_probe(0, IRT_QUERY) != -36L) exec200_fail("image", "stale retained IRQ", 0);
+    long memory,tid;
+    int32_t pid=0;
+    if (exec200_probe(0, IRT_QUERY) != IRT_EMPTY) exec200_fail("image", "stale retained IRQ", 0);
     memory=Malloc(EXEC200_IRQ_STACK);
     if (memory<=0) exec200_fail("image", "new IRQ stack", memory);
-    tid=exec200_irq_spawn(verify_new_irq,(void *)memory,0);
-    if (tid<=0) exec200_fail("image", "new IRQ thread", tid);
-    result=trap_1_wll(GEMDOS_PTHJOIN,tid,(long)&status);
-    if(result || status || Mfree((void *)memory))
-        exec200_fail("image", "join new IRQ thread and release stack", result?result:status);
+    tid=exec200_irq_spawn(verify_new_irq,(void *)memory,&pid);
+    if (tid<=0 || pid<=0) exec200_fail("image", "new IRQ process", tid);
+    exec200_irq_reap(pid,(void *)memory);
 }
 #endif
 

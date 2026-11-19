@@ -904,6 +904,16 @@ if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native retained IRQ Pexec(200) old-owner retirement and fresh-image restart: PASS' "$suite_log"; then
     record "native retained IRQ replacement" FAIL "old IRQ owners or new replacement restart were not proved"
 fi
+if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
+    case $machine in
+        pc-x86_64) irq_profile_marker='native retained IRQ x32 foreign FS selector returns normally: PASS' ;;
+        virt-arm) irq_profile_marker='native retained IRQ ARM Thumb refusal and exclusive monitor ownership: PASS' ;;
+        *) irq_profile_marker= ;;
+    esac
+    if [ -n "$irq_profile_marker" ] && ! grep -aqF "$irq_profile_marker" "$suite_log"; then
+        record "native retained IRQ architecture" FAIL "missing $irq_profile_marker"
+    fi
+fi
 
 if [ "$machine" = pc-x86_64 ] &&
    grep -q '^#define CONF_WITH_NATIVE_SCHED 1' "$top/obj/autoconf.h" &&

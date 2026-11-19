@@ -5,6 +5,7 @@ This is source-level/host evidence, not native IRQ or scheduling execution.
 """
 from itertools import product
 from pathlib import Path
+from irq_restart_evidence import DEFERRED, REFUSED, missing_irq_evidence
 import re
 import os
 import shlex
@@ -61,6 +62,12 @@ with tempfile.TemporaryDirectory(prefix='ptos-deferred-guards-') as directory:
             missing = [label for (label, _), seen, needed in zip(verdicts, present, required) if needed and not seen]
             assert result.stdout.splitlines() == missing, (enabled, cancellation, present, result.stdout)
 print('Native delayed IRQ guards: 128 feature/verdict cases, immediate copy-back evidence refused: PASS (host shell)')
+for profile, markers in (('deferred', DEFERRED), ('refused', (REFUSED,))):
+    assert not missing_irq_evidence('\r\n'.join(markers), profile)
+    assert missing_irq_evidence('\n'.join(DEFERRED + (REFUSED,)), profile)
+    for missing in markers:
+        assert missing_irq_evidence('\n'.join(m for m in markers if m != missing), profile) == ['missing '+missing]
+print('Native ROM IRQ verdicts: incomplete and contradictory evidence refused: PASS (host parser)')
 
 markers = {
     'native completion sequence': 'native completion sequence check/block retry: PASS',

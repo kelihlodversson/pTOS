@@ -136,6 +136,7 @@ static void replace(int nested)
     memset(&t, 0, sizeof(t));
     t.generation = 0; t.descriptor = descriptor;
     t.pid = original.pid; t.tid = original.tid;
+    t.process0 = original.process[0]; t.process1 = original.process[1];
     t.root0 = original.root[0]; t.root1 = original.root[1];
     t.parent = Pgetppid(); t.nested = nested;
     result = exec200_next("EXEC200B.TOS", 0, &t, environment);

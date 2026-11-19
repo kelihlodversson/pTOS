@@ -2,14 +2,12 @@
  * either register-pattern loop; kernel-owned proof rejects mere selection. */
 #if defined(TEST_WITH_IRQ_RESTART)
 #include "irq_restart_probe.h"
-extern char clone_irq_registers_end[];
-extern char clone_irq_registers_alt_end[];
 #if defined(__mc68000__)
 extern long clone_irq_registers_alt(long);
 #else
 extern long clone_irq_registers_alt(void);
 #endif
-struct irq_restart_work { volatile long error, done; int pattern, private_space, refuse; };
+struct irq_restart_work { volatile long error, done; int pattern, private_space, refuse, check_arch; };
 static int irq_restart_resources_equal(const MAPPING_LIFETIME_SNAPSHOT *a,
                                        const MAPPING_LIFETIME_SNAPSHOT *b)
 {
@@ -27,13 +25,85 @@ static long irq_restart_pattern(int alternate)
     return alternate?clone_irq_registers_alt():clone_irq_registers();
 #endif
 }
+#if defined(__x86_64__)
+static int irq_restart_arch_refusal(struct irq_restart_args *args)
+{
+    unsigned short saved_fs, live_fs, user_data;
+    long result;
+    if(pclone_trap(args,IRT_NO_CREDIT))return 0;
+    __asm__ volatile("movw %%fs,%0; movw %%ss,%1; movw %1,%%fs"
+                     : "=&r"(saved_fs), "=&r"(user_data) :: "memory");
+    result=clone_irq_registers();
+    __asm__ volatile("movw %%fs,%0; movw %1,%%fs" : "=&r"(live_fs) : "r"(saved_fs) : "memory");
+    return pclone_trap(0,IRT_FINISH)==-32L && !result && user_data && live_fs==user_data;
+}
+#elif defined(__arm__)
+extern long clone_irq_thumb(void);
+extern char clone_irq_thumb_begin[],clone_irq_thumb_end[];
+static int irq_restart_arch_refusal(struct irq_restart_args *args)
+{
+    unsigned long start,elapsed;
+    long result;
+    irq_restart_prepare_args(args,(uintptr_t)clone_irq_thumb_begin,(uintptr_t)clone_irq_thumb_end);
+    if(pclone_trap(args,IRT_NO_CREDIT))return 0;
+    start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+    result=clone_irq_thumb();
+    elapsed=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start;
+    /* Thumb cannot produce a resumable capture. Time advances across the
+     * stackless, trap-free Thumb loop and the normal IRQ return preserves it. */
+    return pclone_trap(0,IRT_FINISH)==-36L && !result && elapsed>=2;
+}
+
+static volatile unsigned long irq_exclusive_word[1024] __attribute__((aligned(4096)));
+static volatile unsigned long irq_exclusive_stage[1024] __attribute__((aligned(4096)));
+extern long clone_irq_exclusive_a(volatile unsigned long *,volatile unsigned long *);
+extern long clone_irq_exclusive_b(volatile unsigned long *,volatile unsigned long *);
+extern char clone_irq_exclusive_a_begin[],clone_irq_exclusive_a_end[];
+extern char clone_irq_exclusive_b_begin[],clone_irq_exclusive_b_end[];
+
+static void irq_restart_exclusive_worker(void *argument)
+{
+    int peer=(uintptr_t)argument!=0;
+    struct irq_restart_args args;
+    long result;
+    unsigned spin;
+    irq_restart_prepare_args(&args,
+        (uintptr_t)(peer?clone_irq_exclusive_b_begin:clone_irq_exclusive_a_begin),
+        (uintptr_t)(peer?clone_irq_exclusive_b_end:clone_irq_exclusive_a_end));
+    if(pclone_trap(&args,IRT_BEGIN)) { Pterm(87);return; }
+    for(spin=0;peer && irq_exclusive_stage[0]!=1 && spin<128;spin++) (void)Syield();
+    if(spin==128) { Pterm(87);return; }
+    result=(peer?clone_irq_exclusive_b:clone_irq_exclusive_a)(irq_exclusive_word,irq_exclusive_stage);
+    Pterm(result || pclone_trap(0,IRT_FINISH) ? 87:0);
+}
+
+static int irq_restart_exclusive_ownership(void)
+{
+    int peer,okay=1;
+    long tid[2];
+    irq_exclusive_word[0]=irq_exclusive_stage[0]=0;
+    for(peer=0;peer<2;peer++) {
+        struct ptos_clone_args args={0};
+        args.flags=CLONE_VM|CLONE_SAME_PROCESS;
+        args.entry=irq_restart_exclusive_worker;
+        args.argument=(void *)(uintptr_t)peer;
+        args.stack_base=runnable_stacks[peer];args.stack_size=RUNNABLE_STACK_SIZE;
+        tid[peer]=pclone_trap(&args,sizeof(args));
+    }
+    for(peer=0;peer<2;peer++) {
+        int32_t status=-1;
+        if(tid[peer]<=0 || join_tid(tid[peer],&status) || status)okay=0;
+    }
+    return okay && irq_exclusive_word[0]==7 && irq_exclusive_stage[0]==3;
+}
+#endif
 static void irq_restart_entry(void *argument)
 {
     volatile struct irq_restart_work *w=argument;
     struct irq_restart_args args;
     long value;
-    uintptr_t code=w->pattern?(uintptr_t)clone_irq_registers_alt:(uintptr_t)clone_irq_registers;
-    uintptr_t end=w->pattern?(uintptr_t)clone_irq_registers_alt_end:(uintptr_t)clone_irq_registers_end;
+    uintptr_t code=w->pattern?(uintptr_t)clone_irq_window_alt_begin:(uintptr_t)clone_irq_window_begin;
+    uintptr_t end=w->pattern?(uintptr_t)clone_irq_window_alt_end:(uintptr_t)clone_irq_window_end;
     unsigned long private_pattern=w->pattern?0x72407240UL:0x71307130UL;
     MAPPING_LIFETIME_SNAPSHOT before,after;
     irq_restart_prepare_args(&args,code,end);
@@ -54,9 +124,8 @@ static void irq_restart_entry(void *argument)
     value=pclone_trap(&args,IRT_CAPTURE_ONLY);
     if(value || irq_restart_pattern(w->pattern) || pclone_trap(0,IRT_FINISH)!=1) w->error|=32;
     if(w->refuse) {
-        /* NO_CREDIT returns EINVFN if no handoff occurred, as opposed to
-         * EAGAIN after an accepted handoff with the credit suppressed. The
-         * preceding capture-only pass proves a real IRQ hit the window. */
+        /* EINVFN requires a real IRQ in this window and no handoff. EAGAIN
+         * denotes a handoff with credit suppressed, EACCDN no capture. */
         value=pclone_trap(&args,IRT_NO_CREDIT);
         if(value || irq_restart_pattern(w->pattern) || pclone_trap(0,IRT_FINISH)!=-32L)w->error|=512;
         goto done;
@@ -88,6 +157,9 @@ static void irq_restart_entry(void *argument)
         (void)Syield();
         if(irq_restart_pattern(w->pattern) || pclone_trap(0,IRT_FINISH)!=-326L)w->error|=512;
     }
+#if defined(__x86_64__) || defined(__arm__)
+    if(w->check_arch && !irq_restart_arch_refusal(&args))w->error|=1024;
+#endif
 done:
     if(w->error) {
         char message[80];
@@ -121,7 +193,7 @@ static void irq_restart_exit_entry(void *unused)
     struct ptos_clone_args peer={0};
     int mode=irq_restart_exit_mode;
     (void)unused;
-    irq_restart_prepare_args(&args,(uintptr_t)clone_irq_registers,(uintptr_t)clone_irq_registers_end);
+    irq_restart_prepare_args(&args,(uintptr_t)clone_irq_window_begin,(uintptr_t)clone_irq_window_end);
     if(mode!=ARMED_EXIT && mode!=ARMED_FAULT) {
         peer.flags=CLONE_VM|CLONE_SAME_PROCESS;peer.entry=irq_restart_cancel_peer;
         peer.stack_base=runnable_stacks[1];peer.stack_size=RUNNABLE_STACK_SIZE;
@@ -205,6 +277,7 @@ static int irq_restart_peers(int mode, int cycles, int refuse)
             irq_restart_workers[i].pattern=i;
             irq_restart_workers[i].private_space=mode==2;
             irq_restart_workers[i].refuse=refuse;
+            irq_restart_workers[i].check_arch=(mode==0 && !cycle && !i);
             args.flags=CLONE_VM|(mode==1?CLONE_SAME_PROCESS:CLONE_COPY_STANDARD_HANDLES);
             args.entry=irq_restart_entry;args.argument=&irq_restart_workers[i];
             args.stack_base=runnable_stacks[i];args.stack_size=RUNNABLE_STACK_SIZE;
@@ -258,6 +331,9 @@ static void irq_restart_driver(void *unused)
     (void)unused;
     conws("IRQ restart owned driver entered\r\n");
     for(mode=0;mode<3;mode++) if(!irq_restart_peers(mode,3,0))good=0;
+#if defined(__arm__)
+    if(!irq_restart_exclusive_ownership())good=0;
+#endif
 #if defined(TEST_WITH_PTERMGRP)
     if(!irq_restart_test_retirement())good=0;
 #endif
@@ -290,7 +366,8 @@ long pclone_run_irq_image(int role)
 static void irq_restart_test_exact_child(void)
 {
     int32_t pid=0,tid=0,status=-1;
-    long result,polls;
+    long result,excluded;
+    ptest_assert_msg(Pwaitpid(-1,1,0)==-33L,"isolated exact-child probe starts without children");
     anchored_thief_stop=anchored_thief_taken=anchored_thief_polls=0;
     if(launch_entry(anchored_thief,CLONE_VM|CLONE_SAME_PROCESS,
                     runnable_stacks[2],&pid,&tid)<=0) {
@@ -298,7 +375,7 @@ static void irq_restart_test_exact_child(void)
         return;
     }
     while(!anchored_thief_polls)(void)Syield();
-    polls=anchored_thief_polls;
+    excluded=anchored_thief_excluded;
     /* On m68k the ELF loader owns the text leaves. Legacy PRG text requires
      * the private-image authority separately tested by irq_restart_driver. */
 #if defined(__mc68000__)
@@ -308,7 +385,7 @@ static void irq_restart_test_exact_child(void)
 #endif
     anchored_thief_stop=1;
     ptest_assert_msg(join_tid(tid,&status)==0 && status==0,"join B2 competing waiter");
-    ptest_assert_msg(result==0x713b && anchored_thief_polls>polls && !anchored_thief_taken &&
+    ptest_assert_msg(result==0x713b && anchored_thief_excluded>excluded && !anchored_thief_taken &&
                      Pwaitpid(-1,1,0)==-33L,"retained IRQ coexists with exclusive full-status Pexec(0) wait");
     if(!ptest_failures())conws("native retained IRQ with managed exact-child wait: PASS\r\n");
 }
@@ -355,6 +432,11 @@ static void test_irq_restart(void)
 #endif
     conws("native retained IRQ capture-only and uncredited root return: PASS\r\n");
     conws("native interrupted USER A IRQ / B USER execution / saved A restart: PASS\r\n");
+#if defined(__x86_64__)
+    conws("native retained IRQ x32 foreign FS selector returns normally: PASS\r\n");
+#elif defined(__arm__)
+    conws("native retained IRQ ARM Thumb refusal and exclusive monitor ownership: PASS\r\n");
+#endif
 #if defined(TEST_WITH_PTERMGRP)
     conws("native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS\r\n");
     conws("native retained IRQ armed and acknowledged user faults: PASS\r\n");
