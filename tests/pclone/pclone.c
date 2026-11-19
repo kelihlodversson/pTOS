@@ -690,6 +690,9 @@ static struct {
     unsigned char *stack[SCHEDULE_PEERS];
     int32_t pid[SCHEDULE_PEERS], tid[SCHEDULE_PEERS];
     volatile int trace[SCHEDULE_PEERS*SCHEDULE_ROUNDS], used, error;
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    volatile int gate, progress[SCHEDULE_PEERS];
+#endif
 } schedule_probe;
 static void schedule_entry(void *argument)
 {
@@ -700,10 +703,20 @@ static void schedule_entry(void *argument)
         if ((unsigned long)&local >= (unsigned long)schedule_probe.stack[index] &&
             (unsigned long)&local < (unsigned long)(schedule_probe.stack[index]+RUNNABLE_STACK_SIZE)) break;
     if (index==SCHEDULE_PEERS) { schedule_probe.error=1; return; }
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    while (!schedule_probe.gate) (void)Syield();
+#endif
     for (round=0; round<SCHEDULE_ROUNDS; round++) {
         if (Pgetpid()!=schedule_probe.pid[index] || local!=0x13572468UL ||
             schedule_probe.used>=SCHEDULE_PEERS*SCHEDULE_ROUNDS) { schedule_probe.error=1; return; }
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        /* A timer can interrupt between observing the selected execution and
+         * its first USER store. Each worker owns its own progress cell. The
+         * feature-off test below retains the strict cooperative FIFO trace. */
+        schedule_probe.progress[index]=round+1;
+#else
         schedule_probe.trace[schedule_probe.used++]=index;
+#endif
         (void)Syield();
     }
 }
@@ -718,6 +731,10 @@ static void test_scheduler_growth(void)
     }
     for (cycle=0;cycle<2;cycle++) {
         schedule_probe.used=schedule_probe.error=0;
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        schedule_probe.gate=0;
+        for(i=0;i<SCHEDULE_PEERS;i++)schedule_probe.progress[i]=0;
+#endif
         for (i=0;i<SCHEDULE_PEERS;i++) {
             result=launch_entry(schedule_entry,CLONE_VM|(i&1?CLONE_SAME_PROCESS:0),schedule_probe.stack[i],
                                 &schedule_probe.pid[i],&schedule_probe.tid[i]);
@@ -725,14 +742,32 @@ static void test_scheduler_growth(void)
             if (result<=0) return;
             ptest_assert_msg((schedule_probe.pid[i]==Pgetpid())==(i&1),"scheduler preserves shared/distinct PID policy");
             for (j=0;j<i;j++) ptest_assert_msg(schedule_probe.tid[i]!=schedule_probe.tid[j],"unique live scheduler TIDs");
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+            for(j=0;j<=i;j++)
+                ptest_assert_msg(!schedule_probe.progress[j],"no worker advances before admission gate opens");
+#else
             ptest_assert_msg(!schedule_probe.used,"no dispatch before publication returns");
+#endif
         }
-        /* Block the parent; all twelve peers must progress in FIFO RR order. */
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        schedule_probe.gate=1;
+#endif
+        /* Block the parent; all twelve peers must progress in FIFO RR order
+         * when cooperative, or finish independently with timer dispatch. */
         for (i=0;i<SCHEDULE_PEERS;i+=2) {
             result=Pwaitpid(schedule_probe.pid[i],0,0);
             ptest_assert_msg((result>>16)==schedule_probe.pid[i] && !(result&65535),"independent PROCESS completion after fair dispatch");
         }
         (void)Syield(); (void)Syield();
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PTHJOIN)
+        for (i=1;i<SCHEDULE_PEERS;i+=2)
+            ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,schedule_probe.tid[i],0)==0,"timer-dispatched sibling retires after arena growth");
+#endif
+        ptest_assert_msg(!schedule_probe.error,"timer dispatch preserves all mixed worker identities");
+        for(i=0;i<SCHEDULE_PEERS;i++)
+            ptest_assert_msg(schedule_probe.progress[i]==SCHEDULE_ROUNDS,"all twelve mixed workers complete every round under timer dispatch");
+#else
         ptest_assert_msg(!schedule_probe.error && schedule_probe.used==SCHEDULE_PEERS*SCHEDULE_ROUNDS,"all independent and sibling continuations progress");
         for (i=0;i<SCHEDULE_PEERS*SCHEDULE_ROUNDS;i++)
             ptest_assert_msg(schedule_probe.trace[i]==i%SCHEDULE_PEERS,"one circular round-robin across arena growth");
@@ -740,6 +775,7 @@ static void test_scheduler_growth(void)
         for (i=1;i<SCHEDULE_PEERS;i+=2)
             ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,schedule_probe.tid[i],0)==0,"late sibling join after safe root reclaim");
 #endif
+#endif /* cooperative trace / timer progress */
     }
     for (i=0;i<SCHEDULE_PEERS;i++) ptest_assert_msg(Mfree(schedule_probe.stack[i])==0,"repeated fair dispatch releases stack holds");
     conws("native scheduler growth and mixed PROCESS/THREAD round-robin: tested\r\n");

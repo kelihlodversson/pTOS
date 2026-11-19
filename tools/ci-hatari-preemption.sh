@@ -7,6 +7,10 @@ CONFIG_= python3 - <<'PYCONFIG'
 import kconfiglib
 k = kconfiglib.Kconfig()
 k.load_config()
+# The complete native test kernel exceeds the 512-KB image at -O2. Use the
+# existing size profile; retain stack ABI, MMU/FPU and every required probe.
+k.syms['OPTIMIZE_SIZE'].set_value(2)
+assert k.syms['OPTIMIZE_SIZE'].str_value == 'y'
 for name in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN',
              'CONF_WITH_PTERMGRP', 'CONF_WITH_EXIT_HANDOFF_TEST',
              'CONF_WITH_FORK_RETURN_TEST', 'CONF_WITH_PRIVATE_CLONE',
@@ -18,7 +22,10 @@ assert k.syms['CONF_WITH_MFASTCALL'].str_value == 'n'
 assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
 k.write_config()
 PYCONFIG
-make -j"$(getconf _NPROCESSORS_ONLN)" >logs/hatari-preemption.build 2>&1
+make -j"$(getconf _NPROCESSORS_ONLN)" >logs/hatari-preemption.build 2>&1 || {
+    tail -35 logs/hatari-preemption.build
+    exit 1
+}
 make test-hd-shell >logs/hatari-preemption.testdisk 2>&1
 for mode in f040a tt040a; do
     python3 tools/run-hatari-tests.py --tos ptos512k.img --disk test-hd-shell.img \
