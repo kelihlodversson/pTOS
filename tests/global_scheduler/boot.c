@@ -35,7 +35,16 @@ static void read_log(void)
 }
 static void write_log(void)
 {
-    long fd=Fcreate(LOG,0), n;
+    long fd,n;
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    /* Existing fixed-size state must remain readable between USER syscalls.
+     * Truncation followed by a separate write exposed an empty file if a
+     * timer selected a reader between those two operations. */
+    fd=Fopen(LOG,2);
+    if(fd<0)fd=Fcreate(LOG,0);
+#else
+    fd=Fcreate(LOG,0);
+#endif
     REQUIRE(fd>=0,3); n=Fwrite(fd,sizeof(data),data); (void)Fclose(fd); REQUIRE(n==sizeof(data),4);
 }
 int main(void)
@@ -66,7 +75,21 @@ int main(void)
         return 0; /* child may not require this launcher or its PD/stack */
     }
     if(role==2) {
-        read_log(); REQUIRE(data[3]==2 && data[1]!=Pgetpid(),8);
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+        /* A bounded detached pump can stop on a timer IRQ before the child
+         * reaches its explicit wait. Drive the same existing scheduler until
+         * that child publishes its phase, without assuming one quantum of
+         * USER execution is an entire cooperative iteration. */
+        start=Ssystem(S_GETLVAL,0x4baL,0L);
+        do {
+            read_log();
+            if(data[3]==1)(void)Syield();
+            REQUIRE(((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start)<1000UL,8);
+        }while(data[3]==1);
+#else
+        read_log();
+#endif
+        REQUIRE(data[3]==2 && data[1]!=Pgetpid(),8);
         /* No allocator-order assumption about this independent launcher. */
         data[7]=Pgetpid(); data[5]=1; write_log();
         start=Ssystem(S_GETLVAL,0x4baL,0L);
