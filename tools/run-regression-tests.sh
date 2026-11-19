@@ -620,10 +620,9 @@ if grep -q '^#define CONF_WITH_IMAGE_POLICY_TEST 1' "$top/obj/autoconf.h" &&
     record "native immutable image policy" FAIL "configured capture/activation/rollback assertions did not execute"
 fi
 # m68k MMU (#1018): Pexec 4/104 of a staged PRG or a caller-made basepage,
-# run by pie_load, which is built only with the ELF loader, and staging
-# PIEPRG.TOS, which the legacy m68k-elf toolchain cannot link (Makefile).
+# run by the shared_vm suite, which the legacy m68k-elf toolchain cannot
+# build (its probe is a PRG; Makefile).
 if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
-   grep -q '^#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h" &&
    ! grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config"; then
     for marker in \
         'native shared-VM Pexec4/104 execution and canonical reap: tested' \
@@ -677,7 +676,6 @@ fi
 
 # Native revoked-result marker.
 if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
-   grep -q '^#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h" &&
    ! grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config" &&
    grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&

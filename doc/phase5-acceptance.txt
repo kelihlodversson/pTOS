@@ -45,6 +45,9 @@ FreeMiNT primary-source references and the explicit public-activation boundary.
 
 Criterion / production owner / evidence index
 ---------------------------------------------
+(#1018: the shared-VM fixtures this index names as pie_load are now the
+shared_vm suite, tests/shared_vm/; the interpreter, DSO and RELRO ones were
+removed with shared-VM GO of ELF images.)
 Distinct PROCESS/PID, THREAD/TID, common ASPACE,4 full16/104 PID:
   shared_vm_exec.c/proc_clone.c; pie_load basic/status/source-origin fixtures.
 Parent-first, child-first, multiple living children, orphan grandchild,
