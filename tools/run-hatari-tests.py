@@ -118,6 +118,21 @@ SUMMARY = re.compile(r'--- Summary: (\d+) passed, (\d+) failed, (\d+) total ---'
 PANIC = re.compile(r'Panic: ')
 MUST_RUN = ('text_blit', 'raster_copy')
 PANIC_DRAIN = 4         # seconds, for the rest of a panic message to be written
+PARTITION_OFFSET = 2048 * 512
+HALT_EXIT = 77
+PANIC_EXIT = 78
+
+
+def read_test_log(image):
+    result = subprocess.run(['mtype', '-i', '%s@@%d' % (image, PARTITION_OFFSET),
+                            '::RUNTESTS.LOG'], capture_output=True, timeout=30)
+    return result.stdout.decode(errors='replace') if result.returncode == 0 else ''
+
+
+def clear_test_log(image):
+    if read_test_log(image):
+        subprocess.run(['mdel', '-i', '%s@@%d' % (image, PARTITION_OFFSET),
+                        '::RUNTESTS.LOG'], check=True, timeout=30)
 
 
 def main():
@@ -129,13 +144,24 @@ def main():
     ap.add_argument('--require-native-preemption', action='store_true',
                     help='040 MMU only: require timer/FPU/wake/cancellation verdicts')
     ap.add_argument('--timeout', type=int, default=600)
+    ap.add_argument('--halt', type=lambda value: int(value, 0),
+                    help='source ROM halt address, required for TT timer evidence')
+    ap.add_argument('--panic', type=lambda value: int(value, 0),
+                    help='source ROM dopanic address, required for TT timer evidence')
     a = ap.parse_args()
     if a.require_native_preemption and a.mode not in ('f040a', 'tt040a'):
         ap.error('--require-native-preemption requires f040a or tt040a')
 
+    file_evidence = a.require_native_preemption and a.mode == 'tt040a'
+    if file_evidence and (a.halt is None or a.panic is None or
+                          min(a.halt, a.panic) < 0x80000000 or a.halt == a.panic):
+        ap.error('TT timer evidence requires distinct higher-half source ROM --halt/--panic addresses')
+
     work = tempfile.mkdtemp(prefix='hatari-tests-')
     disk = os.path.join(work, 'test-hd.img')    # Hatari locks the file
     shutil.copy(a.disk, disk)
+    if file_evidence:
+        clear_test_log(disk)
     log = os.path.join(work, 'console.txt')
     if a.mode in ('f030', 'f040', 'f030a', 'f040a'):
         machine = 'falcon'
@@ -165,12 +191,12 @@ def main():
     if a.require_native_preemption:
         cmd += ['--fpu', 'internal', '--fpu-softfloat', 'true']
         print('native timer emulator: 68040 internal FPU, softfloat')
-    cmd += ['--conout', '2', '--fast-forward', 'on']
+    cmd += ['--conout', '0' if file_evidence else '2', '--fast-forward', 'on']
     avi = os.path.join(work, 'screen.avi')
     glyphs = None
     if a.mode not in ('tta', 'tt040a'):
         cmd += ['--natfeats', 'on']         # the panic text reaches the log (below)
-    if a.mode in ('tta', 'tt040a'):         # --conout shows nothing here: read the screen
+    if a.mode in ('tta', 'tt040a') and not file_evidence:  # legacy TT: screen evidence
         glyphs = load_font()
         # a flag up to Hatari 2.6.1, an option with a boolean after it since
         help_text = subprocess.run([cmd[0], '-h'], stdout=subprocess.PIPE,
@@ -178,6 +204,23 @@ def main():
                                    universal_newlines=True).stdout
         cmd += ['--avirecord'] + (['true'] if '--avirecord <bool>' in help_text else [])
         cmd += ['--avi-vcodec', 'png', '--avi-file', avi]
+    if file_evidence:
+        cmd += ['--natfeats', 'off'] # TT higher-half NatFeat pointers are not supported
+        # The existing testlib log retains all verdicts. A screen is only a
+        # rolling viewport and can lose them between polls. Quit at the real
+        # ROM halt boundary, after the harness has closed its log, so Hatari
+        # flushes its backing FILEs before the host reads them.
+        quit_script = os.path.join(work, 'halt-quit.ini')
+        init_script = os.path.join(work, 'halt-breakpoint.ini')
+        panic_script = os.path.join(work, 'panic-quit.ini')
+        with open(quit_script, 'w') as f:
+            f.write('quit %d\n' % HALT_EXIT)
+        with open(panic_script, 'w') as f:
+            f.write('r\nquit %d\n' % PANIC_EXIT)
+        with open(init_script, 'w') as f:
+            f.write('b pc = $%x :once :quiet :file %s\n' % (a.panic, panic_script))
+            f.write('b pc = $%x :once :quiet :file %s\n' % (a.halt, quit_script))
+        cmd += ['--parse', init_script]
     env = dict(os.environ, SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
     with open(log, 'w') as out:
         proc = subprocess.Popen(cmd, env=env, stdout=out,
@@ -210,11 +253,26 @@ def main():
                 panic = text[found.start():]
                 break
             summary = SUMMARY.search(text)
-            if summary:
+            if summary and not file_evidence:
                 break
-        proc.kill()
+        if proc.poll() is None:
+            proc.kill()
         proc.wait()
-    if not glyphs and not panic:
+        if file_evidence:
+            # Emulator diagnostics cannot substitute for the test file. A
+            # positive result requires the halt ACK and every fresh verdict.
+            last = capture()
+            if PANIC.search(last):
+                panic = last
+            if proc.returncode != HALT_EXIT:
+                print('run-hatari-tests: ROM halt was not acknowledged (%s)' % proc.returncode,
+                      file=sys.stderr)
+                print(last[-6000:], file=sys.stderr)
+            logged = read_test_log(disk)
+            text = logged # verdicts must come from the fresh committed test file
+            if proc.returncode != HALT_EXIT and not panic:
+                panic = 'kernel panic entry' if proc.returncode == PANIC_EXIT else 'ROM halt was not acknowledged'
+    if not glyphs and not panic and not file_evidence:
         with open(log, errors='replace') as f:
             text = f.read()
     shutil.rmtree(work, ignore_errors=True)

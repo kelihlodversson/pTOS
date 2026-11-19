@@ -2,6 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 python3 tools/test-scheduler-probes.py
+python3 tools/test-hatari-evidence.py
 python3 tools/test-amiberry-config.py
 python3 tools/test-interrupt-restart.py
 python3 tools/test-interrupt-restart.py --preempt

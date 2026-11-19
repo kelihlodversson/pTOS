@@ -30,9 +30,15 @@ make -j"$(getconf _NPROCESSORS_ONLN)" >logs/hatari-preemption.build 2>&1 || {
     exit 1
 }
 make test-hd-shell >logs/hatari-preemption.testdisk 2>&1
+halt=$(awk '/^ +0x[0-9a-f]+ +halt$/ { print $1; exit }' emutos.map)
+panic=$(awk '/^ +0x[0-9a-f]+ +dopanic$/ { print $1; exit }' emutos.map)
+test -n "$halt"
+test -n "$panic"
 for mode in f040a tt040a; do
+    halt_args=
+    [ "$mode" != tt040a ] || halt_args="--halt $halt --panic $panic"
     python3 tools/run-hatari-tests.py --tos ptos512k.img --disk test-hd-shell.img \
-        --mode "$mode" --timeout 1200 --require-native-preemption \
+        --mode "$mode" --timeout 1200 --require-native-preemption $halt_args \
         >"logs/hatari-preemption-$mode.log" 2>&1 || {
         tail -45 "logs/hatari-preemption-$mode.log"
         exit 1

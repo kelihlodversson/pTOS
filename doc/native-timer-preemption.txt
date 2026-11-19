@@ -240,3 +240,19 @@ Full per-IRQ capture/validation overwhelmed USER progress in the cycle-driven
 suite exceeded twenty minutes. Preparing only at the relevant quantum entry
 restored progress. The temporary shortened ROM observation windows were then
 removed; final qualification uses the original full iteration counts.
+
+TT native evidence transport
+-----------------------------
+The full Phase C suite remains enabled on both Falcon and TT. The TT's legacy
+screen reader sees only its last viewport. Recording every emulated VBL as a
+PNG also overwhelmed the native timing lane. The timer lane therefore reuses
+TEST_LOG_FILE, as Amiga already does, and clears any old log before boot. It
+requires the complete fresh file, every native verdict and an exact debugger
+observation of the source ROM's halt entry before accepting the result.
+A separate production dopanic-entry breakpoint always fails, even after a
+success summary, without relying on a rolling screen or unsupported TT
+NatFeat pointers. Both source addresses come from the image's own map. No
+CPU/FPU/cache/RAM profile or register/resource assertion is reduced. Ordinary
+TT compatibility jobs keep their existing screen reader. Hosted I/O models
+reject old logs, console-only verdicts, missing markers, bad summaries,
+crashes, wrong halt exits and final panics; they are not native CPU evidence.
