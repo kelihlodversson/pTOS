@@ -2,6 +2,7 @@
 """Check LRA defaults, architecture isolation and build flag propagation."""
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ class LraConfiguration(unittest.TestCase):
 case "$1" in
     -dumpversion) echo {version} ;;
     -dumpmachine) echo {target} ;;
+    -print-multi-lib) echo '.;' ;;
     *) exit {0 if lra else 1} ;;
 esac
 ''')
@@ -119,6 +121,101 @@ esac
                     if override:
                         self.assertIn("-m68020", line)
             self.assertNotIn("#define BUILD_M68K_LRA", header.read_text())
+
+    def test_subbuild_compile_commands_and_allocator_identity(self):
+        self.compiler()
+        (self.bin / "arm-unknown-ptos-elf-gcc").symlink_to("m68k-unknown-ptos-prgelf-gcc")
+        # Run real sub-make rules against isolated source copies. libcmini's
+        # Makefile creates directories even on a dry run; leave checkouts alone.
+        mini = self.work / "lib" / "libcmini"
+        cli = self.work / "cli"
+        shutil.copytree(ROOT / "lib/libcmini", mini,
+                        ignore=shutil.ignore_patterns(".git", ".config", "obj", "build"))
+        shutil.copytree(ROOT / "cli", cli,
+                        ignore=shutil.ignore_patterns("*.o", ".arch-*", "libcmini-build-*"))
+        shutil.copy(ROOT / "version.mk", self.work)
+        config_file = self.work / ".config"
+        auto = self.work / "auto.conf"
+        header = self.work / "autoconf.h"
+        probe = self.work / "subbuild.mk"
+        probe.write_text(
+            "lra-subbuild-probe:\n"
+            "\t@printf 'libcmini-id=%s\\n' '$(LIBCMINI_BUILD_ID)'\n"
+            "\t@$(LIBCMINI_MAKE) -n $(LIBCMINI_OBJDIR)/strlen.o\n"
+            "\t@$(EMUCON_MAKE) -C '" + str(cli) + "' -n -B NLS=0 cmdutil.o\n")
+        env = dict(os.environ, PATH=str(self.bin) + os.pathsep + HOST_PATH)
+        def configure_libcmini(preset):
+            for goal in (preset, "obj/auto.conf"):
+                subprocess.run([MAKE, "-s", "-C", str(mini), goal,
+                                "PYTHON=" + sys.executable, "KCONFIG_CONFIG=.config",
+                                "CROSSPREFIX=m68k-unknown-ptos-prgelf-"],
+                               env=env, check=True, stdout=subprocess.DEVNULL)
+
+        for preset in ("atari512", "rpi2"):
+            config = self.config(preset)
+            config.syms["CONF_WITH_VDI_SCALABLE_FONTS"].set_value("n")
+            config.syms["CONF_EXTERNAL_CLI"].set_value("y")
+            mini_preset = "mintelf_defconfig" if preset == "atari512" else "ptos_arm_defconfig"
+            configure_libcmini(mini_preset)
+            identities = []
+            for enabled in ("y", "n"):
+                config.syms["BUILD_M68K_LRA"].set_value(enabled)
+                config.write_config(str(config_file))
+                subprocess.run([sys.executable, "tools/genconfig.py", "--config", str(config_file),
+                                "--header", str(header), "--makefile", str(auto)],
+                               env=env, check=True, stdout=subprocess.DEVNULL)
+                for override in ([], ["CPUFLAGS=-m68020"]):
+                    with self.subTest(preset=preset, enabled=enabled, override=override):
+                        output = subprocess.check_output([
+                            MAKE, "-s", "-f", "Makefile", "-f", str(probe), "lra-subbuild-probe",
+                            "KCONFIG_CONFIG=" + str(config_file), "AUTOCONF_MK=" + str(auto),
+                            "AUTOCONF_H=" + str(header), "PYTHON=" + sys.executable,
+                            "LIBCMINI_DIR=" + str(mini),
+                            "LIBCMINI_BUILDDIR=" + str(self.work / "mini-build"), *override,
+                        ], env=env, text=True)
+                        commands = [shlex.split(line) for line in output.splitlines()
+                                    if " -c " in line]
+                        self.assertEqual(len(commands), 2, output)
+                        expected = int(preset == "atari512" and enabled == "y")
+                        for command in commands:
+                            self.assertEqual(command.count("-mlra"), expected, command)
+                            # Do not leak kernel CPU/ABI flags into userland.
+                            self.assertNotIn("-mshort", command)
+                            self.assertNotIn("-m68020", command)
+                        if preset == "atari512":
+                            self.assertIn("-Wa,--register-prefix-optional", commands[1])
+                        else:
+                            for command in commands:
+                                self.assertIn("-mfloat-abi=hard", command)
+                                self.assertIn("-mfpu=vfp", command)
+                        if not override:
+                            identities.append(next(line for line in output.splitlines()
+                                                   if line.startswith("libcmini-id=")))
+            self.assertEqual(len(identities), 2)
+            if preset == "atari512":
+                self.assertNotEqual(*identities)
+            else:
+                self.assertEqual(*identities)
+
+        # A direct standalone build also gets the option, and changes both
+        # object identity and its private libcmini directory when toggled.
+        configure_libcmini("mintelf_defconfig")
+        cli_probe = self.work / "cli-probe.mk"
+        cli_probe.write_text("lra-cli-probe:\n"
+                             "\t@printf '%s\\n' '$(STAMP)' '$(LIBCMINI_BUILDDIR)'\n"
+                             "\t@$(LIBCMINI_MAKE) -n $(LIBCMINI_OBJDIR)/strlen.o\n")
+        identities = []
+        for enabled in ("y", "n"):
+            output = subprocess.check_output([
+                MAKE, "-s", "-C", str(cli), "-f", "Makefile", "-f", str(cli_probe),
+                "lra-cli-probe", "BUILD_M68K_LRA=" + enabled,
+            ], env=env, text=True)
+            lines = output.splitlines()
+            identities.append(lines[:2])
+            command = next(shlex.split(line) for line in lines if " -c " in line)
+            self.assertEqual(command.count("-mlra"), int(enabled == "y"), command)
+        for enabled_id, disabled_id in zip(*identities):
+            self.assertNotEqual(enabled_id, disabled_id)
 
 
 if __name__ == "__main__":
