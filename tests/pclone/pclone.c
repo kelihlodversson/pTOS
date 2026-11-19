@@ -1055,6 +1055,14 @@ static struct {
     int32_t target, joiner, killer, nested, wait_child;
     unsigned char *stack[6];
 } group;
+static void group_ready_bit(long bit)
+{
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(__arm__)
+    (void)__sync_fetch_and_or(&group.ready,bit);
+#else
+    group.ready|=bit; /* one instruction on the single-CPU m68k/x32 targets */
+#endif
+}
 static long term_group(short status) { return trap_1_ww(GEMDOS_PTERMGRP,status); }
 static void group_mark(const char *name)
 {
@@ -1539,7 +1547,7 @@ out:
 static void group_nested(void *arg);
 static void group_target(void *arg)
 {
-    (void)arg; group.ready|=1;
+    (void)arg; group_ready_bit(1);
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
     if (group.mode>=5) {
         long rc;
@@ -1566,7 +1574,7 @@ static void group_target(void *arg)
 }
 static void group_joiner(void *arg)
 {
-    (void)arg; group.ready|=2;
+    (void)arg; group_ready_bit(2);
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
     if (group.mode==12) {
         *(volatile long *)0=1; /* sibling fault cannot abandon the active sampler */
@@ -1632,14 +1640,14 @@ static void group_peer(void *arg)
 }
 static void group_wait_child(void *arg)
 {
-    (void)arg; group.ready|=1;
+    (void)arg; group_ready_bit(1);
     while (!group.child_go) (void)Syield();
     group.child_done=1;
     Pterm(45);
 }
 static void group_compete(void *arg)
 {
-    (void)arg; group.ready|=2;
+    (void)arg; group_ready_bit(2);
     while (!group.requested) (void)Syield();
     (void)term_group(99); /* accepted first status must remain 61 */
     group.returned=1;

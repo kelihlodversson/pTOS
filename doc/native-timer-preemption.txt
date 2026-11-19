@@ -156,3 +156,30 @@ the fork test transport/public Pfork. Selecting Phase C alone does not select
 either fork interface. The dedicated full Falcon/TT test kernel uses the
 existing -Os profile to fit its 512-KB image; Amiga already defaults to -Os.
 This does not alter the shipped ROM presets or remove any required probe.
+
+Exclusive monitors and test-client synchronization
+--------------------------------------------------
+ARMv7 exclusive monitors belong to the CPU. CLREX clears them on dispatch to a
+new/restored execution and on the IRQ return boundary. A saved USER STREX may
+fail spuriously; it must never consume a reservation left by another THREAD.
+The native probe uses separate pages for its handshake and exclusive word,
+leaves B's LDREX outstanding, then requires A's resumed STREX to fail without
+altering B's value. No syscall or voluntary yield occurs in that window.
+
+The cooperative fixtures retain strict trace checks with the timer disabled.
+With Phase C, an admission gate prevents premature work, each mixed worker
+owns a progress cell, and concurrently incremented counters use real atomics
+(040 CAS, ARM exclusives, x32 locked update). Exact counts remain required.
+
+The m68k Phase C pattern window is eight million iterations, repeated four
+times per pattern. The existing B2 test window remains forty million. The
+required authenticated delayed-return witness, full register comparisons and
+independent CPU-bound handshake determine success; a shorter window cannot
+substitute an immediate return for a real peer execution.
+
+The Amiberry Phase C lane explicitly uses fpu_softfloat=true for full extended
+register/control preservation. Its host-native FPU mode was observed rounding
+an alternate integer upward by one during a register round trip under directed
+rounding, including with automatic departure disabled. The accurate software
+FPU mode preserves the pattern with caches off and on. Ordinary compatibility
+lanes keep their original FPU configuration; no register assertion is removed.
