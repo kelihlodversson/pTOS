@@ -126,8 +126,12 @@ def main():
     ap.add_argument('--disk', required=True)
     ap.add_argument('--mode', required=True,
                     choices=['low', 'med', 'high', 'f030', 'f040', 'f030a', 'tta', 'f040a', 'tt040a'])
+    ap.add_argument('--require-native-preemption', action='store_true',
+                    help='040 MMU only: require timer/FPU/wake/cancellation verdicts')
     ap.add_argument('--timeout', type=int, default=600)
     a = ap.parse_args()
+    if a.require_native_preemption and a.mode not in ('f040a', 'tt040a'):
+        ap.error('--require-native-preemption requires f040a or tt040a')
 
     work = tempfile.mkdtemp(prefix='hatari-tests-')
     disk = os.path.join(work, 'test-hd.img')    # Hatari locks the file
@@ -228,6 +232,18 @@ def main():
         print('run-hatari-tests: %s tests failed' % summary.group(2),
               file=sys.stderr)
         return 1
+    if a.require_native_preemption:
+        for marker in (
+            'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS',
+            'native timer file-backed executable progress without Syield: PASS',
+            'native timer busy USER and blocked sleeper wake: PASS',
+            'native timer public-Pfork private-root GPR/FPU patterns: PASS',
+            'native timer original/alternate GPR/FPU delayed restoration: PASS',
+            'native timer suspended-group cancellation and exact retirement: PASS',
+        ):
+            if marker not in text:
+                print('run-hatari-tests: missing timer policy verdict: ' + marker, file=sys.stderr)
+                return 1
     if a.mode in ('f030a', 'tta', 'f040a', 'tt040a'):       # no VDI, so no blitter suites
         return 0
     # both draw with the blitter, which a plain ST has not

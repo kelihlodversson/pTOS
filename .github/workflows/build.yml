@@ -578,6 +578,85 @@ jobs:
           REGRESSION_RAW_DISK: '1'
         run: tools/ci-group.sh --names "${{ matrix.machine }}" tools/ci-regression.sh
 
+  hatari-preemption:
+    name: Native 68040 timer preemption on Hatari
+    runs-on: ubuntu-26.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+      - uses: ./.github/actions/setup-hatari
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: dosfstools mtools
+      - name: Install TT screen reader
+        run: python3 -m pip install pillow
+      - name: Run production timer policy on Falcon and TT 040
+        run: |
+          git show -s --format='source %H%nparents %P' HEAD
+          tools/ci-hatari-preemption.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hatari-preemption-logs
+          path: |
+            logs/*
+            obj/auto.conf
+          retention-days: 14
+
+  native-preemption:
+    name: Native timer preemption ${{ matrix.machine }} ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf}
+          - {arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm}
+          - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Exercise production timer policy and retained USER returns
+        env:
+          NATIVE_PREEMPT: '1'
+          EXEC_REPLACEMENT_TEST: '1'
+          EXEC_HANDOFF_TEST: '1'
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
+          SHARED_VM_PEXEC: ${{ matrix.arch == 'm68k' && '1' || '0' }}
+          SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
+          REGRESSION_RAW_DISK: '1'
+        run: |
+          set -o pipefail
+          git show -s --format='source %H%nparents %P' HEAD | tee native-preemption.log
+          tools/ci-regression.sh "${{ matrix.machine }}" 2>&1 | tee -a native-preemption.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-preemption-${{ matrix.machine }}-${{ matrix.fs }}
+          path: |
+            native-preemption.log
+            obj/auto.conf
+            obj/autoconf.h
+          retention-days: 14
+
   release-archives:
     name: Release archives
     runs-on: ubuntu-24.04

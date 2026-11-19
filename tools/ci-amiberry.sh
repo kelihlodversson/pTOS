@@ -28,6 +28,12 @@ if [ "${IRQ_COPY_PROOF:-0}" = 1 ] && [ "${NATIVE_THREADS:-0}" != 1 ]; then
     exit 2
 fi
 
+if [ "${NATIVE_PREEMPT:-0}" = 1 ] &&
+   { [ "${NATIVE_THREADS:-0}" != 1 ] || [ "${IRQ_COPY_PROOF:-0}" != 1 ]; }; then
+    echo "ci-amiberry: NATIVE_PREEMPT requires NATIVE_THREADS=1 IRQ_COPY_PROOF=1" >&2
+    exit 2
+fi
+
 combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060 amiga-aspace:68030 amiga-aspace040:68040 amiga-aspace040:68060"}
 mkdir -p logs
 failed=
@@ -37,6 +43,7 @@ for combo in $combos; do
     cpu=${combo#*:}
     name=$config-$cpu
     [ "${NATIVE_THREADS:-0}" != 1 ] || name=$name-native
+    [ "${NATIVE_PREEMPT:-0}" != 1 ] || name=$name-preempt
     echo "::group::$name"
 
     build_target() {
@@ -66,13 +73,21 @@ if os.environ.get('IRQ_COPY_PROOF') == '1':
     k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
     assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
     assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
+if os.environ.get('NATIVE_PREEMPT') == '1':
+    for name in ('CONF_WITH_ELF_LOADER', 'CONF_WITH_MMAP', 'CONF_WITH_PRIVATE_CLONE',
+                 'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PROCESS_FILES',
+                 'CONF_WITH_PROCESS_FILES_TEST', 'CONF_WITH_PFORK',
+                 'CONF_WITH_NATIVE_PREEMPT'):
+        k.syms[name].set_value(2)
+        assert k.syms[name].str_value == 'y', name
 k.write_config()
 PYCONFIG
         fi
         make -j"$(nproc)" >"logs/$name.build" 2>&1
     }
     managed=
-    [ "${NATIVE_THREADS:-0}" != 1 ] || managed=--require-managed-threads
+    [ "${NATIVE_PREEMPT:-0}" != 1 ] || managed=--require-native-preemption
+    [ "${NATIVE_THREADS:-0}" != 1 ] || managed="$managed --require-managed-threads"
     fpu=
     [ -z "${AMIBERRY_FPU:-}" ] || fpu="--fpu $AMIBERRY_FPU"
     [ "${REQUIRE_FPIAR:-0}" != 1 ] || managed="$managed --require-nonzero-fpiar"
