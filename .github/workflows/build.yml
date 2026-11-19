@@ -282,7 +282,7 @@ jobs:
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
-          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_NATIVE_SCHED", "CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP"):
+          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_NATIVE_SCHED", "CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP", "CONF_WITH_NATIVE_PREEMPT"):
               config.syms[name].set_value(2)
               assert config.syms[name].str_value == "y"
           assert config.syms["CONF_WITH_DEMAND_PAGING"].str_value == "n"

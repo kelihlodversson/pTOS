@@ -271,3 +271,12 @@ joins. Private/COW/file-mapping proofs remain in the standard demand-paged
 lane, whose full configuration and evidence are retained separately. Eager
 MEMTEST uses its existing dedicated fixture/boot harness; it is not inferred
 from a regression disk missing those probe binaries.
+
+The eager MEMTEST lane also enables the timer. Its PROCESS-wait fixture must
+observe the initial TID's actual completion and join the ordinary sibling
+before the intended final-status/fault sibling exits. A reproduced USER exit
+ordering returned the correct zero status from the ordinary sibling with no
+register errors; assuming creation order also fixed exit order was invalid.
+Exact TID joins now establish those events, concurrent counters are atomic,
+and stack disposal follows completion. Cooperative checks keep their original
+ordering. Neither PROCESS completion nor public wait policy is changed.
