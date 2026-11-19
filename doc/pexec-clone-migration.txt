@@ -122,10 +122,13 @@ invariant check still follows loading; its old ordering needs separate review
 before claiming a general no-fail executable-replacement transaction. Do not
 reuse the isolated move-private mechanism on COW/shared pages for exec200.
 
-Implemented default-off shared-VM consumer (4/104)
-------------------------------------------------
-The following policy is implemented behind CONF_WITH_SHARED_VM_PEXEC;
-exact whole-consumer acceptance is recorded on PR956/#894. It does not authorize production use.
+Shared-VM consumer (4/104): the historical _TEST policy
+-------------------------------------------------------
+This section records the policy as first implemented behind the default-off
+CONF_WITH_SHARED_VM_PEXEC_TEST (acceptance on PR956/#894). Since #1018 the
+derived CONF_WITH_SHARED_VM_PEXEC makes 4/104 production on m68k kernels with
+user address spaces, the native scheduler and the PRG loader; the current mode
+contract is in pexec-legacy-modes.txt, not here.
 Use distinct PROCESS identities with the same retained KASPACE, not SAME_PROCESS.
 A loaded-image policy must authenticate the caller's PE_LOAD grant, retain
 image/stack/environment/basepage allocations and logical mappings through

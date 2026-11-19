@@ -23,9 +23,12 @@ FAT26/0/PFS27/0, with five shutdown checks each. Independent review verifies
 the corrected exact backing bounds, live-ticket checks and cleanup fences
 remain unchanged. Later authored increments require their own final matrix.
 
-CONF_WITH_SHARED_VM_PEXEC defaults n; no shipped preset selects it.
-Ordinary ring-3 mode4/104 rejection remains unchanged. This test switch is
-not a production activation decision.
+Historically the consumer sat behind CONF_WITH_SHARED_VM_PEXEC_TEST, default
+off, with ordinary ring-3 4/104 rejected. Since #1018 the derived
+CONF_WITH_SHARED_VM_PEXEC enables it in production on m68k kernels with user
+address spaces, the native scheduler and the PRG loader; elsewhere 4/104 from
+a process are EINVFN (pexec-legacy-modes.txt has the mode contract). The rest
+of this section is the record of how the consumer was built.
 
 Additional draft implementation:
 - PRG borrowed-text permission preparation authenticates a live exact R1
