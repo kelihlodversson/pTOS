@@ -364,9 +364,13 @@ void gouser(void)
     if (program) prepared = NULL;
 #endif
 #if CONF_WITH_NATIVE_SCHED
+    /* A prepared THREAD starts at its validated entry, even 0: shared-VM
+     * 4/104 (#1018) may start a null p_tbase, which faults in the child.
+     * Never re-read p_tbase for it here: the basepage is in memory the
+     * caller shares, so a new value would skip the checks, odd included. */
     if (prepared) { entry = prepared->entry; user_sp = prepared->sp; }
+    else
 #endif
-
     if (!entry)                 /* no image: a basepage with its code in its TPA */
         entry = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_tbase);
     if (!root || !kstack_phys || !user_sp)

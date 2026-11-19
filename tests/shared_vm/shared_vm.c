@@ -825,6 +825,29 @@ static void shared_vm_tfork(void)
             if(result!=-25) shared_vm_diagnostic("shared tfork odd entry result=",result);
             ptest_assert_msg(result==-25,"shared tfork: an odd entry is refused (EINVAL)");
             if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: refused basepage stays the caller's"); }
+            if(mode==104) {
+                /* the entry is the one validated at the start: p_tbase is in
+                 * memory both share, so changing it before the child runs must
+                 * not change where the child starts (here: 0, so it faults) */
+                BASEPAGE *late=(BASEPAGE *)Pexec(5,0,"",0);
+                ptest_assert_msg((long)late>0,"shared tfork: mode 5 basepage for the late p_tbase");
+                if((long)late>0) {
+                    long pid,waited;
+                    tfork_seen=0;late->p_tbase=0;
+                    pid=Pexec(104,0,late,0);
+                    late->p_tbase=(char *)(uintptr_t)tfork_entry;
+                    ptest_assert_msg(pid>0,"shared tfork: 104 with a null entry starts");
+                    if(pid>0) {
+                        waited=Pwaitpid(pid,0,0);
+                        if((waited&0xff) || !((waited&65535)>>8) || tfork_seen)
+                            shared_vm_diagnostic("shared tfork late p_tbase status=",waited);
+                        ptest_assert_msg((waited>>16)==pid && !(waited&0xff) && ((waited&65535)>>8) && !tfork_seen,
+                            "shared tfork: a p_tbase changed after the start is not entered");
+                    }
+                    env=late->p_env;
+                    ptest_assert_msg(Mfree(late)==0 && Mfree(env)==0,"shared tfork: late basepage stays the caller's");
+                }
+            }
         }
         tfork_seen=0;
         result=shared_vm_tfork_run(mode,(char *)(uintptr_t)tfork_entry,&bp);
