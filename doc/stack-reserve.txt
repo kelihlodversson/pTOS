@@ -68,6 +68,10 @@ largest per-call used value observed so far across all AES processes. A
 larger value reveals a missing earlier peak and a smaller value violates
 the producer's cumulative-counter contract; both fail. A later matching
 sample cannot recover a missing call's entry prefix.
+The producer scans the exiting process's own marker range, so another
+process entering during a wait cannot replace its bounds. The rounded
+recommendation tracks the largest total usage in bytes across processes,
+independent of their stack addresses.
 
 Every entry is validated too. Its top - current is a lower bound on usage,
 including when a call remains outstanding. Entry/exit frames must pair by
@@ -91,7 +95,9 @@ Local use and diagnostics
 -------------------------
 
 Use a dedicated checkout with initialized libcmini/gemlib submodules,
-kconfiglib==14.1.0, SDK 1.0.3 or newer and the pinned Hatari on PATH. See
+kconfiglib==14.1.0, SDK 1.0.3 or newer and the pinned Hatari on PATH. The
+regression tests also require a native C compiler (cc, or HOSTCC); they
+compile the actual AES debug producer to exercise interleaved processes. See
 doc/install.txt and tools/build-hatari.sh. The runner cleans build outputs
 and replaces .config temporarily; do not run profiles concurrently in one
 checkout. The original .config is restored and generated configuration
@@ -111,6 +117,9 @@ output, controller command, screenshots and result.json. ROMs, pBench,
 production/instrumented configs, build log, compiled desktop symbols,
 results.json and a Markdown budget table are retained too, also on failure.
 The workflow uploads these artifacts and adds the table to the job summary.
+Hatari diagnostics and traces go to hatari.log and hatari-trace.log, keeping
+screenshot messages out of the guest's AES telemetry. Fatal diagnostics in
+either file fail before the controller writes its completion marker.
 
 Replay the byte comparison without rebuilding or running an emulator:
 
@@ -124,3 +133,5 @@ Unsequenced historical/interactive traces cannot prove continuity and
 are rejected; create fresh artifacts with the CI runner to replay them.
 The controller marker is only written after complete workloads and the
 producer's final-count/clean-shutdown handshake. Timeouts/crashes have none.
+The controller observes process status before reading the final log, so a
+guest exiting between those operations cannot hide its flushed end marker.

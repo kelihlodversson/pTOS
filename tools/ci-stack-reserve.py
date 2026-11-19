@@ -12,7 +12,8 @@ import sys
 import tempfile
 import time
 
-from stack_usage import (AES_END, COMPLETED, DESKTOP, analyze, pbench_complete, report_lines)
+from stack_usage import (AES_END, COMPLETED, DESKTOP, FATAL_DIAGNOSTIC,
+                         analyze, pbench_complete, report_lines)
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = {
@@ -145,6 +146,8 @@ def run_case(args, metadata, mode, blitter):
             server.listen(1)
             server.settimeout(min(10, args.timeout))
             command = [args.hatari, "--configfile", str(cfg), "--tos", str(args.out / "system.img"),
+                       "--log-file", str(dest / "hatari.log"),
+                       "--trace-file", str(dest / "hatari-trace.log"),
                        "--machine", "ste" if blitter == "on" else "st", "--blitter", blitter,
                        "--memsize", "4", "--sound", "off", "--tos-res", mode,
                        "--monitor", "mono" if mode == "high" else "rgb", "--fast-forward", "on",
@@ -158,6 +161,10 @@ def run_case(args, metadata, mode, blitter):
                 finished = False
 
                 def alive():
+                    # If poll observes exit, read the final flushed log after
+                    # that observation. Reading first can miss the last marker
+                    # and then misclassify a clean shutdown as unexpected.
+                    code = proc.poll()
                     if AES_END.search(log_path.read_text(errors="replace")):
                         try:
                             code = proc.wait(timeout=5)
@@ -166,8 +173,8 @@ def run_case(args, metadata, mode, blitter):
                         if code != 0:
                             raise RuntimeError("guest shutdown failed: " + str(code))
                         raise GuestFinished()
-                    if proc.poll() is not None:
-                        raise RuntimeError("Hatari exited unexpectedly: " + str(proc.returncode))
+                    if code is not None:
+                        raise RuntimeError("Hatari exited unexpectedly: " + str(code))
                     if time.monotonic() >= deadline:
                         raise TimeoutError("Hatari workload timed out")
 
@@ -238,6 +245,9 @@ def run_case(args, metadata, mode, blitter):
     trace = log_path.read_text(errors="replace")
     if not pbench_complete(pbench_text, mode) or len(DESKTOP.findall(trace)) < 3:
         raise RuntimeError("guest end before workload completion")
+    for name in ("hatari.log", "hatari-trace.log"):
+        if FATAL_DIAGNOSTIC.search((dest / name).read_text(errors="replace")):
+            raise RuntimeError("fatal Hatari diagnostic in " + name)
     # Only the controller writes this, after a producer end marker and clean
     # NF_SHUTDOWN. No marker is written on a timeout or unexpected exit.
     with log_path.open("a") as log:

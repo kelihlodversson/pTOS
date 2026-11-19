@@ -20,6 +20,7 @@ AES_END = re.compile(r"AES end seq=(\d+)\s*$", re.M)
 AES_EXIT = re.compile(r"AES exit\s+" + AES_FIELDS + r", " +
     r"used=(\d+), _?max_usage=(\d+), recommended AES_STACK_SIZE=(\d+)\s*$")
 DESKTOP = re.compile(r"Desktop stack has (-?\d+) bytes available\s*$", re.M)
+FATAL_DIAGNOSTIC = re.compile(r"\b(panic|fatal|double bus fault)\b", re.I)
 PBENCH = re.compile(r"^(.+?)\s+(\d+\.\d{3}) s\s+(-?\d+)\s+\w+(?:\s+\d+%)?\s*$")
 
 
@@ -127,7 +128,7 @@ def analyze(log, pbench, metadata, resolution):
         raise ValueError("incomplete pBench workload or wrong display mode")
     if not log.rstrip().endswith(COMPLETED):
         raise ValueError("missing controller completion marker (timeout, crash or incomplete run)")
-    if re.search(r"\b(panic|fatal|double bus fault)\b", log, re.I):
+    if FATAL_DIAGNOSTIC.search(log):
         raise ValueError("fatal emulator/guest diagnostic in log")
     stacks = dict(aes=stack_result(budgets["aes"], max(processes.values()), AES_RESERVE),
                   desktop=stack_result(budgets["desktop"], max(desktop), DESKTOP_RESERVE))

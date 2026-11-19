@@ -2,8 +2,10 @@
 """Regression tests for stack budgets, incomplete telemetry and workloads."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -48,6 +50,11 @@ def log(*samples, desktop_free=1800):
 def pbench():
     return "Screen 320x200, 4 planes\n" + "\n".join(
         name + " 1.000 s 42 objects" for name in PBENCH_TESTS)
+
+
+def host_logs(folder, diagnostic=""):
+    (folder / "hatari.log").write_text(diagnostic)
+    (folder / "hatari-trace.log").write_text("")
 
 
 class StackReserve(unittest.TestCase):
@@ -334,6 +341,7 @@ class StackReserve(unittest.TestCase):
                 def start(*args, stdout, **kwargs):
                     stdout.write(log(aes()).removesuffix(COMPLETED))
                     stdout.flush()
+                    host_logs(dest / "low-off")
                     if complete:
                         (dest / "low-off/drive/PBENCH.TXT").write_text(pbench())
                     return process
@@ -349,6 +357,96 @@ class StackReserve(unittest.TestCase):
                         with self.assertRaises(OSError):
                             ci_stack.run_case(args, self.metadata, "low", "off")
                 self.assertEqual(COMPLETED in (dest / "low-off/emulator.log").read_text(), complete)
+
+    def test_interleaved_processes_use_their_own_stack_marker_range(self):
+        source = (ROOT / "aes/gemsuper.c").read_text()
+        start = source.index("\n#if CONF_DEBUG_AES_STACK\n")
+        end = source.index("\n#endif /* CONF_DEBUG_AES_STACK */", start)
+        producer = source[start:end] + "\n#endif\n"
+        with tempfile.TemporaryDirectory() as temp:
+            dest = Path(temp)
+            (dest / "producer.inc").write_text(producer)
+            command = shlex.split(os.environ.get("HOSTCC", "cc")) + [
+                "-std=gnu90", "-Wall", "-Wextra", "-Werror", "-I", str(dest),
+                str(ROOT / "tests/stack_reserve/interleaved.c"), "-o", str(dest / "producer")]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            trace = subprocess.check_output([str(dest / "producer")], text=True)
+        trace += "\n".join(["Desktop stack has 1800 bytes available"] * 3) + "\n" + COMPLETED
+        result = self.check(trace)
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["stacks"]["aes"]["peak_bytes"], 2200)
+        self.assertEqual(result["stacks"]["aes"]["remaining_bytes"], 360)
+        self.assertEqual(sorted(result["aes_process_peaks"].values()), [1900, 2200])
+        self.assertEqual(re.findall(r"recommended AES_STACK_SIZE=(\d+)", trace)[-2:], ["678", "678"])
+
+    def test_controller_observes_exit_before_reading_final_marker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            dest = Path(temp)
+            (dest / "PBENCH.PRG").write_bytes(b"fixture")
+            args = SimpleNamespace(out=dest, hatari="fake-hatari", timeout=2)
+            server = MagicMock()
+            server.accept.return_value = (MagicMock(), None)
+            process = MagicMock()
+            process.wait.return_value = 0
+
+            def poll():
+                # Deterministically reproduce a guest that publishes its end
+                # marker at the process-status observation boundary.
+                (dest / "low-off/emulator.log").write_text(log(aes()).removesuffix(COMPLETED))
+                (dest / "low-off/drive/PBENCH.TXT").write_text(pbench())
+                host_logs(dest / "low-off")
+                process.returncode = 0
+                return 0
+
+            process.poll.side_effect = poll
+            with patch.object(ci_stack.socket, "socket") as socket_mock, \
+                 patch.object(ci_stack.subprocess, "Popen", return_value=process), \
+                 patch.object(ci_stack.time, "sleep"):
+                socket_mock.return_value.__enter__.return_value = server
+                result = ci_stack.run_case(args, self.metadata, "low", "off")
+            self.assertEqual(result["status"], "pass")
+            self.assertIn(COMPLETED, (dest / "low-off/emulator.log").read_text())
+
+    def test_host_diagnostics_do_not_interleave_with_aes_records(self):
+        for diagnostic, fails in (("WARN : PNG screen dump saved to fixture.png\n", False),
+                                   ("FATAL: fixture emulator failure\n", True)):
+            with self.subTest(diagnostic=diagnostic), tempfile.TemporaryDirectory() as temp:
+                dest = Path(temp)
+                (dest / "PBENCH.PRG").write_bytes(b"fixture")
+                args = SimpleNamespace(out=dest, hatari="fake-hatari", timeout=2)
+                server = MagicMock()
+                server.accept.return_value = (MagicMock(), None)
+                process = MagicMock()
+                process.wait.return_value = 0
+
+                def start(command, *, stdout, **kwargs):
+                    trace = log(aes()).removesuffix(COMPLETED)
+                    # Model Hatari's documented --log-file routing. With no
+                    # routing, a screenshot warning interrupts an AES record,
+                    # as in the failing CI captures.
+                    if "--log-file" in command:
+                        Path(command[command.index("--log-file") + 1]).write_text(diagnostic)
+                        Path(command[command.index("--trace-file") + 1]).write_text("")
+                    else:
+                        trace = trace.replace("max_usage=", diagnostic + "max_usage=", 1)
+                    stdout.write(trace)
+                    stdout.flush()
+                    (dest / "low-off/drive/PBENCH.TXT").write_text(pbench())
+                    return process
+
+                with patch.object(ci_stack.socket, "socket") as socket_mock, \
+                     patch.object(ci_stack.subprocess, "Popen", side_effect=start), \
+                     patch.object(ci_stack.time, "sleep"):
+                    socket_mock.return_value.__enter__.return_value = server
+                    if fails:
+                        with self.assertRaisesRegex(RuntimeError, "fatal Hatari diagnostic"):
+                            ci_stack.run_case(args, self.metadata, "low", "off")
+                    else:
+                        result = ci_stack.run_case(args, self.metadata, "low", "off")
+                        self.assertEqual(result["status"], "pass")
+                        self.assertNotIn("WARN", (dest / "low-off/emulator.log").read_text())
+                self.assertEqual(COMPLETED in (dest / "low-off/emulator.log").read_text(), not fails)
 
 
 if __name__ == "__main__":
