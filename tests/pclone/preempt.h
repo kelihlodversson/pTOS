@@ -3,7 +3,8 @@
  * the alternating handshake. Both PROCESS and THREAD ownership are exercised. */
 #if defined(TEST_WITH_NATIVE_PREEMPT)
 #include <stddef.h>
-#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && !defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && \
+    (!defined(TEST_WITH_PRIVATE_CLONE_TEST) || !defined(TEST_WITH_MMAP))
 #include "../../include/mapping_lifetime_test.h"
 static long mlt_snapshot(MAPPING_LIFETIME_SNAPSHOT *snapshot)
 { return pclone_trap(snapshot,MLT_SNAPSHOT); }
@@ -199,6 +200,7 @@ static void preempt_wait_spinner(void *unused)
     unsigned long budget=1000000000UL;
     (void)unused;preempt_wait_started=1;
     while(!preempt_wait_woke && --budget) preempt_wait_progress++;
+    if(!budget)preempt_wait_progress=0; /* a later wake did not interrupt this window */
 }
 static void preempt_wait_sleeper(void *unused)
 {

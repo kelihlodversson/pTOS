@@ -1094,10 +1094,10 @@ static struct {
 } group;
 static void group_ready_bit(long bit)
 {
-#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(__arm__)
+#if defined(TEST_WITH_NATIVE_PREEMPT) && (defined(__arm__) || defined(__x86_64__))
     (void)__sync_fetch_and_or(&group.ready,bit);
 #else
-    group.ready|=bit; /* one instruction on the single-CPU m68k/x32 targets */
+    group.ready|=bit; /* cooperative, or one memory-OR on the single-CPU m68k */
 #endif
 }
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && defined(__x86_64__) && defined(TEST_WITH_CUIS)

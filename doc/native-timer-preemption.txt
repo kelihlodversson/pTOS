@@ -280,3 +280,19 @@ register errors; assuming creation order also fixed exit order was invalid.
 Exact TID joins now establish those events, concurrent counters are atomic,
 and stack disposal follows completion. Cooperative checks keep their original
 ordering. Neither PROCESS completion nor public wait policy is changed.
+
+Timer fixture review guards
+----------------------------
+Readiness bits use atomic OR on ARM and x32; volatile read/modify/write is not
+an atomic x32 publication. The m68k fixture retains its single memory-OR
+instruction. Timer snapshot helpers fall back whenever the ordinary private
+mapping helpers are absent, including private-clone tests without Mmap.
+A sleeper wake is accepted only while the non-yielding spinner still has a
+live observation window; exhausting its budget invalidates its progress.
+
+tools/test-timer-fixtures.py executes these actual fixture helpers with a
+Linux x86 fault-injected writer, all four private/Mmap helper combinations,
+and early, overlapping, failed and late wake models. The former code lost a
+readiness bit, failed the no-Mmap compile and accepted a wake after the loop
+ended. These are deterministic host fixture checks, not native IRQ evidence;
+the native timer lanes still require the complete execution witnesses.
