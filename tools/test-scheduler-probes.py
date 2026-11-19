@@ -261,6 +261,7 @@ timer_markers = [
     'native timer original/alternate GPR/FPU delayed restoration: PASS',
     'native timer suspended-group cancellation and exact retirement: PASS',
     'native timer independent-image/root GPR/FPU patterns: PASS',
+    'native timer busy USER and mapping-owner progress/conservation: PASS',
 ]
 with tempfile.TemporaryDirectory(prefix='ptos-timer-guards-') as directory:
     top = Path(directory)
@@ -279,14 +280,14 @@ with tempfile.TemporaryDirectory(prefix='ptos-timer-guards-') as directory:
             required = bool(mask & 1) and missing is not None
             if missing == 1:
                 required = required and bool(mask & 2)
-            elif missing in (2, 3, 4, 5, 6):
+            elif missing in (2, 3, 4, 5, 6, 7):
                 required = required and bool(mask & 4)
                 if missing in (3, 4):
                     required = required and bool(mask & 8)
                 elif missing == 5:
                     required = required and bool(mask & 16)
             assert bool(result.stdout) == required, (mask, missing, result.stdout)
-print('Production timer guards: 256 feature/marker cases, missing native proof fails: PASS (host shell)')
+print('Production timer guards: 288 feature/marker cases, missing native proof fails: PASS (host shell)')
 
 with tempfile.TemporaryDirectory(prefix='ptos-arm-exclusive-guards-') as directory:
     top = Path(directory)

@@ -183,3 +183,23 @@ an alternate integer upward by one during a register round trip under directed
 rounding, including with automatic departure disabled. The accurate software
 FPU mode preserves the pattern with caches off and on. Ordinary compatibility
 lanes keep their original FPU configuration; no register assertion is removed.
+
+Mapping-owner progress and backing witnesses
+---------------------------------------------
+An existing mapping mutation/reaper may yield at a safe checkpoint while a
+peer runs USER code. Its busy flag cannot exclude that peer from every later
+timer departure and thereby starve the parked owner. IRQ admission performs
+its resident/rights/ownership queries under existing mapping exclusion and
+adds held ranges to the same ledger. Backend commit gates revalidate those
+holds; current providers do not yield/call back between that check and the
+actual mapping edit. Pending ownership still refuses fresh return authority.
+A native non-yielding peer must let the existing guarded allocation owner
+resume, finish and free its allocation, with exact resource conservation.
+
+An IRQ slot is a return/disposal fence, not independent backing authority for
+another fresh slot. Canonical R2 backing witnesses remain reusable; IRQ slots
+are excluded from that search. After source-pin retirement, an already-held
+view may resume again, but a fresh view cannot borrow its return fence as a
+new mapping owner. Production backend tests cover this authority distinction on all three
+providers. The separate mutation model and fresh-view checks both fail against
+the earlier code and pass after the correction.

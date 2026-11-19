@@ -241,6 +241,7 @@ def main():
             'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS',
             'native timer file-backed executable progress without Syield: PASS',
             'native timer busy USER and blocked sleeper wake: PASS',
+            'native timer busy USER and mapping-owner progress/conservation: PASS',
             'native timer independent-image/root GPR/FPU patterns: PASS',
             'native timer original/alternate GPR/FPU delayed restoration: PASS',
             'native timer suspended-group cancellation and exact retirement: PASS',

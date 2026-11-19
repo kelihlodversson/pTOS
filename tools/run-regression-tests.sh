@@ -853,6 +853,9 @@ if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1' "$top/obj/autoconf.h"; then
         record "native file-backed timer preemption" FAIL "CPU-bound file-cache execution was not proved"
     fi
     if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        if ! grep -aq 'native timer busy USER and mapping-owner progress/conservation: PASS' "$suite_log"; then
+            record "native timer mapping owner" FAIL "busy USER starved a mapping owner or changed resource counts"
+        fi
         if ! grep -aq 'native timer busy USER and blocked sleeper wake: PASS' "$suite_log"; then
             record "native timer blocked wake" FAIL "blocked sleeper did not wake alongside CPU-bound USER"
         fi

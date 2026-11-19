@@ -483,7 +483,7 @@ BOOL kaspace_irq_activate(KASPACE_LEASE *lease,KASPACE *space,VADDR address,UWOR
     if (!lease || !lease->irq_reserved || !space ||
         (lease->space && lease->space!=space) || address>=USER_VA_LIMIT ||
         (access!=(ASPACE_PROT_USER|ASPACE_PROT_EXEC) &&
-         access!=(ASPACE_PROT_USER|ASPACE_PROT_WRITE)) || space->mutating || space->reaping ||
+         access!=(ASPACE_PROT_USER|ASPACE_PROT_WRITE)) ||
         (!retained && pending_overlap(space,page,USER_PAGE_SIZE)) ||
         !aspace_translate(space->backend,page,NULL,&resident_rights) ||
         !(resident_rights&ASPACE_PROT_USER) ||
@@ -495,6 +495,12 @@ BOOL kaspace_irq_activate(KASPACE_LEASE *lease,KASPACE *space,VADDR address,UWOR
         (logical_rights&access)!=access ||
         (!retained && !aspace_irq_range_owned(space->backend,page,USER_PAGE_SIZE) &&
          !independent_backing_owner(space,page,USER_PAGE_SIZE,access,TRUE))) goto done;
+    /* A mutation owner can be parked at an existing safe checkpoint while
+     * this USER peer executes. Its busy flag must not prevent timer departure
+     * and starve that owner. Mapping exclusion stabilizes these resident
+     * queries; existing commit gates recheck held ranges before changing a
+     * leaf. No callback/yield lies between that check and the backend edit.
+     * Pending ownership still rejects fresh views above. */
     /* A COW stack may be resident read-only: RTE/RFE/IRETQ does not write
      * user memory. The existing COW path retains its logical write authority. */
     /* The existing KTHREAD owns this root through execution reclamation.
@@ -755,6 +761,9 @@ static BOOL independent_backing_owner(KASPACE *space, VADDR address,
          * acquisition and keeps its logical mapping stable across COW. It
          * grants no reservation or absent-page materialization authority. */
         else if (resident && lease->held && !lease->sealed && !lease->revoked &&
+#if CONF_WITH_NATIVE_PREEMPT
+                 !lease->irq_reserved && /* a return fence is not a backing owner */
+#endif
                  !lease->reservation_ticket && !lease->reservation_id &&
                  !lease->captured && !lease->attachment_ticket &&
                  !lease->exact_bytes && !lease->retire_bytes &&

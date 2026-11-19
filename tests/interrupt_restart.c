@@ -264,7 +264,9 @@ int main(void)
         assert(!quantum.left && quantum.pending); /* unsafe IRQs never lose expiry */
         assert(kaspace_mapping_can_change(&backend,CODE,1));
         execution.identity++;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));execution.identity--;
-        critical=FALSE;freeze();
+        critical=FALSE;
+        if(!(i%8))assert(kaspace_mutation_begin(process.space));
+        freeze();
         assert(!kaspace_mapping_can_change(&backend,CODE,1));
         assert(!kaspace_mapping_can_change(&backend,STACK,1));
         assert(interrupt_restart_suspend(&execution)==peer);
@@ -278,6 +280,7 @@ int main(void)
         assert(!kaspace_mapping_can_change(&backend,STACK,1));
         assert(allocations-frees==baseline+2);
         critical=FALSE;
+        if(!(i%8))kaspace_mutation_end(process.space);
         if(i&1) {
             interrupt_restart_user_entry();
             assert(kaspace_mapping_can_change(&backend,CODE,1));

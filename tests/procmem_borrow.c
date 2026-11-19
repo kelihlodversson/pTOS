@@ -459,7 +459,7 @@ static void interrupt_pin_authority(void)
 {
     ASPACE *as=aspace_create();
     KASPACE *space=kaspace_adopt(as);
-    KASPACE_LEASE *slot=NULL;
+    KASPACE_LEASE *slot=NULL,*fresh=NULL;
     void *p=procmem_alloc(TEST_PAGE,0),*q=procmem_alloc(TEST_PAGE,0);
     VADDR va=(VADDR)(uintptr_t)p;
     UWORD rights=ASPACE_PROT_USER|ASPACE_PROT_EXEC;
@@ -480,6 +480,7 @@ static void interrupt_pin_authority(void)
     CHECK(!aspace_irq_range_owned(as,va,TEST_PAGE));
     as->pins[0].retired=FALSE;
     CHECK(kaspace_irq_reserve(&slot)==E_OK);
+    CHECK(kaspace_irq_reserve(&fresh)==E_OK);
     CHECK(kaspace_irq_activate(slot,space,va,rights));
     CHECK(!kaspace_mapping_can_change(as,va,TEST_PAGE));
     /* Source PD allocation retirement cannot reclaim the root's pin or
@@ -489,6 +490,8 @@ static void interrupt_pin_authority(void)
     CHECK(aspace_irq_range_owned(as,va,TEST_PAGE));
     CHECK(kaspace_retire_borrow(space,va,TEST_PAGE));
     CHECK(!aspace_irq_range_owned(as,va,TEST_PAGE));
+    /* An IRQ view fences disposal; it cannot mint fresh backing authority. */
+    CHECK(!kaspace_irq_activate(fresh,space,va,rights));
     /* The same authenticated resident view stays resumable after source
      * retirement; no fresh backing/PD authority is fabricated. */
     CHECK(kaspace_irq_activate(slot,space,va,rights));
@@ -498,7 +501,7 @@ static void interrupt_pin_authority(void)
     CHECK(!kaspace_mapping_can_change(as,va,TEST_PAGE));
     kaspace_reap_deferred(space);
     CHECK(kaspace_mapping_can_change(as,va,TEST_PAGE));
-    kaspace_lease_release(&slot);
+    kaspace_lease_release(&slot);kaspace_lease_release(&fresh);
     CHECK(!procmem_size(p) && !aspace_irq_range_owned(as,va,TEST_PAGE));
     CHECK(procmem_free(q));kaspace_put(space);
     puts("Production IRQ pins: foreign/retired/mismatched aliases refused, source-PD-first retirement, exact lease/unpin conservation: PASS");

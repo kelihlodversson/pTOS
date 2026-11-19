@@ -223,6 +223,56 @@ static void preempt_blocked_wakeup(void)
         conws("native timer busy USER and blocked sleeper wake: PASS\r\n");
 }
 #endif
+#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+static volatile unsigned long preempt_mutation_ready,preempt_mutation_go;
+static volatile unsigned long preempt_mutation_done,preempt_mutation_progress,preempt_mutation_error;
+static void preempt_mutation_spinner(void *unused)
+{
+    unsigned long budget=100000000UL;
+    (void)unused;preempt_mutation_ready=1;
+    while(!preempt_mutation_go)(void)Syield(); /* outside the CPU-bound window */
+    while(!preempt_mutation_done && --budget)preempt_mutation_progress++;
+    if(!budget)preempt_mutation_error=2;
+}
+static void preempt_mutation_owner(void *unused)
+{
+    long allocation;
+    (void)unused;preempt_mutation_go=1;
+    /* Existing adapter yields only at the real mapping-owner checkpoint. */
+    allocation=pclone_trap(0,MLT_CONTENDED_ALLOC);
+    if(allocation<=0 || Mfree((void *)allocation))preempt_mutation_error=1;
+    preempt_mutation_done=1;
+}
+static void preempt_mapping_owner_progress(void)
+{
+    unsigned cycle,i;int okay=1;
+    MAPPING_LIFETIME_SNAPSHOT before,after;
+    for(cycle=0;cycle<3;cycle++) {
+        int32_t pid=0,tid=0,owner_pid=0,owner_tid=0;
+        long a,b,status;
+        preempt_mutation_ready=preempt_mutation_go=preempt_mutation_done=0;
+        preempt_mutation_progress=preempt_mutation_error=0;
+        (void)mlt_snapshot(&before);(void)mlt_snapshot(&after);(void)mlt_snapshot(&before);
+        b=launch_entry(preempt_mutation_spinner,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&tid);
+        for(i=0;b>0 && i<128 && !preempt_mutation_ready;i++)(void)Syield();
+        a=launch_entry(preempt_mutation_owner,CLONE_VM,runnable_stacks[1],&owner_pid,&owner_tid);
+        ptest_assert_msg(a>0 && b>0 && preempt_mutation_ready,"publish mapping owner and non-yielding peer");
+        status=a>0?Pwaitpid(owner_pid,0,0):-1;
+        if(b>0)ptest_assert_msg(join_tid(tid,0)==0,"busy mapping peer rejoins after owner progress");
+        if(a<=0 || b<=0 || (status>>16)!=owner_pid || (status&65535) ||
+           !preempt_mutation_done || !preempt_mutation_progress || preempt_mutation_error)okay=0;
+        ptest_assert_msg(okay,"CPU-bound USER cannot starve a suspended mapping mutation owner");
+        (void)mlt_snapshot(&after);
+        if(cycle) {
+            int same=1;
+            for(i=0;i<MLT_FIELDS;i++)if(before.value[i]!=after.value[i])same=0;
+            if(!same){mlt_print("timer mapping before",&before);mlt_print("timer mapping after",&after);okay=0;}
+            ptest_assert_msg(same,"mapping-owner timer handoffs conserve every resource exactly");
+        }
+    }
+    if(okay)conws("native timer busy USER and mapping-owner progress/conservation: PASS\r\n");
+}
+#endif
 #if defined(TEST_WITH_PTERMGRP) && defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
 static volatile unsigned long preempt_cancel_started,preempt_cancel_seen,preempt_cancel_after;
 static void preempt_cancel_spinner(void *unused)
@@ -368,6 +418,7 @@ static void test_preempt(void)
 #endif
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
     preempt_blocked_wakeup();
+    preempt_mapping_owner_progress();
 #if defined(TEST_WITH_PTERMGRP)
     preempt_cancel_retirement();
 #endif
