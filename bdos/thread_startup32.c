@@ -13,10 +13,12 @@ LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS
 {
     UWORD prot;
     BOOL unchecked = args && (args->flags & THREAD_STARTUP_ENTRY_UNCHECKED);
-    /* An unchecked entry (Pexec 4/104) may be any address, as on FreeMiNT:
-     * a null, odd or unmapped one faults in the started THREAD. */
+    /* An unchecked entry (Pexec 4/104) need not be mapped, as on FreeMiNT:
+     * a null or unmapped one faults in the started THREAD. It must still be
+     * aligned: entering user mode at an odd PC hangs the 68060 (Amiberry,
+     * #1026) instead of raising an address error in the THREAD. */
     if (!space || !args ||
-        (!unchecked && (!args->entry || args->entry % CONF_PCLONE_ENTRY_ALIGNMENT)) ||
+        (!unchecked && !args->entry) || args->entry % CONF_PCLONE_ENTRY_ALIGNMENT ||
         args->stack_base % CONF_PCLONE_STACK_ALIGNMENT ||
         args->stack_size < CONF_PCLONE_MIN_STACK ||
         args->stack_base >= USER_VA_LIMIT ||

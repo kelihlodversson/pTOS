@@ -810,8 +810,8 @@ static void shared_vm_tfork(void)
     for(i=0;i<2;i++) {
         int mode=i?104:4;
         BASEPAGE *bp;char *env;long result;
-        {   /* unmapped, null and odd entries all start and fault, as on FreeMiNT */
-            static char *const bad[]={(char *)0x10,(char *)0,(char *)0x11};
+        {   /* unmapped and null entries start and fault, as on FreeMiNT */
+            static char *const bad[]={(char *)0x10,(char *)0};
             unsigned b;
             for(b=0;b<sizeof(bad)/sizeof(bad[0]);b++) {
                 result=shared_vm_tfork_run(mode,bad[b],&bp);
@@ -821,6 +821,12 @@ static void shared_vm_tfork(void)
                     "shared tfork: an entry that cannot run faults in the child");
                 if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: faulted basepage stays the caller's"); }
             }
+            /* an odd entry is refused before anything starts (see
+             * thread_startup_arch_validate()) */
+            result=shared_vm_tfork_run(mode,(char *)0x11,&bp);
+            if(result!=-25) shared_vm_diagnostic("shared tfork odd entry result=",result);
+            ptest_assert_msg(result==-25,"shared tfork: an odd entry is refused (EINVAL)");
+            if(bp) { env=bp->p_env;ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"shared tfork: refused basepage stays the caller's"); }
         }
         tfork_seen=0;
         result=shared_vm_tfork_run(mode,(char *)(uintptr_t)tfork_entry,&bp);

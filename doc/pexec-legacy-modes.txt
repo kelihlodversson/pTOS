@@ -62,7 +62,10 @@ least the basepage) and makes it executable; for a staged PRG it holds the
 loaded image. Nothing holds the TPA above that, where the startup stack is,
 so the child's Mshrink() can release it. A p_tbase that cannot run is not
 refused: as on FreeMiNT, the child faults on it and the fault is its exit
-status. MiNTLib's tfork() points p_tbase at a function of the caller.
+status. One difference: an odd p_tbase is refused with EINVAL before
+anything starts, because entering user mode at an odd PC hangs the 68060
+(Amiberry) instead of raising an address error in the child. MiNTLib's
+tfork() points p_tbase at a function of the caller.
 
 Unlike FreeMiNT, a basepage starts once: the staged basepage becomes the
 child, so a second 4/104 of it is refused (EIMBA), as is the caller's own
