@@ -32,27 +32,26 @@ BOOL aspace_logical_protection(const ASPACE *space, VADDR address, UWORD *prot)
 #endif
 int main(void)
 {
-    struct uheap_block block;
-    memset(&parent,0,sizeof(parent)); memset(&child,0,sizeof(child)); memset(&block,0,sizeof(block));
+    const VADDR image = 0x10000000;
+    memset(&parent,0,sizeof(parent)); memset(&child,0,sizeof(child));
     parent.pd=&caller; parent.aspace=(ASPACE *)1;
-    parent.heap=&block; parent.nheap=1; parent.next=&child; kproc_list=&parent;
-    block.va=0x10000000; block.pages=4; block.kind=UH_IMAGE;
-    parent.layout.nseg=1; parent.layout.seg[0].vaddr=block.va;
+    parent.next=&child; kproc_list=&parent;
+    parent.layout.nseg=1; parent.layout.seg[0].vaddr=image;
     parent.layout.seg[0].memsz=USER_PAGE_SIZE; parent.layout.seg[0].flags=1;
     child.pd=&child_pd; child.aspace=parent.aspace;
-    assert(kproc_validate_user_exec(block.va+16));
-    assert(!kproc_validate_user_exec(block.va+USER_PAGE_SIZE+16));
+    assert(kproc_validate_user_exec(image+16));
+    assert(!kproc_validate_user_exec(image+USER_PAGE_SIZE+16));
     run=&child_pd; /* no inherited PROCESS-local heap/layout */
-    assert(kproc_validate_user_exec(block.va+16));
-    assert(!kproc_validate_user_exec(block.va+USER_PAGE_SIZE+16));
-    assert(!kproc_validate_user_exec(block.va+2*USER_PAGE_SIZE));
-    assert(!kproc_validate_user_exec(block.va+3*USER_PAGE_SIZE));
-    assert(!kproc_validate_user_exec(block.va+4*USER_PAGE_SIZE));
+    assert(kproc_validate_user_exec(image+16));
+    assert(!kproc_validate_user_exec(image+USER_PAGE_SIZE+16));
+    assert(!kproc_validate_user_exec(image+2*USER_PAGE_SIZE));
+    assert(!kproc_validate_user_exec(image+3*USER_PAGE_SIZE));
+    assert(!kproc_validate_user_exec(image+4*USER_PAGE_SIZE));
     /* Original owner gone; its PD is reused for an unrelated address space. */
-    parent.heap=NULL; parent.nheap=0; memset(&parent.layout,0,sizeof(parent.layout));
+    memset(&parent.layout,0,sizeof(parent.layout));
     parent.aspace=(ASPACE *)2;
-    assert(kproc_validate_user_exec(block.va+16));
-    assert(!kproc_validate_user_exec(block.va+USER_PAGE_SIZE+16));
-    text=ASPACE_PROT_USER; assert(!kproc_validate_user_exec(block.va+16));
+    assert(kproc_validate_user_exec(image+16));
+    assert(!kproc_validate_user_exec(image+USER_PAGE_SIZE+16));
+    text=ASPACE_PROT_USER; assert(!kproc_validate_user_exec(image+16));
     return 0;
 }

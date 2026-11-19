@@ -169,15 +169,6 @@ if ! grep -q 'x86-64 unaligned relocation: PASS' boot.log; then
   exit 1
 fi
 
-if ! grep -q 'x86-64 pexec go staged ownership: PASS' boot.log; then
-  echo "::error::PE_GO policy did not preserve the caller's staged ownership"
-  exit 1
-fi
-
-if ! grep -q 'x86-64 pexec go rejected with a gap: PASS' boot.log; then
-  echo "::error::PE_GO rejection did not preserve the staged program for mode 6"
-  exit 1
-fi
 
 # pc-x86_64-eager is built without demand paging (#562): the Psetlimit and
 # demand-paging probes, which need it, say SKIP, and the eager one runs instead
@@ -198,8 +189,8 @@ else
   fi
 fi
 
-if ! grep -q 'x86-64 pexec load big: PASS' boot.log; then
-  echo "::error::PE_LOAD did not take a program bigger than the image window"
+if ! grep -q 'x86-64 pexec big program: PASS' boot.log; then
+  echo "::error::a program bigger than the image window was not loaded whole and run"
   exit 1
 fi
 

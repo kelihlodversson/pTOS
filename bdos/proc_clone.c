@@ -250,7 +250,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         if(loaded_shared) tx->owns_shared_exec=TRUE;
         error=ENSMEM;
     }
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
     if(!loaded_shared && args->process_policy==PROC_CLONE_NEW_PROCESS &&
         args->vm_policy!=PROC_CLONE_PRIVATE_VM) {
         error=kproc_shared_dependencies_prepare(tx->process,tx->source);
@@ -453,20 +453,6 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
     return thread_startup_prepare(tx->space, args, &tx->startup);
 }
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-LONG proc_clone_prepare_startup_elf(PROC_CLONE_TRANSACTION *tx,const THREAD_STARTUP_ARGS *args,VADDR initial_sp)
-{
-    if(!tx || !args || tx->startup || !initial_sp) return EINVAL;
-    if(!tx->loaded_shared || tx->policy!=PROC_CLONE_NEW_PROCESS ||
-        kproc_shared_exec_initial_sp(tx->process)!=initial_sp ||
-#if CONF_WITH_PTERMGRP
-        kproc_group_status(tx->source,NULL) || kproc_group_status(tx->process,NULL) ||
-#endif
-        kproc_active_space(tx->source)!=tx->source_space || tx->space!=tx->source_space ||
-        !kproc_clone_target_ready(tx->process,tx->thread)) return EACCDN;
-    return thread_startup_prepare_elf(tx->space,args,initial_sp,&tx->startup);
-}
-#endif
 
 static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 {
@@ -520,6 +506,13 @@ LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *tx)
     }
     return E_OK;
 }
+#if CONF_WITH_SHARED_VM_PEXEC
+LONG proc_clone_tpa_startup_stack(PROC_CLONE_TRANSACTION *tx)
+{
+    if (!startup_target_live(tx) || !tx->loaded_shared) return EACCDN;
+    return kthread_use_tpa_stack(tx->thread) ? E_OK : EACCDN;
+}
+#endif
 
 #if CONF_WITH_IMAGE_POLICY
 LONG proc_clone_prepare_image_policy(PROC_CLONE_TRANSACTION *tx,const KPROC_IMAGE_POLICY *policy)

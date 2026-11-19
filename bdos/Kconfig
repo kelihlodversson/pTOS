@@ -22,7 +22,7 @@ config CONF_WITH_IMAGE_POLICY
 config CONF_WITH_IMAGE_POLICY_TEST
     bool "Native immutable executable-policy tests (test transport only)"
     depends on CONF_WITH_IMAGE_POLICY && CONF_WITH_PRIVATE_CLONE_TEST
-    depends on CONF_WITH_SHARED_VM_PEXEC_TEST
+    depends on CONF_WITH_SHARED_VM_PEXEC
     default n
     help
       Test policy capture and its existing trusted NEW_PROCESS publication
@@ -125,7 +125,7 @@ config CONF_WITH_PRIVATE_CLONE_TEST
 
 config CONF_WITH_PRIVATE_SNAPSHOT_TEST
     bool "Native captured private-snapshot ownership tests (test only)"
-    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_SHARED_VM_PEXEC_TEST
+    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_SHARED_VM_PEXEC
     default n
     help
       Verify a surviving shared descendant privately clones an absent captured
@@ -175,13 +175,32 @@ config CONF_WITH_NATIVE_SCHED
       Scheduling is cooperative and does not require CUIS or external libaes.
 
 
-config CONF_WITH_SHARED_VM_PEXEC_TEST
-    bool "Native shared-VM Pexec acceptance tests (experimental)"
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
-    default n
+config CONF_WITH_LEGACY_PEXEC
+    def_bool ARCH_M68K
     help
-      Test-only modes4/104 while independent ownership/runtime acceptance is
-      pending. No shipped preset selects it. Does not enable fork or preemption.
+      The historical staged-execution Pexec modes 3 (load only, PRG targets
+      only), 5/7 (create a basepage) and 4/6/104/106 (start one with the
+      classic PRG entry). They are 68k TOS/FreeMiNT compatibility: ARM and
+      x32 refuse them with EINVFN and do not carry their machinery
+      (doc/pexec-legacy-modes.txt).
+
+config CONF_WITH_STAGED_PEXEC
+    def_bool CONF_WITH_LEGACY_PEXEC || !CONF_WITH_USER_ASPACE
+    help
+      The public staged Pexec modes (3, 5/7, 4/6/104/106) exist: on m68k,
+      and unchecked on kernels without user address spaces (non-MMU ARM,
+      to be deprecated), which cannot tell the kernel's own requests from a
+      program's. MMU ARM and x32 refuse them with EINVFN.
+
+config CONF_WITH_SHARED_VM_PEXEC
+    def_bool CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC && CONF_WITH_PRG_LOADER
+    help
+      m68k MMU kernels: Pexec modes 4 and 104 start a staged PRG as a
+      distinct PROCESS sharing the caller's address space, entered with the
+      classic PRG convention (doc/pexec-legacy-modes.txt). Without an MMU,
+      mode 4 runs the basepage in place as on TOS. It needs the PRG loader:
+      the classic TPA of mode 5/7 and the preparation's TPA permissions are
+      the PRG loader's; without it, 4/104 from a process are EINVFN.
 
 # Hidden until explicit public activation review. No preset may select this.
 config CONF_WITH_PROCESS_EXEC

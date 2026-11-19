@@ -30,8 +30,6 @@ static ULONG previous_motion;
 static char mode;
 static ULONG *volatile fault_address;
 static USER_CALLBACK_STACK *oom_output;
-static ULONG free_child, free_environment;
-static volatile ULONG free_checks_done;
 static volatile ULONG quota_calls;
 extern const UBYTE callback_quota_handlers[], callback_quota_handlers_end[];
 
@@ -124,53 +122,6 @@ static ULONG queued_motion(WORD x, WORD y)
      * while this handler is active, and checks the native cursor state. */
     HCHECK(raw(1, 0x10b, 0, 0, 0, 0) > 0);
     return MAKE_ULONG(x + 10, y + 20);
-}
-
-static void free_blocks(int ms)
-{
-    LONG allocation;
-
-    (void)ms;
-    if (free_checks_done)
-        return;
-    HCHECK(raw(1, 0x49, free_child, 0, 0, 0) == EACCDN);
-    HCHECK(raw(1, 0x49, free_environment, 0, 0, 0) == EACCDN);
-    allocation = raw(1, 0x48, 8192, 0, 0, 0);
-    HCHECK(allocation > 0);
-    if (allocation > 0) {
-        HCHECK(raw(1, 0x49, (1ULL << 32) | (ULONG)allocation, 0, 0, 0) == EACCDN);
-        HCHECK(raw(1, 0x4a, 0, (ULONG)allocation, 4096, 0) == E_OK);
-        HCHECK(raw(1, 0x49, (ULONG)allocation, 0, 0, 0) == E_OK);
-    }
-    free_checks_done = 1;
-}
-
-static int callback_free_checks(void)
-{
-    VDI_SERVICE_VECTOR_RESULT old, direct;
-    PD *child;
-    LONG loaded;
-    int i, failure = 0;
-
-    for (i = 0; i < 2; i++) {
-        loaded = raw(1, 0x4b, i ? PE_BASEPAGE : PE_LOAD,
-                     i ? 0 : (uintptr_t)"X32HELLO.TOS", (uintptr_t)"", 0);
-        if (loaded <= 0)
-            return __LINE__;
-        child = (PD *)(uintptr_t)(ULONG)loaded;
-        free_child = (ULONG)loaded;
-        free_environment = (ULONG)(uintptr_t)child->p_env;
-        free_checks_done = 0;
-        CHECK(exchange(118, (uintptr_t)free_blocks, &old) == E_OK);
-        CHECK(callback_register_checks(&free_checks_done) == 0);
-        CHECK(free_checks_done && !handler_failure);
-        CHECK(exchange(118, old.old_handler, &direct) == E_OK);
-        /* Denial must leave the child and its inherited references intact:
-         * the same release succeeds after callback delivery has finished. */
-        CHECK(raw(1, 0x49, free_child, 0, 0, 0) == E_OK);
-        CHECK(raw(1, 0x49, free_environment, 0, 0, 0) == E_OK);
-    }
-    return failure;
 }
 
 static int native_old_checks(void)
@@ -322,62 +273,6 @@ static int prepare_stack(void)
     return failure;
 }
 
-static int loaded_stack_checks(void)
-{
-    USER_CALLBACK_STACK candidate, old;
-    PD *child;
-    ULONG env;
-    LONG loaded, allocation;
-    char *environment;
-    int i, j, failure = 0;
-
-    for (i = 0; i < 2; i++) {
-        loaded = raw(1, 0x4b, PE_LOAD, (uintptr_t)"X32HELLO.TOS", (uintptr_t)"", 0);
-        if (loaded <= 0)
-            return __LINE__;
-        child = (PD *)(uintptr_t)(ULONG)loaded;
-        env = (ULONG)(uintptr_t)child->p_env;
-        /* The image's writable startup slack belongs to the loader now,
-         * but freeing/launching this child can release/transfer its pages. */
-        candidate.ss_sp = ((ULONG)(uintptr_t)child->p_bbase + child->p_blen + 4095UL) & ~4095UL;
-        candidate.ss_size = USER_CALLBACK_MIN_STACK;
-        candidate.ss_flags = 0;
-        CHECK(Psigaltstack(&candidate, NULL) == EACCDN);
-        CHECK(Psigaltstack(NULL, &old) == E_OK && old.ss_sp == stack.ss_sp &&
-              old.ss_size == stack.ss_size && old.ss_flags == 0);
-        if (i) {
-            CHECK(raw(1, 0x4b, PE_GOTHENFREE, 0, loaded, 0) == E_OK);
-        } else {
-            CHECK(raw(1, 0x49, loaded, 0, 0, 0) == E_OK);
-            CHECK(raw(1, 0x49, env, 0, 0, 0) == E_OK);
-        }
-        CHECK(Psigaltstack(NULL, &old) == E_OK && old.ss_sp == stack.ss_sp);
-    }
-    /* A large child environment is another writable caller grant that
-     * Mfree can revoke without going through the ordinary heap pin check. */
-    allocation = raw(1, 0x48, 32752, 0, 0, 0);
-    if (allocation <= 0)
-        return __LINE__;
-    environment = (char *)(uintptr_t)(ULONG)allocation;
-    environment[0] = 'X';
-    environment[1] = '=';
-    for (j = 2; j < 32749; j++)
-        environment[j] = 'a';
-    environment[32749] = environment[32750] = 0;
-    loaded = raw(1, 0x4b, PE_BASEPAGE, 0, (uintptr_t)"", (uintptr_t)environment);
-    if (loaded <= 0)
-        return __LINE__;
-    child = (PD *)(uintptr_t)(ULONG)loaded;
-    env = (ULONG)(uintptr_t)child->p_env;
-    candidate.ss_sp = env;
-    CHECK(Psigaltstack(&candidate, NULL) == EACCDN);
-    CHECK(raw(1, 0x49, loaded, 0, 0, 0) == E_OK);
-    CHECK(raw(1, 0x49, env, 0, 0, 0) == E_OK);
-    CHECK(raw(1, 0x49, allocation, 0, 0, 0) == E_OK);
-    CHECK(Psigaltstack(NULL, &old) == E_OK && old.ss_sp == stack.ss_sp);
-    return failure;
-}
-
 static int child_checks(BOOL fault_parent)
 {
     VDI_SERVICE_VECTOR_RESULT old, direct;
@@ -468,10 +363,11 @@ int callback_roundtrip_checks(const char *tail)
         return __LINE__;
     }
     if (mode == 'C') {
-        failure = loaded_stack_checks();
-        if (failure)
-            return failure;
-        failure = callback_free_checks();
+        /* #1018: x32 has no staged Pexec modes, so no unlaunched child image
+         * can hold callback or stack grants: refused before any argument. */
+        CHECK(raw(1, 0x4b, PE_LOAD, (uintptr_t)"X32HELLO.TOS", (uintptr_t)"", 0) == EINVFN);
+        CHECK(raw(1, 0x4b, PE_BASEPAGE, 0, (uintptr_t)"", 0) == EINVFN);
+        CHECK(raw(1, 0x4b, PE_GOTHENFREE, 0, 0x10000, 0) == EINVFN);
         if (failure)
             return failure;
         failure = native_old_checks();

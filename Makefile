@@ -1803,6 +1803,15 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out pie_load load_fail broad_va,$(TEST_SUITES))
 endif
 
+# shared_vm tests shared-VM Pexec 4/104, which only m68k MMU kernels with the
+# native scheduler have (CONF_WITH_SHARED_VM_PEXEC). It stages its probe as a
+# PRG, which the legacy m68k-elf toolchain cannot link.
+ifneq ($(CONF_WITH_SHARED_VM_PEXEC),y)
+TEST_SUITES := $(filter-out shared_vm,$(TEST_SUITES))
+else ifdef BUILD_TOOLCHAIN_ELF
+TEST_SUITES := $(filter-out shared_vm,$(TEST_SUITES))
+endif
+
 # ptos_reloc_load launches two separate executables (reloc_probe.c, built
 # below, linked twice with different flags -- see TEST_PTOS_RELOC_LDFLAGS/
 # TEST_PTOS_RELOC_LDFLAGS2 below) packed into the compact PT_PTOS_RELOC
@@ -1922,7 +1931,9 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_ELF_LOADER),-DTEST_WITH_ELF_LOADER) \
               $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
-              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST)),-DTEST_WITH_SHARED_VM_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC)),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_WITH_SHARED_VM_PEXEC)) \
+              $(if $(filter y,$(CONF_WITH_LEGACY_PEXEC)),-DTEST_WITH_LEGACY_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_STAGED_PEXEC)),-DTEST_WITH_STAGED_PEXEC) \
               $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_REPLACEMENT_TEST)),-DTEST_WITH_EXEC_REPLACEMENT_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_HANDOFF_TEST)),-DTEST_WITH_EXEC_HANDOFF_TEST) \
@@ -1946,7 +1957,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(MACHINE_AMIGA),-DTEST_LOG_FILE) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
               $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
-              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(filter y,$(CONF_WITH_SHARED_VM_PEXEC_TEST))),-DTEST_WITH_ELF_SHARED)) \
+              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(ARCH_X86_64)),-DTEST_WITH_ELF_SHARED)) \
               $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 
@@ -2220,6 +2231,21 @@ TEST_PIE_FILES =
 TEST_LOAD_FAIL_FILES =
 endif
 
+# SHVMPRB.TOS: the shared_vm suite's probe (tests/shared_vm/shared_vm_probe.c),
+# an ordinary PRG that the suite stages with Pexec(3) and starts with 4/104.
+ifneq ($(filter shared_vm,$(TEST_SUITES)),)
+obj/shared_vm_probe.o: tests/shared_vm/shared_vm_probe.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+SHVMPRB.TOS: $(TEST_STARTUP) obj/shared_vm_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/shared_vm_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+TEST_SHARED_VM_FILES = SHVMPRB.TOS
+TOCLEAN += SHVMPRB.TOS
+else
+TEST_SHARED_VM_FILES =
+endif
+
 ifdef TEST_WITH_PTOS_RELOC
 # PTRELOC.TOS / PTRELOC2.TOS: the ptos_reloc_load suite's two payloads
 # (see tests/ptos_reloc_load/reloc_probe.c), repacked into the compact
@@ -2362,16 +2388,10 @@ PROCXIT.TOS: $(TEST_STARTUP) obj/process_transport_child.o $(LIBCMINI_LIB)
 TEST_PROCESS_EXEC_FILES = PROCXIT.TOS
 endif
 
-# Explicit shared-Pexec test kernels exercise standard ELF interpreter entry.
-# This adds fixtures only; no shipped preset selects the test gate.
-ifdef CONF_WITH_SHARED_VM_PEXEC_TEST
+# The x32 ldso_dynamic failure fixtures (a missing or bad library, a missing
+# interpreter) and the nested ordinary isolated launch they exercise.
 ifdef CONF_WITH_ELF_SHARED
-LDSO_TEST_APP += obj/ldso/runtime/SHRINT.ELF
-obj/ldso/runtime/SHRINT.ELF: obj/ldso/test/soapp-pie.elf
-	@mkdir -p $(@D)
-	cp $< $@
 ifdef ARCH_X86_64
-# The existing runtime fixture exercises a nested ordinary isolated launch.
 LDSO_TEST_APP += obj/ldso/runtime/LDSOAPP.ELF obj/ldso/runtime/NEEDMISS.ELF \
                  obj/ldso/runtime/NEEDBAD.ELF obj/ldso/runtime/NOINTRP.ELF
 obj/ldso/runtime/NEEDMISS.ELF: obj/ldso/test/needmiss.elf
@@ -2399,9 +2419,8 @@ $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO: obj/ldso/test/libdyn.so
 	cp $< $@
 endif
 endif
-endif
 
-TEST_HD_FILES = $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
+TEST_HD_FILES = $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2417,7 +2436,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 

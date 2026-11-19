@@ -11,7 +11,16 @@ typedef struct { THREAD_STARTUP_STACK syscall, scheduler; } THREAD_STARTUP_STACK
 typedef struct {
     VADDR entry, argument, stack_base;
     ULONG stack_size;
+    UWORD flags;
 } THREAD_STARTUP_ARGS;
+/* The entry need not be executable: like FreeMiNT's Pexec(4/104), a bad
+ * entry faults in the started THREAD instead of failing the start. */
+#define THREAD_STARTUP_ENTRY_UNCHECKED 1
+/* The classic 68k PRG entry (TOS, FreeMiNT's exec_region()): the argument
+ * is only at 4(sp) and every register is zero; A0 != 0 would tell the
+ * program's startup that it is a desk accessory. Without it a native
+ * fastcall kernel also passes the argument in A0. */
+#define THREAD_STARTUP_PRG_ENTRY 2
 /* All arguments are normalized kernel values, not a user structure. Requires
  * resident mappings; backing/COW must be completed before prepare. It never
  * faults in or writes user memory. Retains ASPACE
@@ -21,16 +30,6 @@ typedef struct {
  * Calls are serialized/no-yield. Unsupported backends return EINVFN. */
 LONG thread_startup_prepare(struct kaspace *space, const THREAD_STARTUP_ARGS *args,
                             THREAD_STARTUP_DRAFT **draft);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-/* Trusted loader-only standard ELF entry. initial_sp addresses argc in the
- * already-built resident stack; publication never inserts a C return frame.
- * This is not a public clone option or arbitrary saved CPU-state restore. */
-LONG thread_startup_prepare_elf(struct kaspace *,const THREAD_STARTUP_ARGS *,
-                              VADDR initial_sp,THREAD_STARTUP_DRAFT **);
-/* Native launcher projection of the published trusted entry kind. Zero for
- * C entries and unpublished drafts; this does not grant execution authority. */
-VADDR thread_startup_elf_initial_sp(const THREAD_STARTUP_DRAFT *);
-#endif
 #if CONF_WITH_EXEC_REPLACE
 /* Trusted Pexec(200) relaunch only. The draft owns fresh scheduler/syscall
  * stacks plus leases on the new image's entry and resident stack, but the

@@ -113,13 +113,14 @@ The parent independently waits for final status, then rejects a second reap.
 The native runner requires the transport marker whenever the gate is enabled.
 
 Reproduce with the repository's installed toolchains/QEMU/fonts:
-  EXEC_REPLACEMENT_TEST=1 EXEC_HANDOFF_TEST=1 SHARED_VM_PEXEC_TEST=1 \
+  EXEC_REPLACEMENT_TEST=1 EXEC_HANDOFF_TEST=1 EXEC_STAGING_PROFILE=1 \
     SHARED_VM_PEXEC_FS=fat tools/ci-regression.sh pc-x86_64
-  Substitute virt-arm-aspace or virt-m68k-aspace; repeat those with FS=pfs.
+  Substitute virt-arm-aspace, or virt-m68k-aspace with SHARED_VM_PEXEC=1
+  (m68k MMU only since #1018); repeat those with FS=pfs.
   tools/run-regression-tests.sh also performs its five shutdown checks.
   Run a separate #975 matrix with EXEC_REPLACEMENT_TEST=1 EXEC_HANDOFF_TEST=1
   PROCESS_FILES_TEST=1 PROCESS_FILES_FS=fat (or pfs), REGRESSION_RAW_DISK=1 and
-  without SHARED_VM_PEXEC_TEST. CI exercises both five-configuration matrices.
+  without SHARED_VM_PEXEC. CI exercises both five-configuration matrices.
   The all-gates combination also reproduces an accepted-base m68k full-suite
   self-reload failure before transport: the third large classic PRG cannot
   satisfy libc startup's TPA reserve and exits65535 before main. This is not

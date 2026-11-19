@@ -21,13 +21,7 @@ typedef struct kaspace_member KASPACE_MEMBER;
 LONG kaspace_member_new(KASPACE *space,UQUAD number,void *identity,KASPACE_MEMBER **result);
 LONG kaspace_member_inherit(const KASPACE_MEMBER *source,UQUAD number,void *identity,
                            KASPACE_MEMBER **result);
-/* Loaded execution inherits general allocations (including future ones),
- * but acquires only existing exact dependencies from loader runtime scopes.
- * Generic CLONE_VM still inherits both kinds, including future runtime maps. */
-LONG kaspace_member_inherit_general(const KASPACE_MEMBER *,UQUAD,void *,KASPACE_MEMBER **);
-LONG kaspace_member_add_runtime(KASPACE *,UQUAD,void *,KASPACE_MEMBER **,KASPACE_SCOPE **);
-KASPACE_SCOPE *kaspace_member_runtime(const KASPACE_MEMBER *);
-BOOL kaspace_member_selects(const KASPACE_MEMBER *,const KASPACE_SCOPE *,BOOL runtime);
+BOOL kaspace_member_selects(const KASPACE_MEMBER *,const KASPACE_SCOPE *);
 KASPACE_SCOPE *kaspace_member_scope(const KASPACE_MEMBER *member); /* borrowed */
 BOOL kaspace_member_matches(const KASPACE_MEMBER *member,const KASPACE *space,
                             UQUAD number,const void *identity);
@@ -116,11 +110,6 @@ void kaspace_permission_finish(KASPACE_PERMISSION_TRANSACTION **,BOOL commit);
 
 /* Logical reservation-preserving lazy/file backing only. This cannot authorize
  * arbitrary remap, unmap or permission changes, nor bypass sealed aliases. */
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-/* Backend-only, after complete resident private-frame preflight; only image
- * write removal which preserves all retained minimum-access obligations. */
-BOOL kaspace_relro_change(struct aspace *,VADDR,VADDR);
-#endif
 BOOL kaspace_materialization_change(struct aspace *backend, VADDR address,
                                    VADDR bytes, UWORD logical_rights);
 
@@ -158,7 +147,6 @@ typedef struct mmap_region {
     ULONG offset;
     UQUAD reservation; /* split fragments preserve this original identity */
     KASPACE_SCOPE *scope;
-    BOOL runtime_owned; /* preserved classification when PRIVATE_VM copies metadata */
     struct mmap_region *next;
 } MMAP_REGION;
 typedef struct {
@@ -206,13 +194,6 @@ LONG kaspace_reservation_hold_captured(KASPACE *space,
 BOOL kaspace_retained_lazy_protection(KASPACE *space, VADDR address, UWORD *rights);
 /* Borrowed canonical owner; source ticket must stay owned across duplication. */
 void *kaspace_reservation_owner(const KASPACE_RESERVATION_HOLD *hold);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-/* Pure authentication of this selected live captured nonlazy receipt, not a
- * query whose metadata could be supplied by another hold. Caller owns the
- * receipt throughout; no retain, backing, access grant or transfer occurs. */
-BOOL kaspace_reservation_matches(const KASPACE_RESERVATION_HOLD *,
-        const KASPACE *,UQUAD birth,VADDR exact_address,VADDR exact_bytes);
-#endif
 LONG kaspace_reservation_duplicate(const KASPACE_RESERVATION_HOLD *source,
         void *owner_identity, KASPACE_RESERVATION_HOLD *result);
 BOOL kaspace_reservation_release(KASPACE_RESERVATION_HOLD *hold, void **owner_identity);

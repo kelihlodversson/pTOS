@@ -894,10 +894,12 @@ static void test_aspace(void)
     same(&s, "aspace");
 }
 
-/* A basepage as Pexec(PE_BASEPAGEFLAGS) creates it; 0 on failure. */
+/* A basepage as Pexec(PE_BASEPAGEFLAGS) creates it; 0 on failure. Also
+ * called while a ring-3 process is current (clone scenarios), so it is the
+ * kernel's own request through the self-test entry, not the GEMDOS one. */
 static PD *new_basepage(void)
 {
-    long rc = Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", NULL);
+    long rc = xexec_selftest(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", NULL);
 
     CHECK(rc > 0, "basepage creation");     /* never a silent skip */
     return (rc > 0) ? (PD *)(uintptr_t)rc : NULL;
@@ -2731,7 +2733,7 @@ static LONG active_clone_construct(UWORD index)
     bzero(&args,sizeof(args)); args.source = source;
     args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
     args.resources = PROC_CLONE_RESOURCE_MASK;
-    startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE;
+    startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE; startup.flags = 0;
     CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
           proc_clone_retain_startup_stack(tx) == E_OK && proc_clone_prepare_outputs(tx,data+16,data+20) == E_OK,
           "prepare real active-group PROCESS/THREAD/ASPACE and execution resources");
@@ -3633,7 +3635,7 @@ static void test_ordinary_observation(void)
         LONG loaded, status;
         PD *program;
         snap(&baseline);
-        loaded=Pexec(PE_LOAD,"C:\\X32HELLO.TOS",command,environment);
+        loaded=Pexec(PE_KERNEL|PE_LOAD,"C:\\X32HELLO.TOS",command,environment);
         CHECK(loaded>0,"load real ordinary observer parent");
         if (loaded<=0) break;
         program=(PD *)(uintptr_t)loaded;
@@ -3751,7 +3753,7 @@ void x86_64_memtest_clone_yield(void)
             identity = kproc_retain(replacement);
             CHECK(kproc_ref_pid(identity) != kproc_ref_pid(active_clone.parent),
                   "replacement has a fresh canonical PROCESS identity");
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
             CHECK(replacement != active_clone.old_pd &&
                   procmem_gen(active_clone.old_pd)==active_clone.old_generation &&
                   !procmem_mutation_allowed(active_clone.old_pd,active_clone.old_generation,0,procmem_size(active_clone.old_pd)),
@@ -3819,7 +3821,7 @@ static void test_clone_execution(void)
         bzero(&args,sizeof(args)); args.source = source;
         args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
         args.resources = PROC_CLONE_COPY_STANDARD_HANDLES | PROC_CLONE_COPY_CWD;
-        startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE;
+        startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE; startup.flags = 0;
         resident_generation = procmem_next_gen();
         CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
               proc_clone_retain_startup_stack(tx) == E_OK &&
@@ -3893,7 +3895,7 @@ static void test_clone_execution(void)
                 CHECK(active_clone.child_progress, "blocked creator permits independent child execution");
             if (active_clone.scenario == 2) {
                 CHECK(active_clone.replacement_checked,"orphan survived a fresh PROCESS after source retirement");
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
                 {
                     PD *again=new_basepage();
                     KPROC *identity;
@@ -4079,7 +4081,7 @@ static void test_proc_clone_startup(void)
               "caller supplies resident writable startup stack mappings");
     }
     startup.entry = (VADDR)(uintptr_t)pd;
-    startup.argument = 0xfedcba98UL; startup.stack_base = stack; startup.stack_size = 2 * PAGE;
+    startup.argument = 0xfedcba98UL; startup.stack_base = stack; startup.stack_size = 2 * PAGE; startup.flags = 0;
     rsp = ((stack + 2 * PAGE) & ~15ULL) - 8;
     CHECK(aspace_copy_to_user(backend, rsp, &old_slot, sizeof(old_slot)), "seed prospective return slot");
     bzero(&args, sizeof(args)); args.source = source;
@@ -5077,7 +5079,7 @@ static long run_probe(char mode)
 
     tail[0] = mode;
     tail[1] = '\0';
-    rc = Pexec(PE_BASEPAGEFLAGS, (char *)PF_STANDARD, tail, NULL);
+    rc = Pexec(PE_KERNEL|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, tail, NULL);
     if (rc <= 0 && probe_may_fail_early)
         return -1000;
     CHECK(rc > 0, "probe basepage");
@@ -5109,7 +5111,7 @@ static long run_probe(char mode)
         if (!rc) return results[0];
     } else
 #endif
-    rc = Pexec(PE_GOTHENFREE, "", (char *)pd, NULL);
+    rc = Pexec(PE_KERNEL|PE_GOTHENFREE, "", (char *)pd, NULL);
     if (rc < 0) {
         set_owner(pd, pd);
         set_owner(USERPTR_TO_PTR(pd->p_env), pd);
@@ -5563,7 +5565,7 @@ static void test_interpreter_failures(void)
     int k, failed = 0, succeeded = 0;
 
     /* Prime filesystem caches before taking allocator snapshots. */
-    rc = Pexec(PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
+    rc = Pexec(PE_KERNEL|PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
     CHECK(rc > 0, "interpreter failure-test fixture is available");
     if (rc <= 0)
         return;
@@ -5571,7 +5573,7 @@ static void test_interpreter_failures(void)
     for (k = 1; k <= 64; k++) {
         snap(&s);
         x86_64_pmem_test_fail_after(k);
-        rc = Pexec(PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
+        rc = Pexec(PE_KERNEL|PE_LOAD, "C:\\DYNTEST.TOS", tail, env);
         x86_64_pmem_test_fail_after(0);
         if (rc > 0) {
             succeeded++;
@@ -5775,7 +5777,7 @@ static void test_vdi_imports(void)
     CHECK(rc == EPLFMT, "the baseline refuses optional VDI imports");
 #endif
     same(&s, "VDI imported client processes");
-    probe_expect('I', 0, "VDI imports: nested Pexec, PE_LOAD/GO, relocation and invalid metadata");
+    probe_expect('I', 0, "VDI imports: nested Pexec, relocation and invalid metadata");
     if (failures == before)
         kcprintf("x86-64 VDI imports: PASS\n");
 }
@@ -5894,12 +5896,12 @@ static void test_async_processes(void)
         if (!i) {
             result = Pexec(PE_LOADGO, "C:\\ASYNC.TOS", tail, environment);
         } else {
-            rc = Pexec(PE_LOAD, "C:\\ASYNC.TOS", tail, environment);
+            rc = Pexec(PE_KERNEL|PE_LOAD, "C:\\ASYNC.TOS", tail, environment);
             CHECK(rc > 0, "load ordinary async process fixture");
             if (rc <= 0) break;
             program = (PD *)(uintptr_t)rc;
             environment_block = USERPTR_TO_PTR(program->p_env);
-            result = Pexec(i == 2 ? PE_GO : PE_GOTHENFREE, NULL, (char *)program, NULL);
+            result = Pexec(PE_KERNEL|(i == 2 ? PE_GO : PE_GOTHENFREE), NULL, (char *)program, NULL);
             if (i == 2) {
                 CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
                       "PE_GO keeps caller ownership after managed descendants exit");
@@ -5917,13 +5919,13 @@ static void test_async_processes(void)
     for (i = 0; i < 2; i++) {
         for (j = 1; j <= 2; j++) {
             snap(&s);
-            rc = Pexec(PE_LOAD, "C:\\X32HELLO.TOS", "", environment);
+            rc = Pexec(PE_KERNEL|PE_LOAD, "C:\\X32HELLO.TOS", "", environment);
             CHECK(rc > 0, "load group allocation failure fixture");
             if (rc <= 0) break;
             program = (PD *)(uintptr_t)rc;
             environment_block = USERPTR_TO_PTR(program->p_env);
             x86_64_pmem_test_fail_after(j);
-            rc = Pexec(i ? PE_GOTHENFREE : PE_GO, NULL, (char *)program, NULL);
+            rc = Pexec(PE_KERNEL|(i ? PE_GOTHENFREE : PE_GO), NULL, (char *)program, NULL);
             x86_64_pmem_test_fail_after(0);
             CHECK(rc == ENSMEM && !ksched_active() && kproc_unlaunched(program),
                   "failed group allocation leaves an unlaunched caller-owned program");
@@ -5935,13 +5937,13 @@ static void test_async_processes(void)
         }
     }
     snap(&s);
-    rc = Pexec(PE_LOAD, "C:\\X32HELLO.TOS", "", environment);
+    rc = Pexec(PE_KERNEL|PE_LOAD, "C:\\X32HELLO.TOS", "", environment);
     CHECK(rc > 0, "load consuming launch THREAD-construction failure fixture");
     if (rc > 0) {
         program = (PD *)(uintptr_t)rc;
         environment_block = USERPTR_TO_PTR(program->p_env);
         kthread_test_fail_after_attach();
-        rc = Pexec(PE_GOTHENFREE, NULL, (char *)program, NULL);
+        rc = Pexec(PE_KERNEL|PE_GOTHENFREE, NULL, (char *)program, NULL);
         CHECK(rc == ENSMEM && !ksched_active() && kproc_unlaunched(program),
               "THREAD construction failure leaves consuming launch unpublished");
         CHECK(procmem_owner(program) == run && procmem_owner(environment_block) == run,
@@ -5971,7 +5973,7 @@ static void test_cuis_scheduler(void)
         programs[0] = programs[1] = NULL;
         tail_b[2] = '0' + mode;
         for (i = 0; i < 2; i++) {
-            rc = Pexec(PE_LOAD, "C:\\CUISCHED.TOS", i ? tail_b : tail_a, environment);
+            rc = Pexec(PE_KERNEL|PE_LOAD, "C:\\CUISCHED.TOS", i ? tail_b : tail_a, environment);
             if (rc < 0) kcprintf("scheduler load error %ld\n", (long)rc);
             CHECK(rc > 0, "load isolated scheduler client");
             if (rc <= 0) break;
@@ -6207,7 +6209,7 @@ static void test_ring3(void)
         int before = failures;
         ULONG shared_before;
         probe_expect('3', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
-        probe_expect('2', 0, "PT_INTERP initial stack/auxv, direct and split Pexec, repeated cleanup");
+        probe_expect('2', 0, "PT_INTERP initial stack/auxv, ARGV, staged modes refused, repeated cleanup");
         test_interpreter_failures();
         shared_before = aspace_file_cross_shares();
         probe_expect('1', 0, "filesystem LD.SO: binding, preinit/init/fini order, repeated cleanup");
@@ -6396,7 +6398,7 @@ static void test_ring3(void)
     probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
     /* basepages a ring-3 process can use, and launches it cannot forge (#416) */
-    probe_expect('g', 0, "ring 3 builds, launches and frees basepages; forged launches are refused");
+    probe_expect('g', 0, "the staged and basepage Pexec modes are refused with EINVFN (#1018)");
 
     /* the ancestors' basepages: one (this launcher's), read-only */
     probe_expect('w', 0x101, "a ring-3 process sees its launcher's basepage as a scrubbed copy");
@@ -6477,9 +6479,6 @@ static void test_ring3(void)
 #if CONF_WITH_PCLONE
     probe_expect('^', 0, "Pclone validates ring-3 arguments before rejecting the unavailable backend");
 #endif
-    /* a Pexec() that runs out of loan slots half way gives back what it took */
-    probe_expect('z', 0, "a failed Pexec(PE_BASEPAGE) from ring 3 releases its blocks and loans");
-
     /* BIOS and XBIOS pointer arguments are checked per call (#352) */
     probe_expect('A', 0, "bad BIOS/XBIOS pointers are refused, calls that would give the kernel a user address are refused, valid ones let through");
     {
@@ -6513,23 +6512,14 @@ static void test_ring3(void)
     /* the basepage's p_uft/p_curdir are not the kernel's tables (#418) */
     probe_expect('t', 0, "overwriting the basepage's file and directory tables harms nothing");
 
-    /* PE_LOAD then PE_GOTHENFREE, and a child freeing its parent's block */
+    /* a child freeing its parent's block */
     {
-        snap(&s);
-        rc = run_probe('l');
-        if (rc == 0x100) {
-            kcprintf("x86-64 pexec load: SKIP (no C:\\X32HELLO.TOS)\n");
-        } else {
-            CHECK(rc == 0, "ring 3 loads a program with PE_LOAD and launches it with PE_GOTHENFREE");
-            kcprintf(rc == 0 ? "x86-64 pexec load: PASS\n" : "x86-64 pexec load: FAIL (0x%lx)\n", rc);
-        }
-        same(&s, "PE_LOAD and PE_GOTHENFREE from ring 3");
         snap(&s);
         rc = run_probe('y');
         if (rc != 0x100) {
             if (rc != 0)
                 kcprintf("memtest: child Mfree probe: exit code 0x%lx\n", rc);
-            CHECK(rc == 0, "a child cannot free its parent's basepage");
+            CHECK(rc == 0, "a child cannot free its parent's block");
         }
         same(&s, "a child's Mfree of its parent's block");
     }
@@ -6574,47 +6564,17 @@ static void test_ring3(void)
         same(&s, "a program mapped into the image window");
     }
 
-    /* Mfree() of an ordinary block is given the pointer as an x32 value (#434) */
-    probe_expect('F', 0, "Mfree of a basepage through a pointer with upper bits set");
-
-    /* PE_LOAD puts the program in the caller's heap, and freeing the basepage
-     * gives it back (#434) */
-    {
-        snap(&s);
-        rc = run_probe('L');
-        if (rc == 0x100) {
-            kcprintf("x86-64 loaded program in the caller: SKIP (no C:\\X32HELLO.TOS)\n");
-        } else {
-            CHECK(rc == 0, "the program PE_LOAD loaded is in the caller's heap, and goes back with its basepage");
-            kcprintf(rc == 0 ? "x86-64 loaded program in the caller: PASS\n" : "x86-64 loaded program in the caller: FAIL (0x%lx)\n", rc);
-        }
-        same(&s, "a program loaded into the caller");
-    }
-
-    /* PE_LOAD then the configured PE_GO policy: staged ownership survives. */
-    {
-        snap(&s);
-        rc = run_probe('G');
-        if (rc == 0x100) {
-            kcprintf("x86-64 pexec go staged ownership: SKIP (no C:\\X32HELLO.TOS)\n");
-        } else {
-            CHECK(rc == 0, "PE_GO policy preserves the caller's staged program ownership");
-            kcprintf(rc == 0 ? "x86-64 pexec go staged ownership: PASS\n" : "x86-64 pexec go staged ownership: FAIL (0x%lx)\n", rc);
-        }
-        same(&s, "PE_LOAD and rejected PE_GO from ring 3");
-    }
-
-    /* a program bigger than the image window, loaded by PE_LOAD (#434) */
+    /* a program bigger than the image window (#434) */
     {
         snap(&s);
         rc = run_probe('B');
         if (rc == 0x100) {
-            kcprintf("x86-64 pexec load big: SKIP (no C:\\X32BIG.TOS)\n");
+            kcprintf("x86-64 pexec big program: SKIP (no C:\\X32BIG.TOS)\n");
         } else {
-            CHECK(rc == 0, "PE_LOAD takes a program bigger than the image window");
-            kcprintf(rc == 0 ? "x86-64 pexec load big: PASS\n" : "x86-64 pexec load big: FAIL (0x%lx)\n", rc);
+            CHECK(rc == 0, "a program bigger than the image window is loaded whole and runs");
+            kcprintf(rc == 0 ? "x86-64 pexec big program: PASS\n" : "x86-64 pexec big program: FAIL (0x%lx)\n", rc);
         }
-        same(&s, "PE_LOAD of a big program");
+        same(&s, "a big program");
     }
 
     /* a program whose file is cut short: the loading fails with the new
@@ -6629,31 +6589,19 @@ static void test_ring3(void)
         same(&s, "a failed load");
     }
 
-    /* A heap gap and rejected PE_GO followed by consuming mode 6. */
-    {
-        snap(&s);
-        rc = run_probe('H');
-        if (rc != 0x100) {
-            CHECK(rc == 0, "failed PE_GO preserves a staged image for mode 6");
-            kcprintf(rc == 0 ? "x86-64 pexec go rejected with a gap: PASS\n" : "x86-64 pexec go rejected with a gap: FAIL (0x%lx)\n", rc);
-        }
-        same(&s, "rejected PE_GO and PE_GOTHENFREE with a gap");
-    }
-
-    /* PE_LOAD, PE_GO(THENFREE) and mode 0 with a physical allocation failing at every
-     * point: whatever fails, nothing is leaked and the caller carries on (#434) */
+    /* mode 0 launches with a physical allocation failing at every point:
+     * whatever fails, nothing is leaked and the caller carries on (#434) */
     snap(&s);
     for (k = 1; k <= 120; k += (k < 24) ? 1 : 4) {
         x86_64_pmem_test_fail_after(k);
         probe_may_fail_early = TRUE;
-        (void)run_probe('l');
-        (void)run_probe('G');
-        (void)run_probe('H');
+        (void)run_probe('a');
+        (void)run_probe('D');
         (void)run_probe('j');
         probe_may_fail_early = FALSE;
         x86_64_pmem_test_fail_after(0);
     }
-    same(&s, "failed PE_LOAD launches");
+    same(&s, "failed launches");
 
 #if CONF_WITH_DEMAND_PAGING
     /* Psetlimit(): the limits, the stack size, inheritance (#450) */

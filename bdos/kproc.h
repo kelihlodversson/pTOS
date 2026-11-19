@@ -255,11 +255,15 @@ VADDR kproc_test_contended_allocation(void);
 ULONG kproc_test_mapping_wait_count(void);
 #endif
 #if CONF_WITH_NATIVE_SCHED
-/* Loader-only, distinct existing PE_LOAD PROCESS; no resource adoption on failure. */
 #include "thread_startup.h"
+#if CONF_WITH_SHARED_VM_PEXEC
+/* m68k test kernels: a staged PRG (68k PE_LOAD) as a distinct PROCESS
+ * sharing the caller's ASPACE; no resource adoption on failure. */
 LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PERMISSION_TRANSACTION **);
+void kproc_shared_exec_finish(KPROC *);
+#endif
 LONG kproc_shared_exec_take_mapping_owners(KPROC *,KASPACE_MEMBER **);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
+#if CONF_WITH_SHARED_VM_PEXEC
 LONG kproc_shared_dependencies_prepare(KPROC *,KPROC *);
 #if CONF_WITH_PRIVATE_CLONE_TEST
 void kproc_shared_dependency_test_fail_after(UWORD);
@@ -267,15 +271,11 @@ UWORD kproc_shared_dependency_test_steps(void);
 #endif
 #endif
 void kproc_shared_exec_abort(KPROC *);
-void kproc_shared_exec_finish(KPROC *);
-BOOL kproc_shared_exec_relro_range(const KPROC *,VADDR address,VADDR bytes);
-VADDR kproc_shared_exec_initial_sp(const KPROC *);
 BOOL kproc_shared_exec_ready(const KPROC *,struct kthread *);
 BOOL kproc_shared_exec_constructible(const KPROC *);
 BOOL kproc_shared_exec_active(PD *);
 BOOL kproc_shared_exec_committed(const KPROC *);
 BOOL kproc_shared_exec_retire_source(void *);
-void kproc_shared_exec_release_base(void *);
 BOOL kproc_clone_prepare_compat(KPROC *, struct kthread *, struct kaspace *);
 void kproc_clone_drop_compat(KPROC *);
 BOOL kproc_clone_run_ready(KPROC *, struct kthread *, struct kaspace *);
@@ -383,26 +383,6 @@ BOOL kproc_load_begin(PD *pd, VADDR va, VADDR bytes);
 void kproc_load_enter(PD *pd);
 void kproc_load_leave(void);
 BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout);
-/*
- * Pexec(PE_LOAD) from a ring-3 caller loads the program into the caller's own
- * address space, in its heap, where it can read and patch it before the
- * launch: kproc_load_alloc() takes the block for the process `child` that is
- * being made and records it with the child, so that destroying the child, a
- * failed load included, gives it back (0: none), the loader reads the file into it, in place, and
- * kproc_set_moved_image() makes it the child's image, laid out as `layout`.
- * Nothing is mapped for the child yet: PE_GOTHENFREE moves the block's pages, at the
- * same addresses, from the caller's address space to the child's, with each
- * segment's permissions.  The caller cannot free the block (Mfree() leaves it
- * alone); freeing the child's basepage unlaunched gives it back, and so does
- * kproc_load_release().  With PE_GOTHENFREE the pages stay with the child.
- * Ring-3 PE_GO is currently rejected. The legacy give-back path remains for
- * compatible internal callers.
- */
-VADDR kproc_load_alloc(PD *caller, PD *child, ULONG bytes, VADDR preferred);
-void kproc_load_release(PD *caller, VADDR va);
-BOOL kproc_set_moved_image(PD *pd, const PROG_LAYOUT *layout, PD *caller, VADDR va, ULONG pages);
-/* Legacy PE_GO give-back: call before kproc_prepare_user(). */
-void kproc_set_give_back(PD *pd, BOOL give_back);
 /* Fsfirst()/Fsnext() search state kept kernel-side: kproc_dta_save() after a
  * search, kproc_dta_restore() before Fsnext() (FALSE: no search was made with
  * this DTA, the search is over). */
@@ -427,15 +407,16 @@ VADDR kproc_user_entry(PD *pd);         /* image entry point; 0 if no image (it 
  * block is freed.
  */
 BOOL kproc_borrow(PD *launcher, void *block);
-/* Pexec() from ring 3: who made a basepage, handing its blocks to that
- * caller, and checking a basepage it asks to launch (E_OK, EIMBA, EPLFMT). */
-void kproc_set_creator(PD *pd, PD *creator);
+#if CONF_WITH_LEGACY_PEXEC
+/* 68k staged Pexec from ring 3: who made a basepage, handing its blocks to
+ * that caller, and checking a basepage it asks to launch (E_OK, EIMBA,
+ * EPLFMT). */
 void kproc_hand_over(PD *caller, PD *child);
 LONG kproc_check_launch(PD *pd, PD *caller);
+#endif
+void kproc_set_creator(PD *pd, PD *creator);
 /* Pure allocation/borrow/staged-image mutation check, before any disposal. */
 BOOL kproc_allocation_disposal_allowed(const void *base);
-/* CUIS-only: identify a live unlaunched image belonging to this caller. */
-LONG kproc_child_image_pid(PD *pd, PD *caller);
 void kproc_unborrow(void *block);
 ULONG kproc_borrow_count(PD *launcher, void *block);
 PADDR kproc_take_kernel_stack(PD *pd, uintptr_t *top);
@@ -561,7 +542,7 @@ LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size);
 LONG kproc_copy_to_user_checked(VADDR address, const void *src, ULONG size);
 BOOL kproc_copy_from_user_resident(void *dst, VADDR address, ULONG size);
 BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 void kproc_shared_test_fail_after(UWORD after);
 UWORD kproc_shared_test_steps(void);
 #endif

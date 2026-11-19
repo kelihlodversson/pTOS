@@ -99,9 +99,6 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
  * Identity-only commit still returns EINVFN with a draft attached. Only the
  * trusted NEW_PROCESS/SAME_PROCESS publication paths below can publish prepared execution. */
 LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *transaction, const THREAD_STARTUP_ARGS *args);
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-LONG proc_clone_prepare_startup_elf(PROC_CLONE_TRANSACTION *,const THREAD_STARTUP_ARGS *,VADDR initial_sp);
-#endif
 LONG proc_clone_prepare_outputs(PROC_CLONE_TRANSACTION *transaction, VADDR pid, VADDR tid);
 /* Heap-owned asynchronous observation: one caller reference plus one startup
  * registration. Release either order; completion is read from retained KPROC,
@@ -122,6 +119,10 @@ LONG proc_clone_observe_startup(PROC_CLONE_TRANSACTION *transaction,
                                  const THREAD_STARTUP_OBSERVER *observer, void *context);
 LONG proc_clone_seal_startup(PROC_CLONE_TRANSACTION *transaction);
 LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
+#if CONF_WITH_SHARED_VM_PEXEC
+/* Instead of retaining it: the prepared stack is the child's TPA top. */
+LONG proc_clone_tpa_startup_stack(PROC_CLONE_TRANSACTION *transaction);
+#endif
 #if CONF_WITH_IMAGE_POLICY
 /* Value-only policy for an empty NEW_PROCESS target. Requires prepared startup
  * and its retained initial user stack. Existing no-fail activation installs it;

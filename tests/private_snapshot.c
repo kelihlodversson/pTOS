@@ -298,80 +298,12 @@ static void exact_backing_and_rights(void)
     CHECK(kaspace_clone(source,&child)==EACCDN && !child && allocations-frees==before);
     /* Readable file-COW PTEs cannot manufacture a missing FILE_BACKING owner. */
     backend.page[0].file=FALSE;backend.page[0].rights=ASPACE_PROT_USER;
-    source->resident_permissions_tightened=TRUE;
     CHECK(kaspace_clone(source,&child)==E_OK);
-    CHECK(kaspace_reservation_info(child,description.address,description.bytes,&info) && info.rights==ASPACE_PROT_USER);
+    /* The captured ceiling is immutable: a read-only resident PTE does not
+     * narrow it (#1018 removed RELRO, the only rights tightening). */
+    CHECK(kaspace_reservation_info(child,description.address,description.bytes,&info) && info.rights==description.rights);
     CHECK(child->leases->reservation_flags==(KASPACE_RESERVATION_CAPTURED|description.flags));
     kaspace_put(child);release_hold(&hold,&owner);kaspace_put(source);
-}
-
-static void mixed_resident_rights(void)
-{
-    unsigned writable,source_first;
-    for(writable=0;writable<2;writable++) for(source_first=0;source_first<2;source_first++) {
-        ASPACE backend={0};
-        KASPACE *source,*child=NULL,*nested=NULL;
-        KASPACE_MEMBER *member=NULL,*nested_member=NULL;
-        KASPACE_RESERVATION_INFO description={0xb0008,8192-16,0,ASPACE_PROT_USER|ASPACE_PROT_WRITE,0};
-        KASPACE_RESERVATION_INFO info,rw_info,nested_info;
-        KASPACE_RESERVATION_HOLD source_hold={0},child_hold={0},denied={0};
-        VADDR rw=0xb0020+writable*4096,ro=0xb0020+(1-writable)*4096;
-        unsigned baseline=allocations-frees,prepared,step;
-        int owner;
-        source=kaspace_adopt(&backend);CHECK(source);
-        backend.page[0].address=0xb0000;backend.page[1].address=0xb1000;
-        backend.page[0].rights=backend.page[1].rights=description.rights;backend.count=2;
-        description.identity=kaspace_reservation_next();
-        CHECK(kaspace_reservation_hold_captured(source,&description,description.address,
-            description.bytes,ASPACE_PROT_USER,401,&owner,&source_hold)==E_OK);
-        /* One immutable capture ceiling covers two independently protected
-         * resident pages. Reducing either page must leave the other writable. */
-        backend.page[1-writable].rights=ASPACE_PROT_USER;
-        source->resident_permissions_tightened=TRUE;
-        CHECK(kaspace_reservation_info(source,rw,8,&info) && info.rights==description.rights);
-        CHECK(kaspace_reservation_info(source,ro,8,&info) && info.rights==ASPACE_PROT_USER);
-        prepared=allocations-frees;
-        for(step=1;step<12;step++) {
-            LONG error;
-            fail_allocation=step;error=kaspace_clone(source,&child);fail_allocation=0;
-            if(!error) break;
-            CHECK(error==ENSMEM && !child && allocations-frees==prepared);
-            CHECK(kaspace_reservation_info(source,rw,8,&info) && info.rights==description.rights);
-        }
-        CHECK(child && step<12);
-        CHECK(kaspace_member_new(child,402,&owner,&member)==E_OK);kaspace_member_claim_private(member);
-        if(source_first) { release_hold(&source_hold,&owner);kaspace_put(source);source=NULL; }
-        CHECK(kaspace_reservation_info(child,rw,8,&rw_info) && rw_info.rights==description.rights);
-        CHECK(rw_info.identity!=description.identity && rw_info.address==rw && rw_info.bytes==8);
-        CHECK(kaspace_reservation_info(child,ro,8,&info) && info.rights==ASPACE_PROT_USER);
-        CHECK(kaspace_reservation_info(child,description.address,description.bytes,&info) && info.rights==ASPACE_PROT_USER);
-        CHECK(!kaspace_reservation_info(child,description.address-1,1,&info));
-        CHECK(!kaspace_reservation_info(child,description.address+description.bytes,1,&info));
-        CHECK(kaspace_reservation_hold(child,rw_info.identity,rw,8,description.rights,402,&owner,&child_hold)==E_OK);
-        CHECK(kaspace_reservation_hold(child,rw_info.identity,ro,8,description.rights,402,&owner,&denied)==EACCDN && !denied.ticket);
-        CHECK(kaspace_reservation_hold(child,rw_info.identity,description.address,description.bytes,
-            description.rights,402,&owner,&denied)==EACCDN && !denied.ticket);
-        release_hold(&child_hold,&owner);
-        CHECK(kaspace_clone(child,&nested)==E_OK);
-        CHECK(kaspace_member_new(nested,403,&owner,&nested_member)==E_OK);kaspace_member_claim_private(nested_member);
-        CHECK(kaspace_reservation_info(nested,rw,8,&nested_info) && nested_info.rights==description.rights);
-        CHECK(nested_info.identity!=rw_info.identity && nested_info.identity!=description.identity);
-        CHECK(kaspace_reservation_info(nested,ro,8,&info) && info.rights==ASPACE_PROT_USER);
-        /* An earlier RW query is not a transferable grant after tightening. */
-        page_find(kaspace_backend(child),rw)->rights=ASPACE_PROT_USER;
-        CHECK(kaspace_reservation_hold_captured(child,&rw_info,rw,8,description.rights,
-            402,&owner,&denied)==EACCDN && !denied.ticket);
-        CHECK(kaspace_reservation_info(nested,rw,8,&info) && info.rights==description.rights);
-        kaspace_member_release(&member);
-        CHECK(child->refs==1 && !child->leases && !child->scopes && !kaspace_backend(child)->count);
-        kaspace_put(child);
-        if(source) { release_hold(&source_hold,&owner);kaspace_put(source); }
-        kaspace_member_release(&nested_member);
-        CHECK(nested->refs==1 && !nested->leases && !nested->scopes && !kaspace_backend(nested)->count);
-        kaspace_put(nested);
-        CHECK(allocations-frees==baseline);
-    }
-    puts("Mixed captured RO/RW pages: per-query rights, holds, both layouts, nested/source-first, rollback and conservation: PASS");
 }
 
 static void cloned_return_bridge(void)
@@ -403,7 +335,7 @@ static void cloned_return_bridge(void)
 
 int main(void)
 {
-    captured_only();file_and_ordinary();reentrant_final_loss();borrowed_fence();exact_backing_and_rights();mixed_resident_rights();cloned_return_bridge();
+    captured_only();file_and_ordinary();reentrant_final_loss();borrowed_fence();exact_backing_and_rights();cloned_return_bridge();
     CHECK(allocations==frees && !spaces && retirements);
     puts("Private captured snapshots: exact lazy/rights/fences, source-first/nested lifetime, members, file authority, poisoned return bridge, allocation rollback and live-root final conservation: PASS (host MMU model)");
     return 0;

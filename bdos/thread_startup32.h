@@ -12,5 +12,6 @@ typedef struct {
 #if CONF_WITH_SAVED_RETURN
     void *saved_return;
 #endif
+    UWORD flags;        /* THREAD_STARTUP_* of the arguments */
 } THREAD_STARTUP32;
 #endif

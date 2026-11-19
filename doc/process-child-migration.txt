@@ -105,6 +105,7 @@ callers; an unguarded userspace write-then-close sequence is not proof.
 Native acceptance fixtures (retain existing deadlines)
 -----------------------------------------------------
 
+(#1018 removed gem_exit.c's staged-mode synchronous checks.)
 Existing tests/cuis/gem_exit.c already checks both Pwait/CH_EXIT orders, reverse
 completion order and exactly-once messages using real GEM applications. Its
 normal-return role t returns -1 (the full UWORD 0xffff); fault role f separately

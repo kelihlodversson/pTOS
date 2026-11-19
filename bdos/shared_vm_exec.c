@@ -11,6 +11,8 @@
 #include "procmem.h"
 #include "process_completion.h"
 #include "biosext.h"
+#include "kprint.h"
+#include "aspace32.h"
 extern PD *run;
 LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
 {
@@ -35,24 +37,20 @@ LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous)
     stage=2;error=proc_clone_loaded_shared(source,target,&tx);
     if(!error) {
         stage=3;
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-        if(kproc_shared_exec_initial_sp(target))
-            error=proc_clone_prepare_startup_elf(tx,&startup,kproc_shared_exec_initial_sp(target));
-        else
-#endif
         error=proc_clone_prepare_startup(tx,&startup);
     }
-    if(!error) {stage=4;error=proc_clone_retain_startup_stack(tx); }
+    if(!error) {stage=4;error=proc_clone_tpa_startup_stack(tx); }
     if(!error) {stage=5;error=proc_clone_observe_async(tx,&observer); }
     if(!error && ksched_cancellation_pending()) error=EACCDN;
+    /* As FreeMiNT's exec_region() does (cpushi of the text): code the
+     * caller put in the TPA went in through the data side, so publish it
+     * before the child's first fetch (68040/68060 copyback caches). */
+    if(!error) aspace_hw_code_changed();
     if(!error) {stage=6;error=proc_clone_spawn(&tx,&ids); }
     if(!error) kproc_shared_exec_finish(target);
 done:
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-    if(error) kcprintf("shared VM preparation stage=%u error=%ld\n",stage,(long)error);
-#else
+    if(error) KDEBUG(("shared VM preparation stage=%u error=%ld\n",stage,(long)error));
     UNUSED(stage);
-#endif
     proc_clone_abort(&tx);
     /* A rejected live/foreign/self target may already own a committed set.
      * Only successful preparation by this invocation grants abort authority.

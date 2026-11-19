@@ -122,7 +122,7 @@ typedef char CUIS_PEER_IDENTITY_LAYOUT[
 #define CUIS_ENTRY_LIMIT 64UL
 #define CUIS_ENTRY_BYTES 128UL
 #define CUIS_CHILD_RESERVE 0UL
-#define CUIS_CHILD_BIND 1UL
+/* 1 bound an unlaunched staged image; removed with the x32 staged modes. */
 #define CUIS_CHILD_CANCEL 2UL
 #define CUIS_CHILDREN_PER_SESSION 16UL
 #define CUIS_READY_CHILD 2048UL

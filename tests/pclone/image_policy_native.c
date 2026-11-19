@@ -103,8 +103,8 @@ static void test_image_policy(void)
     ptest_pass();
 }
 
-/* Runs both in ordinary loaded images and in the PE_LOAD -> mode 106 moved
- * image below. Child status crosses the private VM boundary; globals do not. */
+/* Runs in ordinary loaded images (#1018 removed the staged moved image).
+ * Child status crosses the private VM boundary; globals do not. */
 static volatile long private_image_value=0x13579;
 static unsigned char private_dta[512];
 static void *private_original_dta;

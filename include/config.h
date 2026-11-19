@@ -81,6 +81,19 @@
 #endif
 
 /*
+ * The Pexec() mode bit that marks the kernel's own requests (PE_KERNEL in
+ * bdosdefs.h, doc/pexec-legacy-modes.txt). Only a kernel with user address
+ * spaces can tell them from a program's; elsewhere the mode word goes out
+ * unchanged, so FreeMiNT, Hatari's GEMDOS hook and other trap #1 filters see
+ * the TOS modes they know.
+ */
+#if CONF_WITH_USER_ASPACE
+#define PE_KERNEL_TAG 0x4000
+#else
+#define PE_KERNEL_TAG 0
+#endif
+
+/*
  * System configuration definitions
  */
 /*

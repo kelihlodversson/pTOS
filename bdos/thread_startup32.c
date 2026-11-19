@@ -12,42 +12,24 @@
 LONG thread_startup_arch_validate(const ASPACE *space, const THREAD_STARTUP_ARGS *args)
 {
     UWORD prot;
-    if (!space || !args || !args->entry ||
-        args->entry % CONF_PCLONE_ENTRY_ALIGNMENT ||
+    BOOL unchecked = args && (args->flags & THREAD_STARTUP_ENTRY_UNCHECKED);
+    /* An unchecked entry (Pexec 4/104) need not be mapped, as on FreeMiNT:
+     * a null or unmapped one faults in the started THREAD. It must still be
+     * aligned: entering user mode at an odd PC hangs the 68060 (Amiberry,
+     * #1026) instead of raising an address error in the THREAD. */
+    if (!space || !args ||
+        (!unchecked && !args->entry) || args->entry % CONF_PCLONE_ENTRY_ALIGNMENT ||
         args->stack_base % CONF_PCLONE_STACK_ALIGNMENT ||
         args->stack_size < CONF_PCLONE_MIN_STACK ||
         args->stack_base >= USER_VA_LIMIT ||
         args->stack_size > USER_VA_LIMIT - args->stack_base)
         return EINVAL;
-    if (!aspace_translate(space, args->entry, NULL, &prot) ||
-        (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) != (ASPACE_PROT_USER | ASPACE_PROT_EXEC) ||
+    if ((!unchecked &&
+         (!aspace_translate(space, args->entry, NULL, &prot) ||
+          (prot & (ASPACE_PROT_USER | ASPACE_PROT_EXEC)) != (ASPACE_PROT_USER | ASPACE_PROT_EXEC))) ||
         !aspace_user_range_ok(space, args->stack_base, args->stack_size, TRUE)) return EIMBA;
     return E_OK;
 }
-#if CONF_WITH_SHARED_VM_PEXEC_TEST
-LONG thread_startup_arch_validate_elf(const ASPACE *space,const THREAD_STARTUP_ARGS *args,VADDR initial_sp)
-{
-    LONG error=thread_startup_arch_validate(space,args);
-    if(error) return error;
-    if(!initial_sp || initial_sp%CONF_PCLONE_STACK_ALIGNMENT || initial_sp<args->stack_base ||
-        initial_sp-args->stack_base>=args->stack_size ||
-        args->stack_size-(initial_sp-args->stack_base)<4) return EINVAL;
-    return E_OK;
-}
-LONG thread_startup_arch_elf_entry(ASPACE *space,const THREAD_STARTUP_ARGS *args,VADDR initial_sp,void *image)
-{
-    LONG error;
-    if(!image) return EINVAL;
-    error=thread_startup_arch_validate_elf(space,args,initial_sp);
-    if(error) return error;
-    ((THREAD_STARTUP32 *)image)->sp=initial_sp;
-#if ARCH_ARM
-    /* Standard ELF uses r0 for an optional finalizer, not a basepage. */
-    ((THREAD_STARTUP32 *)image)->argument=0;
-#endif
-    return E_OK;
-}
-#endif
 void thread_startup_arch_abort(void *image)
 {
     THREAD_STARTUP32 *draft = image;
@@ -76,6 +58,7 @@ LONG thread_startup_arch_prepare(ASPACE *space, const THREAD_STARTUP_ARGS *args,
     if (!draft->syscall.physical) goto failed;
     draft->entry = args->entry;
     draft->argument = args->argument;
+    draft->flags = args->flags;
     draft->return_pc = thread_return_bridge_address(bridge);
 #if ARCH_ARM
     /* AAPCS32: aligned SP, argument r0, return PC in LR; reserve one word

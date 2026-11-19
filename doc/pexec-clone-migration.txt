@@ -16,9 +16,11 @@ Its tree is identical to independently accepted #968 source69ccd179. Existing
 8ece5bde Phase5 history is reconciled by normal merge96e408df6, with #966/#968
 imported once. Current consumer evidence and the exact acceptance verdict are in
 phase5-acceptance.txt and PR956/#894. Historical results are not current source.
-The mode table below records the original migration inventory. Shared4/104 now
-have a default-off test implementation; see shared-vm-pexec.txt and the current
-acceptance ledger, not this historical table, for implementation status.
+The mode table below records the original migration inventory. Since #1018 the
+staged modes (3, 5/7, 4/6/104/106) exist only on m68k (EINVFN on MMU ARM and
+x32), mode 3 loads PRGs only, and shared 4/104 are production on m68k MMU
+kernels with the native scheduler; see pexec-legacy-modes.txt and
+shared-vm-pexec.txt, not this historical table, for the current status.
 This workstream owns executable creation/transition policy and fork/vfork.
 The scheduler, final PROCESS termination, public waits and filesystem reference
 service remain #713/#914, #893, #909 and #933 respectively. #907/#935 owns the
@@ -60,7 +62,7 @@ xexec / xexec_observed / xexec_prepared (bdos/proc.c)
      init_pd_files; descriptors/runtime are not full fork inheritance.
   -> kpgmhdrld/kpgmld, ELF or PRG staging, kproc_set_image/load_begin/load_commit
      Loader owns layout, relocation, entry/stack/image metadata and error scope.
-     It records pending KASPACE or caller-staged UH_LOADED grant, not runnable VM.
+     It records pending KASPACE (the caller-staged UH_LOADED grant is gone, #1018).
   -> synchronous ordinary managed: ksched_exec -> run_group(prepare=TRUE)
   -> async/observed/deferred: ksched_process_prepare -> kproc_prepare_async_thread
   -> both: kproc_prepare_user_thread(pd,parent,&thread)
@@ -120,10 +122,13 @@ invariant check still follows loading; its old ordering needs separate review
 before claiming a general no-fail executable-replacement transaction. Do not
 reuse the isolated move-private mechanism on COW/shared pages for exec200.
 
-Implemented default-off shared-VM consumer (4/104)
-------------------------------------------------
-The following policy is implemented behind CONF_WITH_SHARED_VM_PEXEC_TEST;
-exact whole-consumer acceptance is recorded on PR956/#894. It does not authorize production use.
+Shared-VM consumer (4/104): the historical _TEST policy
+-------------------------------------------------------
+This section records the policy as first implemented behind the default-off
+CONF_WITH_SHARED_VM_PEXEC_TEST (acceptance on PR956/#894). Since #1018 the
+derived CONF_WITH_SHARED_VM_PEXEC makes 4/104 production on m68k kernels with
+user address spaces, the native scheduler and the PRG loader; the current mode
+contract is in pexec-legacy-modes.txt, not here.
 Use distinct PROCESS identities with the same retained KASPACE, not SAME_PROCESS.
 A loaded-image policy must authenticate the caller's PE_LOAD grant, retain
 image/stack/environment/basepage allocations and logical mappings through

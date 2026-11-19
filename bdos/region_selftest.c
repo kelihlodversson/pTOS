@@ -150,14 +150,14 @@ static void borrow_rollback(void)
      * subsequent failed TPA construction. It is reclaimed through the normal
      * canonical discard path before measuring failed loader transactions. */
     {
-        LONG pd=xexec(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty);
+        LONG pd=xexec_selftest(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty);
         REQUIRE(pd>0);proc_discard_scheduled((PD *)(uintptr_t)pd);
     }
     for(mode=0;mode<2;mode++) {
         PROCMEM_STATS start,finish;
         procmem_stats(&start);kheap_stats(&meta);free_ram=REGION_FREE_RAM();tables=aspace_table_pages(backend);
         aspace_test_borrow_failure(backend,mode);
-        REQUIRE(xexec(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty)==ENSMEM);
+        REQUIRE(xexec_selftest(PE_BASEPAGEFLAGS,(char *)PF_STANDARD,(char *)empty,(char *)empty)==ENSMEM);
         REQUIRE(aspace_test_borrow_pending(backend)==-1);
         aspace_test_borrow_failure(backend,-1);
         procmem_stats(&finish);kheap_stats(&after_meta);
@@ -218,70 +218,6 @@ static void retired_backing_bounds(KPROC *source)
     kcprintf("native retired reservation exact backing bounds: PASS\n");
 }
 
-static void held_staging_discard(KPROC *source)
-{
-    KPROC *child=NULL;
-    PD *pd;
-    void *environment;
-    KPROC_ALLOCATION_HOLD bp_hold={{0}},env_hold={{0}};
-    KASPACE_RESERVATION_INFO info;
-    KASPACE_RESERVATION_HOLD first={0},last={0},bp_view={0},env_view={0};
-    ASPACE *backend=kaspace_backend(kproc_active_space(source));
-    VADDR va,independent;
-    ULONG sentinel=0x894beefUL,readback=0;
-    REQUIRE(proc_create_clone_process(source,0,&child)==E_OK && child);
-    pd=kproc_live_pd(child); REQUIRE(pd);
-    REQUIRE(kproc_borrow(run,pd));
-    environment=USERPTR_TO_PTR(pd->p_env); REQUIRE(kproc_borrow(run,environment));
-    set_owner(pd,run); set_owner(environment,run);
-    set_owner(environment,NULL);
-    REQUIRE(!kproc_prepare_discard(child) && procmem_owner(pd)==run);
-    set_owner(environment,run); /* failed pair preflight changed neither owner */
-    REQUIRE(kproc_reservation_info(run,(VADDR)(uintptr_t)pd,sizeof(PD),&info)==EACCDN);
-    kproc_hand_over(run,pd);
-    REQUIRE(kproc_reservation_info(run,(VADDR)(uintptr_t)pd,sizeof(PD),&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(run,(VADDR)(uintptr_t)pd,sizeof(PD),info.identity,ASPACE_PROT_USER,&bp_view)==E_OK);
-    REQUIRE(kproc_reservation_info(run,(VADDR)(uintptr_t)environment,2,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(run,(VADDR)(uintptr_t)environment,2,info.identity,ASPACE_PROT_USER,&env_view)==E_OK);
-    REQUIRE(kproc_allocation_hold(run,pd,procmem_gen(pd),0,sizeof(PD),ASPACE_PROT_USER,&bp_hold)==E_OK);
-    REQUIRE(kproc_allocation_hold(run,environment,procmem_gen(environment),0,2,ASPACE_PROT_USER,&env_hold)==E_OK);
-    va=kproc_load_alloc(run,pd,2*PAGE,0); REQUIRE(va);
-    kproc_set_creator(pd,run);
-    REQUIRE(kproc_reservation_info(run,va,16,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(run,va,16,info.identity,ASPACE_PROT_USER,&first)==E_OK);
-    REQUIRE(kproc_reservation_duplicate(&first,&last)==E_OK);
-    pd->p_env=0; /* caller-writable PD cannot replace the recorded allocation owner */
-    proc_discard_scheduled(pd);
-    REQUIRE(!kproc_live_pd(child) && aspace_translate(backend,va,NULL,NULL));
-    REQUIRE(procmem_size(pd) && procmem_size(environment) && !procmem_owner(pd) && !procmem_owner(environment));
-    REQUIRE(!procmem_set_owner(pd,run));
-    REQUIRE(kproc_allocation_release(&bp_hold) && procmem_size(pd));
-    REQUIRE(kproc_allocation_release(&env_hold) && procmem_size(environment));
-    REQUIRE(kproc_reservation_release(&bp_view) && !procmem_size(pd));
-    REQUIRE(kproc_reservation_release(&env_view) && !procmem_size(environment));
-    independent=kproc_uheap_alloc(run,2*PAGE);
-    REQUIRE(independent && (independent+2*PAGE<=va || independent>=va+2*PAGE));
-#if CONF_WITH_DEMAND_PAGING
-    REQUIRE(kproc_demand_page(run,independent,ASPACE_PROT_WRITE)==1);
-#else
-    {
-        UWORD protection;
-        REQUIRE(kproc_demand_page(run,independent,ASPACE_PROT_WRITE)==0 &&
-                aspace_translate(backend,independent,NULL,&protection) &&
-                (protection&(ASPACE_PROT_USER|ASPACE_PROT_WRITE))==(ASPACE_PROT_USER|ASPACE_PROT_WRITE));
-    }
-#endif
-    REQUIRE(aspace_copy_to_user(backend,independent,&sentinel,sizeof(sentinel)));
-    REQUIRE(!kproc_ref_has_basepage(child));
-    REQUIRE(kproc_reservation_release(&first) && aspace_translate(backend,va,NULL,NULL));
-    REQUIRE(kproc_reservation_release(&last) && !aspace_translate(backend,va,NULL,NULL) &&
-            !aspace_translate(backend,va+PAGE,NULL,NULL));
-    REQUIRE(aspace_copy_from_user(backend,&readback,independent,sizeof(readback)) && readback==sentinel);
-    REQUIRE(kproc_uheap_alloc(run,2*PAGE)==va && kproc_uheap_free(run,va)==E_OK &&
-            kproc_uheap_free(run,independent)==E_OK);
-    kproc_release(child);
-}
-
 static void held_clone_compat_retirement(KPROC *source)
 {
     KPROC *child=NULL;
@@ -309,60 +245,13 @@ static void held_clone_compat_retirement(KPROC *source)
     kproc_release(child);
 }
 
-#if CONF_WITH_DEMAND_PAGING
-/* A discarded staged image has lost its live heap entry, but its exact
- * retirement fence must still exclude a new stack reservation and guard. */
-static void held_stack_growth(KPROC *source,PD *pd,VADDR image_address)
-{
-    KPROC *staging=NULL;
-    KASPACE_RESERVATION_INFO info;
-    KASPACE_RESERVATION_HOLD hold={0};
-    ASPACE *backend=kproc_user_aspace(pd);
-    VADDR va,prefix=0;
-    LONG old,grown,guard_only;
-    /* First-fit staging must lie ABOVE the existing image; otherwise its
-     * live image metadata correctly refuses growth before the fence test. */
-    if (image_address>USER_HEAP_BASE) {
-        prefix=kproc_uheap_alloc(pd,(LONG)(image_address-USER_HEAP_BASE));
-        REQUIRE(prefix==USER_HEAP_BASE);
-    }
-    REQUIRE(proc_create_clone_process(source,0,&staging)==E_OK && staging);
-    va=kproc_load_alloc(pd,kproc_live_pd(staging),2*PAGE,0);REQUIRE(va>=image_address+2*PAGE);
-    kproc_set_creator(kproc_live_pd(staging),pd);
-    REQUIRE(kproc_reservation_info(pd,va,2*PAGE,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(pd,va,2*PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&hold)==E_OK);
-    proc_dispose_process(staging);kproc_release(staging);
-    old=kproc_psetlimit(pd,PSETLIMIT_STACK,-1);
-    grown=(LONG)(USER_STACK_TOP-va-PAGE);
-    guard_only=(LONG)(USER_STACK_TOP-va-2*PAGE);
-    REQUIRE(old>0 && guard_only>old && grown>guard_only);
-    {
-        LONG result=kproc_psetlimit(pd,PSETLIMIT_STACK,grown);
-        if (result!=EACCDN) kcprintf("held stack growth va=%lx old=%lx grown=%lx result=%ld\n",
-                (unsigned long)va,(unsigned long)old,(unsigned long)grown,(long)result);
-        REQUIRE(result==EACCDN && kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==old);
-    }
-    REQUIRE(kproc_psetlimit(pd,PSETLIMIT_STACK,guard_only)==EACCDN &&
-            kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==old);
-    REQUIRE(aspace_translate(backend,va+PAGE,NULL,NULL));
-    REQUIRE(kproc_reservation_release(&hold) && !aspace_translate(backend,va+PAGE,NULL,NULL));
-    /* Successful growth after release proves this was the retired fence,
-     * rather than a live heap/stack collision. No page is materialized. */
-    REQUIRE(kproc_psetlimit(pd,PSETLIMIT_STACK,grown)==old &&
-            kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==grown &&
-            !aspace_translate(backend,va+PAGE,NULL,NULL));
-    REQUIRE(kproc_psetlimit(pd,PSETLIMIT_STACK,old)==grown &&
-            kproc_psetlimit(pd,PSETLIMIT_STACK,-1)==old);
-    if (prefix) REQUIRE(kproc_uheap_free(pd,prefix)==E_OK);
-}
-#endif
 
 void kproc_region_selftest(void)
 {
     static BOOL tested;
     KSCHED_CLEANUP_SCOPE scope={0};
     FS_ERROR_STATE error;
-    KPROC *source, *owner=NULL, *orphan_stage=NULL;
+    KPROC *source, *owner=NULL;
     PD *pd;
     void *env;
     ASPACE *backend;
@@ -371,9 +260,9 @@ void kproc_region_selftest(void)
     KPROC_ALLOCATION_HOLD raw={{0}}, raw_copy={{0}};
     KASPACE_RESERVATION_INFO info;
     KASPACE_RESERVATION_HOLD base={0}, environment={0}, environment_other={0}, stack={0}, copy={0}, image={0};
-    KASPACE_RESERVATION_HOLD staged={0},broad={0},data={0},orphan_hold={0};
+    KASPACE_RESERVATION_HOLD data={0};
     PROG_LAYOUT layout;
-    VADDR image_address,orphan_address;
+    VADDR image_address;
     ULONG records, value=0x8941234UL;
     VADDR stack_page=USER_STACK_TOP-PAGE;
 #if CONF_WITH_PRIVATE_CLONE
@@ -404,7 +293,6 @@ void kproc_region_selftest(void)
     owner_copy_operation();
 #endif
     retired_backing_bounds(source);
-    held_staging_discard(source);
     held_clone_compat_retirement(source);
     REQUIRE(proc_create_clone_process(source,0,&owner)==E_OK && owner);
     pd=kproc_live_pd(owner); REQUIRE(pd);
@@ -413,20 +301,17 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_borrow(run,pd));
     env=USERPTR_TO_PTR(pd->p_env);
     REQUIRE(kproc_borrow(run,env));
-    /* Exercise the real staged-loader allocation/move primitives. These zero
-     * pages are NEVER executed; this is ownership proof, not Pexec4 evidence. */
-    image_address=kproc_load_alloc(run,pd,2*PAGE,0); REQUIRE(image_address);
+    /* The canonical loader primitives of Pexec(0/100/200): the image's pages
+     * in the new process's own pending address space, adopted by the launch
+     * preparation. These zero pages are NEVER executed; this is ownership
+     * proof only. */
+    image_address=USER_IMAGE_BASE;
+    REQUIRE(kproc_load_begin(pd,image_address,2*PAGE+USER_IMAGE_SLACK));
     memset(&layout,0,sizeof(layout));
     layout.nseg=2; layout.entry=image_address; layout.end=image_address+2*PAGE;
     layout.seg[0].vaddr=image_address; layout.seg[0].memsz=PAGE; layout.seg[0].flags=5;
     layout.seg[1].vaddr=image_address+PAGE; layout.seg[1].memsz=PAGE; layout.seg[1].flags=6;
-    REQUIRE(kproc_set_moved_image(pd,&layout,run,image_address,2));
-    kproc_set_creator(pd,run);
-    REQUIRE(kproc_reservation_info(run,image_address,PAGE,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(run,image_address,PAGE,info.identity,ASPACE_PROT_USER,&staged)==E_OK);
-    REQUIRE(!kproc_allocation_disposal_allowed(pd) && kproc_check_launch(pd,run)==EACCDN);
-    REQUIRE(!kproc_prepare_user(pd,run) && !kproc_user_aspace(pd) && kproc_live_pd(owner)==pd);
-    REQUIRE(kproc_reservation_release(&staged));
+    REQUIRE(kproc_set_loaded_image(pd,&layout));
     REQUIRE(kproc_prepare_user(pd,run));
     kproc_unborrow(env); kproc_unborrow(pd);
     space=kproc_active_space(owner); backend=kaspace_backend(space);
@@ -439,23 +324,15 @@ void kproc_region_selftest(void)
     REQUIRE(kproc_reservation_duplicate(&environment,&environment_other)==E_OK);
     REQUIRE(kproc_allocation_hold(pd,env,procmem_gen(env),0,2,ASPACE_PROT_USER,&raw)==E_OK);
     REQUIRE(!procmem_free(env));
-    /* Broad READ first must not hide RX/RW subrange permissions. */
-    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(pd,image_address,2*PAGE,info.identity,ASPACE_PROT_USER,&broad)==E_OK);
+    /* Each loaded segment keeps its own rights: RX text, RW data. A range
+     * spanning both is not one reservation of a loaded image. */
+    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)!=E_OK);
     REQUIRE(kproc_reservation_info(pd,image_address,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,image_address,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_EXEC,&image)==E_OK);
     REQUIRE(kproc_reservation_info(pd,image_address+PAGE,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,image_address+PAGE,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&data)==E_OK);
-    REQUIRE(kproc_reservation_release(&broad));
-    /* And the opposite order must preserve the same rights. */
-    REQUIRE(kproc_reservation_info(pd,image_address,2*PAGE,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(pd,image_address,2*PAGE,info.identity,ASPACE_PROT_USER,&broad)==E_OK);
-    REQUIRE(kproc_reservation_release(&broad));
     REQUIRE(kproc_reservation_info(pd,stack_page,PAGE,&info)==E_OK);
     REQUIRE(kproc_reservation_hold(pd,stack_page,PAGE,info.identity,ASPACE_PROT_USER|ASPACE_PROT_WRITE,&stack)==E_OK);
-#if CONF_WITH_DEMAND_PAGING
-    held_stack_growth(source,pd,image_address);
-#endif
 #if CONF_WITH_MMAP
     a=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     b=kproc_mmap(pd,0,PAGE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
@@ -514,21 +391,11 @@ void kproc_region_selftest(void)
         }
     }
 #endif
-    REQUIRE(proc_create_clone_process(source,0,&orphan_stage)==E_OK && orphan_stage);
-    orphan_address=kproc_load_alloc(pd,kproc_live_pd(orphan_stage),2*PAGE,0); REQUIRE(orphan_address);
-    kproc_set_creator(kproc_live_pd(orphan_stage),pd);
-    REQUIRE(kproc_reservation_info(pd,orphan_address,16,&info)==E_OK);
-    REQUIRE(kproc_reservation_hold(pd,orphan_address,16,info.identity,ASPACE_PROT_USER,&orphan_hold)==E_OK);
     REQUIRE(kaspace_retire_borrow(space,(VADDR)(uintptr_t)env,procmem_size(env)));
     REQUIRE(kaspace_retire_borrow(space,(VADDR)(uintptr_t)env,2));
     REQUIRE(kaspace_retire_borrow(space,(VADDR)(uintptr_t)env,8));
     proc_dispose_process(owner);
     REQUIRE(!kproc_live_pd(owner));
-    REQUIRE(aspace_translate(backend,orphan_address,NULL,NULL));
-    proc_dispose_process(orphan_stage); kproc_release(orphan_stage);
-    REQUIRE(kproc_reservation_release(&orphan_hold) &&
-            !aspace_translate(backend,orphan_address,NULL,NULL) &&
-            !aspace_translate(backend,orphan_address+PAGE,NULL,NULL));
     REQUIRE(!kaspace_reservation_info(space,(VADDR)(uintptr_t)env+PAGE-2,2,&info));
     REQUIRE(kproc_allocation_duplicate(&raw,&raw_copy)==E_OK);
     REQUIRE(kproc_allocation_release(&raw));

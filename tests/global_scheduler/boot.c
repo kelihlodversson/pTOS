@@ -40,7 +40,7 @@ static void write_log(void)
 }
 int main(void)
 {
-    long pid,fd,loaded,result;
+    long pid,fd,result;
     unsigned long start;
     char tail[]={0,0};
     if(_base->p_cmdlin[0] && _base->p_cmdlin[1]=='w') { Pterm(23); return 99; }
@@ -70,26 +70,10 @@ int main(void)
         REQUIRE(Pwaitpid((short)data[2],1,0)==-33L,11); /* orphan is not this PROCESS's zombie */
         /* The existing authoritative wait handles both early and late completion. */
         tail[0]=1; tail[1]='w';
-        loaded=Pexec(3,"C:\\GLOBALCH.TOS",tail,0); REQUIRE(loaded>0,12);
-        pid=Pexec(106,0,(void *)(uintptr_t)loaded,0); REQUIRE(pid>0,13);
-        (void)Syield(); result=Pwaitpid((short)pid,0,0);
-        REQUIRE((unsigned long)result==((unsigned long)pid<<16|23) && Pwaitpid((short)pid,1,0)==-33L,14);
         pid=Pexec(100,"C:\\GLOBALCH.TOS",tail,0); REQUIRE(pid>0,15);
         result=Pwaitpid((short)pid,0,0);
         REQUIRE((unsigned long)result==((unsigned long)pid<<16|23) && Pwaitpid((short)pid,1,0)==-33L,16);
-        /* Force a real basepage identity retirement/reuse under the same
-         * loader policy, rather than assuming which hole a different image
-         * will receive. The old orphan is never this replacement's child. */
-        {
-            BASEPAGE *first,*replacement;
-            loaded=Pexec(3,"C:\\GLBSRC.TOS",tail,0); REQUIRE(loaded>0,26);
-            first=(BASEPAGE *)(uintptr_t)loaded;
-            REQUIRE(Mfree(first->p_env)==0 && Mfree(first)==0,24);
-            loaded=Pexec(3,"C:\\GLBSRC.TOS",tail,0); REQUIRE(loaded>0,27);
-            replacement=(BASEPAGE *)(uintptr_t)loaded;
-            REQUIRE(first==replacement && Pwaitpid((short)data[2],1,0)==-33L,9);
-            REQUIRE(Mfree(replacement->p_env)==0 && Mfree(replacement)==0,25);
-        }
+        REQUIRE(Pwaitpid((short)data[2],1,0)==-33L,9); /* still not this PROCESS's */
         fd=Fopen("C:\\GLOBAL0.ON",0); REQUIRE(fd>=0,17); (void)Fclose(fd);
         fd=Fcreate("C:\\GLOBALOK.ON",0); REQUIRE(fd>=0,18); (void)Fclose(fd);
         (void)Cconws("native public global launcher-return/later-entry/PD-reuse: PASS\r\n");

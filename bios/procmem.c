@@ -451,7 +451,7 @@ void procmem_stats(PROCMEM_STATS *stats)
 
 #endif /* CONF_WITH_PROCMEM */
 
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 #include "shared_pexec_test.h"
 void procmem_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
 {

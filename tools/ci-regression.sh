@@ -63,6 +63,13 @@ case $machine in
         # tables per process (#568, #570)
         config=virt-m68k-aspace
         ;;
+    virt-m68k-aspace-defconfig)
+        # the same configuration exactly as shipped: virt-m68k-aspace above
+        # adds test profiles to it, so this is the only run of the suite
+        # (shared-VM Pexec included, #1018) with the defconfig's own options
+        config=virt-m68k-aspace
+        script_machine=virt-m68k-aspace
+        ;;
     virt-arm-aspace)
         config=virt-arm-aspace
         script_machine=virt-arm
@@ -75,7 +82,7 @@ case $machine in
         config=pc-x86_64-desktop
         ;;
     *)
-        echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, raspi2b-aspace, pc-x86_64)" >&2
+        echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace, virt-m68k-aspace-defconfig, virt-arm-aspace, raspi2b-aspace, pc-x86_64)" >&2
         exit 2
         ;;
 esac
@@ -118,14 +125,17 @@ if os.environ.get('EXEC_HANDOFF_TEST') == '1':
     for required in ('CONF_WITH_EXEC_REPLACEMENT_TEST', 'CONF_WITH_EXEC_HANDOFF_TEST'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
-if os.environ.get('SHARED_VM_PEXEC_TEST') == '1':
-    config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].set_value(2)
-    assert config.syms['CONF_WITH_SHARED_VM_PEXEC_TEST'].str_value == 'y'
-    for required in ('CONF_WITH_IMAGE_POLICY', 'CONF_WITH_IMAGE_POLICY_TEST'):
-        config.syms[required].set_value(2)
-        assert config.syms[required].str_value == 'y', required
-    config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].set_value(2)
-    assert config.syms['CONF_WITH_PRIVATE_SNAPSHOT_TEST'].str_value == 'y'
+if os.environ.get('SHARED_VM_PEXEC') == '1':
+    # m68k MMU kernels only (#1018); derived, never forced.
+    assert config.syms['CONF_WITH_SHARED_VM_PEXEC'].str_value == 'y'
+if os.environ.get('SHARED_VM_PEXEC') == '1' or os.environ.get('EXEC_STAGING_PROFILE') == '1':
+    config.syms['CONF_WITH_IMAGE_POLICY'].set_value(2)
+    assert config.syms['CONF_WITH_IMAGE_POLICY'].str_value == 'y'
+    # These two exercise shared-VM Pexec: m68k MMU kernels only (#1018).
+    shared = config.syms['CONF_WITH_SHARED_VM_PEXEC'].str_value == 'y'
+    for required in ('CONF_WITH_IMAGE_POLICY_TEST', 'CONF_WITH_PRIVATE_SNAPSHOT_TEST'):
+        config.syms[required].set_value(2 if shared else 0)
+        assert config.syms[required].str_value == ('y' if shared else 'n'), required
     for required in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_MMAP'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
@@ -152,15 +162,15 @@ if [ "$traditional_fat" = true ]; then
 fi
 make $make_args 2>&1 | tee -a build.log
 tools/check-build-warnings.sh build.log
-if [ "${SHARED_VM_PEXEC_TEST:-0}" = 1 ]; then
-    for symbol in CONF_WITH_SHARED_VM_PEXEC_TEST CONF_WITH_ELF_SHARED CONF_WITH_MMAP \
+if [ "${SHARED_VM_PEXEC:-0}" = 1 ]; then
+    for symbol in CONF_WITH_SHARED_VM_PEXEC CONF_WITH_ELF_SHARED CONF_WITH_MMAP \
                   CONF_WITH_PRIVATE_CLONE_TEST CONF_WITH_NATIVE_SCHED CONF_WITH_PCLONE; do
         grep -q "^#define $symbol 1$" obj/autoconf.h || {
             echo "positive shared-Pexec configuration missing effective $symbol" >&2
             exit 2
         }
     done
-    echo 'positive shared-Pexec effective gates: shared/interpreter/mmap/private-test/scheduler/clone=1'
+    echo 'shared-VM Pexec effective gates: shared/mmap/private-test/scheduler/clone=1'
 fi
 make $make_args test-dir
 

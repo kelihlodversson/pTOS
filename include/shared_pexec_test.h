@@ -22,8 +22,8 @@ typedef struct { uint64_t count[SP_COUNT]; } SHARED_PEXEC_SNAPSHOT;
 #define SHARED_PEXEC_DEPENDENCY_FAIL 0xc8940c00UL
 #define SHARED_PEXEC_DEPENDENCY_STEPS 0xc8940d00UL
 typedef struct { uint32_t image,result,pending,tid_before,tid_after; } SHARED_PEXEC_PROTECTED;
-#if defined(CONF_WITH_SHARED_VM_PEXEC_TEST)
-#if CONF_WITH_SHARED_VM_PEXEC_TEST && CONF_WITH_PRIVATE_CLONE_TEST
+#if defined(CONF_WITH_SHARED_VM_PEXEC)
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 struct aspace;
 void procmem_shared_snapshot(SHARED_PEXEC_SNAPSHOT *);
 void aspace_shared_snapshot(const struct aspace *,SHARED_PEXEC_SNAPSHOT *);

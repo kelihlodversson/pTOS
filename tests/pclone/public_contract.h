@@ -528,54 +528,49 @@ static void test_public_contract(unsigned char *stack)
     phase1_account("anchored",baseline);
 #undef PHASE1_SMALL_PROBE
     {
+        /* The image's own text must pass the native Pclone policy, from its
+         * loader PROCESS, a CLONE_VM child and an orphan after the owner has
+         * gone. #1018: a 68k PRG build stages it with mode 3 and starts it
+         * with mode 106; elsewhere (no staged modes, or an ELF image) the
+         * same image starts with Pexec(100). */
         static const char tail[] = "\14--abi-staged";
-        long image, child, status, report;
+        long child, status, report;
         struct phase1_policy_report unpublished;
-        unsigned format;
-        for (format = 0; format <
-#if defined(__mc68000__) && defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
-             2
+#if defined(TEST_WITH_LEGACY_PEXEC) && defined(TEST_IS_PRG)
+        long image;
+        phase1_policy_file = PHASE1_POLICY_PRG;
 #else
-             1
+        phase1_policy_file = PHASE1_POLICY_ELF;
 #endif
-             ; format++) {
-#if defined(__mc68000__) && defined(TEST_IS_PRG) && !defined(TEST_WITH_ELF_LOADER)
-            phase1_policy_file = PHASE1_POLICY_PRG;
-#else
-            phase1_policy_file = format ? PHASE1_POLICY_PRG : PHASE1_POLICY_ELF;
-#endif
-            report = Fcreate(phase1_policy_file,0);
-            /* Every opener must see the full record size before the orphan
-             * can run; an early empty-file handle can otherwise close with a
-             * stale size while another handle publishes the source header. */
-            memset(&unpublished,0,sizeof(unpublished));
-            ptest_assert_msg(report >= 6 && Fwrite(report,sizeof(unpublished),&unpublished)==sizeof(unpublished) &&
-                             Fclose(report) == 0,"prepare full unpublished orphan policy report");
-            ptest_log_flush();
-#if defined(__mc68000__) && defined(TEST_WITH_ELF_LOADER)
-            image = Pexec(3,format ?
+        report = Fcreate(phase1_policy_file,0);
+        /* Every opener must see the full record size before the orphan
+         * can run; an early empty-file handle can otherwise close with a
+         * stale size while another handle publishes the source header. */
+        memset(&unpublished,0,sizeof(unpublished));
+        ptest_assert_msg(report >= 6 && Fwrite(report,sizeof(unpublished),&unpublished)==sizeof(unpublished) &&
+                         Fclose(report) == 0,"prepare full unpublished orphan policy report");
+        ptest_log_flush();
+#if defined(TEST_WITH_LEGACY_PEXEC) && defined(TEST_IS_PRG)
+        image = Pexec(3,
 #if defined(TEST_WITH_IMAGE_POLICY_TEST)
-                          "C:\\IMAGEPOL.TOS"
+                      "C:\\IMAGEPOL.TOS",
 #else
-                          "C:\\RUNTESTS.TOS"
+                      "C:\\RUNTESTS.TOS",
 #endif
-                          : "C:\\CLNABI.TOS",tail,0);
+                      tail,0);
+        ptest_assert_msg(image > 0,"stage a PRG in loader-owned memory");
+        child = image > 0 ? Pexec(106,0,(void *)image,0) : 0;
 #else
-            image = Pexec(3,"C:\\RUNTESTS.TOS",tail,0);
+        child = Pexec(100,"C:\\RUNTESTS.TOS",tail,0);
 #endif
-            ptest_assert_msg(image > 0,"stage executable in loader-owned heap");
-            if (image > 0) {
-                child = Pexec(106,0,(void *)image,0);
-                ptest_assert_msg(child > 0,"publish staged executable through existing async loader");
-                if (child > 0) {
-                    status = Pwaitpid(child,0,0);
-                    if((status>>16)!=child || (status&65535))
-                        printf("staged policy format=%u pid=%ld status=%ld\r\n",format,child,status);
-                    ptest_assert_msg((status >> 16) == child && !(status & 65535),
-                                     "staged executable validates native Pclone text and zero return");
-                    if ((status >> 16) == child && !(status & 65535)) phase1_policy_observe(child);
-                }
-            }
+        ptest_assert_msg(child > 0,"publish the policy image as an asynchronous child");
+        if (child > 0) {
+            status = Pwaitpid(child,0,0);
+            if((status>>16)!=child || (status&65535))
+                printf("staged policy pid=%ld status=%ld\r\n",child,status);
+            ptest_assert_msg((status >> 16) == child && !(status & 65535),
+                             "the image validates native Pclone text and returns zero");
+            if ((status >> 16) == child && !(status & 65535)) phase1_policy_observe(child);
         }
     }
     phase1_account("staged",baseline);

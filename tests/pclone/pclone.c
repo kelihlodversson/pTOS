@@ -2099,36 +2099,6 @@ void test_pclone(void)
             ptest_assert_msg((status>>16)==child && !(status&65535),"immutable image-policy companion passes");
             ptest_assert_msg(Pwaitpid(child,1,0)<0,"immutable image-policy companion reaped once");
         }
-        /* Measure the entire moved source/child lifetime: a live source may
-         * retain exclusive COW metadata until its next write or retirement. */
-        {
-            SHARED_PEXEC_SNAPSHOT before,after;
-            long loaded;
-            int cycle,index,conserved=1;
-            for(cycle=0;cycle<3;cycle++) {
-                ptest_log_flush();memset(&before,0,sizeof(before));memset(&after,0,sizeof(after));
-                if(pclone_trap(&before,SHARED_PEXEC_SNAPSHOT_QUERY)!=0) conserved=0;
-                loaded=Pexec(3,"IMAGEPOL.TOS","",0);
-                ptest_assert_msg(loaded>0,"load moved private-image companion");
-                if(loaded>0) {
-                    child=Pexec(106,0,(void *)loaded,0);
-                    ptest_assert_msg(child>0,"start independently owned moved image");
-                    if(child>0) {
-                        status=Pwaitpid(child,0,0);
-                        ptest_assert_msg((status>>16)==child && !(status&65535),"moved image private clone execution passes");
-                    } else {
-                        (void)Mfree(((BASEPAGE *)loaded)->p_env);(void)Mfree((void *)loaded);
-                    }
-                }
-                if(pclone_trap(&after,SHARED_PEXEC_SNAPSHOT_QUERY)!=0) conserved=0;
-                if(cycle>=1) for(index=0;index<SP_COUNT;index++)
-                    if(before.count[index]!=after.count[index]) {
-                        printf("moved image lifetime counter %d: %lu -> %lu\r\n",index,
-                            (unsigned long)before.count[index],(unsigned long)after.count[index]);conserved=0;
-                    }
-            }
-            ptest_assert_msg(conserved,"moved source/child complete lifetimes conserve every resource counter");
-        }
 #endif
 #if defined(TEST_WITH_EXEC_HANDOFF_TEST)
         ptest_log_flush();

@@ -50,7 +50,12 @@ void test_gemdos_pointers(void)
 
     /* Pexec(mode, path, tail, env): the path of mode 0, the tail of mode 5 */
     ptest_assert_msg(Pexec(0, (void *)0, "", (void *)0) == EIMBA, "Pexec(path NULL) was not refused");
+#ifdef TEST_WITH_STAGED_PEXEC
     ptest_assert_msg(Pexec(5, (void *)0, (void *)0, (void *)0) == EIMBA, "Pexec(tail NULL) was not refused");
+#else
+    /* #1018: MMU ARM and x32 have no staged modes: refused before a pointer is read */
+    ptest_assert_msg(Pexec(5, (void *)0, (void *)0, (void *)0) == -32L, "Pexec(5) was not refused with EINVFN");
+#endif
 
     /* and a good pointer still works */
     ptest_assert_msg(Dgetpath(path, 0) == 0, "Dgetpath() with a buffer failed");

@@ -36,16 +36,18 @@ claim those operations for nested continuations.
 
 Unannotated Malloc/Mmap uses common GENERAL membership, including existing and
 future allocations, so surviving peers keep a departed creator's allocations.
-Explicit test-gated MAP_PTOS_RUNTIME annotation selects runtime-owned DSO maps;
-loaded execution has a fresh runtime scope and exact source-owned dependencies.
-Generic CLONE_VM inherits compatible current/future runtime membership. A raw
-shared pointer alone never exports lifetime across runtime scopes. Trusted exact
+(#1018 removed the test-gated MAP_PTOS_RUNTIME annotation and runtime scopes
+with shared-VM GO of ELF images: every mapping is in the PROCESS allocation
+scope.) A raw shared pointer alone never exports lifetime. Trusted exact
 birth/interval attachment must precede source release. Lifetime is neither
 memory access nor immutable permission authority. See shared-vm-pexec.txt for
 FreeMiNT primary-source references and the explicit public-activation boundary.
 
 Criterion / production owner / evidence index
 ---------------------------------------------
+(#1018: the shared-VM fixtures this index names as pie_load are now the
+shared_vm suite, tests/shared_vm/; the interpreter, DSO and RELRO ones were
+removed with shared-VM GO of ELF images.)
 Distinct PROCESS/PID, THREAD/TID, common ASPACE,4 full16/104 PID:
   shared_vm_exec.c/proc_clone.c; pie_load basic/status/source-origin fixtures.
 Parent-first, child-first, multiple living children, orphan grandchild,
@@ -98,7 +100,8 @@ Private protected-query diagnostic copyout after its blocking mode4 execution:
   non-consumption contract, which remains unchanged. No output lease is implied
   by preflight and no new pin, rollback or second reap is introduced.
 Independent CUIS CH_EXIT and GUI shell/controller/deferred completion:
-  gated tests/cuis/gem_exit.c plus required test-mmap-boot marker; positive
+  gated tests/cuis/gem_exit.c plus required test-mmap-boot marker (its
+  staged-mode synchronous checks were removed with those modes in #1018); positive
   full MEMTEST/GEM/form/input CI step is distinct from gate-off compatibility.
 Static/standard interpreted ELF, PRG/fastcall,0/3/6/100/106, nested/deferred/
 observed and ROM/non-MMU execution; missing/malformed interpreter/executable:

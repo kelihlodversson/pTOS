@@ -24,6 +24,9 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+long xexec_selftest(WORD, char *, char *, char *);
+#endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
@@ -98,11 +101,6 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename);
  */
 LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign);
 LONG elf_pgmld(FH h, PD *p);
-#if CONF_WITH_USER_ASPACE
-/* whether the next ELF load is Pexec(PE_LOAD), whose image goes into the
- * caller's heap instead of waiting for the launch */
-void elf_set_load_into_caller(BOOL wanted);
-#endif
 #endif
 
 #if DETECT_NATIVE_FEATURES

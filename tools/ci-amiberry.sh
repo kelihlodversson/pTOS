@@ -143,22 +143,30 @@ PYCONFIG
 
     # (the Zorro II fast RAM of the configuration answers only if the ROM has
     # configured the board, which is autoconfig through the I/O window)
+    # A booted ROM is idle nearly all the time, but one PC sample at a fixed
+    # wall-clock time can land in work still in progress (a slow runner may
+    # still be drawing the desktop at 15 s): take up to ten samples a second
+    # apart, and ask that one of them be idle.
+    set -- --cmd GET_CPU_REGS
+    for n in 2 3 4 5 6 7 8 9 10; do
+        set -- "$@" --cmd "SLEEP 1" --cmd GET_CPU_REGS
+    done
     python3 tools/run-amiberry.py --rom ptos-amiga.rom --cpu "$cpu" --wait 15 \
-        --cmd GET_CPU_REGS --cmd "WRITE_MEM 0x300000 4 305419896" \
+        "$@" --cmd "WRITE_MEM 0x300000 4 305419896" \
         --cmd "READ_MEM 0x300000 4" --screenshot "logs/$name.png" >"logs/$name.log" 2>&1
-    pc=$(sed -n 's/^PC=\([0-9A-Fa-f]*\)$/\1/p' "logs/$name.log" | head -1)
+    pcs=$(sed -n 's/^PC=\([0-9A-Fa-f]*\)$/\1/p' "logs/$name.log" | tr '\n' ' ')
     fastram=$(sed -n '/^> READ_MEM 0x300000 4/{n;n;p}' "logs/$name.log" | head -1)
 
-    # the PC is within the loop of stop_until_interrupt (a few instructions)
-    ok=$(python3 -c "
-import sys
-pc = int('${pc:-0}', 16); idle = int('$idle', 16)
-print(1 if idle <= pc < idle + 0x40 else 0)")
+    # the first sample within the loop of stop_until_interrupt (a few instructions)
+    pc=$(python3 -c "
+idle = int('$idle', 16)
+print(next((p for p in '$pcs'.split() if idle <= int(p, 16) < idle + 0x40), ''))")
+    ok=0; [ -z "$pc" ] || ok=1
     if [ "$fastram" != 305419896 ]; then
         echo "::error::$name: the Zorro II fast RAM does not answer (the board was not configured): read ${fastram:-nothing}"
         failed="$failed $name"
     elif [ "$ok" != 1 ]; then
-        echo "::error::$name: not idle in the kernel: PC=${pc:-?}, stop_until_interrupt at $idle"
+        echo "::error::$name: not idle in the kernel: PC samples ${pcs:-?}, stop_until_interrupt at $idle"
         cat "logs/$name.log"
         failed="$failed $name"
     elif grep -q 'CONF_AMIGA_HIGHER_HALF=y' .config \

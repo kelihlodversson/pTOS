@@ -44,6 +44,11 @@ void kthread_clone_commit(KTHREAD *thread, void *resource, void (*reclaim)(void 
  * Failure leaves *hold owned by caller. Reap releases it only after backend
  * execution resources are safely reclaimed. No start capability is granted. */
 BOOL kthread_take_stack_hold(KTHREAD *thread, struct kaspace_lease **hold);
+#if CONF_WITH_SHARED_VM_PEXEC
+/* Shared-VM Pexec 4/104 (#1018): the thread starts, as on FreeMiNT, on a
+ * stack at the top of its TPA that it may Mshrink() away; nothing holds it. */
+BOOL kthread_use_tpa_stack(KTHREAD *thread);
+#endif
 BOOL kthread_is_executing(const KTHREAD *thread);
 /* On the resumed launcher stack, after abandoning the child syscall stack:
  * detach this thread, retaining its identity/ASPACE/execution resource until

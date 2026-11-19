@@ -34,6 +34,10 @@
 #if DETECT_NATIVE_FEATURES
 #define PE_RELOCATE   50    /* required for NatFeats support only, not in Atari TOS */
 #endif
+/* Set in the mode by the kernel's own requests (basepages for, and starts of,
+ * code it carries; the AES accessory loader): never accepted from a process
+ * with a user address space (doc/pexec-legacy-modes.txt). */
+#define PE_KERNEL     0x4000
 
 /* File Attributes bits used by FAT and Fsfirst() / Fattrib() */
 #define FA_RO           0x01
