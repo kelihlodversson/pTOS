@@ -253,8 +253,11 @@ completed:
     conws(bad?"native captured ancestor-stack private snapshot: FAIL\r\n":
                "native captured ancestor-stack private snapshot after source exit, both write orders: PASS\r\n");
     {
-        long fd=Fcreate("CAPDONE.DAT",0),result=bad;
-        if(fd>=0) {(void)Fwrite((short)fd,sizeof(result),&result);(void)Fclose((short)fd);}
+        long fd=Fcreate("C:\\CAPDONE.DAT",0),result=bad;
+        if(fd>=0) {
+            long wrote=Fwrite((short)fd,sizeof(result),&result),closed=Fclose((short)fd);
+            if(wrote!=sizeof(result) || closed)printf("captured report fd=%ld wrote=%ld closed=%ld\r\n",fd,wrote,closed);
+        }else printf("captured report create=%ld\r\n",fd);
     }
     Pterm(bad?74:73);
 }
@@ -293,7 +296,7 @@ static void test_captured_snapshot(void)
     memset(stack,0,32768);memset(captured_probe.peer_stack,0,32768);memset(captured_probe.child_stack,0,32768);
     args.flags=CLONE_VM|CLONE_COPY_STANDARD_HANDLES;args.entry=captured_creator;
     args.stack_base=stack;args.stack_size=32768;
-    (void)Fdelete("CAPDONE.DAT");
+    (void)Fdelete("C:\\CAPDONE.DAT");
     child=pclone_trap(&args,0xc8920000UL|sizeof(args));
     ptest_assert_msg(child>0,"independent captured-stack source publishes");
     if(child>0) {
@@ -307,13 +310,14 @@ static void test_captured_snapshot(void)
              * Its result fence ends all fault-injection windows before this
              * driver starts the next global allocation-failure fixture. */
             for(attempt=0;attempt<2000;attempt++) {
-                long fd=Fopen("CAPDONE.DAT",0),bytes=0;
+                long fd=Fopen("C:\\CAPDONE.DAT",0),bytes=0;
                 if(fd>=0) {bytes=Fread((short)fd,sizeof(result),&result);(void)Fclose((short)fd);}
                 if(bytes==sizeof(result)) {complete=1;break;}
                 (void)Syield();
             }
+            if(!complete || result)printf("captured result complete=%d result=%lx attempts=%d\r\n",complete,(unsigned long)result,attempt);
             ptest_assert_msg(complete && !result,"orphan completes both snapshot write orders before another fault injector starts");
-            ptest_assert_msg(Fdelete("CAPDONE.DAT")==0,"retire captured-snapshot result fence");
+            ptest_assert_msg(Fdelete("C:\\CAPDONE.DAT")==0,"retire captured-snapshot result fence");
             (void)Syield();
         }
     }
@@ -1928,7 +1932,12 @@ static void test_runnable(void)
     result = launch_probe(CLONE_VM|CLONE_SAME_PROCESS,2,&pid,&other_tid);
     ptest_assert_msg(result == other_tid && other_tid > 0 && other_tid != tid,
                      "native siblings must have independent TIDs");
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_PTHJOIN)
+    ptest_assert_msg(join_tid(tid,0)==0 && join_tid(other_tid,0)==0,
+                     "timer-dispatched siblings complete through exact TID joins");
+#else
     for (cycle = 0; cycle < 128 && probe.steps < 24; cycle++) (void)Syield();
+#endif
     ptest_assert_msg(probe.steps == 24,"native siblings did not progress");
     /* Each increments before its final yield; let both return and root reap. */
     (void)Syield(); (void)Syield();
