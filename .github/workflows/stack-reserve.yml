@@ -1,0 +1,78 @@
+name: Stack reserve
+
+on:
+  pull_request:
+    # The feature base keeps the stacked #1036 check active before #1034 merges.
+    branches: [master, "epic/**", feature/m68k-lra-kconfig]
+  push:
+    branches: [master, "epic/**"]
+  schedule:
+    - cron: '21 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  parser:
+    name: Stack parser and failure boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/test-stack-reserve.py
+
+  measure:
+    name: Stack ${{ matrix.profile }} LRA ${{ matrix.lra }}
+    needs: parser
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [stack-o2, fastcall-o2, fastcall-os-lto, stack-o2-lto]
+        lra: ["off", "on"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+      - uses: ./.github/actions/setup-hatari
+      - name: Install the configuration front end
+        run: |
+          python3 -m venv /tmp/stack-venv
+          /tmp/stack-venv/bin/pip install kconfiglib==14.1.0
+      - name: Exercise stack budgets
+        env:
+          COVERAGE: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
+          PROFILE: ${{ matrix.profile }}
+          LRA: ${{ matrix.lra }}
+        run: |
+          PATH=/tmp/stack-venv/bin:$PATH python3 tools/ci-stack-reserve.py \
+            --profile "$PROFILE" --lra "$LRA" --coverage "$COVERAGE" --out stack-results
+      - name: Keep stack evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-${{ matrix.profile }}-lra-${{ matrix.lra }}
+          path: stack-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  stack-reserve:
+    name: Stack reserve
+    needs: [parser, measure]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require parser and all instrumented profiles
+        env:
+          PARSER: ${{ needs.parser.result }}
+          MEASUREMENTS: ${{ needs.measure.result }}
+        run: |
+          test "$PARSER" = success && test "$MEASUREMENTS" = success
