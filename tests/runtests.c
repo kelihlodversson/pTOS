@@ -16,6 +16,9 @@ void pclone_run_managed_tests(void);
 void pclone_run_unmanaged_tests(void);
 void pclone_run_staged_tests(void);
 long pclone_run_anchored_probe(void);
+#if defined(TEST_WITH_IRQ_RESTART)
+long pclone_run_irq_image(int role);
+#endif
 #endif
 
 #if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
@@ -61,6 +64,14 @@ int main(void)
         Pterm((short)status);
         return (int)status;
     }
+#if defined(TEST_WITH_IRQ_RESTART)
+    if ((unsigned char)_base->p_cmdlin[0]==7 && !memcmp(_base->p_cmdlin+1,"--irq ",6) &&
+        _base->p_cmdlin[7] && strchr("ARN",_base->p_cmdlin[7])) {
+        long status=pclone_run_irq_image(_base->p_cmdlin[7]);
+        Pterm((short)status);
+        return (int)status;
+    }
+#endif
 #endif
 
     conws("pTOS regression tests\r\n\r\n");

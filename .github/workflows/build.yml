@@ -624,6 +624,38 @@ jobs:
             obj/autoconf.h
           retention-days: 14
 
+  hatari-irq-restart:
+    name: Native B2 IRQ on Hatari ${{ matrix.mode }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [f030a, f040a, tt040a]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+      - uses: ./.github/actions/setup-hatari
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: dosfstools mtools
+      - name: Exercise gated IRQ return on the actual MMU CPU
+        run: |
+          git show -s --format='source %H%nparents %P' HEAD
+          sh tools/ci-hatari-irq-restart.sh '${{ matrix.mode }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hatari-b2-${{ matrix.mode }}
+          path: |
+            logs/hatari-b2*
+            obj/auto.conf
+          retention-days: 14
+
   hatari-preemption:
     name: Native 68040 timer preemption on Hatari
     runs-on: ubuntu-26.04

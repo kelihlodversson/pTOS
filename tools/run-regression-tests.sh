@@ -884,10 +884,21 @@ if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
     if ! grep -aq 'native interrupted USER A IRQ / B USER execution / saved A restart: PASS' "$suite_log"; then
         record "native delayed IRQ restart" FAIL "hardware A IRQ / actual B USER / saved A return was not proved"
     fi
+    if ! grep -aqF 'native retained IRQ capture-only and uncredited root return: PASS' "$suite_log"; then
+        record "native IRQ proof classification" FAIL "capture-only and uncredited root return were not proved"
+    fi
+    if ! grep -aqF 'native retained IRQ with managed exact-child wait: PASS' "$suite_log"; then
+        record "native IRQ exact-child wait" FAIL "exclusive full-status Pexec(0) wait did not coexist with retained IRQ"
+    fi
     if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
        ! grep -aq 'native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS' "$suite_log"; then
         record "native retained IRQ retirement" FAIL "acknowledged cancellation and exact retirement conservation were not proved"
     fi
+fi
+if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native retained IRQ Pexec(200) old-owner retirement and fresh-image restart: PASS' "$suite_log"; then
+    record "native retained IRQ replacement" FAIL "old IRQ owners or new replacement restart were not proved"
 fi
 
 if [ "$machine" = pc-x86_64 ] &&

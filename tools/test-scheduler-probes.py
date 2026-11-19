@@ -3,6 +3,7 @@
 
 This is source-level/host evidence, not native IRQ or scheduling execution.
 """
+from itertools import product
 from pathlib import Path
 import re
 import os
@@ -30,8 +31,8 @@ for alternate, marker in [(False, '0x71307132'), (True, '0x72407242')]:
 print('ARM original/alternate IRQ probes: one sentinel window before comparison scratch: PASS (source model)')
 
 script = (root / 'tools/run-regression-tests.sh').read_text()
-# Exercise the actual portable deferred-return guard, including both missing
-# verdicts. An immediate capture/copy marker cannot satisfy either requirement.
+# Exercise the actual portable deferred-return guard. Capture or an
+# immediate copy-back cannot satisfy a delayed-restart requirement.
 start = script.index("if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1'")
 end = script.index('\nfi', start) + 3
 block = script[start:end]
@@ -39,22 +40,26 @@ with tempfile.TemporaryDirectory(prefix='ptos-deferred-guards-') as directory:
     top = Path(directory)
     (top / 'obj').mkdir()
     log = top / 'suite.log'
-    for enabled in (False, True):
-        for cancellation in (False, True):
-            for restart in (False, True):
-                for retired in (False, True):
-                    (top / 'obj/autoconf.h').write_text(
-                        ('#define CONF_WITH_IRQ_RESTART_TEST 1\n' if enabled else '') +
-                        ('#define CONF_WITH_PTERMGRP 1\n' if cancellation else ''))
-                    log.write_text(
-                        ('native interrupted USER A IRQ / B USER execution / saved A restart: PASS\n' if restart else '') +
-                        ('native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS\n' if retired else ''))
-                    shell = 'top=$1; suite_log=$2\nrecord() { echo "$1"; }\n' + block
-                    result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
-                                            check=True, text=True, capture_output=True)
-                    assert ('native delayed IRQ restart' in result.stdout) == (enabled and not restart)
-                    assert ('native retained IRQ retirement' in result.stdout) == (enabled and cancellation and not retired)
-print('Native delayed IRQ guards:16 feature/verdict cases, capture-only evidence refused: PASS (host shell)')
+    verdicts = (
+        ('native delayed IRQ restart', 'native interrupted USER A IRQ / B USER execution / saved A restart: PASS'),
+        ('native IRQ proof classification', 'native retained IRQ capture-only and uncredited root return: PASS'),
+        ('native IRQ exact-child wait', 'native retained IRQ with managed exact-child wait: PASS'),
+        ('native retained IRQ retirement', 'native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS'),
+    )
+    for enabled, cancellation in product((False, True), repeat=2):
+        (top / 'obj/autoconf.h').write_text(
+            ('#define CONF_WITH_IRQ_RESTART_TEST 1\n' if enabled else '') +
+            ('#define CONF_WITH_PTERMGRP 1\n' if cancellation else ''))
+        for present in product((False, True), repeat=len(verdicts)):
+            log.write_text('native ARM fresh owned IRQ image round trip: PASS\n' +
+                           ''.join(marker + '\n' for (_, marker), seen in zip(verdicts, present) if seen))
+            shell = 'top=$1; suite_log=$2\nrecord() { echo "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
+                                    check=True, text=True, capture_output=True)
+            required = [enabled, enabled, enabled, enabled and cancellation]
+            missing = [label for (label, _), seen, needed in zip(verdicts, present, required) if needed and not seen]
+            assert result.stdout.splitlines() == missing, (enabled, cancellation, present, result.stdout)
+print('Native delayed IRQ guards: 64 feature/verdict cases, immediate copy-back evidence refused: PASS (host shell)')
 
 markers = {
     'native completion sequence': 'native completion sequence check/block retry: PASS',

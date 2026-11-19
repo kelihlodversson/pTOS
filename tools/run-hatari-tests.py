@@ -143,6 +143,8 @@ def main():
                     choices=['low', 'med', 'high', 'f030', 'f040', 'f030a', 'tta', 'f040a', 'tt040a'])
     ap.add_argument('--require-native-preemption', action='store_true',
                     help='040 MMU only: require timer/FPU/wake/cancellation verdicts')
+    ap.add_argument('--require-irq-restart', choices=('deferred', 'refused'),
+                    help='require gated B2 delayed restart or observable ordinary-return refusal')
     ap.add_argument('--timeout', type=int, default=600)
     ap.add_argument('--halt', type=lambda value: int(value, 0),
                     help='source ROM halt address, required for TT timer evidence')
@@ -152,7 +154,10 @@ def main():
     if a.require_native_preemption and a.mode not in ('f040a', 'tt040a'):
         ap.error('--require-native-preemption requires f040a or tt040a')
 
-    file_evidence = a.require_native_preemption and a.mode == 'tt040a'
+    if a.require_irq_restart and (a.require_native_preemption or a.mode not in
+                                  ('f030a', 'tta', 'f040a', 'tt040a')):
+        ap.error('B2 requires an independent MMU shell run')
+    file_evidence = (a.require_native_preemption or a.require_irq_restart) and a.mode in ('tta', 'tt040a')
     if file_evidence and (a.halt is None or a.panic is None or
                           min(a.halt, a.panic) < 0x80000000 or a.halt == a.panic):
         ap.error('TT timer evidence requires distinct higher-half source ROM --halt/--panic addresses')
@@ -188,9 +193,10 @@ def main():
                '--sound', 'off', '--tos-res', a.mode,
                '--monitor', 'mono' if a.mode == 'high' else 'rgb',
                '--acsi', disk]
-    if a.require_native_preemption:
-        cmd += ['--fpu', 'internal', '--fpu-softfloat', 'true']
-        print('native timer emulator: 68040 internal FPU, softfloat')
+    if a.require_native_preemption or a.require_irq_restart:
+        fpu = '68882' if a.mode in ('f030a', 'tta') else 'internal'
+        cmd += ['--fpu', fpu, '--fpu-softfloat', 'true']
+        print(f'native IRQ emulator: {fpu} FPU, softfloat')
     cmd += ['--conout', '0' if file_evidence else '2', '--fast-forward', 'on']
     avi = os.path.join(work, 'screen.avi')
     glyphs = None
@@ -307,6 +313,14 @@ def main():
             if marker not in text:
                 print('run-hatari-tests: missing timer policy verdict: ' + marker, file=sys.stderr)
                 return 1
+    if a.require_irq_restart:
+        from irq_restart_evidence import missing_irq_evidence
+        errors = missing_irq_evidence(text, a.require_irq_restart)
+        if 'native m68k nonzero FPIAR: PASS' not in text:
+            errors.append('missing native m68k nonzero FPIAR')
+        if errors:
+            print('run-hatari-tests: B2 evidence: ' + '; '.join(errors), file=sys.stderr)
+            return 1
     if a.mode in ('f030a', 'tta', 'f040a', 'tt040a'):       # no VDI, so no blitter suites
         return 0
     # both draw with the blitter, which a plain ST has not

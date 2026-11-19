@@ -298,6 +298,7 @@ config CONF_WITH_SAVED_RETURN
     depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
     depends on !ARCH_ARM || CPU_ARMV7
     default y if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK || CONF_WITH_NATIVE_PREEMPT
+    default y if ARCH_M68K && CONF_WITH_IRQ_RESTART_TEST
     help
       Internal: capture a system call's user return image so a new THREAD
       resumes after the same trap (Pfork/Pvfork and the test probe).
