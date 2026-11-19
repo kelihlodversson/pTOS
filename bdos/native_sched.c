@@ -362,6 +362,7 @@ BOOL ksched_preempt_due(void)
     return execution_cpu.quantum.pending || ksched_cancellation_pending();
 }
 #if CONF_WITH_PRIVATE_CLONE_TEST
+static BOOL always_ready(void *argument);
 LONG ksched_preempt_test_blocked(ULONG tid)
 {
 #if CONF_WITH_PTERMGRP
@@ -370,7 +371,10 @@ LONG ksched_preempt_test_blocked(ULONG tid)
     RUNQUEUE_GUARD guard;runqueue_enter(&guard);
     for(task=scheduler.tasks;task;task=task->next_task)
         if(task->thread && kthread_tid(task->thread)==tid) {
-            result=task->state==TASK_BLOCKED && task->cancel_boundary;
+            /* Syield uses a cancelable always-ready wait too. It is a
+             * parked yield, not admission to the operation under test. */
+            result=task->state==TASK_BLOCKED && task->cancel_boundary &&
+                task->ready && task->ready!=always_ready;
             break;
         }
     runqueue_leave(&guard);return result;

@@ -1087,7 +1087,7 @@ static void test_joins(void)
 static const char group_env[2]={0,0};
 static struct {
     volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done, atexit_calls;
-    volatile long session, window, wait_done;
+    volatile long session, window, wait_done, wait_entering;
     int anchored; /* modes 1/2: the Pexec(0) chain runs as anchors (#1015) */
     int32_t target, joiner, killer, nested, wait_child;
     unsigned char *stack[6];
@@ -1104,7 +1104,7 @@ static void group_ready_bit(long bit)
 static int group_wait_admitted(void)
 {
     unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
-    while(pclone_trap((void *)(uintptr_t)group.target,0xc713c103UL)!=1) {
+    while(!group.wait_entering || pclone_trap((void *)(uintptr_t)group.target,0xc713c103UL)!=1) {
         if(group.error || group.returned ||
            (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start>=1000UL)return 0;
         (void)Syield();
@@ -1621,13 +1621,13 @@ static void group_target(void *arg)
         long rc;
         group.session=native_cuis(0,0,0);
         if (group.session<0) group.error=1;
-        if (group.mode>=10) rc=native_cuis5(32,group.session,0,group.mode==13?16:group.mode==10?8:10,group.mode==12?100:0,0);
-        else if (group.mode==5) rc=native_cuis(24,group.session,3600000UL);
+        if (group.mode>=10) {group.wait_entering=1;rc=native_cuis5(32,group.session,0,group.mode==13?16:group.mode==10?8:10,group.mode==12?100:0,0);}
+        else if (group.mode==5) {group.wait_entering=1;rc=native_cuis(24,group.session,3600000UL); }
         else if (group.mode==7 || group.mode==8) {
             group.window=group_window(3,1,1,32,32,0);
             if (group.window<0 || group_window(6,group.window,0,0,0,0)) group.error=1;
-            rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
-        } else rc=native_cuis5(32,group.session,1,1,0,0); /* pending stream readiness */
+            group.wait_entering=1;rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
+        } else {group.wait_entering=1;rc=native_cuis5(32,group.session,1,1,0,0); } /* pending stream readiness */
         if (group.mode==12 && rc==2) {
             group.wait_done=1; /* rejected legacy outcome: pending cancellation must win */
             (void)native_cuis5(32,group.session,0,8,0,0);
@@ -1795,7 +1795,7 @@ static void test_group_exit(void)
         if ((mode==1 || mode==2) && !group.anchored && !PCLONE_NESTED_CARRIER) continue;
         pclone_nest_synchronous((mode==1 || mode==2) && !group.anchored);
         for (i=0;i<5;i++) (void)Fdelete(files[i]);
-        group.session=group.window=-1; group.wait_done=0;
+        group.session=group.window=-1; group.wait_done=group.wait_entering=0;
         group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=group.atexit_calls=0;
         ptest_assert_msg(launch_entry(group_peer,CLONE_VM,group.stack[5],&peer_pid,&peer_tid)>0,"independent shared-ASPACE peer created");
         ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
