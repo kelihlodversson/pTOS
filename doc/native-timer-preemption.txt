@@ -256,3 +256,18 @@ CPU/FPU/cache/RAM profile or register/resource assertion is reduced. Ordinary
 TT compatibility jobs keep their existing screen reader. Hosted I/O models
 reject old logs, console-only verdicts, missing markers, bad summaries,
 crashes, wrong halt exits and final panics; they are not native CPU evidence.
+
+Eager x32 configuration
+-----------------------
+Timer return capture also selects the existing internal SAVED_RETURN helpers
+when fork is absent. The syscall-return child constructor remains compiled
+only for its actual public/test fork consumers; enabling the timer alone must
+not carry unused fork construction or require a fork test transport.
+
+The x32 timer CI lane additionally rebuilds with demand paging, Mmap, public
+fork and the private test transports disabled. The ordinary complete suite
+still requires CPU-bound PROCESS/THREAD progress without Syield and exact
+joins. Private/COW/file-mapping proofs remain in the standard demand-paged
+lane, whose full configuration and evidence are retained separately. Eager
+MEMTEST uses its existing dedicated fixture/boot harness; it is not inferred
+from a regression disk missing those probe binaries.
