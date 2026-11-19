@@ -287,3 +287,17 @@ with tempfile.TemporaryDirectory(prefix='ptos-timer-guards-') as directory:
                     required = required and bool(mask & 16)
             assert bool(result.stdout) == required, (mask, missing, result.stdout)
 print('Production timer guards: 256 feature/marker cases, missing native proof fails: PASS (host shell)')
+
+with tempfile.TemporaryDirectory(prefix='ptos-arm-exclusive-guards-') as directory:
+    top = Path(directory)
+    (top / 'obj').mkdir()
+    log = top / 'suite.log'
+    (top / 'obj/autoconf.h').write_text('#define CONF_WITH_NATIVE_PREEMPT 1\n')
+    for machine in ('virt-arm', 'raspi2b-aspace', 'pc-x86_64', 'virt-m68k-aspace'):
+        for present in (False, True):
+            log.write_text(timer_markers[0]+'\n'+('native timer ARM exclusive monitor ownership: PASS\n' if present else ''))
+            shell = 'top=$1; suite_log=$2; machine=$3\nrecord() { echo "$1"; }\n' + block
+            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log), machine],
+                                    check=True, text=True, capture_output=True)
+            assert bool(result.stdout) == (machine in ('virt-arm', 'raspi2b-aspace') and not present)
+print('Native ARM exclusive guards: correct machines and missing reservation proof: PASS (host shell)')

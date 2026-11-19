@@ -232,6 +232,11 @@ void native_sched_save(NATIVE_SCHED_CONTEXT *context)
 void native_sched_restore(const NATIVE_SCHED_CONTEXT *context)
 {
     native_sched_irq_disable();
+#if CONF_WITH_NATIVE_PREEMPT
+    /* Exclusive monitors belong to the CPU, not the saved THREAD. A retry
+     * may fail spuriously; inheriting a peer's reservation must never pass. */
+    __asm__ volatile ("clrex" ::: "memory");
+#endif
     run = context->pd;
     set_uspace_launch(context->launch);
     ksched_context_restore(context->native_task);

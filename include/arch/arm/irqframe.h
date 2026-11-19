@@ -119,6 +119,9 @@ void arm_irq_capture_report(void);
     bl C_SYM(arm_capture_user_irq)
 .endm
 .macro ARM_IRQ_POP_CAPTURE
+#if CONF_WITH_NATIVE_PREEMPT
+    clrex /* do not export a kernel/peer exclusive reservation through RFE */
+#endif
     FPU_POP_ALL r0
 #if CONF_WITH_IRQ_RESTART
     /* Only register loads in IRQ mode: its SP may legitimately be zero.

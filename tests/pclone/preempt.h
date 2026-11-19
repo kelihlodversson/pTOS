@@ -115,6 +115,12 @@ static void preempt_image_patterns(void)
     for(i=0;i<2;i++)if(child[i]>0) {
         long status=Pwaitpid(child[i],0,0);
         int success=(status>>16)==child[i] && !(status&65535);
+        if(!success) {
+            char message[96];
+            sprintf(message,"timer image role=%u PID=%ld status=%lx root=%lx\r\n",
+                    i,child[i],(unsigned long)status,(unsigned long)report[i][0]);
+            conws(message);
+        }
         ptest_assert_msg(success,"independently loaded timer peer preserves GPR/FPU patterns");
         if(!success)okay=0;
     }
@@ -269,9 +275,56 @@ static void preempt_cancel_retirement(void)
         conws("native timer suspended-group cancellation and exact retirement: PASS\r\n");
 }
 #endif
+#if defined(__arm__)
+/* Separate pages exceed the architectural exclusive-reservation granule.
+ * The peer publishes its handshake after leaving a fresh LDREX on the same
+ * counter. A must not consume that peer-owned CPU reservation with STREX. */
+static volatile unsigned long preempt_exclusive_word[1024] __attribute__((aligned(4096)));
+static volatile unsigned long preempt_exclusive_stage[1024] __attribute__((aligned(4096)));
+static volatile unsigned long preempt_exclusive_result;
+static void preempt_exclusive_a(void *unused)
+{
+    unsigned long observed,status,candidate=1,budget=1000000000UL;
+    (void)unused;
+    __asm__ volatile("ldrex %0,[%1]" : "=&r"(observed) : "r"(preempt_exclusive_word) : "memory");
+    preempt_exclusive_stage[0]=1;
+    while(preempt_exclusive_stage[0]!=2 && --budget) __asm__ volatile("" ::: "memory");
+    __asm__ volatile("strex %0,%1,[%2]" : "=&r"(status) : "r"(candidate),"r"(preempt_exclusive_word) : "memory");
+    preempt_exclusive_result=budget && !observed && status && preempt_exclusive_word[0]==7;
+    preempt_exclusive_stage[0]=3;
+}
+static void preempt_exclusive_b(void *unused)
+{
+    unsigned long observed,budget=1000000000UL;
+    (void)unused;
+    while(preempt_exclusive_stage[0]!=1 && --budget) __asm__ volatile("" ::: "memory");
+    preempt_exclusive_word[0]=7;
+    __asm__ volatile("ldrex %0,[%1]" : "=&r"(observed) : "r"(preempt_exclusive_word) : "memory");
+    preempt_exclusive_stage[0]=2;
+    while(preempt_exclusive_stage[0]!=3 && --budget) __asm__ volatile("" ::: "memory");
+    (void)observed;
+}
+static void preempt_exclusive_ownership(void)
+{
+    long a,b;int32_t pid=0,tid[2]={0,0};
+    preempt_exclusive_word[0]=preempt_exclusive_stage[0]=preempt_exclusive_result=0;
+    a=launch_entry(preempt_exclusive_a,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&tid[0]);
+    b=launch_entry(preempt_exclusive_b,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[1],&pid,&tid[1]);
+    ptest_assert_msg(a>0 && b>0,"publish native ARM exclusive-reservation peers");
+    if(a>0)ptest_assert_msg(join_tid(tid[0],0)==0,"exclusive owner A returns");
+    if(b>0)ptest_assert_msg(join_tid(tid[1],0)==0,"exclusive owner B returns");
+    ptest_assert_msg(preempt_exclusive_result && preempt_exclusive_word[0]==7,
+                     "STREX cannot consume another THREAD's LDREX reservation");
+    if(a>0 && b>0 && preempt_exclusive_result && preempt_exclusive_word[0]==7)
+        conws("native timer ARM exclusive monitor ownership: PASS\r\n");
+}
+#endif
 static void test_preempt(void)
 {
     int okay;
+#if defined(__arm__)
+    preempt_exclusive_ownership();
+#endif
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
     preempt_image_patterns();
 #endif

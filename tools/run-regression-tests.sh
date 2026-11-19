@@ -838,6 +838,13 @@ esac
 
 
 if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1' "$top/obj/autoconf.h"; then
+    case $machine in
+    virt-arm|raspi2b-aspace)
+        if ! grep -aq 'native timer ARM exclusive monitor ownership: PASS' "$suite_log"; then
+            record "native timer ARM exclusives" FAIL "a THREAD consumed a peer exclusive reservation or failed to progress"
+        fi
+        ;;
+    esac
     if ! grep -aq 'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS' "$suite_log"; then
         record "native timer preemption" FAIL "CPU-bound PROCESS/THREAD progress without voluntary yield was not proved"
     fi
