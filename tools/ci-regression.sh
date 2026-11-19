@@ -63,6 +63,13 @@ case $machine in
         # tables per process (#568, #570)
         config=virt-m68k-aspace
         ;;
+    virt-m68k-aspace-defconfig)
+        # the same configuration exactly as shipped: virt-m68k-aspace above
+        # adds test profiles to it, so this is the only run of the suite
+        # (shared-VM Pexec included, #1018) with the defconfig's own options
+        config=virt-m68k-aspace
+        script_machine=virt-m68k-aspace
+        ;;
     virt-arm-aspace)
         config=virt-arm-aspace
         script_machine=virt-arm
@@ -75,7 +82,7 @@ case $machine in
         config=pc-x86_64-desktop
         ;;
     *)
-        echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace, virt-arm-aspace, raspi2b-aspace, pc-x86_64)" >&2
+        echo "usage: $0 MACHINE (virt-arm, virt-arm-traditional-fat, raspi2b, virt-m68k, virt-m68k-fastcall, virt-m68k-mmu, virt-m68k-aspace, virt-m68k-aspace-defconfig, virt-arm-aspace, raspi2b-aspace, pc-x86_64)" >&2
         exit 2
         ;;
 esac

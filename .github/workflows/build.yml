@@ -459,7 +459,7 @@ jobs:
             machines: virt-arm virt-arm-traditional-fat raspi2b virt-arm-aspace raspi2b-aspace
             qemu: qemu-system-arm
           - arch: m68k
-            machines: virt-m68k virt-m68k-fastcall virt-m68k-mmu virt-m68k-aspace
+            machines: virt-m68k virt-m68k-fastcall virt-m68k-mmu virt-m68k-aspace virt-m68k-aspace-defconfig
             qemu: qemu-system-misc
     steps:
       - uses: actions/checkout@v4
