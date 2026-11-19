@@ -1149,6 +1149,25 @@ static long native_cuis5(unsigned fn, long a, long b, long c, long d, long e)
     return (long)ax;
 }
 
+
+/* Window mutation may meet the desktop's public display lease. A timer can
+ * legally schedule this fixture inside that lease; EAGAIN is retryable. */
+static long group_window(unsigned fn,long a,long b,long c,long d,long e)
+{
+#if defined(TEST_WITH_NATIVE_PREEMPT)
+    unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+    long result;
+    do {
+        result=native_cuis5(fn,a,b,c,d,e);
+        if(result!=-326L)return result;
+        (void)Syield();
+    }while((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start<1000UL);
+    return result;
+#else
+    return native_cuis5(fn,a,b,c,d,e);
+#endif
+}
+
 #if defined(TEST_WITH_PTHJOIN)
 static long native_cuis6(unsigned fn, unsigned long long a, unsigned long long b,
                          unsigned long long c, unsigned long long d,
@@ -1605,8 +1624,8 @@ static void group_target(void *arg)
         if (group.mode>=10) rc=native_cuis5(32,group.session,0,group.mode==13?16:group.mode==10?8:10,group.mode==12?100:0,0);
         else if (group.mode==5) rc=native_cuis(24,group.session,3600000UL);
         else if (group.mode==7 || group.mode==8) {
-            group.window=native_cuis5(3,1,1,32,32,0);
-            if (group.window<0 || native_cuis(6,group.window,0)) group.error=1;
+            group.window=group_window(3,1,1,32,32,0);
+            if (group.window<0 || group_window(6,group.window,0,0,0,0)) group.error=1;
             rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
         } else rc=native_cuis5(32,group.session,1,1,0,0); /* pending stream readiness */
         if (group.mode==12 && rc==2) {
@@ -1676,7 +1695,7 @@ static void group_killer(void *arg)
     if (group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) {
         if (group.mode>=10 && native_cuis5(32,group.session,0,10,0,0)!=-36L) group.error=1;
         if (group.mode==8) {
-            long closed=native_cuis(5,group.window,0);
+            long closed=group_window(5,group.window,0,0,0,0);
             if (closed) { printf("group window close result=%ld window=%ld\r\n",closed,group.window);group.error=1; }
         } else {
             long replacement;

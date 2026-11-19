@@ -240,7 +240,8 @@ static void preempt_mutation_owner(void *unused)
     (void)unused;preempt_mutation_go=1;
     /* Existing adapter yields only at the real mapping-owner checkpoint. */
     allocation=pclone_trap(0,MLT_CONTENDED_ALLOC);
-    if(allocation<=0 || Mfree((void *)allocation))preempt_mutation_error=1;
+    if(allocation<=0) {printf("timer mapping allocation=%ld\r\n",allocation);preempt_mutation_error=1;}
+    else {long freed=Mfree((void *)allocation);if(freed) {printf("timer mapping free=%ld allocation=%lx\r\n",freed,(unsigned long)allocation);preempt_mutation_error=1;}}
     preempt_mutation_done=1;
 }
 static void preempt_mapping_owner_progress(void)
@@ -261,6 +262,8 @@ static void preempt_mapping_owner_progress(void)
         if(b>0)ptest_assert_msg(join_tid(tid,0)==0,"busy mapping peer rejoins after owner progress");
         if(a<=0 || b<=0 || (status>>16)!=owner_pid || (status&65535) ||
            !preempt_mutation_done || !preempt_mutation_progress || preempt_mutation_error)okay=0;
+        if(!okay)printf("timer mapping cycle=%u owner=%ld/%ld status=%lx done=%lu progress=%lu error=%lu\r\n",
+                       cycle,a,b,(unsigned long)status,preempt_mutation_done,preempt_mutation_progress,preempt_mutation_error);
         ptest_assert_msg(okay,"CPU-bound USER cannot starve a suspended mapping mutation owner");
         (void)mlt_snapshot(&after);
         if(cycle) {
