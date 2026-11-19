@@ -25,13 +25,17 @@ runs:
     # SDL3 and its image library, FLAC, libpng and libcurl are what it is built
     # with and links to, so they are installed whether it comes from the cache
     # or from a build
-    - name: Install what Amiberry builds with and runs on
+    - name: Read the pinned Amiberry dependencies
+      id: packages
       shell: bash
       run: |
         . tools/amiberry-pin.sh
-        sudo apt-get update -qq
-        # shellcheck disable=SC2086  # a list
-        sudo apt-get install -y --no-install-recommends $AMIBERRY_APT_PACKAGES
+        echo "packages=$AMIBERRY_APT_PACKAGES" >>"$GITHUB_OUTPUT"
+
+    - name: Install what Amiberry builds with and runs on
+      uses: ./.github/actions/apt-install
+      with:
+        packages: --no-install-recommends ${{ steps.packages.outputs.packages }}
 
     - name: Cache Amiberry
       id: cache
