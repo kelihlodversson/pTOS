@@ -114,6 +114,7 @@ if os.environ.get('IRQ_RESTART_TEST') == '1':
     config.syms['CONF_WITH_MMAP'].set_value(2)
     config.syms['CONF_WITH_IRQ_RESTART_TEST'].set_value(2)
     assert config.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
+    assert config.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'n'
 if os.environ.get('NATIVE_PREEMPT') == '1':
     config.syms['CONF_WITH_NATIVE_PREEMPT'].set_value(2)
     assert config.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'y'
@@ -166,6 +167,14 @@ if [ "$traditional_fat" = true ]; then
 fi
 make $make_args 2>&1 | tee -a build.log
 tools/check-build-warnings.sh build.log
+if [ "${IRQ_RESTART_TEST:-0}" = 1 ]; then
+    grep -qx '#define CONF_WITH_IRQ_RESTART_TEST 1' obj/autoconf.h
+    if grep -qx '#define CONF_WITH_NATIVE_PREEMPT 1' obj/autoconf.h; then
+        echo 'B2 validation must run with production timer preemption disabled' >&2
+        exit 2
+    fi
+    echo 'B2 effective gates: retained IRQ test enabled, production timer preemption disabled'
+fi
 if [ "${SHARED_VM_PEXEC:-0}" = 1 ]; then
     for symbol in CONF_WITH_SHARED_VM_PEXEC CONF_WITH_ELF_SHARED CONF_WITH_MMAP \
                   CONF_WITH_PRIVATE_CLONE_TEST CONF_WITH_NATIVE_SCHED CONF_WITH_PCLONE; do
