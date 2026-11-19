@@ -42,6 +42,23 @@ def desktop_budget(symbols):
     return size
 
 
+def validate_flags(flags, profile, lra):
+    _, fastcall, lto, optimization = PROFILES[profile]
+    kernel = flags["CFLAGS"].split()
+    expected = {"-mlra": lra == "on", "-mfastcall": fastcall == "y"}
+    for flag, present in expected.items():
+        if (flag in kernel) != present or (present and "-mno-" + flag[2:] in kernel):
+            raise ValueError("effective profile flag mismatch: " + flag)
+    if any(flag == "-flto" or flag.startswith("-flto=") for flag in kernel) != (lto == "y"):
+        raise ValueError("effective LTO flags do not match requested profile")
+    if "-fno-lto" in kernel or [flag for flag in kernel if flag.startswith("-O")] != [optimization]:
+        raise ValueError("effective optimization flags do not match requested profile")
+    for name in ("CPUFLAGS", "TEST_CFLAGS"):
+        tokens = flags[name].split()
+        if ("-mlra" in tokens) != (lra == "on") or (lra == "on" and "-mno-lra" in tokens):
+            raise ValueError("effective allocator flags do not match requested profile: " + name)
+
+
 def build(args, metadata):
     import kconfiglib
 
@@ -55,8 +72,9 @@ def build(args, metadata):
         config.syms[name].set_value(value)
         if config.syms[name].str_value != value:
             raise ValueError("cannot select profile setting " + name + "=" + value)
-    if config.syms["ARCH_M68K"].str_value != "y" or config.syms["CONF_WITH_AES"].str_value != "y":
-        raise ValueError("stack profiles require m68k kernel AES")
+    if any(config.syms[name].str_value != "y" for name in
+           ("ARCH_M68K", "CONF_WITH_AES", "CONF_WITH_BLITTER")):
+        raise ValueError("stack profiles require m68k kernel AES and blitter support")
     # Record the production configuration before instrumentation. No larger
     # diagnostic allocation: an overflow/crash must fail the workload too.
     config.write_config(str(args.out / "production.config"))
@@ -92,8 +110,7 @@ def build(args, metadata):
     output = subprocess.check_output([make, "-s", "-f", "Makefile", "-f", str(probe), "stack-flags"], text=True)
     metadata["flags"] = dict(line.removeprefix("STACK_").split("=", 1)
                              for line in output.splitlines() if line.startswith("STACK_"))
-    if ("-mlra" in metadata["flags"]["CPUFLAGS"].split()) != (args.lra == "on"):
-        raise ValueError("effective allocator flags do not match requested profile")
+    validate_flags(metadata["flags"], args.profile, args.lra)
     image = "ptos256us.img" if preset == "atari256" else "ptos512k.img"
     shutil.copy2(image, args.out / "system.img")
     shutil.copy2("pbench.prg", args.out / "PBENCH.PRG")

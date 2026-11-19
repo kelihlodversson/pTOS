@@ -26,6 +26,8 @@ Every profile runs with BUILD_M68K_LRA on and off. Off uses the compiler's
 default allocator (reload in SDK 1.0.3); it does not force a future GCC to
 use reload. Eight separate checkouts/jobs prevent mixed compiler flags or
 stale sub-build objects. They build independently, including libcmini.
+Effective compiler flags must match the requested allocator, ABI, LTO and
+optimization profile; a disabled flag cannot silently remove coverage.
 
 Pull requests run low resolution without the blitter and high resolution
 with it: 16 emulator runs. Pushes to master/epics, nightly runs and manual

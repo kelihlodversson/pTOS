@@ -117,6 +117,26 @@ class StackReserve(unittest.TestCase):
         self.assertEqual(set(ci_stack.PROFILES), {"stack-o2", "fastcall-o2", "fastcall-os-lto", "stack-o2-lto"})
         self.assertEqual(len(ci_stack.DESKTOP.findall(log(aes()))), 3)
 
+    def test_effective_profile_flags_cannot_silently_drop_coverage(self):
+        for profile, (_, fastcall, lto, optimization) in ci_stack.PROFILES.items():
+            for lra in ("off", "on"):
+                with self.subTest(profile=profile, lra=lra):
+                    allocator = "-mlra" if lra == "on" else ""
+                    kernel = " ".join((optimization, allocator,
+                                       "-mfastcall" if fastcall == "y" else "",
+                                       "-flto=auto" if lto == "y" else ""))
+                    flags = dict(CFLAGS=kernel, CPUFLAGS=allocator, TEST_CFLAGS=allocator)
+                    ci_stack.validate_flags(flags, profile, lra)
+                    for bad in (kernel + " -fno-lto", kernel.replace(optimization, "-O0"),
+                                kernel.replace("-mfastcall", "") if fastcall == "y" else kernel + " -mfastcall",
+                                kernel.replace("-flto=auto", "") if lto == "y" else kernel + " -flto",
+                                kernel.replace("-mlra", "") if lra == "on" else kernel + " -mlra"):
+                        with self.assertRaises(ValueError):
+                            ci_stack.validate_flags(dict(flags, CFLAGS=bad), profile, lra)
+                    if lra == "on":
+                        with self.assertRaises(ValueError):
+                            ci_stack.validate_flags(dict(flags, CFLAGS=kernel + " -mno-lra"), profile, lra)
+
     def test_cli_fails_with_useful_diagnostic_and_json(self):
         with tempfile.TemporaryDirectory() as temp:
             dest = Path(temp)
