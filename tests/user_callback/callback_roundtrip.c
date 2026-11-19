@@ -368,6 +368,8 @@ int callback_roundtrip_checks(const char *tail)
         CHECK(raw(1, 0x4b, PE_LOAD, (uintptr_t)"X32HELLO.TOS", (uintptr_t)"", 0) == EINVFN);
         CHECK(raw(1, 0x4b, PE_BASEPAGE, 0, (uintptr_t)"", 0) == EINVFN);
         CHECK(raw(1, 0x4b, PE_GOTHENFREE, 0, 0x10000, 0) == EINVFN);
+        if (failure)
+            return failure;
         failure = native_old_checks();
         if (failure)
             return failure;

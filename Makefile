@@ -1922,7 +1922,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_ELF_LOADER),-DTEST_WITH_ELF_LOADER) \
               $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
               $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
-              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC)),-DTEST_WITH_SHARED_VM_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC)),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_WITH_SHARED_VM_PEXEC)) \
               $(if $(filter y,$(CONF_WITH_LEGACY_PEXEC)),-DTEST_WITH_LEGACY_PEXEC) \
               $(if $(filter y,$(CONF_WITH_STAGED_PEXEC)),-DTEST_WITH_STAGED_PEXEC) \
               $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
@@ -2210,9 +2210,10 @@ endif
 
 TEST_PIE_FILES = pieprobe.tos
 
-ifeq ($(CONF_WITH_SHARED_VM_PEXEC),y)
+ifeq ($(CONF_WITH_SHARED_VM_PEXEC)$(BUILD_TOOLCHAIN_ELF),y)
 # Shared-VM Pexec 4/104 starts a staged PRG (#1018): the same probe, linked
-# as the PRG the test suite stages with mode 3.
+# as the PRG the test suite stages with mode 3. The legacy m68k-elf
+# toolchain links ELF only, so its builds have neither this nor the suite.
 PIEPRG.TOS: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 TEST_PIE_FILES += PIEPRG.TOS
