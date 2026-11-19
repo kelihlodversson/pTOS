@@ -79,7 +79,7 @@ static int preempt_run(void (*entry)(void *))
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
 static void preempt_image_patterns(void)
 {
-    long child[2],report[2][2],own_root=pclone_trap(0,0xc8920100UL),fd;
+    long child[2],report[2][3],own_root=pclone_trap(0,0xc8920100UL),fd;
     unsigned i,attempt;
     int okay=1;
     const char *files[2]={"PREEMPR0.DAT","PREEMPR1.DAT"};
@@ -110,6 +110,11 @@ static void preempt_image_patterns(void)
         ptest_assert_msg(distinct,"register peers have distinct live PROCESS and MMU roots");
         if(!distinct)okay=0;
     }
+#if defined(__mc68000__)
+    ptest_assert_msg(report[0][2]==0x80000L && report[1][2]==0x80000L,
+                     "both 040 peers execute actual internal-FPU patterns");
+    if(report[0][2]!=0x80000L || report[1][2]!=0x80000L)okay=0;
+#endif
     fd=Fcreate("PREEMPG.ON",0);
     if(fd>=0)(void)Fclose((short)fd);else okay=0;
     for(i=0;i<2;i++)if(child[i]>0) {

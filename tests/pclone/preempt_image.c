@@ -15,12 +15,17 @@ extern long clone_preempt_registers(void),clone_preempt_registers_alt(void);
 int main(void)
 {
     unsigned role=(unsigned char)_base->p_cmdlin[1]=='1',attempt=0,cycle;
-    long report[2],fd,error=0;
+    long report[3],fd,error=0;
 #if defined(__mc68000__)
     long fpu=0;
     (void)Ssystem(S_GETCOOKIE,0x5f465055L,&fpu);
 #endif
     report[0]=pclone_trap(0,0xc8920100UL);report[1]=Pgetpid();
+#if defined(__mc68000__)
+    report[2]=fpu;
+#else
+    report[2]=1; /* these probes unconditionally execute their FPU patterns */
+#endif
     fd=Fcreate(role?"PREEMPR1.DAT":"PREEMPR0.DAT",0);
     if(fd<0)return 81;
     if(Fwrite((short)fd,sizeof(report),report)!=sizeof(report))error=1;

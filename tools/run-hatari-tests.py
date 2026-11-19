@@ -162,6 +162,9 @@ def main():
                '--sound', 'off', '--tos-res', a.mode,
                '--monitor', 'mono' if a.mode == 'high' else 'rgb',
                '--acsi', disk]
+    if a.require_native_preemption:
+        cmd += ['--fpu', 'internal', '--fpu-softfloat', 'true']
+        print('native timer emulator: 68040 internal FPU, softfloat')
     cmd += ['--conout', '2', '--fast-forward', 'on']
     avi = os.path.join(work, 'screen.avi')
     glyphs = None
@@ -234,6 +237,7 @@ def main():
         return 1
     if a.require_native_preemption:
         for marker in (
+            'native m68k nonzero FPIAR: PASS',
             'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS',
             'native timer file-backed executable progress without Syield: PASS',
             'native timer busy USER and blocked sleeper wake: PASS',
