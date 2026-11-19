@@ -14,7 +14,7 @@ published on GitHub Releases, currently for Apple Silicon macOS 26.
 See .claude/skills/toolchain-install/SKILL.md for manual installation,
 restricted environments, host support and verification commands.
 
-SDK 1.0.1 or newer is required. Linux CI pins a GitHub Release in
+SDK 1.0.3 or newer is required. Linux CI pins a GitHub Release in
 tools/ptos-toolchain.sha256, downloads its .deb files, checks each checksum
 and installs them with APT. To reproduce that version locally, use:
 
@@ -36,6 +36,13 @@ selects -mmintelf for ordinary TOS programs; the runtime linker and its
 libraries use the same SDK in ELF/PIC mode. No separate m68k Linux
 compiler or MiNT headers package is needed. Legacy MiNT and bare
 m68k-elf toolchain choices remain available in the Toolchain menu.
+
+The same menu has a separate BUILD_M68K_LRA option for GCC's -mlra allocator.
+It defaults on with an installed standard pTOS m68k GCC 16 or newer that
+accepts the flag, and off otherwise. Nonstandard prefix overrides can opt
+in manually. The flag applies to m68k kernel, libcmini, programs and LTO
+links; prebuilt SDK libraries retain their original allocator. Clean before
+rebuilding after changing it.
 
 The PC SDK supplies both x32 userspace and the LP64 no-red-zone kernel
 runtime. Its linker supports the i386pep PE32+ emulation needed for UEFI,

@@ -59,6 +59,8 @@ jobs:
           /tmp/elf-shared-venv/bin/pip install kconfiglib==14.1.0
       - name: Test pinned SDK selection and checksum rejection
         run: python3 tools/test-toolchain-install.py
+      - name: Test m68k LRA defaults and compiler flag propagation
+        run: /tmp/elf-shared-venv/bin/python tools/test-m68k-lra.py
       - name: Test metadata, corrupt inputs and Kconfig isolation
         run: /tmp/elf-shared-venv/bin/python tools/test-elf-shared.py
       - name: Test executable handlers and interpreter arguments

@@ -190,6 +190,14 @@ CPP = $(CC) -E
 OBJDUMP = $(CROSS_COMPILE)objdump
 OBJCOPY = $(CROSS_COMPILE)objcopy
 
+# Keep the allocator in CPUFLAGS so kernel, libcmini, utilities, tests and
+# LTO links all agree, including when CPUFLAGS is overridden on make's CLI.
+ifeq ($(ARCH_M68K)$(BUILD_M68K_LRA),yy)
+ifeq (,$(filter -mlra,$(CPUFLAGS)))
+override CPUFLAGS += -mlra
+endif
+endif
+
 # The native C compiler, used for the build tools.
 NATIVECC = gcc -std=gnu90 -pedantic $(WARNFLAGS) -W -O
 
