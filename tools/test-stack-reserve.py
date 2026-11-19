@@ -18,13 +18,14 @@ ci_stack = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci_stack)
 
 
-def aes(peak=1900, process=1, bottom=0x1000, size=2560, lto=False):
+def aes(peak=1900, process=1, bottom=0x1000, size=2560, lto=False, maximum=None):
     # Already occupied prefix = 400 bytes, distinct from the marker's used.
     top = bottom + size
     current = top - 400
     return (f"AES exit  rlr={hex(process)} bottom={hex(bottom)} current={hex(current)} "
             f"top={hex(top)} free={current-bottom}, used={peak-400}, "
-            f"{'_max_usage' if lto else 'max_usage'}={peak-400}, recommended AES_STACK_SIZE=1")
+            f"{'_max_usage' if lto else 'max_usage'}={peak-400 if maximum is None else maximum}, "
+            "recommended AES_STACK_SIZE=1")
 
 
 def log(*samples, desktop_free=1800):
@@ -58,10 +59,24 @@ class StackReserve(unittest.TestCase):
         self.assertEqual(result["stacks"]["aes"]["remaining_bytes"], 460)
 
     def test_multiple_processes_and_lto_spelling(self):
-        result = self.check(log(aes(1800), aes(2048, process=2, bottom=0x4000, lto=True), aes(1900)))
+        result = self.check(log(aes(1800), aes(2048, process=2, bottom=0x4000, lto=True),
+                                aes(1900, maximum=1648)))
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["aes_samples"], 3)
         self.assertEqual(result["aes_process_peaks"], {"0x1": 1900, "0x2": 2048})
+
+    def test_missing_cumulative_peak_cannot_pass(self):
+        for lto in (False, True):
+            with self.subTest(lto=lto), self.assertRaisesRegex(ValueError, "cumulative"):
+                self.check(log(aes(1900, maximum=2200, lto=lto)))
+        # A later sample reaching the reported maximum does not recover the
+        # missing earlier sample's prefix. Validate at each exit, not at EOF.
+        with self.assertRaisesRegex(ValueError, "cumulative"):
+            self.check(log(aes(1900, maximum=1700), aes(2100, maximum=1700)))
+
+    def test_cumulative_peak_cannot_decrease_across_processes(self):
+        with self.assertRaisesRegex(ValueError, "cumulative"):
+            self.check(log(aes(2048), aes(1900, process=2, bottom=0x4000)))
 
     def test_desktop_reserve_independent_of_aes(self):
         for free, expected in ((511, "fail"), (512, "pass"), (513, "pass")):
@@ -100,9 +115,19 @@ class StackReserve(unittest.TestCase):
         self.assertTrue(pbench_complete(good, "low"))
         for bad in ("", good.replace("VDI Text ", "Unknown test "),
                     good + "\nVDI Text 1.000 s 42 lines", good.replace("320x200", "640x400"),
-                    good.replace("42 objects", "0 objects", 1)):
+                    good.replace("42 objects", "0 objects", 1),
+                    good + "\nScreen 640x400, 1 planes"):
             with self.subTest(pbench=bad), self.assertRaisesRegex(ValueError, "pBench"):
                 self.check(log(aes()), bad)
+
+    def test_invalid_extra_results_are_not_discarded(self):
+        good = pbench()
+        for extra in ("VDI Text 1.000 s 0 lines", "Unknown test 1.000 s 0 lines",
+                      "VDI Text 1.000 s -1 lines", "VDI Text malformed result"):
+            with self.subTest(extra=extra):
+                self.assertFalse(pbench_complete(good + "\n" + extra, "low"))
+                with self.assertRaisesRegex(ValueError, "pBench"):
+                    self.check(log(aes()), good + "\n" + extra)
 
     def test_desktop_budget_from_compiled_symbols(self):
         self.assertEqual(ci_stack.desktop_budget("00000100 B deskstackbottom\n00000b00 b deskustack"), 2560)
@@ -151,6 +176,15 @@ class StackReserve(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("remaining=460 B, required reserve=512 B", result.stdout)
             self.assertEqual(json.loads((dest / "result.json").read_text())["status"], "fail")
+            (dest / "emulator.log").write_text(log(aes(maximum=2200)))
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("cumulative max_usage", result.stdout)
+            (dest / "emulator.log").write_text(log(aes()))
+            (dest / "PBENCH.TXT").write_text(pbench() + "\nVDI Text 1.000 s 0 lines")
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("incomplete pBench", result.stdout)
             (dest / "emulator.log").unlink()
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1)

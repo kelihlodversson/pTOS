@@ -41,7 +41,9 @@ These timings are not performance baselines. It then opens/closes the
 desktop About dialog repeatedly. Three distinct About-entry stack samples
 prove that two prior dialog cycles returned; an opened dialog alone is not
 completion. pBench's GEM Window workload exercises window operations too.
-Wrong screen modes, missing/duplicate tests and zero work counts fail.
+Wrong/ambiguous screen modes, missing/duplicate tests, nonpositive work
+counts and malformed result rows fail. Invalid extra rows are not dropped
+before checking completeness.
 
 Budget and telemetry
 --------------------
@@ -56,8 +58,14 @@ match the production allocation. A crash from exhausted space fails too.
 For every AES exit, total usage is top - current + used: the marker scan's
 used value excludes the prefix already occupied at AES entry. Neither
 max_usage alone nor the rounded recommendation in LONGs is a valid total
-budget comparison. The parser accepts LTO's _max_usage spelling and keeps
-the highest total for every AES process. Desktop usage is its allocation
+budget comparison. At each exit, the cumulative max_usage must equal the
+largest per-call used value observed so far across all AES processes. A
+larger value reveals a missing earlier peak and a smaller value violates
+the producer's cumulative-counter contract; both fail. A later matching
+sample cannot recover a missing call's entry prefix.
+
+The parser accepts LTO's _max_usage spelling and keeps the highest total
+for every AES process. Desktop usage is its allocation
 minus the minimum available bytes reported at About entry.
 
 This is an empirical regression guard for these executed paths, not a

@@ -18,15 +18,22 @@ AES_EXIT = re.compile(
     r"current=(0x[\da-fA-F]+) top=(0x[\da-fA-F]+) free=(-?\d+), "
     r"used=(\d+), _?max_usage=(\d+), recommended AES_STACK_SIZE=(\d+)\s*$")
 DESKTOP = re.compile(r"Desktop stack has (-?\d+) bytes available\s*$", re.M)
-PBENCH = re.compile(r"^(.+?)\s+(\d+\.\d{3}) s\s+(\d+)\s+\w+(?:\s+\d+%)?\s*$")
+PBENCH = re.compile(r"^(.+?)\s+(\d+\.\d{3}) s\s+(-?\d+)\s+\w+(?:\s+\d+%)?\s*$")
 
 
 def pbench_complete(text, resolution):
     """Require every named test exactly once and the requested display mode."""
-    tests = [m.group(1) for line in text.splitlines()
-             if (m := PBENCH.fullmatch(line)) and int(m.group(3)) > 0]
+    lines = text.splitlines()
+    results = []
+    for line in lines:
+        if match := PBENCH.fullmatch(line):
+            results.append(match)
+        elif line.strip() and not line.startswith(("Screen ", "Speed relative to ")):
+            return False
     screen = "Screen %dx%d, %d planes" % SCREENS[resolution]
-    return Counter(tests) == Counter(PBENCH_TESTS) and screen in text.splitlines()
+    return (Counter(match.group(1) for match in results) == Counter(PBENCH_TESTS) and
+            all(int(match.group(3)) > 0 for match in results) and
+            [line for line in lines if line.startswith("Screen ")] == [screen])
 
 
 def stack_result(allocation, peak, reserve):
@@ -44,6 +51,7 @@ def analyze(log, pbench, metadata, resolution):
     processes = {}
     desktop = []
     samples = 0
+    observed_maximum = 0
     for line in log.splitlines():
         if "AES exit" in line:
             match = AES_EXIT.search(line)
@@ -54,6 +62,14 @@ def analyze(log, pbench, metadata, resolution):
             if (top - bottom != budgets["aes"] or not bottom <= current <= top or
                     free != current - bottom or not 0 <= used <= free or maximum < used):
                 raise ValueError("inconsistent AES addresses, allocation or usage: " + line)
+            # The producer's max_usage is global across AES calls/processes.
+            # Every new cumulative maximum must be explained by a sample we
+            # actually saw, including its entry prefix. A later matching call
+            # cannot recover the missing earlier call's total stack usage.
+            observed_maximum = max(observed_maximum, used)
+            if maximum != observed_maximum:
+                raise ValueError("incomplete or inconsistent AES cumulative max_usage: "
+                                 f"reported={maximum}, observed={observed_maximum}")
             peak = top - current + used
             key = hex(process)
             processes[key] = max(processes.get(key, 0), peak)
