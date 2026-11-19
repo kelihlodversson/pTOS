@@ -40,7 +40,11 @@ Every run completes all ten named pBench tests with fixed -q -r 1 options.
 These timings are not performance baselines. It then opens/closes the
 desktop About dialog repeatedly. Three distinct About-entry stack samples
 prove that two prior dialog cycles returned; an opened dialog alone is not
-completion. pBench's GEM Window workload exercises window operations too.
+completion. The CI-only CONF_DEBUG_STACK_CI_END option then emits the
+producer's final trace count and uses Native Features to exit Hatari.
+The controller requires that marker, a clean guest exit and complete
+workloads before recording success. Interactive tracing leaves this new
+option off (its default). pBench's GEM Window exercises window operations too.
 Wrong/ambiguous screen modes, missing/duplicate tests, nonpositive work
 counts and malformed result rows fail. Invalid extra rows are not dropped
 before checking completeness.
@@ -49,7 +53,8 @@ Budget and telemetry
 --------------------
 
 production.config records the profile before enabling CONF_DEBUG_AES_STACK
-and CONF_DEBUG_DESK_STACK. The AES budget is AES_STACK_SIZE * 4 bytes; the
+and CONF_DEBUG_DESK_STACK, plus the CI-only termination handshake. The
+AES budget is AES_STACK_SIZE * 4 bytes; the
 desktop budget is the distance from deskstackbottom to deskustack in the
 compiled obj/deskstart.o. No default budget is hardcoded. Instrumentation
 does not enlarge either allocation, and the logged AES addresses must
@@ -63,6 +68,16 @@ largest per-call used value observed so far across all AES processes. A
 larger value reveals a missing earlier peak and a smaller value violates
 the producer's cumulative-counter contract; both fail. A later matching
 sample cannot recover a missing call's entry prefix.
+
+Every entry is validated too. Its top - current is a lower bound on usage,
+including when a call remains outstanding. Entry/exit frames must pair by
+AES process; ordinary outstanding event waits are allowed at capture end.
+The global producer sequence must start at one and increase on every
+entry/exit. Gaps, duplicate/reordered rows and unmatched frames fail.
+The final producer count must match the last observed event, catching a
+dropped exit or entire call at EOF even when max_usage did not increase.
+An entry alone cannot reveal additional stack growth before its exit;
+the guard retains its observed occupied-prefix lower bound in that case.
 
 The parser accepts LTO's _max_usage spelling and keeps the highest total
 for every AES process. Desktop usage is its allocation
@@ -104,6 +119,8 @@ Replay the byte comparison without rebuilding or running an emulator:
         --pbench /tmp/stack-o2-on/low-off/drive/PBENCH.TXT --resolution low \
         --output /tmp/replayed-stack-result.json
 
-This returns nonzero for a reserve violation or incomplete evidence. The
-controller completion marker is only written after the emulator stayed
-alive through all workloads; timeouts/crashes have no completion marker.
+This returns nonzero for a reserve violation or incomplete evidence.
+Unsequenced historical/interactive traces cannot prove continuity and
+are rejected; create fresh artifacts with the CI runner to replay them.
+The controller marker is only written after complete workloads and the
+producer's final-count/clean-shutdown handshake. Timeouts/crashes have none.

@@ -13,9 +13,11 @@ PBENCH_TESTS = ("GEM Dialog Box", "VDI Text", "VDI Text Effects", "VDI Small Tex
                 "VDI Graphics", "GEM Window", "Blitting", "VDI Scroll",
                 "Justified Text", "VDI Enquire")
 SCREENS = {"low": (320, 200, 4), "med": (640, 200, 2), "high": (640, 400, 1)}
-AES_EXIT = re.compile(
-    r"AES exit\s+rlr=(0x[\da-fA-F]+) bottom=(0x[\da-fA-F]+) "
-    r"current=(0x[\da-fA-F]+) top=(0x[\da-fA-F]+) free=(-?\d+), "
+AES_FIELDS = (r"seq=(\d+) rlr=(0x[\da-fA-F]+) bottom=(0x[\da-fA-F]+) "
+              r"current=(0x[\da-fA-F]+) top=(0x[\da-fA-F]+) free=(-?\d+)")
+AES_ENTER = re.compile(r"AES enter\s+" + AES_FIELDS + r"\s*$")
+AES_END = re.compile(r"AES end seq=(\d+)\s*$", re.M)
+AES_EXIT = re.compile(r"AES exit\s+" + AES_FIELDS + r", " +
     r"used=(\d+), _?max_usage=(\d+), recommended AES_STACK_SIZE=(\d+)\s*$")
 DESKTOP = re.compile(r"Desktop stack has (-?\d+) bytes available\s*$", re.M)
 PBENCH = re.compile(r"^(.+?)\s+(\d+\.\d{3}) s\s+(-?\d+)\s+\w+(?:\s+\d+%)?\s*$")
@@ -51,17 +53,44 @@ def analyze(log, pbench, metadata, resolution):
     processes = {}
     desktop = []
     samples = 0
+    entries = 0
+    pending = {}
+    next_sequence = 1
+    ended = False
     observed_maximum = 0
     for line in log.splitlines():
-        if "AES exit" in line:
-            match = AES_EXIT.search(line)
+        if "AES enter" in line or "AES exit" in line:
+            if ended:
+                raise ValueError("AES telemetry after producer end marker")
+            entering = "AES enter" in line
+            match = (AES_ENTER if entering else AES_EXIT).search(line)
             if not match:
-                raise ValueError("malformed AES exit telemetry: " + line)
-            process, bottom, current, top = (int(x, 16) for x in match.groups()[:4])
-            free, used, maximum, _ = map(int, match.groups()[4:])
+                raise ValueError("malformed AES entry/exit telemetry: " + line)
+            sequence = int(match.group(1))
+            if sequence != next_sequence:
+                raise ValueError(f"AES telemetry sequence gap/reorder: expected={next_sequence}, got={sequence}")
+            next_sequence += 1
+            process, bottom, current, top = (int(x, 16) for x in match.groups()[1:5])
+            free = int(match.group(6))
             if (top - bottom != budgets["aes"] or not bottom <= current <= top or
-                    free != current - bottom or not 0 <= used <= free or maximum < used):
+                    free != current - bottom):
                 raise ValueError("inconsistent AES addresses, allocation or usage: " + line)
+            key = hex(process)
+            frame = (bottom, current, top)
+            if entering:
+                if key in pending:
+                    raise ValueError("AES entry without the previous exit: " + key)
+                pending[key] = frame
+                # Event waits may still be outstanding at emulator stop.
+                # Their occupied prefix is already a measured lower bound.
+                processes[key] = max(processes.get(key, 0), top - current)
+                entries += 1
+                continue
+            if pending.pop(key, None) != frame:
+                raise ValueError("AES exit without matching entry/frame: " + key)
+            used, maximum, _ = map(int, match.groups()[6:])
+            if not 0 <= used <= free or maximum < used:
+                raise ValueError("inconsistent AES per-call usage: " + line)
             # The producer's max_usage is global across AES calls/processes.
             # Every new cumulative maximum must be explained by a sample we
             # actually saw, including its entry prefix. A later matching call
@@ -71,9 +100,13 @@ def analyze(log, pbench, metadata, resolution):
                 raise ValueError("incomplete or inconsistent AES cumulative max_usage: "
                                  f"reported={maximum}, observed={observed_maximum}")
             peak = top - current + used
-            key = hex(process)
             processes[key] = max(processes.get(key, 0), peak)
             samples += 1
+        if "AES end" in line:
+            match = AES_END.search(line)
+            if not match or ended or int(match.group(1)) != next_sequence - 1:
+                raise ValueError("missing/reordered AES telemetry at producer end marker")
+            ended = True
         if "Desktop stack has" in line:
             match = DESKTOP.search(line)
             if not match:
@@ -84,6 +117,8 @@ def analyze(log, pbench, metadata, resolution):
             desktop.append(budgets["desktop"] - free)
     if not samples:
         raise ValueError("missing AES telemetry")
+    if not ended:
+        raise ValueError("missing producer AES end marker")
     # Samples are at About entry. A third entry proves two prior dialogs
     # returned to the desktop; merely opening one dialog is insufficient.
     if len(desktop) < 3:
@@ -97,7 +132,8 @@ def analyze(log, pbench, metadata, resolution):
     stacks = dict(aes=stack_result(budgets["aes"], max(processes.values()), AES_RESERVE),
                   desktop=stack_result(budgets["desktop"], max(desktop), DESKTOP_RESERVE))
     return dict(status="pass" if all(s["status"] == "pass" for s in stacks.values()) else "fail",
-                stacks=stacks, aes_samples=samples, aes_process_peaks=processes,
+                stacks=stacks, aes_samples=samples, aes_entries=entries,
+                aes_outstanding_calls=len(pending), aes_process_peaks=processes,
                 desktop_samples=len(desktop), pbench_tests=len(PBENCH_TESTS))
 
 

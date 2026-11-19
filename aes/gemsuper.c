@@ -30,6 +30,10 @@
 #include "gem_rsc.h"
 
 #include "gemsuper.h"
+#if CONF_DEBUG_STACK_CI_END
+#include "../bios/natfeat.h"
+LONG aes_stack_trace_finish(void); /* Supexec callback of the CI desktop */
+#endif
 #include "gempd.h"
 #include "gemaplib.h"
 #include "geminit.h"
@@ -482,6 +486,20 @@ UBYTE* check_min; /* Minimum stack address to check */
 UBYTE* check_max; /* Maximum stack address to check */
 ULONG max_usage = 0; /* Maximum stack usage for an AES call, since the beginning */
 UBYTE* min_pointer = NULL; /* Minimum detected stack pointer, since the beginning */
+static ULONG stack_trace_sequence; /* Detect missing/reordered debug records */
+
+#if CONF_DEBUG_STACK_CI_END
+LONG aes_stack_trace_finish(void)
+{
+    if (has_nf_shutdown())
+    {
+        /* No AES calls follow this authoritative end-of-capture count. */
+        kprintf("AES end seq=%lu\n", stack_trace_sequence);
+        nf_shutdown();
+    }
+    return 0;
+}
+#endif
 
 /* Called when entering AES trap #2 */
 void trapaes_debug_enter(void)
@@ -490,8 +508,8 @@ void trapaes_debug_enter(void)
     UBYTE* current = (UBYTE*)rlr->p_uda->u_spsuper;
     UBYTE* top = bottom + sizeof rlr->p_uda->u_super;
 
-    kprintf("AES enter rlr=%p bottom=%p current=%p top=%p free=%ld\n",
-        rlr, bottom, current, top, current - bottom);
+    kprintf("AES enter seq=%lu rlr=%p bottom=%p current=%p top=%p free=%ld\n",
+        ++stack_trace_sequence, rlr, bottom, current, top, current - bottom);
 
     if (!min_pointer)
         min_pointer = top;
@@ -523,8 +541,8 @@ void trapaes_debug_exit(void)
 
     recommended = (top - min_pointer) + 512; /* Heuristic */
 
-    kprintf("AES exit  rlr=%p bottom=%p current=%p top=%p free=%ld, used=%ld, max_usage=%ld, recommended AES_STACK_SIZE=%ld\n",
-        rlr, bottom, current, top, current - bottom, used, max_usage, recommended/4);
+    kprintf("AES exit  seq=%lu rlr=%p bottom=%p current=%p top=%p free=%ld, used=%ld, max_usage=%ld, recommended AES_STACK_SIZE=%ld\n",
+        ++stack_trace_sequence, rlr, bottom, current, top, current - bottom, used, max_usage, recommended/4);
 }
 
 #endif /* CONF_DEBUG_AES_STACK */

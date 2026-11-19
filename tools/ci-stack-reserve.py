@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 
-from stack_usage import (COMPLETED, DESKTOP, analyze, pbench_complete, report_lines)
+from stack_usage import (AES_END, COMPLETED, DESKTOP, analyze, pbench_complete, report_lines)
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = {
@@ -24,6 +24,10 @@ PROFILES = {
 PR_CASES = (("low", "off"), ("high", "on"))
 FULL_CASES = tuple((mode, blitter) for mode in ("low", "med", "high")
                   for blitter in ("off", "on"))
+
+
+class GuestFinished(Exception):
+    """The guest emitted its final sequence and shut down successfully."""
 
 
 def write_json(path, value):
@@ -83,7 +87,7 @@ def build(args, metadata):
                                  (ROOT / "tools/ptos-toolchain.sha256").read_text().splitlines()
                                  if line.startswith("# release:")))
     write_json(args.out / "metadata.json", metadata)
-    for name in ("CONF_DEBUG_AES_STACK", "CONF_DEBUG_DESK_STACK", "DEBUG_PRINT_NONE"):
+    for name in ("CONF_DEBUG_AES_STACK", "CONF_DEBUG_DESK_STACK", "CONF_DEBUG_STACK_CI_END", "DEBUG_PRINT_NONE"):
         config.syms[name].set_value("y")
         if config.syms[name].str_value != "y":
             raise ValueError("missing required instrumentation: " + name)
@@ -151,8 +155,17 @@ def run_case(args, metadata, mode, blitter):
                 proc = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                         env=dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy"))
                 deadline = time.monotonic() + args.timeout
+                finished = False
 
                 def alive():
+                    if AES_END.search(log_path.read_text(errors="replace")):
+                        try:
+                            code = proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired as error:
+                            raise RuntimeError("producer end marker without guest shutdown") from error
+                        if code != 0:
+                            raise RuntimeError("guest shutdown failed: " + str(code))
+                        raise GuestFinished()
                     if proc.poll() is not None:
                         raise RuntimeError("Hatari exited unexpectedly: " + str(proc.returncode))
                     if time.monotonic() >= deadline:
@@ -165,7 +178,18 @@ def run_case(args, metadata, mode, blitter):
 
                         def send(value):
                             alive()
-                            connection.sendall((value + "\n").encode())
+                            try:
+                                connection.sendall((value + "\n").encode())
+                            except OSError:
+                                # NF_SHUTDOWN can close the socket between the
+                                # liveness check and this send. Still require
+                                # the final producer marker and clean exit.
+                                try:
+                                    proc.wait(timeout=5)
+                                except subprocess.TimeoutExpired as error:
+                                    raise RuntimeError("control socket failed before guest shutdown") from error
+                                alive()
+                                raise
 
                         def event(value):
                             send("hatari-event " + value)
@@ -196,10 +220,11 @@ def run_case(args, metadata, mode, blitter):
                                 break
                         if count < 3:
                             raise RuntimeError("desktop About workload did not complete")
-                        alive()
-                        send("hatari-shortcut screenshot")
-                        time.sleep(0.2)
-                        alive()
+                        while True:
+                            alive()
+                            time.sleep(0.05)
+                except GuestFinished:
+                    finished = True
                 finally:
                     proc.terminate()
                     try:
@@ -207,11 +232,17 @@ def run_case(args, metadata, mode, blitter):
                     except subprocess.TimeoutExpired:
                         proc.kill()
                         proc.wait()
-    # Only the controller writes this, after checking the emulator remained
-    # alive through the workload. No marker is written on a timeout/crash.
+                if not finished:
+                    raise RuntimeError("missing producer end/shutdown handshake")
+    pbench_text = result.read_text(errors="replace")
+    trace = log_path.read_text(errors="replace")
+    if not pbench_complete(pbench_text, mode) or len(DESKTOP.findall(trace)) < 3:
+        raise RuntimeError("guest end before workload completion")
+    # Only the controller writes this, after a producer end marker and clean
+    # NF_SHUTDOWN. No marker is written on a timeout or unexpected exit.
     with log_path.open("a") as log:
         log.write("\n" + COMPLETED + "\n")
-    return analyze(log_path.read_text(errors="replace"), result.read_text(errors="replace"), metadata, mode)
+    return analyze(log_path.read_text(errors="replace"), pbench_text, metadata, mode)
 
 
 def summary(metadata, results):
@@ -245,7 +276,8 @@ def main():
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=False)
     cases = PR_CASES if args.coverage == "pr" else FULL_CASES
-    metadata = dict(profile=args.profile, lra=args.lra, coverage=args.coverage, cases=list(cases))
+    metadata = dict(profile=args.profile, lra=args.lra, coverage=args.coverage,
+                    aes_trace_schema=2, cases=list(cases))
     results = {}
     original = (ROOT / ".config").read_bytes() if (ROOT / ".config").exists() else None
     try:
