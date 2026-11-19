@@ -133,3 +133,26 @@ saved context returns. A blocked sleeper must wake alongside a non-yielding
 worker. Group cancellation must retire a suspended continuation without USER
 re-entry and with unchanged resource counters. These are separate required
 verdicts; a successful capture or same-entry copy-back cannot satisfy them.
+
+Independent roots and ROM-window limits
+---------------------------------------
+PREEMPT.TOS is a small loader-created PROCESS, run twice with independent
+original/alternate patterns. Each reports its live PID and root before a file
+gate opens. The parent checks that both roots differ from one another and from
+its own. A test-only CPU metadata query credits each pattern only after an
+acknowledged saved IRQ return with intervening peer USER execution. Both user
+register comparisons and these delayed-return witnesses are required.
+
+The existing aspace_clone() rejects CONF_M68K_ROM_WINDOW, including Amiga and
+Atari ROM kernels. Phase C does not change that backend capability. Those lanes
+exercise independent loader roots and shared-root PROCESS/THREAD handshakes;
+they do not enable public Pfork or advertise the private-clone positive tests.
+The kernel's existing private test counters remain available for exact resource
+observations. QEMU x32/ARM/040 additionally require public-Pfork private roots.
+The ordinary 030/040/060 and scheduler-disabled ROM coverage is unchanged.
+
+Timer support now derives its internal saved-state helpers independently of
+the fork test transport/public Pfork. Selecting Phase C alone does not select
+either fork interface. The dedicated full Falcon/TT test kernel uses the
+existing -Os profile to fit its 512-KB image; Amiga already defaults to -Os.
+This does not alter the shipped ROM presets or remove any required probe.
