@@ -47,6 +47,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-deferred-guards-') as directory:
         ('native IRQ exact-child wait', 'native retained IRQ with managed exact-child wait: PASS'),
         ('native retained IRQ retirement', 'native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS'),
         ('native retained IRQ fault retirement', 'native retained IRQ armed and acknowledged user faults: PASS'),
+        ('native retained IRQ orphan continuation', 'native retained IRQ exact-wait cancellation and orphan continuation: PASS'),
     )
     for enabled, cancellation in product((False, True), repeat=2):
         (top / 'obj/autoconf.h').write_text(
@@ -58,10 +59,10 @@ with tempfile.TemporaryDirectory(prefix='ptos-deferred-guards-') as directory:
             shell = 'top=$1; suite_log=$2\nrecord() { echo "$1"; }\n' + block
             result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
                                     check=True, text=True, capture_output=True)
-            required = [enabled]*3 + [enabled and cancellation]*2
+            required = [enabled]*3 + [enabled and cancellation]*3
             missing = [label for (label, _), seen, needed in zip(verdicts, present, required) if needed and not seen]
             assert result.stdout.splitlines() == missing, (enabled, cancellation, present, result.stdout)
-print('Native delayed IRQ guards: 128 feature/verdict cases, immediate copy-back evidence refused: PASS (host shell)')
+print('Native delayed IRQ guards: 256 feature/verdict cases, immediate copy-back evidence refused: PASS (host shell)')
 for profile, markers in (('deferred', DEFERRED), ('refused', (REFUSED,))):
     assert not missing_irq_evidence('\r\n'.join(markers), profile)
     assert missing_irq_evidence('\n'.join(DEFERRED + (REFUSED,)), profile)

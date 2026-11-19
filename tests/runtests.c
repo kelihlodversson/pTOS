@@ -66,7 +66,7 @@ int main(void)
     }
 #if defined(TEST_WITH_IRQ_RESTART)
     if ((unsigned char)_base->p_cmdlin[0]==7 && !memcmp(_base->p_cmdlin+1,"--irq ",6) &&
-        _base->p_cmdlin[7] && strchr("ARN",_base->p_cmdlin[7])) {
+        _base->p_cmdlin[7] && strchr("ARNO",_base->p_cmdlin[7])) {
         long status=pclone_run_irq_image(_base->p_cmdlin[7]);
         Pterm((short)status);
         return (int)status;

@@ -3,6 +3,11 @@
 #if defined(TEST_WITH_IRQ_RESTART)
 #include "irq_restart_probe.h"
 #if defined(__mc68000__)
+#define IRQ_RESTART_IMAGE "CLNABI.TOS"
+#else
+#define IRQ_RESTART_IMAGE "RUNTESTS.TOS"
+#endif
+#if defined(__mc68000__)
 extern long clone_irq_registers_alt(long);
 #else
 extern long clone_irq_registers_alt(void);
@@ -341,6 +346,105 @@ static void irq_restart_driver(void *unused)
 }
 #endif
 
+#if defined(TEST_WITH_PTERMGRP) && !defined(TEST_M68K_ROM_WINDOW)
+#define IRQ_ORPHAN_READY "IRQWAIT.ON"
+#define IRQ_ORPHAN_DONE "IRQDONE.OUT"
+
+static int irq_restart_file(const char *name, int create)
+{
+    long fd=create?Fcreate(name,0):Fopen(name,0);
+    return fd>=0 && Fclose((short)fd)==0;
+}
+
+/* The exact waiter's sibling is the only runnable USER peer when A enters
+ * its IRQ window. It requests group exit, then the child must finish B2 and
+ * run independently of the released parent claim. */
+static void irq_restart_orphan_killer(void *unused)
+{
+    unsigned spin;
+    (void)unused;
+    for(spin=0;spin<1024;spin++) {
+        if(irq_restart_file(IRQ_ORPHAN_READY,0)) {
+            (void)term_group(61);
+            break;
+        }
+        (void)Syield();
+    }
+    Pterm(87);
+}
+
+static void irq_restart_orphan_waiter(void *unused)
+{
+    int32_t pid=0,tid=0;
+    (void)unused;
+    if(launch_entry(irq_restart_orphan_killer,CLONE_VM|CLONE_SAME_PROCESS,
+                    runnable_stacks[1],&pid,&tid)>0)
+        (void)Pexec(0,IRQ_RESTART_IMAGE,"\007--irq O",0);
+    Pterm(87); /* the exact wait must end through cancellation */
+}
+
+static void irq_restart_orphan_worker(void *unused)
+{
+    struct irq_restart_args args;
+    long parent=Pgetppid();
+    unsigned spin;
+    (void)unused;
+    irq_restart_prepare_args(&args,(uintptr_t)clone_irq_window_begin,(uintptr_t)clone_irq_window_end);
+    if(parent<=0 || pclone_trap(&args,IRT_BEGIN) || !irq_restart_file(IRQ_ORPHAN_READY,1) ||
+       Pgetppid()!=parent || irq_restart_pattern(0) || pclone_trap(0,IRT_FINISH)) {
+        Pterm(87);return;
+    }
+    for(spin=0;spin<1024 && Pgetppid()==parent;spin++) (void)Syield();
+    Pterm(spin<1024?0:87);
+}
+
+static long irq_restart_orphan_image(void)
+{
+    struct ptos_clone_args args={0};
+    long memory=Malloc(RUNNABLE_STACK_SIZE),tid;
+    int32_t status=-1;
+    if(memory<=0)return 87;
+    args.flags=CLONE_VM|CLONE_SAME_PROCESS;
+    args.entry=irq_restart_orphan_worker;
+    args.stack_base=(void *)memory;
+    args.stack_size=RUNNABLE_STACK_SIZE;
+    tid=pclone_trap(&args,sizeof(args));
+    if(tid<=0 || join_tid(tid,&status) || status || Mfree((void *)memory))return 87;
+    return irq_restart_file(IRQ_ORPHAN_DONE,1)?0:87;
+}
+
+static void irq_restart_test_orphan(void)
+{
+    struct ptos_clone_args args={0};
+    MAPPING_LIFETIME_SNAPSHOT before,after;
+    long child,result;
+    int32_t pid=0;
+    unsigned spin;
+    int completed=0;
+    (void)Fdelete(IRQ_ORPHAN_READY);
+    (void)Fdelete(IRQ_ORPHAN_DONE);
+    if(mlt_snapshot(&before)) { ptest_assert_msg(0,"snapshot before B2 orphan");return; }
+    args.flags=CLONE_VM|CLONE_COPY_CWD|CLONE_COPY_STANDARD_HANDLES;
+    args.entry=irq_restart_orphan_waiter;
+    args.stack_base=runnable_stacks[0];
+    args.stack_size=RUNNABLE_STACK_SIZE;
+    args.child_pid=&pid;
+    child=pclone_trap(&args,sizeof(args));
+    result=child>0?Pwaitpid(pid,0,0):-1;
+    for(spin=0;spin<1024 && !completed;spin++) {
+        completed=irq_restart_file(IRQ_ORPHAN_DONE,0);
+        if(!completed)(void)Syield();
+    }
+    ptest_assert_msg(child>0 && (result>>16)==pid && (result&65535)==61 &&
+                     Pwaitpid(pid,1,0)==-33L && completed,
+                     "cancel exact waiter while its child retains an IRQ and verify orphan completion");
+    ptest_assert_msg(Fdelete(IRQ_ORPHAN_READY)==0 && Fdelete(IRQ_ORPHAN_DONE)==0,"remove B2 orphan receipts");
+    ptest_assert_msg(!mlt_snapshot(&after) && irq_restart_resources_equal(&before,&after),
+                     "B2 orphan, IRQ and exact claim resources return to baseline");
+    if(!ptest_failures())conws("native retained IRQ exact-wait cancellation and orphan continuation: PASS\r\n");
+}
+#endif
+
 /* An independent loader PROCESS with an exact synchronous parent wait.
  * Its two siblings use heap stacks so the regular B2 stack lease applies. */
 long pclone_run_irq_image(int role);
@@ -349,6 +453,9 @@ long pclone_run_irq_image(int role)
     int i,ok=1;
 #if defined(__mc68000__)
     if(Ssystem(S_GETCOOKIE,0x5f465055L,(long)&has_fpu)!=0)has_fpu=0;
+#endif
+#if defined(TEST_WITH_PTERMGRP) && !defined(TEST_M68K_ROM_WINDOW)
+    if(role=='O')return irq_restart_orphan_image();
 #endif
     for(i=0;i<2;i++) {
         long memory=Malloc(RUNNABLE_STACK_SIZE);
@@ -378,11 +485,7 @@ static void irq_restart_test_exact_child(void)
     excluded=anchored_thief_excluded;
     /* On m68k the ELF loader owns the text leaves. Legacy PRG text requires
      * the private-image authority separately tested by irq_restart_driver. */
-#if defined(__mc68000__)
-    result=Pexec(0,"CLNABI.TOS","\007--irq A",0);
-#else
-    result=Pexec(0,"RUNTESTS.TOS","\007--irq A",0);
-#endif
+    result=Pexec(0,IRQ_RESTART_IMAGE,"\007--irq A",0);
     anchored_thief_stop=1;
     ptest_assert_msg(join_tid(tid,&status)==0 && status==0,"join B2 competing waiter");
     ptest_assert_msg(result==0x713b && anchored_thief_excluded>excluded && !anchored_thief_taken &&
@@ -414,6 +517,9 @@ static void test_irq_restart(void)
     struct ptos_clone_args args={0};
     long child,status;
     irq_restart_test_exact_child();
+#if defined(TEST_WITH_PTERMGRP)
+    irq_restart_test_orphan();
+#endif
     /* In particular, legacy m68k PRG text is borrowed procmem, not private
      * code authority. Obtain the proof source through the existing owned
      * private-image transaction rather than weakening IRQ lease admission. */

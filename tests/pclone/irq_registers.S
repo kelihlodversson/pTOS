@@ -361,6 +361,7 @@ clone_irq_window_end:
         .globl clone_irq_registers_end
 clone_irq_registers_end:
 #if defined(TEST_WITH_IRQ_RESTART) && !defined(IRQ_ALTERNATE)
+        .syntax unified
         .globl clone_irq_thumb,clone_irq_thumb_begin,clone_irq_thumb_end
 clone_irq_thumb:
         adr r2,6f
