@@ -285,7 +285,7 @@ Replaced, and the old one freed:
   - the environment;
   - the address space (KASPACE root), and with it the old image, interpreter,
     stack and all Malloc/mmap memory;
-  - mapping memberships and allocation/runtime scopes;
+  - mapping memberships and the allocation scope;
   - reservation births, so views of the old root never authenticate the new;
   - DTA and directory search state, and the old program's GUI (AES/CUIS)
     clients with their display, mouse and keyboard leases.
@@ -305,7 +305,7 @@ the commit is reversible and owned by a handle that aborts it:
      is the new program's (initial stack, auxv).
   3. Bundle. kproc_exec_image_prepare builds what an ordinary launch builds,
      with eight injectable steps:
-       - the source's mapping membership (and runtime scope) in the new root;
+       - the source's mapping membership in the new root;
        - the container's environment and TPA, mapped user-RW, with a PRG's
          text extent executable;
        - the exit parent and controller basepages;

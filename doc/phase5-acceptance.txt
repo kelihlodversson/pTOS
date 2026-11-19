@@ -36,10 +36,9 @@ claim those operations for nested continuations.
 
 Unannotated Malloc/Mmap uses common GENERAL membership, including existing and
 future allocations, so surviving peers keep a departed creator's allocations.
-Explicit test-gated MAP_PTOS_RUNTIME annotation selects runtime-owned DSO maps;
-loaded execution has a fresh runtime scope and exact source-owned dependencies.
-Generic CLONE_VM inherits compatible current/future runtime membership. A raw
-shared pointer alone never exports lifetime across runtime scopes. Trusted exact
+(#1018 removed the test-gated MAP_PTOS_RUNTIME annotation and runtime scopes
+with shared-VM GO of ELF images: every mapping is in the PROCESS allocation
+scope.) A raw shared pointer alone never exports lifetime. Trusted exact
 birth/interval attachment must precede source release. Lifetime is neither
 memory access nor immutable permission authority. See shared-vm-pexec.txt for
 FreeMiNT primary-source references and the explicit public-activation boundary.
