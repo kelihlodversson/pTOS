@@ -99,6 +99,7 @@ done:
     Pterm(w->error?87:0);
 }
 #if defined(TEST_WITH_PTERMGRP)
+enum irq_restart_exit { ARMED_EXIT, ACKED_EXIT, SUSPENDED_CANCEL, ARMED_FAULT, ACKED_FAULT };
 static volatile int irq_restart_exit_mode,irq_restart_cancel_ready;
 static volatile int irq_restart_cancel_seen,irq_restart_cancel_user;
 static void irq_restart_cancel_peer(void *unused)
@@ -108,7 +109,7 @@ static void irq_restart_cancel_peer(void *unused)
     for(spin=0;spin<128 && !irq_restart_cancel_ready;spin++) (void)Syield();
     if(!irq_restart_cancel_ready) { Pterm(87);return; }
     irq_restart_cancel_seen=1;
-    if(irq_restart_exit_mode==2) {
+    if(irq_restart_exit_mode==SUSPENDED_CANCEL) {
         (void)term_group(61);
         Pterm(87);return;
     }
@@ -116,37 +117,40 @@ static void irq_restart_cancel_peer(void *unused)
 }
 static void irq_restart_exit_entry(void *unused)
 {
-    struct { uint64_t code,code_bytes,stack,stack_bytes; } args;
+    struct irq_restart_args args;
     struct ptos_clone_args peer={0};
-    uintptr_t code=(uintptr_t)clone_irq_registers;
-    unsigned long page=(unsigned long)(uintptr_t)&args & ~4095UL,touch;
+    int mode=irq_restart_exit_mode;
     (void)unused;
-    args.code=code;args.code_bytes=(uintptr_t)clone_irq_registers_end-code;
-    args.stack=page-8192UL;args.stack_bytes=12288;
-    for(touch=page-8192UL;touch<=page;touch+=4096UL) {
-        volatile unsigned char *p=(volatile unsigned char *)touch;
-        unsigned char value=*p;*p=value;
-    }
-    if(irq_restart_exit_mode) {
+    irq_restart_prepare_args(&args,(uintptr_t)clone_irq_registers,(uintptr_t)clone_irq_registers_end);
+    if(mode!=ARMED_EXIT && mode!=ARMED_FAULT) {
         peer.flags=CLONE_VM|CLONE_SAME_PROCESS;peer.entry=irq_restart_cancel_peer;
         peer.stack_base=runnable_stacks[1];peer.stack_size=RUNNABLE_STACK_SIZE;
         if(pclone_trap(&peer,sizeof(peer))<=0) { Pterm(87);return; }
     }
     if(pclone_trap(&args,IRT_BEGIN)) { Pterm(87);return; }
-    if(!irq_restart_exit_mode) { Pterm(62);return; } /* ARMED, never frozen */
+    if(mode==ARMED_EXIT) { Pterm(62);return; }
+    if(mode==ARMED_FAULT) {
+        *(volatile unsigned long *)0x80001000UL=1;
+        Pterm(87);return;
+    }
     irq_restart_cancel_ready=1;
     if(irq_restart_pattern(0)) { Pterm(87);return; }
     irq_restart_cancel_user=1;
     /* Mode 2 must stop via existing cancellation before returning to USER.
      * Mode 1 verifies ACKED ownership remains attached until off-stack exit. */
-    if(irq_restart_exit_mode==2 || pclone_trap(0,IRT_QUERY)!=IRT_ACKED || !irq_restart_cancel_seen)
+    if(mode==SUSPENDED_CANCEL || pclone_trap(0,IRT_QUERY)!=IRT_ACKED || !irq_restart_cancel_seen)
         { Pterm(87);return; }
+    if(mode==ACKED_FAULT) {
+        *(volatile unsigned long *)0x80001000UL=1;
+        Pterm(87);return;
+    }
     Pterm(63);
 }
 static int irq_restart_test_retirement(void)
 {
+    static const unsigned expected[]={62,63,61,0x0b00,0x0b00};
     int mode,good=1;
-    for(mode=0;mode<3;mode++) {
+    for(mode=ARMED_EXIT;mode<=ACKED_FAULT;mode++) {
         struct ptos_clone_args args={0};
         MAPPING_LIFETIME_SNAPSHOT before,after;
         int32_t pid=0;
@@ -170,8 +174,13 @@ static int irq_restart_test_retirement(void)
         args.stack_size=RUNNABLE_STACK_SIZE;args.child_pid=&pid;
         child=pclone_trap(&args,sizeof(args));
         status=child>0?Pwaitpid(pid,0,0):-1;
-        if(child<=0 || (status>>16)!=pid || (status&65535)!=(mode==2?61:62+mode) ||
-           (mode && !irq_restart_cancel_seen) || (mode==2 && irq_restart_cancel_user)) good=0;
+        if(child<=0 || (status>>16)!=pid || (status&65535)!=expected[mode] ||
+           Pwaitpid(pid,1,0)!=-33L ||
+           ((mode!=ARMED_EXIT && mode!=ARMED_FAULT) && !irq_restart_cancel_seen) ||
+           (mode==SUSPENDED_CANCEL && irq_restart_cancel_user)) {
+            printf("IRQ retirement mode %d unexpected wait status %lx\r\n",mode,(unsigned long)status);
+            good=0;
+        }
         if(mlt_snapshot(&after) || !irq_restart_resources_equal(&before,&after)) {
             char message[96];sprintf(message,"IRQ retirement mode=%d child=%ld pid=%ld status=%lx seen=%d user=%d\r\n",
                 mode,child,(long)pid,(unsigned long)status,irq_restart_cancel_seen,irq_restart_cancel_user);conws(message);
@@ -348,6 +357,7 @@ static void test_irq_restart(void)
     conws("native interrupted USER A IRQ / B USER execution / saved A restart: PASS\r\n");
 #if defined(TEST_WITH_PTERMGRP)
     conws("native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS\r\n");
+    conws("native retained IRQ armed and acknowledged user faults: PASS\r\n");
 #endif
 }
 #endif

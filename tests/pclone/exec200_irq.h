@@ -13,22 +13,15 @@ extern long clone_irq_registers(long fpu);
 extern long clone_irq_registers(void);
 #endif
 
-static long exec200_irq_thread(void (*entry)(void *), void *stack)
+static long exec200_irq_spawn(void (*entry)(void *), void *stack, int32_t *pid)
 {
     struct ptos_clone_args args={0};
-    args.flags=CLONE_VM|CLONE_SAME_PROCESS;
+    args.flags=CLONE_VM|(pid?0:CLONE_SAME_PROCESS);
     args.entry=entry;
     args.stack_base=stack;
     args.stack_size=EXEC200_IRQ_STACK;
+    args.child_pid=pid;
     return exec200_probe(&args,sizeof(args));
-}
-
-static void exec200_irq_join(long tid, void *stack)
-{
-    int32_t status=-1;
-    long result=trap_1_wll(GEMDOS_PTHJOIN,tid,(long)&status);
-    if(result || status)exec200_fail("IRQ", "join peer", result?result:status);
-    if(Mfree(stack))exec200_fail("IRQ", "peer stack release", 0);
 }
 
 static void exec200_irq_peer(void *unused)
@@ -41,14 +34,17 @@ static void exec200_irq_retain(void)
 {
     struct irq_restart_args args;
     long memory,peer,result;
+    int32_t pid=0;
 #if defined(__mc68000__)
     long fpu=0;
     (void)Ssystem(S_GETCOOKIE,0x5f465055L,&fpu);
 #endif
     memory=Malloc(EXEC200_IRQ_STACK);
     if(memory<=0)exec200_fail("IRQ", "allocate peer stack", memory);
-    peer=exec200_irq_thread(exec200_irq_peer,(void *)memory);
-    if(peer<=0)exec200_fail("IRQ", "publish peer", peer);
+    /* Replacing a private clone requires a never-threaded PROCESS. Use a
+     * separate peer PROCESS on the same root, then reap it before Pexec. */
+    peer=exec200_irq_spawn(exec200_irq_peer,(void *)memory,&pid);
+    if(peer<=0 || pid<=0)exec200_fail("IRQ", "publish peer", peer);
     irq_restart_prepare_args(&args,(uintptr_t)clone_irq_registers,(uintptr_t)clone_irq_registers_end);
     result=exec200_probe(&args,IRT_BEGIN);
     if(result)exec200_fail("IRQ", "arm the owned frame", result);
@@ -59,6 +55,8 @@ static void exec200_irq_retain(void)
 #endif
     if(result)exec200_fail("IRQ", "restore register pattern", result);
     if(exec200_probe(0,IRT_QUERY)!=IRT_ACKED)exec200_fail("IRQ", "missing B2 witness", 0);
-    exec200_irq_join(peer,(void *)memory);
+    result=Pwaitpid(pid,0,0);
+    if((result>>16)!=pid || (result&65535) || Mfree((void *)memory))
+        exec200_fail("IRQ", "reap peer and release stack", result);
 }
 #endif

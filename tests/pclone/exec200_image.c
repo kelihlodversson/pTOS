@@ -19,13 +19,16 @@ static void verify_new_irq(void *unused)
 
 static void verify_irq_replacement(void)
 {
-    long memory,tid;
+    long memory,tid,result;
+    int32_t status=-1;
     if (exec200_probe(0, IRT_QUERY) != -36L) exec200_fail("image", "stale retained IRQ", 0);
     memory=Malloc(EXEC200_IRQ_STACK);
     if (memory<=0) exec200_fail("image", "new IRQ stack", memory);
-    tid=exec200_irq_thread(verify_new_irq,(void *)memory);
+    tid=exec200_irq_spawn(verify_new_irq,(void *)memory,0);
     if (tid<=0) exec200_fail("image", "new IRQ thread", tid);
-    exec200_irq_join(tid,(void *)memory);
+    result=trap_1_wll(GEMDOS_PTHJOIN,tid,(long)&status);
+    if(result || status || Mfree((void *)memory))
+        exec200_fail("image", "join new IRQ thread and release stack", result?result:status);
 }
 #endif
 
@@ -41,7 +44,7 @@ int main(void)
             for (attempt=0;attempt<1024 && Fsfirst(EXEC200_IRQ_GATE,0);attempt++) (void)Syield();
             if (attempt==1024) exec200_fail("image", "retained IRQ commit gate", 0);
             verify_irq_replacement();
-            Cconws("native retained IRQ Pexec(200) old-owner retirement and fresh-image restart: PASS\r\n");
+            (void)Cconws("native retained IRQ Pexec(200) old-owner retirement and fresh-image restart: PASS\r\n");
         }
 #endif
         while (!t.nested && Fsfirst("GO970.TMP", 0)) (void)Syield();

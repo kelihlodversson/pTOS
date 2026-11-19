@@ -24,6 +24,9 @@ static VADDR stack_first=STACK,stack_end=STACK+8192;
 static BOOL owned_code=TRUE,owned_stack=TRUE;
 #endif
 static unsigned allocations,frees,destroys,fail_alloc,cancel_calls;
+#if CONF_WITH_IRQ_RESTART_TEST
+static unsigned suspended_probe,fault_calls;
+#endif
 static UQUAD selected=4,user_observed=3;
 static ULONG current_tid=17;
 static jmp_buf exit_resume;
@@ -113,18 +116,51 @@ BOOL ksched_block(BOOL (*ready)(void *),void *argument)
 #if CONF_WITH_NATIVE_PREEMPT
     interrupt_restart_reap(&execution);
 #endif
+#if CONF_WITH_IRQ_RESTART_TEST
+    if (suspended_probe) {
+        ASPACE *as=kaspace_backend(process.space);
+        unsigned live=allocations-frees;
+        assert(execution.irq_restart.state==IRQ_RESTART_SUSPENDED);
+        assert(!kaspace_mapping_change(as,CODE,4096));
+        assert(!kaspace_mapping_change(as,STACK,8192));
+        assert(!kaspace_materialization_change(as,CODE,4096,ASPACE_PROT_USER|ASPACE_PROT_EXEC));
+        /* Resident COW writes are legal under a held logical view. A
+         * destructive mutation, or a new backing claim, cannot use it. */
+        assert(kaspace_cow_change(as,STACK,4096));
+        assert(allocations-frees==live);
+        if(suspended_probe==2)resident_code=FALSE; /* injected backend failure */
+        if(suspended_probe==3)resident_stack=FALSE;
+    }
+#endif
     selected+=2;if(peer)user_observed++;
     execution.on_cpu=TRUE;
     return TRUE;
 }
-void ksched_fault(PD *loaded,WORD signal) { (void)loaded;(void)signal;abort(); }
+void ksched_fault(PD *loaded,WORD signal)
+{
+#if CONF_WITH_IRQ_RESTART_TEST
+    assert((suspended_probe==2 || suspended_probe==3) && loaded==run && signal==11 && !critical);
+    assert(execution.on_cpu && execution.irq_restart.state==IRQ_RESTART_ABORTED);
+    fault_calls++;
+#else
+    (void)loaded;(void)signal;abort();
+#endif
+}
 void ksched_cancel_point(void)
 {
     assert(!critical && cancelled && execution.on_cpu);
     assert(execution.irq_restart.state==IRQ_RESTART_ABORTED);
     cancel_calls++;longjmp(exit_resume,1);
 }
-void xterm(UWORD status) { (void)status;abort(); }
+void xterm(UWORD status)
+{
+#if CONF_WITH_IRQ_RESTART_TEST
+    assert(status==(UWORD)-1 && fault_calls && execution.irq_restart.state==IRQ_RESTART_ABORTED);
+    longjmp(exit_resume,1);
+#else
+    (void)status;abort();
+#endif
+}
 
 #if CONF_WITH_IRQ_RESTART_TEST
 static LONG operation(UQUAD selector)
@@ -190,8 +226,9 @@ int main(void)
         assert(!interrupt_restart_admit(&execution,0,CODE,STACK));
         assert(!interrupt_restart_admit(&execution,1,CODE+4096,STACK));
         assert(!interrupt_restart_admit(&execution,1,CODE,STACK+8192));
-        critical=FALSE;freeze();peer=(i&1)!=0;
+        critical=FALSE;freeze();peer=(i&1)!=0;suspended_probe=1;
         assert(interrupt_restart_suspend(&execution)==peer);
+        suspended_probe=0;
         critical=TRUE;
         assert(interrupt_restart_return_valid(&execution));
         execution.identity++;assert(!interrupt_restart_return_valid(&execution));execution.identity--;
@@ -214,6 +251,16 @@ int main(void)
     assert(cancel_calls==1 && allocations-frees==baseline+2);
     execution.on_cpu=FALSE;interrupt_restart_dispose(&execution);execution.on_cpu=TRUE;
     cancelled=FALSE;assert(allocations-frees==baseline);
+    for(suspended_probe=2;suspended_probe<=3;suspended_probe++) {
+        assert(operation(IRQ_RESTART_BEGIN)==E_OK);freeze();
+        if(!setjmp(exit_resume)) { (void)interrupt_restart_suspend(&execution);abort(); }
+        assert(fault_calls==suspended_probe-1 && allocations-frees==baseline+2);
+        assert(!interrupt_restart_return_valid(&execution));
+        execution.on_cpu=FALSE;interrupt_restart_dispose(&execution);execution.on_cpu=TRUE;
+        resident_code=resident_stack=TRUE;
+        assert(allocations-frees==baseline);
+    }
+    suspended_probe=0;
     assert(operation(IRQ_RESTART_BEGIN)==E_OK);
     critical=TRUE;interrupt_restart_detach(&execution,&retired);critical=FALSE;
     execution.identity++;assert(allocations-frees==baseline+2);
@@ -222,7 +269,7 @@ int main(void)
     kaspace_put(process.space);assert(!destroys); /* Leases retain the root. */
     assert(operation(IRQ_RESTART_ABORT)==E_OK);
     assert(destroys==1 && allocations==frees);
-    puts("Retained IRQ transaction: rollback, no-peer return, stale identity, cancellation, replacement and exact lease/root conservation: PASS (dispatch/CPU/PROCESS models)");
+    puts("Retained IRQ transaction: rollback, no-peer return, stale identity, suspended mapping exclusion/fault, cancellation, replacement and exact lease/root conservation: PASS (dispatch/CPU/PROCESS models)");
     return 0;
 }
 

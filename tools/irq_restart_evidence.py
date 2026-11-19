@@ -5,6 +5,7 @@ DEFERRED = (
     'native interrupted USER A IRQ / B USER execution / saved A restart: PASS',
     'native retained IRQ with managed exact-child wait: PASS',
     'native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS',
+    'native retained IRQ armed and acknowledged user faults: PASS',
 )
 REFUSED = 'native retained IRQ unsupported CPU or ABI ordinary return: PASS'
 

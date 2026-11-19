@@ -894,6 +894,10 @@ if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
        ! grep -aq 'native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS' "$suite_log"; then
         record "native retained IRQ retirement" FAIL "acknowledged cancellation and exact retirement conservation were not proved"
     fi
+    if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native retained IRQ armed and acknowledged user faults: PASS' "$suite_log"; then
+        record "native retained IRQ fault retirement" FAIL "faults with attached IRQ owners were not reaped exactly once"
+    fi
 fi
 if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&

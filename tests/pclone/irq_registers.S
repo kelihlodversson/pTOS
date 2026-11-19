@@ -377,7 +377,13 @@ irq_fpu_last:
 #if defined(PREEMPT_PATTERN)
         move.l #8000000,%d0
 #elif defined(TEST_WITH_IRQ_RESTART)
+# if defined(TEST_M68K_ROM_WINDOW)
+        /* Cycle-driven ROM emulators execute far fewer USER instructions per
+         * IRQ than QEMU virt. Keep the full native witness requirement. */
+        move.l #8000000,%d0
+# else
         move.l #40000000,%d0
+# endif
 #else
         move.l #4000000,%d0
 #endif

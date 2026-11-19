@@ -50,7 +50,14 @@ on:
     paths:
       - tools/amiberry-pin.sh
       - tools/build-amiberry.sh
+      - tools/ci-amiberry.sh
+      - tools/run-amiberry-tests.py
+      - tools/irq_restart_evidence.py
+      - tests/pclone/irq_restart*
+      - bdos/interrupt_restart.*
+      - bdos/arch/m68k/interrupt_user.c
       - .github/actions/setup-amiberry/**
+      - .github/workflows/amiberry.yml
   schedule:
     - cron: '41 4 * * 1'
   workflow_dispatch:
