@@ -365,7 +365,7 @@ static void irq_restart_orphan_killer(void *unused)
     (void)unused;
     for(spin=0;spin<1024;spin++) {
         if(irq_restart_file(IRQ_ORPHAN_READY,0)) {
-            (void)term_group(61);
+            if(Pwaitpid(-1,1,0)==-36L)(void)term_group(61);
             break;
         }
         (void)Syield();
@@ -395,7 +395,7 @@ static void irq_restart_orphan_worker(void *unused)
         Pterm(87);return;
     }
     for(spin=0;spin<1024 && Pgetppid()==parent;spin++) (void)Syield();
-    Pterm(spin<1024?0:87);
+    Pterm(Pgetppid()==0?0:87);
 }
 
 static long irq_restart_orphan_image(void)

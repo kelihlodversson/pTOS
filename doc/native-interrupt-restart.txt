@@ -248,3 +248,58 @@ Unsupported profiles remain unchanged: x32 TLS/XSAVE/AVX; ARM Thumb/Jazelle/IT,
 FIQ, unsupported MMU or VFP restart states; m68k non-format0, 030/060 delayed
 return, fastcall and busy/pending/foreign FPU. Unsupported USER IRQs return
 normally. Arbitrary kernel/callback/nested frames never gain restart authority.
+
+Dedicated B2 qualification (#1025)
+----------------------------------
+Build runs a distinct hardware IRQ restart matrix with IRQ_RESTART_TEST=1 and
+production timer policy disabled. The QEMU lanes cover x32 FAT, Cortex-A7
+virt-arm FAT/PFS and 68040 virt-m68k FAT/PFS. Each checks the effective gates,
+records checkout and parent SHAs, and publishes the run log and configuration.
+The ordinary Phase C and feature-disabled lanes continue to run independently.
+
+The start/end symbols delimit only the assembly loop where the register
+patterns are live. A return during setup or comparison cannot earn credit.
+The test distinguishes capture-only (1), captured with normal return
+(EINVFN on NO_CREDIT), no eligible capture (EACCDN), forced-uncredited real
+transport (EAGAIN), and credited delayed restart (0). The latter requires
+authenticated peer USER execution between the original hardware IRQ and its
+return. QEMU proofs include sibling THREADs, shared-root separate PROCESSes
+and independent private roots. x32 checks R15, selected writable RFLAGS,
+x87 and MMX patterns, all XMM registers and MXCSR. A live user FS selector
+must survive ordinary IRQ return and cannot gain delayed-return authority.
+FSGSBASE, XSAVE/AVX and invalid privileged control profiles are host-model
+rejections. The ARM Thumb loop checks elapsed timer ticks and preserved USER
+state while admission refuses the frame. A second ARM pair requires both
+retained returns and a failed STREX after the peer's LDREX. The existing
+CLREX handoff/return sites now cover B2 on ARMv7 as well as Phase C.
+
+The exact-child fixture requires real EACCDN for a competing wait-any while
+an independent Pexec(0) child runs the IRQ probes, and requires the exact
+waiter to receive the full 16-bit exit status. A separate fixture cancels
+that waiter from its PROCESS sibling while the child has an armed hardware
+return. The child must complete its credited return, outlive the orphaned
+claim and restore the full resource baseline. The replacement fixture holds
+an ACKED operation through Pexec(200) rollback and checks the actual new
+execution has empty IRQ state and lease handles. A separate PROCESS executes
+on the replacement root to prove fresh restart while preserving the exec
+source's single-THREAD policy. The chain checks PROCESS identity, PID/TID,
+committed-exec generation, replacement root, once-only reap and conservation.
+
+Native exits and user faults exercise both ARMED and ACKED retirement, and
+group cancellation stops a suspended owner before USER reentry. Hosted
+production-transaction tests exercise revocation and materialization
+exclusion while suspended, including forced backend loss before restoration.
+The injected faults must leave leases attached until off-stack disposal.
+Synthetic frames and these owner/CPU models are kept distinct from the
+native register and scheduler evidence.
+
+The ROM-window backend declines private cloning, so the pinned Hatari and
+Amiberry lanes run these IRQ proofs in ELF loader roots with ordinary shared
+PROCESS/THREAD peers. The 040 stack ABI uses full format-0 RTE and requires
+nonzero FPIAR in the actual B2 pattern. The 030/68882, 060/FPU060 and 040
+fastcall profiles require capture and ordinary return in the same refused
+attempt. Hatari requires a fresh disk log and the matching ROM's halt and
+panic addresses. Amiberry additionally reads the real capture and FPIAR
+counters through its debugger with caches off and on. No unsupported CPU or
+ABI is reported as a deferred-return profile. The PR records exact source and
+synthetic merge evidence, and integrated epic results follow the merge.
