@@ -33,6 +33,9 @@ class LraConfiguration(unittest.TestCase):
     def compiler(self, version="16.2.0", target="m68k-unknown-ptos-prgelf", lra=True):
         cc = self.bin / "m68k-unknown-ptos-prgelf-gcc"
         cc.write_text(f'''#!/bin/sh
+for arg in "$@"; do
+    if [ "$arg" = -print-libgcc-file-name ]; then echo /mock/libgcc.a; exit 0; fi
+done
 case "$1" in
     -dumpversion) echo {version} ;;
     -dumpmachine) echo {target} ;;
@@ -121,6 +124,49 @@ esac
                     if override:
                         self.assertIn("-m68020", line)
             self.assertNotIn("#define BUILD_M68K_LRA", header.read_text())
+
+    def test_runtime_linker_compile_and_link_commands(self):
+        self.compiler()
+        config_file = self.work / ".config"
+        auto = self.work / "auto.conf"
+        header = self.work / "autoconf.h"
+        targets = ("obj/ldso/ld.so", "obj/ldso/test/librt.so",
+                   "obj/ldso/test/libdyn.so", "obj/ldso/test/soapp.elf",
+                   "obj/ldso/test/soapp-pie.elf")
+        env = dict(os.environ, PATH=str(self.bin) + os.pathsep + HOST_PATH)
+        for preset, arch_flag in (("virt-m68k-aspace", "-m68020"),
+                                  ("virt-arm-aspace", "-march=armv6k"),
+                                  ("pc-x86_64", "-mx32")):
+            config = self.config(preset)
+            config.syms["CONF_WITH_VDI_SCALABLE_FONTS"].set_value("n")
+            config.syms["CONF_WITH_ELF_SHARED"].set_value("y")
+            for enabled in ("y", "n"):
+                config.syms["BUILD_M68K_LRA"].set_value(enabled)
+                config.write_config(str(config_file))
+                subprocess.run([sys.executable, "tools/genconfig.py", "--config", str(config_file),
+                                "--header", str(header), "--makefile", str(auto)],
+                               env=env, check=True, stdout=subprocess.DEVNULL)
+                for override in ([], ["CPUFLAGS=-m68060 -mshort"]):
+                    with self.subTest(preset=preset, enabled=enabled, override=override):
+                        output = subprocess.check_output([
+                            MAKE, "-s", "-n", "-B", "-o", str(auto), "-o", str(header),
+                            "KCONFIG_CONFIG=" + str(config_file), "AUTOCONF_MK=" + str(auto),
+                            "AUTOCONF_H=" + str(header), "PYTHON=" + sys.executable,
+                            *override, *targets,
+                        ], env=env, text=True)
+                        commands = [shlex.split(line) for line in output.replace("\\\n", "").splitlines()
+                                    if line.split() and line.split()[0].endswith("gcc")]
+                        self.assertTrue(commands, output)
+                        outputs = {command[command.index("-o") + 1] for command in commands}
+                        self.assertTrue(set(targets).issubset(outputs), outputs)
+                        self.assertIn("obj/ldso/dynamic.o", outputs)
+                        expected = int(preset == "virt-m68k-aspace" and enabled == "y")
+                        for command in commands:
+                            self.assertEqual(command.count("-mlra"), expected, command)
+                            self.assertIn(arch_flag, command)
+                            self.assertIn("-fPIC", command)
+                            self.assertNotIn("-mshort", command)
+                            self.assertNotIn("-m68060", command)
 
     def test_subbuild_compile_commands_and_allocator_identity(self):
         self.compiler()
