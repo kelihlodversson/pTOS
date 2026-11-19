@@ -1,7 +1,18 @@
 /* The alternate object gives peer B independent GPR, FPU and control patterns. */
+#ifdef PREEMPT_PATTERN
 #ifdef IRQ_ALTERNATE
+#define clone_irq_registers clone_preempt_registers_alt
+#define clone_irq_registers_end clone_preempt_registers_alt_end
+#else
+#define clone_irq_registers clone_preempt_registers
+#define clone_irq_registers_end clone_preempt_registers_end
+#endif
+#endif
+#ifdef IRQ_ALTERNATE
+#ifndef PREEMPT_PATTERN
 #define clone_irq_registers clone_irq_registers_alt
 #define clone_irq_registers_end clone_irq_registers_alt_end
+#endif
 #define IRQ_GPR(n) 0x72400000007240##n
 #define IRQ_XMM 0x7240724072407240
 #define IRQ_WORD 0x72407240
@@ -78,7 +89,11 @@ clone_irq_registers:
         movabs $IRQ_GPR(12),%r12
         movabs $IRQ_GPR(13),%r13
         movabs $IRQ_GPR(14),%r14
+#ifdef PREEMPT_PATTERN
+        mov $20000000,%ecx
+#else
         mov $2000000,%ecx
+#endif
         std /* IRQ entry must clear DF for C, then restore the original flags */
         movabs $IRQ_GPR(15),%r15
 1:      pause
@@ -228,7 +243,7 @@ clone_irq_registers:
         mov r10,r0
         mov r11,r0
         ldr lr,=IRQ_LR
-#if defined(TEST_WITH_IRQ_RESTART)
+#if defined(TEST_WITH_IRQ_RESTART) || defined(PREEMPT_PATTERN)
         ldr r1,=40000000
 #else
         ldr r1,=4000000
@@ -359,7 +374,7 @@ irq_fpu_last:
         movea.l %d1,%a3
         movea.l %d1,%a4
         movea.l %d1,%a5
-#if defined(TEST_WITH_IRQ_RESTART)
+#if defined(TEST_WITH_IRQ_RESTART) || defined(PREEMPT_PATTERN)
         move.l #40000000,%d0
 #else
         move.l #4000000,%d0

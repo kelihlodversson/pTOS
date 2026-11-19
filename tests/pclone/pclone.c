@@ -1802,7 +1802,9 @@ static void test_runnable(void)
         }
         ptest_assert_msg(result > 0 && result == tid && pid > 0 && pid != probe.parent,
                          "native NEW_PROCESS must publish distinct PID and positive TID");
+#if !defined(TEST_WITH_NATIVE_PREEMPT)
         ptest_assert_msg(probe.steps == 0,"child dispatched before Pclone returned");
+#endif
         waited = Pwaitpid(pid,0,0);
         ptest_assert_msg((waited >> 16) == pid,"blocked process wait must dispatch and reap clone");
         ptest_assert_msg((waited & 65535) == (mode == 1 ? 23 : mode == 2 ? 11*256 : 0),

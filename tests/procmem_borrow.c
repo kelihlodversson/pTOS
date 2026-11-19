@@ -487,10 +487,18 @@ static void interrupt_pin_authority(void)
     procmem_free_owned(&canonical,NULL);
     CHECK(procmem_size(p) && pins(p)==1 && !procmem_owner(p));
     CHECK(aspace_irq_range_owned(as,va,TEST_PAGE));
+    CHECK(kaspace_retire_borrow(space,va,TEST_PAGE));
+    CHECK(!aspace_irq_range_owned(as,va,TEST_PAGE));
+    /* The same authenticated resident view stays resumable after source
+     * retirement; no fresh backing/PD authority is fabricated. */
+    CHECK(kaspace_irq_activate(slot,space,va,rights));
+    kaspace_reap_deferred(space);
+    CHECK(procmem_size(p) && pins(p)==1);
     kaspace_irq_park(slot);
+    CHECK(!kaspace_mapping_can_change(as,va,TEST_PAGE));
+    kaspace_reap_deferred(space);
     CHECK(kaspace_mapping_can_change(as,va,TEST_PAGE));
     kaspace_lease_release(&slot);
-    aspace_unborrow(as,va,TEST_PAGE);
     CHECK(!procmem_size(p) && !aspace_irq_range_owned(as,va,TEST_PAGE));
     CHECK(procmem_free(q));kaspace_put(space);
     puts("Production IRQ pins: foreign/retired/mismatched aliases refused, source-PD-first retirement, exact lease/unpin conservation: PASS");

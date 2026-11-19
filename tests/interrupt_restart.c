@@ -57,6 +57,10 @@ BOOL aspace_private_range_ok(const ASPACE *as,VADDR va,VADDR bytes)
 #if CONF_WITH_NATIVE_PREEMPT
 BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
 { return (va!=CODE || owned_code) && aspace_private_range_ok(as,va,bytes); }
+BOOL aspace_retired_pin_overlap(const ASPACE *as,VADDR va,VADDR bytes)
+{ (void)as;(void)va;(void)bytes;return FALSE; }
+BOOL aspace_retired_pin_next(const ASPACE *as,VADDR from,VADDR *va,VADDR *bytes)
+{ (void)as;(void)from;(void)va;(void)bytes;return FALSE; }
 #endif
 BOOL aspace_release_lazy(ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;(void)va;(void)bytes;return TRUE; }
@@ -105,6 +109,9 @@ BOOL ksched_block(BOOL (*ready)(void *),void *argument)
     execution.interrupted_user.valid=FALSE;
     execution.on_cpu=FALSE;
     critical=FALSE;
+#if CONF_WITH_NATIVE_PREEMPT
+    interrupt_restart_reap(&execution);
+#endif
     selected+=2;if(peer)user_observed++;
     execution.on_cpu=TRUE;
     return TRUE;
@@ -125,7 +132,13 @@ static LONG operation(UQUAD selector)
 #if CONF_WITH_NATIVE_PREEMPT
 #include "ksched_quantum.h"
 static KSCHED_QUANTUM quantum;
+static UWORD patterns;
 BOOL ksched_preempt_due(void) { return quantum.pending || cancelled; }
+void ksched_preempt_probe_return(UWORD pattern) { patterns|=pattern; }
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{ assert(!critical && !cleanup);cleanup=TRUE;scope->active=TRUE; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{ assert(!critical && cleanup && scope->active);cleanup=FALSE;scope->active=FALSE; }
 #endif
 static void capture(void)
 {
@@ -233,6 +246,8 @@ int main(void)
     for(i=0;i<64;i++) {
         unsigned tick;
         capture();critical=TRUE;ksched_quantum_reset(&quantum);
+        execution.interrupted_user.image.r15=(i&1)?0x7240000000724015ULL:0x7130000000713015ULL;
+        peer=(i%4)!=0;
         for(tick=0;tick<8;tick++)ksched_quantum_tick(&quantum,FALSE);
         assert(quantum.left==KSCHED_QUANTUM_TICKS && !quantum.pending);
         assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,STACK+4096));
@@ -244,6 +259,7 @@ int main(void)
         target=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));target=TRUE;
         resident_code=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));resident_code=TRUE;
         resident_stack=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));resident_stack=TRUE;
+        critical=FALSE;interrupt_restart_user_entry();critical=TRUE;
         for(tick=0;tick<100;tick++)ksched_quantum_tick(&quantum,TRUE);
         assert(!quantum.left && quantum.pending); /* unsafe IRQs never lose expiry */
         assert(kaspace_mapping_can_change(&backend,CODE,1));
@@ -251,18 +267,24 @@ int main(void)
         critical=FALSE;freeze();
         assert(!kaspace_mapping_can_change(&backend,CODE,1));
         assert(!kaspace_mapping_can_change(&backend,STACK,1));
-        assert(interrupt_restart_suspend(&execution));
+        assert(interrupt_restart_suspend(&execution)==peer);
         critical=TRUE;
         assert(interrupt_restart_return_valid(&execution));
         current_tid++;assert(!interrupt_restart_return_valid(&execution));current_tid--;
         process.number++;assert(!interrupt_restart_return_valid(&execution));process.number--;
         interrupt_restart_ack(&execution);
         assert(execution.irq_restart.state==IRQ_RESTART_ARMED);
-        assert(kaspace_mapping_can_change(&backend,CODE,1));
-        assert(kaspace_mapping_can_change(&backend,STACK,1));
+        assert(!kaspace_mapping_can_change(&backend,CODE,1));
+        assert(!kaspace_mapping_can_change(&backend,STACK,1));
         assert(allocations-frees==baseline+2);
         critical=FALSE;
+        if(i&1) {
+            interrupt_restart_user_entry();
+            assert(kaspace_mapping_can_change(&backend,CODE,1));
+            assert(kaspace_mapping_can_change(&backend,STACK,1));
+        }
     }
+    assert(patterns==3);peer=TRUE;
     {
         KASPACE_RESERVATION_HOLD image={0};
         KASPACE_RESERVATION_INFO info={CODE,4096,0,ASPACE_PROT_USER|ASPACE_PROT_EXEC,0};
@@ -279,6 +301,9 @@ int main(void)
         assert(kaspace_reservation_release(&image,&owner) && owner==&process);
         assert(!kaspace_mapping_can_change(&backend,CODE,1));
         assert(interrupt_restart_return_valid(&execution));interrupt_restart_ack(&execution);
+        freeze();assert(interrupt_restart_suspend(&execution));
+        assert(interrupt_restart_return_valid(&execution));interrupt_restart_ack(&execution);
+        interrupt_restart_user_entry();
         assert(kaspace_mapping_can_change(&backend,CODE,1));
         assert(allocations-frees==baseline+2);owned_code=TRUE;
     }

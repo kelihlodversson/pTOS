@@ -23,12 +23,18 @@ typedef struct {
     UWORD cpu;
     IRQ_RESTART_STATE state;
     BOOL peer_ran, capture_only, captured, suppress_credit, transported;
-    BOOL automatic; /* timer operation, with preallocated reusable leases */
+    BOOL automatic, reap_pending; /* reusable timer views; safe-context cleanup */
 } IRQ_RESTART;
 #if CONF_WITH_NATIVE_PREEMPT
 LONG interrupt_restart_reserve(IRQ_RESTART *);
+void interrupt_restart_reap(struct kthread_context *); /* off-CPU root only */
 void ksched_preempt_tick(void); /* 200 Hz IRQ: CPU metadata only */
 BOOL ksched_preempt_due(void); /* masked authenticated outer USER IRQ */
+#if CONF_WITH_PRIVATE_CLONE_TEST
+void ksched_preempt_probe_return(UWORD pattern); /* bounded CPU-local proof stamp */
+LONG interrupt_preempt_test_delay(ULONG ticks); /* regression transport only */
+#define IRQ_PREEMPT_TEST_DELAY 0xc713c100UL
+#endif
 #endif
 /* Test-only Pclone transport, not a public syscall/clone flag. */
 #define IRQ_RESTART_BEGIN  0xc713b200UL

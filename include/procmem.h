@@ -425,6 +425,10 @@ BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
  * including file-cache references. IRQ lifetime authority does not transfer
  * allocation/cleanup rights, move cache pages or bless bare PD/device aliases. */
 BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes);
+/* Existing exact pin records are the pending cleanup owner; these pure
+ * queries neither consume them nor create another retirement registry. */
+BOOL aspace_retired_pin_overlap(const ASPACE *,VADDR,VADDR);
+BOOL aspace_retired_pin_next(const ASPACE *,VADDR,VADDR *,VADDR *);
 #endif
 
 #if ARCH_HAS_DEMAND_PAGING

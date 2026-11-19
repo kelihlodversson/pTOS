@@ -2000,9 +2000,13 @@ TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 ifneq ($(filter pclone,$(TEST_SUITES)),)
 TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
 ifeq ($(CONF_WITH_NATIVE_PREEMPT),y)
-TEST_SUITE_OBJ += obj/preempt_file_loop.o
+TEST_SUITE_OBJ += obj/preempt_file_loop.o obj/preempt_registers.o obj/preempt_registers_alt.o
 obj/preempt_file_loop.o: tests/pclone/preempt_loop.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
+obj/preempt_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DPREEMPT_PATTERN -c -o $@ $<
+obj/preempt_registers_alt.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DPREEMPT_PATTERN -DIRQ_ALTERNATE -c -o $@ $<
 endif
 obj/clone_irq_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<

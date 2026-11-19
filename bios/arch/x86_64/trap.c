@@ -253,9 +253,6 @@ static LONG return_probe(x86_64_trap_frame_t *f)
 
 void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
 {
-#if CONF_WITH_IRQ_RESTART
-    if(from_ring3) interrupt_restart_user_entry();
-#endif
     /* Stack-local policy belongs to this invocation across nested callbacks,
      * Pexec and AES dispatch. No global latch can leak to another return. */
 
@@ -270,6 +267,11 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
             return;
         }
     }
+#endif
+#if CONF_WITH_IRQ_RESTART
+    /* Frame and syscall GS ownership are installed before safe-context
+     * deferred mapping cleanup. Callback/foreign owners are still refused. */
+    if(from_ring3) interrupt_restart_user_entry();
 #endif
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     if (from_ring3)

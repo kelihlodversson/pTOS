@@ -845,6 +845,23 @@ if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1' "$top/obj/autoconf.h"; then
        ! grep -aq 'native timer file-backed executable progress without Syield: PASS' "$suite_log"; then
         record "native file-backed timer preemption" FAIL "CPU-bound file-cache execution was not proved"
     fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        if ! grep -aq 'native timer busy USER and blocked sleeper wake: PASS' "$suite_log"; then
+            record "native timer blocked wake" FAIL "blocked sleeper did not wake alongside CPU-bound USER"
+        fi
+        if grep -q '^#define CONF_WITH_PFORK 1' "$top/obj/autoconf.h"; then
+            for marker in 'native timer public-Pfork private-root GPR/FPU patterns: PASS' \
+                          'native timer original/alternate GPR/FPU delayed restoration: PASS'; do
+                if ! grep -aq "$marker" "$suite_log"; then
+                    record "native timer private FPU restoration" FAIL "$marker missing"
+                fi
+            done
+        fi
+        if grep -q '^#define CONF_WITH_PTERMGRP 1' "$top/obj/autoconf.h" &&
+           ! grep -aq 'native timer suspended-group cancellation and exact retirement: PASS' "$suite_log"; then
+            record "native timer cancellation" FAIL "suspended USER cancellation and exact conservation were not proved"
+        fi
+    fi
 fi
 if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
     if ! grep -aq 'native interrupted USER A IRQ / B USER execution / saved A restart: PASS' "$suite_log"; then

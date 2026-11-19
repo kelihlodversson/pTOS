@@ -69,10 +69,20 @@ authoritative. Admission faults no pages and copies no user bytes. Missing,
 unowned or unsupported mappings refuse admission safely.
 
 While suspended these ordinary held ranges exclude unmap/protection/retirement.
-After restored-frame validation, acknowledgment unlinks the two records without
-freeing storage, dropping a reference or reaping pending mappings on the IRQ
-tail. Dormant slots can be activated again. Ordinary off-stack disposal uses
-the existing lease cleanup/reaping path while its KTHREAD/handoff root lives.
+After restored-frame validation, acknowledgment retains these views until the
+next authenticated ordinary USER syscall entry or retargeted capture. This
+keeps a continuation resumable even if its original source owner exits between
+successive timer returns. Reactivation of the same held page consumes no new
+mapping authority. New pages still require independently validated ownership.
+
+Source retirement marks the existing ASPACE pin as retired when no ordinary
+captured-backing cleanup record owns it. Held views delay its existing cleanup;
+they never acquire its allocation or cleanup token. The existing KASPACE
+retirement job consumes that exact pin only after all held views depart.
+Pending pins reject fresh admission and mapping mutation. Reaping runs at an
+authenticated syscall entry or off-CPU root, outside the IRQ/leaf. Ordinary
+off-stack disposal uses the same lease cleanup path while its KTHREAD/handoff
+root lives.
 THREAD, PROCESS, ASPACE and both kernel stacks remain owned through the same
 B2 suspend/restore/cancel transaction and root-only retirement protocol.
 
@@ -115,3 +125,11 @@ PD retirement while the exact existing pin retains backing, then unpin once.
 Keep #713 open until its complete native, lifecycle, failure/conservation and
 review matrix is accepted. This implementation is not authorization to merge
 or to enable unsupported configurations.
+
+Additional native probes require original/alternate GPR and full supported FPU
+patterns in independently forked private roots. The kernel verdict credits a
+pattern only after another THREAD has actually executed USER code before the
+saved context returns. A blocked sleeper must wake alongside a non-yielding
+worker. Group cancellation must retire a suspended continuation without USER
+re-entry and with unchanged resource counters. These are separate required
+verdicts; a successful capture or same-entry copy-back cannot satisfy them.

@@ -19,7 +19,9 @@ BOOL kaspace_copy_valid(const KASPACE_LEASE *);
  * execution reclaimer returns; IRQ slots borrow that existing reference. */
 LONG kaspace_irq_reserve(KASPACE_LEASE **);
 BOOL kaspace_irq_activate(KASPACE_LEASE *,KASPACE *,VADDR,UWORD);
-void kaspace_irq_park(KASPACE_LEASE *);
+BOOL kaspace_irq_park(KASPACE_LEASE *); /* TRUE if an active view was removed */
+/* Off-IRQ safe context only, outside owner exclusion; caller retains space. */
+void kaspace_reap_deferred(KASPACE *);
 #endif
 typedef struct kaspace_scope KASPACE_SCOPE;
 typedef struct kaspace_member KASPACE_MEMBER;

@@ -223,6 +223,9 @@ static long clone_request(uint64_t address, uint64_t size)
     if (size>=IRQ_RESTART_BEGIN && size<=IRQ_RESTART_FAIL_STACK)
         return interrupt_restart_test(address,size);
 #endif
+#if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+    if (size==IRQ_PREEMPT_TEST_DELAY) return interrupt_preempt_test_delay((ULONG)address);
+#endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     if (size==PRIVATE_SNAPSHOT_QUERY) {
 #if CONF_WITH_PRIVATE_SNAPSHOT_TEST

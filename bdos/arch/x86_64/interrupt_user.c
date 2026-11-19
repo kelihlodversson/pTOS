@@ -15,12 +15,17 @@ extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
 static ULONG irq_pattern_seen, irq_roundtrip_seen;
 static BOOL irq_pattern_bad, irq_pattern_reported;
+#if CONF_WITH_NATIVE_PREEMPT
+#define IRQ_PATTERN_COUNT 20000000
+#else
+#define IRQ_PATTERN_COUNT 2000000
+#endif
 static void check_irq_pattern(const X86_USER_IRQ_FRAME *f)
 {
     UWORD i;
     if (f->r15!=0x7130000000713015ULL) return; /* set last, cleared first by user probe */
     irq_pattern_seen++;
-    if (!(f->rflags&0x400) || f->rax!=0x7130000000713001ULL || f->rbx!=0x7130000000713002ULL || f->rcx>2000000 ||
+    if (!(f->rflags&0x400) || f->rax!=0x7130000000713001ULL || f->rbx!=0x7130000000713002ULL || f->rcx>IRQ_PATTERN_COUNT ||
         f->rdx!=0x7130000000713004ULL || f->rsi!=0x7130000000713005ULL || f->rdi!=0x7130000000713006ULL ||
         f->rbp!=0x7130000000713007ULL || f->r8!=0x7130000000713008ULL || f->r9!=0x7130000000713009ULL ||
         f->r10!=0x7130000000713010ULL || f->r11!=0x7130000000713011ULL || f->r12!=0x7130000000713012ULL ||

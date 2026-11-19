@@ -13,6 +13,22 @@
 #include "gemerror.h"
 #include "biosext.h"
 #include "string.h"
+#if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+#include "tosvars.h"
+typedef struct { ULONG start,ticks; } PREEMPT_TEST_DELAY;
+static BOOL preempt_test_ready(void *argument)
+{
+    PREEMPT_TEST_DELAY *delay=argument;
+    return (ULONG)((ULONG)hz_200-delay->start)>=delay->ticks;
+}
+LONG interrupt_preempt_test_delay(ULONG ticks)
+{
+    PREEMPT_TEST_DELAY delay;
+    if (!ticks || ticks>20) return EINVAL;
+    delay.start=(ULONG)hz_200;delay.ticks=ticks;
+    return ksched_wait_cancelable(preempt_test_ready,&delay)==KSCHED_WAIT_READY?E_OK:EACCDN;
+}
+#endif
 extern PD *run;
 
 static BOOL owner_valid(KTHREAD_CONTEXT *c)
@@ -97,12 +113,19 @@ static BOOL automatic_hold(KTHREAD_CONTEXT *c,VADDR pc,VADDR sp)
     }
     if (!owner_valid(c)) return FALSE;
     if (!kaspace_irq_activate(r->code,space,pc,ASPACE_PROT_USER|ASPACE_PROT_EXEC)) return FALSE;
-    if (!kaspace_irq_activate(r->stack,space,sp-1,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) {
-        kaspace_irq_park(r->code);return FALSE;
-    }
+    r->reap_pending=TRUE; /* retargeting may unblock an older source pin */
+    if (!kaspace_irq_activate(r->stack,space,sp-1,ASPACE_PROT_USER|ASPACE_PROT_WRITE)) return FALSE;
     r->code_address=pc&~(VADDR)(USER_PAGE_SIZE-1);r->code_bytes=USER_PAGE_SIZE;
     r->stack_address=(sp-1)&~(VADDR)(USER_PAGE_SIZE-1);r->stack_bytes=USER_PAGE_SIZE;
     return TRUE;
+}
+void interrupt_restart_reap(KTHREAD_CONTEXT *c)
+{
+    IRQ_RESTART *r=&c->irq_restart;
+    if(!r->reap_pending)return;
+    if(c->on_cpu)panic("IRQ retirement on current execution");
+    r->reap_pending=FALSE;
+    kaspace_reap_deferred(r->space);
 }
 #endif
 #if CONF_WITH_IRQ_RESTART_TEST
@@ -218,8 +241,28 @@ void interrupt_restart_user_entry(void)
     ULONG tid=0;
     uintptr_t flags=native_sched_irq_save();
     KTHREAD_CONTEXT *c=ksched_interrupt_target(run,&space,&tid);
+#if CONF_WITH_NATIVE_PREEMPT
+    BOOL reap=FALSE;
+#endif
     if(c) ksched_irq_restart_observe_user(c->identity);
+#if CONF_WITH_NATIVE_PREEMPT
+    if(c && c->irq_restart.automatic && c->irq_restart.state==IRQ_RESTART_ARMED &&
+       c->irq_restart.execution && !ksched_cleanup_active() && owner_valid(c)) {
+        reap=kaspace_irq_park(c->irq_restart.stack);
+        if(kaspace_irq_park(c->irq_restart.code))reap=TRUE;
+        reap=reap || c->irq_restart.reap_pending;c->irq_restart.reap_pending=FALSE;
+    }
+#endif
     native_sched_irq_restore(flags);
+#if CONF_WITH_NATIVE_PREEMPT
+    if(reap) {
+        /* This is an authenticated ordinary USER trap with its registers
+         * saved, not an IRQ. Its live launcher/THREAD retains the root and
+         * cleanup scope while the ordinary deferred reaper runs unlocked. */
+        KSCHED_CLEANUP_SCOPE scope={0};
+        ksched_cleanup_begin(&scope);kaspace_reap_deferred(space);ksched_cleanup_end(&scope);
+    }
+#endif
 }
 BOOL interrupt_restart_admit(KTHREAD_CONTEXT *c,UQUAD sequence,VADDR pc,VADDR sp)
 {
@@ -287,8 +330,26 @@ void interrupt_restart_ack(KTHREAD_CONTEXT *c)
         panic("IRQ restart: invalid architectural return acknowledgment");
 #if CONF_WITH_NATIVE_PREEMPT
     if (c->irq_restart.automatic) {
-        kaspace_irq_park(c->irq_restart.stack);
-        kaspace_irq_park(c->irq_restart.code);
+#if CONF_WITH_PRIVATE_CLONE_TEST
+        if (c->irq_restart.peer_ran) {
+#if ARCH_X86_64
+            UQUAD marker=c->interrupted_user.image.r15;
+            if (marker==0x7130000000713015ULL) ksched_preempt_probe_return(1);
+            if (marker==0x7240000000724015ULL) ksched_preempt_probe_return(2);
+#elif ARCH_ARM
+            ULONG marker=c->interrupted_user.image.r[12];
+            if (marker==0x71307132UL) ksched_preempt_probe_return(1);
+            if (marker==0x72407242UL) ksched_preempt_probe_return(2);
+#else
+            ULONG marker=c->interrupted_user.image.d[7];
+            if (marker==0x71307137UL) ksched_preempt_probe_return(1);
+            if (marker==0x72407247UL) ksched_preempt_probe_return(2);
+#endif
+        }
+#endif
+        /* Keep resident execution authority across repeated USER IRQs, even
+         * if its source owner retired while suspended. The next authenticated
+         * kernel entry parks views; no cleanup runs on this IRQ epilogue. */
         c->irq_restart.state=IRQ_RESTART_ARMED;
         return;
     }

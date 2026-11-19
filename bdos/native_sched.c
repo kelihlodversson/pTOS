@@ -162,6 +162,10 @@ typedef struct {
     KSCHED_WAKE_STATE wake; /* permanent CPU-owned IRQ/idle handshake */
 #if CONF_WITH_NATIVE_PREEMPT
     KSCHED_QUANTUM quantum;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    UWORD preempt_patterns;
+    BOOL preempt_patterns_reported;
+#endif
 #endif
 #if CONF_WITH_IRQ_RESTART
     UQUAD irq_selected, irq_last_selected, irq_user_observed, irq_last_user;
@@ -357,6 +361,12 @@ BOOL ksched_preempt_due(void)
 {
     return execution_cpu.quantum.pending || ksched_cancellation_pending();
 }
+#if CONF_WITH_PRIVATE_CLONE_TEST
+void ksched_preempt_probe_return(UWORD pattern)
+{
+    execution_cpu.preempt_patterns|=pattern;
+}
+#endif
 #endif
 void ksched_shutdown_begin(void)
 {
@@ -3272,6 +3282,12 @@ static void scheduler_root_entry(void)
         if (scheduler.stopping) panic("scheduler: dispatch during shutdown");
         runqueue_unlocked(); /* predicates and notifications are outside leaf exclusion */
         check_root_stack();
+#if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+        if (execution_cpu.preempt_patterns==3 && !execution_cpu.preempt_patterns_reported) {
+            execution_cpu.preempt_patterns_reported=TRUE;
+            kprintf("native timer original/alternate GPR/FPU delayed restoration: PASS\r\n");
+        }
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
         wait_probe_on_root();
 #if ARCH_X86_64
@@ -3283,8 +3299,12 @@ static void scheduler_root_entry(void)
 #endif
 #endif
         /* Reclaim only from root. Referenced slots remain stable across entries. */
-        for (task = scheduler.tasks; task; task = task->next_task)
+        for (task = scheduler.tasks; task; task = task->next_task) {
+#if CONF_WITH_NATIVE_PREEMPT
+            interrupt_restart_reap(&task->execution);
+#endif
             reap_finished_on_root(task);
+        }
         /* A leader can precede its last worker in the list. Publish/retire
          * anchors only after all stopped dependents have dropped ownership. */
         for (task = scheduler.tasks; task; task = task->next_task)

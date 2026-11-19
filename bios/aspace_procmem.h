@@ -5,6 +5,32 @@
  * providers allocate without yielding, callbacks or user copy; preemption/SMP
  * require the documented owner/mapping locks, not local IRQ masking. */
 #if CONF_WITH_NATIVE_PREEMPT
+BOOL aspace_retired_pin_overlap(const ASPACE *as,VADDR address,VADDR bytes)
+{
+    ULONG i;
+    VADDR first,last;
+    if(!as || !bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address)return FALSE;
+    first=address&~(VADDR)(USER_PAGE_SIZE-1);
+    last=(address+bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+    for(i=0;i<as->npins;i++) if(as->pins[i].retired && as->pins[i].bytes) {
+        VADDR lo=as->pins[i].va&~(VADDR)(USER_PAGE_SIZE-1);
+        VADDR hi=(as->pins[i].va+as->pins[i].bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        if(first<=hi && lo<=last)return TRUE;
+    }
+    return FALSE;
+}
+BOOL aspace_retired_pin_next(const ASPACE *as,VADDR from,VADDR *address,VADDR *bytes)
+{
+    ULONG i;
+    VADDR first=USER_VA_LIMIT,last=0;
+    for(i=0;i<as->npins;i++) if(as->pins[i].retired && as->pins[i].bytes) {
+        VADDR lo=as->pins[i].va&~(VADDR)(USER_PAGE_SIZE-1);
+        VADDR hi=(as->pins[i].va+as->pins[i].bytes-1)&~(VADDR)(USER_PAGE_SIZE-1);
+        if(lo>=from && (lo<first || (lo==first && hi<last))) { first=lo;last=hi; }
+    }
+    if(first==USER_VA_LIMIT)return FALSE;
+    *address=first;*bytes=last-first+USER_PAGE_SIZE;return TRUE;
+}
 /* The ASPACE already owns these exact allocator pins independently of the
  * original PD's lifetime. An IRQ lease can fence their ordinary unborrow;
  * it never takes the PD's allocation, R1 token or cleanup authority. Reject
