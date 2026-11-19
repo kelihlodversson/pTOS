@@ -29,6 +29,7 @@ typedef struct {
 LONG interrupt_restart_reserve(IRQ_RESTART *);
 void interrupt_restart_reap(struct kthread_context *); /* off-CPU root only */
 void ksched_preempt_tick(void); /* 200 Hz IRQ: CPU metadata only */
+BOOL ksched_preempt_capture_needed(void); /* IRQ entry, before device tick */
 BOOL ksched_preempt_due(void); /* masked authenticated outer USER IRQ */
 #if CONF_WITH_PRIVATE_CLONE_TEST
 LONG ksched_preempt_test_blocked(ULONG tid); /* canonical cancelable-wait observation */

@@ -171,10 +171,9 @@ With Phase C, an admission gate prevents premature work, each mixed worker
 owns a progress cell, and concurrently incremented counters use real atomics
 (040 CAS, ARM exclusives, x32 locked update). Exact counts remain required.
 
-The m68k Phase C pattern window is eight million iterations on QEMU and one
-million on cycle-driven ROM configurations, repeated four times per pattern.
-Their ordinary Phase C IRQ probe uses 400,000 iterations; the feature-off
-four-million and existing B2 forty-million windows remain unchanged. The
+The m68k Phase C pattern window is eight million iterations on QEMU and ROM,
+repeated four times per pattern. Ordinary IRQ probes retain four million
+iterations and the existing B2 window retains forty million. The
 required authenticated delayed-return witness, full register comparisons and
 independent CPU-bound handshake determine success; a shorter window cannot
 substitute an immediate return for a real peer execution.
@@ -223,3 +222,21 @@ now accepts this legitimate word alignment while retaining the eight-byte
 kernel IRQ/SVC frame and all banked/control/return checks. Synthetic validation
 rejects byte/halfword alignment, and the native mapping-owner probe requires
 actual timer departure from the compiler-generated word-aligned loop.
+
+IRQ capture work and quantum prediction
+----------------------------------------
+Phase C prepares a full owned capture only when expiry/cancellation is pending
+or the remaining tick can expire the quantum. Entry precedes the handler's
+200-Hz tick, so the last tick must prepare before decrementing the counter;
+this does not delay the four-tick handoff. Other IRQs invalidate old capture
+freshness and retain ordinary return, while wake metadata is always recorded.
+The tail refuses work unless expiry/cancellation is now due. Architectural
+validation, complete supported register/FPU state and all retirement fences
+remain mandatory for every actual handoff. Feature-off B1/B2 capture is
+unchanged.
+
+Full per-IRQ capture/validation overwhelmed USER progress in the cycle-driven
+040 Hatari profile: the saved loop count kept decreasing, but the complete
+suite exceeded twenty minutes. Preparing only at the relevant quantum entry
+restored progress. The temporary shortened ROM observation windows were then
+removed; final qualification uses the original full iteration counts.

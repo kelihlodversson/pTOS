@@ -92,6 +92,12 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     if ((frame->sr&0x2000) || (frame->format_vector&0xf000)) return;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return;
+#if CONF_WITH_NATIVE_PREEMPT
+    /* Invalidate freshness even when skipping a diagnostic copy. The device
+     * tick runs later; prepare on its last quantum tick, never afterward. */
+    execution->interrupted_user.valid=FALSE;
+    if (!ksched_preempt_capture_needed()) return;
+#endif
     binding.root=aspace_hw_current();
     binding.expected_root=aspace_root(kaspace_backend(space));
     binding.model=mcpu; binding.fpu_type=fputype;
@@ -168,6 +174,9 @@ ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame)
     if ((frame->sr&0x3000) || (frame->format_vector&0xf000)) return 0;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return 0;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (!ksched_preempt_due()) return 0;
+#endif
     c=&execution->interrupted_user;
     /* This prefix was freshly reconstructed after device-register restore.
      * Compare it to the entry-owned copy; never dereference the discarded

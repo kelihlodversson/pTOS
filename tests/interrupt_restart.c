@@ -250,11 +250,15 @@ int main(void)
         peer=(i%4)!=0;
         for(tick=0;tick<8;tick++)ksched_quantum_tick(&quantum,FALSE);
         assert(quantum.left==KSCHED_QUANTUM_TICKS && !quantum.pending);
+        assert(!ksched_quantum_capture_needed(&quantum));
         assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,STACK+4096));
         for(tick=1;tick<KSCHED_QUANTUM_TICKS;tick++) {
+            assert(ksched_quantum_capture_needed(&quantum)==(quantum.left==1));
             ksched_quantum_tick(&quantum,TRUE);assert(!quantum.pending);
         }
+        assert(ksched_quantum_capture_needed(&quantum)); /* before expiring device tick */
         ksched_quantum_tick(&quantum,TRUE);assert(quantum.pending);
+        assert(ksched_quantum_capture_needed(&quantum));
         cleanup=TRUE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));cleanup=FALSE;
         target=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));target=TRUE;
         resident_code=FALSE;assert(!interrupt_restart_admit(&execution,1,CODE,STACK));resident_code=TRUE;

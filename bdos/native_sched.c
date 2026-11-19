@@ -357,6 +357,10 @@ void ksched_preempt_tick(void)
     ksched_quantum_tick(&execution_cpu.quantum,
         !scheduler.stopping && task && task->execution.on_cpu && task->state==TASK_RUNNING);
 }
+BOOL ksched_preempt_capture_needed(void)
+{
+    return ksched_quantum_capture_needed(&execution_cpu.quantum) || ksched_cancellation_pending();
+}
 BOOL ksched_preempt_due(void)
 {
     return execution_cpu.quantum.pending || ksched_cancellation_pending();

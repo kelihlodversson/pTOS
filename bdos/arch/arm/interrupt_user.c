@@ -73,6 +73,12 @@ void arm_capture_user_irq(const ARM_USER_IRQ_FRAME *frame)
     if ((frame->cpsr&0x1f)!=0x10) return; /* Never interpret a kernel IRQ as user. */
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return; /* Includes nested different-PROCESS launchers. */
+#if CONF_WITH_NATIVE_PREEMPT
+    /* Invalidate freshness even when skipping a diagnostic copy. The device
+     * tick runs later; prepare on its last quantum tick, never afterward. */
+    execution->interrupted_user.valid=FALSE;
+    if (!ksched_preempt_capture_needed()) return;
+#endif
     if (!read_binding(space,frame,&binding)) return;
     capture=&execution->interrupted_user;
     capture->valid=FALSE;
@@ -120,6 +126,9 @@ void arm_restart_user_irq(ARM_USER_IRQ_FRAME *frame)
     if ((frame->cpsr&0x1f)!=0x10) return;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (!ksched_preempt_due()) return;
+#endif
     c=&execution->interrupted_user;
     if (!read_binding(space,frame,&b) ||
         !arm_irq_same_entry_valid(c,frame,&b,execution->identity,c->sequence,tid,

@@ -60,6 +60,12 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     if (frame->cs!=X86_64_USER_CODE_SEL) return; /* no kernel-frame interpretation */
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return;
+#if CONF_WITH_NATIVE_PREEMPT
+    /* Invalidate freshness even when skipping a diagnostic copy. The device
+     * tick runs later; prepare on its last quantum tick, never afterward. */
+    execution->interrupted_user.valid=FALSE;
+    if (!ksched_preempt_capture_needed()) return;
+#endif
     binding.cr3=x86_64_read_cr3();
     binding.expected_cr3=aspace_root(kaspace_backend(space));
     binding.syscall_top=x86_64_get_kernel_stack();
@@ -115,6 +121,9 @@ void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
     if (frame->cs!=X86_64_USER_CODE_SEL) return;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return;
+#if CONF_WITH_NATIVE_PREEMPT
+    if (!ksched_preempt_due()) return;
+#endif
     c=&execution->interrupted_user;
     b.cr3=x86_64_read_cr3(); b.expected_cr3=aspace_root(kaspace_backend(space));
     b.syscall_top=x86_64_get_kernel_stack(); b.irq_top=x86_64_get_irq_stack();
