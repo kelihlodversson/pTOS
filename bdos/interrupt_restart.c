@@ -201,7 +201,7 @@ LONG interrupt_restart_test(UQUAD address, UQUAD selector)
     r=&c->irq_restart;
     if (selector==IRQ_RESTART_QUERY) {
         if (address) return EACCDN;
-        if (r->state==IRQ_RESTART_EMPTY && !r->code && !r->stack) return IRQ_RESTART_EMPTY;
+        if (r->state==IRQ_RESTART_EMPTY) return !r->code && !r->stack ? IRQ_RESTART_EMPTY:EACCDN;
         return owner_valid(c) ? (LONG)r->state:EACCDN;
     }
     if (selector==IRQ_RESTART_FINISH || selector==IRQ_RESTART_ABORT) {
@@ -280,6 +280,9 @@ BOOL interrupt_restart_admit(KTHREAD_CONTEXT *c,UQUAD sequence,VADDR pc,VADDR sp
 {
     IRQ_RESTART *r=&c->irq_restart;
     if (r->state!=IRQ_RESTART_ARMED || r->capture_only || !sequence || ksched_cleanup_active()) return FALSE;
+#if CONF_WITH_IRQ_RESTART_TEST
+    if (r->suppress_credit && r->transported) return FALSE; /* one real uncredited transport per operation */
+#endif
 #if CONF_WITH_NATIVE_PREEMPT
     if (r->automatic) {
         if (!automatic_hold(c,pc,sp)) return FALSE;

@@ -224,6 +224,9 @@ int main(void)
         resident_code=FALSE;assert(operation(IRQ_RESTART_BEGIN)==EACCDN);resident_code=TRUE;
         resident_stack=FALSE;assert(operation(IRQ_RESTART_BEGIN)==EACCDN);resident_stack=TRUE;
         assert(operation(IRQ_RESTART_BEGIN)==E_OK && allocations-frees==baseline+2);
+        execution.irq_restart.state=IRQ_RESTART_EMPTY;
+        assert(operation(IRQ_RESTART_QUERY)==EACCDN); /* EMPTY cannot hide attached holds */
+        execution.irq_restart.state=IRQ_RESTART_ARMED;
         process.number++;
         assert(operation(IRQ_RESTART_QUERY)==EACCDN); /* attached stale owner is not EMPTY */
         process.number--;
@@ -255,6 +258,8 @@ int main(void)
     assert(!interrupt_restart_suspend(&execution));
     assert(execution.irq_restart.transported && interrupt_restart_return_valid(&execution));
     interrupt_restart_ack(&execution);
+    capture();
+    assert(!interrupt_restart_admit(&execution,execution.interrupted_user.sequence,CODE,STACK+4096));
     assert(operation(IRQ_RESTART_FINISH)==EAGAIN && allocations-frees==baseline);
     assert(operation(IRQ_RESTART_BEGIN)==E_OK);freeze();cancelled=TRUE;
     if(!setjmp(exit_resume)) { (void)interrupt_restart_suspend(&execution);abort(); }

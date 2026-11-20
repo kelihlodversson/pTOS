@@ -303,3 +303,12 @@ panic addresses. Amiberry additionally reads the real capture and FPIAR
 counters through its debugger with caches off and on. No unsupported CPU or
 ABI is reported as a deferred-return profile. The PR records exact source and
 synthetic merge evidence, and integrated epic results follow the merge.
+
+The cycle-driven 040 lanes initially exceeded the halt deadline. Debugger
+samples showed the USER loop counters advancing, with repeated FPU capture
+and root dispatch between samples. During ROM B2 tests, authenticate genuine
+peer USER entry before taking the full image. Capture it for an armed live
+window or for the standalone diagnostic witnesses. A forced-uncredited
+operation needs exactly one completed transport; subsequent IRQs return
+normally. This preserves all native verdicts, failure checks and the original
+runner deadline. Production timer scheduling does not use the ROM test budget.

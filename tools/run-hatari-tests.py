@@ -234,6 +234,7 @@ def main():
         text = ''
         summary = None
         panic = None
+        halt_failure = False
         deadline = time.time() + a.timeout
         def capture():
             if glyphs:
@@ -277,7 +278,10 @@ def main():
             logged = read_test_log(disk)
             text = logged # verdicts must come from the fresh committed test file
             if proc.returncode != HALT_EXIT and not panic:
-                panic = 'kernel panic entry' if proc.returncode == PANIC_EXIT else 'ROM halt was not acknowledged'
+                if proc.returncode == PANIC_EXIT:
+                    panic = 'kernel panic entry'
+                else:
+                    halt_failure = True
     if not glyphs and not panic and not file_evidence:
         with open(log, errors='replace') as f:
             text = f.read()
@@ -289,6 +293,8 @@ def main():
         print('run-hatari-tests: the kernel panicked:\n' +
               '\n'.join(panic.replace('\r', '').splitlines()[:12]),
               file=sys.stderr)
+        return 1
+    if halt_failure:
         return 1
     summary = SUMMARY.search(text)
     if not summary:
