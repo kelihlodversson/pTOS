@@ -45,9 +45,8 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
     marker("CUIS resume checkpoint: READY")
     print("First checkpoint after %.3fs" % (time.monotonic()-started),flush=True)
     command("mouse_button 0")
-    # The leader prints this only once both it and the observer peer have
-    # sampled the release: the peer polls current state, so a press sent
-    # before it looked would hide the release from it (#1021).
+    # Both guest peers must sample the release. The admission-test peer
+    # additionally observes the resumed wait before posting this marker.
     marker("CUIS resume adopt: READY")
     print("Adoption after %.3fs" % (time.monotonic()-started),flush=True)
     command("mouse_button 1")

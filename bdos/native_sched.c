@@ -366,26 +366,6 @@ BOOL ksched_preempt_due(void)
     return execution_cpu.quantum.pending || ksched_cancellation_pending();
 }
 #if CONF_WITH_PRIVATE_CLONE_TEST
-static BOOL always_ready(void *argument);
-LONG ksched_preempt_test_blocked(ULONG tid)
-{
-#if CONF_WITH_PTERMGRP
-    KERNEL_TASK *task;
-    LONG result=ESRCH;
-    RUNQUEUE_GUARD guard;runqueue_enter(&guard);
-    for(task=scheduler.tasks;task;task=task->next_task)
-        if(task->thread && kthread_tid(task->thread)==tid) {
-            /* Syield uses a cancelable always-ready wait too. It is a
-             * parked yield, not admission to the operation under test. */
-            result=task->state==TASK_BLOCKED && task->cancel_boundary &&
-                task->ready && task->ready!=always_ready;
-            break;
-        }
-    runqueue_leave(&guard);return result;
-#else
-    UNUSED(tid);return EINVFN;
-#endif
-}
 LONG ksched_preempt_test_patterns(BOOL reset)
 {
     uintptr_t flags=native_sched_irq_save();
@@ -400,6 +380,32 @@ void ksched_preempt_probe_return(UWORD pattern)
     execution_cpu.preempt_patterns|=pattern;
 }
 #endif
+#endif
+#if CONF_WITH_CUIS_WAIT_TEST
+static BOOL always_ready(void *argument);
+LONG ksched_test_wait_admission(ULONG tid)
+{
+    KTHREAD *caller=ksched_exit_thread(run);
+    KERNEL_TASK *task;
+    LONG result=ESRCH;
+    RUNQUEUE_GUARD guard;
+
+    if (!caller) return ESRCH;
+    if (!tid) return kthread_tid(caller);
+
+    runqueue_enter(&guard);
+    for (task=scheduler.tasks; task; task=task->next_task) {
+        if (task->process!=kthread_process(caller) || task->nested ||
+            !task->thread || kthread_tid(task->thread)!=tid) continue;
+        /* Syield parks on an always-ready predicate. It does not admit
+         * the input operation that the observer is waiting for. */
+        result=task->state==TASK_BLOCKED && task->cancel_boundary &&
+            task->ready && task->ready!=always_ready;
+        break;
+    }
+    runqueue_leave(&guard);
+    return result;
+}
 #endif
 void ksched_shutdown_begin(void)
 {

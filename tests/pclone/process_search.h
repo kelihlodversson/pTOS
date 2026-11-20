@@ -14,8 +14,14 @@ static void search_entry(void *argument)
         search_orphan=2;nested.flags=CLONE_VM|CLONE_COPY_CWD;nested.entry=search_entry;
         nested.stack_base=(void *)stack;nested.stack_size=RUNNABLE_STACK_SIZE;
         child=pclone_trap(&nested,0xc9840000UL|sizeof(nested));
-        /* Exit with the searches still active, before the descendant runs. */
+        /* Exit with both searches still active. The descendant waits for
+         * actual orphaning before advancing either inherited iterator. */
         (void)Pterm(child>0?83:84);return;
+    }
+    if(search_orphan==2) {
+        int attempt;
+        for(attempt=0;attempt<2000 && Pgetppid()!=0;attempt++)(void)Syield();
+        if(Pgetppid()!=0) { (void)Pterm(85);return; }
     }
     if((_DTA *)Fgetdta()!=search_a) bad=1;
     if(Fsnext() || strcmp(search_a->dta_name,search_second)) bad=2;

@@ -39,6 +39,14 @@ config CONF_WITH_X32_DESKTOP_TEST
       Console return and missing-desktop fallback support both external
       and embedded EmuCON.
 
+config CONF_WITH_CUIS_WAIT_TEST
+    bool "Observe native CUIS wait admission in regression tests"
+    depends on CONF_WITH_REGRESSION_TESTS && CONF_WITH_CUIS && CONF_WITH_PCLONE && CONF_WITH_PTERMGRP && CONF_WITH_PTHJOIN
+    default y if CONF_WITH_PRIVATE_CLONE_TEST
+    help
+      Let regression peers observe their own PROCESS's blocked wait before
+      the host injects real input. This uses a private Pclone test selector.
+
 config CONF_WITH_IRQ_RESTART_TEST
     bool "Test retained hardware user interruption across another THREAD"
     depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE && CONF_WITH_PCLONE && CONF_WITH_PRIVATE_CLONE_TEST

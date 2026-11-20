@@ -223,9 +223,11 @@ static long clone_request(uint64_t address, uint64_t size)
     if (size>=IRQ_RESTART_BEGIN && size<=IRQ_RESTART_FAIL_STACK)
         return interrupt_restart_test(address,size);
 #endif
+#if CONF_WITH_CUIS_WAIT_TEST
+    if (size==KSCHED_TEST_WAIT_ADMISSION)
+        return address<=0xffffffffULL?ksched_test_wait_admission((ULONG)address):EINVAL;
+#endif
 #if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
-    if (size==IRQ_PREEMPT_TEST_BLOCKED)
-        return address && address<=0xffffffffULL?ksched_preempt_test_blocked((ULONG)address):EINVAL;
     if (!address && (size==IRQ_PREEMPT_TEST_RESET || size==IRQ_PREEMPT_TEST_PATTERNS))
         return ksched_preempt_test_patterns(size==IRQ_PREEMPT_TEST_RESET);
     if (size==IRQ_PREEMPT_TEST_DELAY) return interrupt_preempt_test_delay((ULONG)address);

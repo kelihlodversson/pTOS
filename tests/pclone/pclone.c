@@ -1100,11 +1100,19 @@ static void group_ready_bit(long bit)
     group.ready|=bit; /* cooperative, or one memory-OR on the single-CPU m68k */
 #endif
 }
-#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && defined(__x86_64__) && defined(TEST_WITH_CUIS)
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+#define WAIT_ADMISSION_TEST 0xc713c103UL
+
+static long wait_admission(long tid)
+{
+    return pclone_trap((void *)(uintptr_t)tid,WAIT_ADMISSION_TEST);
+}
+#endif
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_CUIS_WAIT_TEST)
 static int group_wait_admitted(void)
 {
     unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
-    while(!group.wait_entering || pclone_trap((void *)(uintptr_t)group.target,0xc713c103UL)!=1) {
+    while(!group.wait_entering || wait_admission(group.target)!=1) {
         if(group.error || group.returned ||
            (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start>=1000UL)return 0;
         (void)Syield();
@@ -1180,13 +1188,39 @@ static long native_cuis6(unsigned fn, unsigned long long a, unsigned long long b
     __asm__ volatile ("syscall" : "+a"(ax) : "r"(di),"r"(si),"r"(dx),"r"(r10),"r"(r8),"r"(r9) : "rcx","r11","memory","cc");
     return (long)ax;
 }
-static struct { volatile long error, first_tick, second_tick, released; long session, child; } native_resume;
+static int input_wait_admitted(long tid)
+{
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+    long state;
+
+    do {
+        state=wait_admission(tid);
+        if (state) return state==1;
+        (void)Syield();
+    } while ((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start<1000UL);
+    return 0;
+#else
+    (void)tid;
+    return 1;
+#endif
+}
+static struct {
+    volatile long error, first_tick, second_tick, released, checked_before_wait, adopting;
+    long session, child, leader;
+} native_resume;
 static void native_resume_peer(void *argument)
 {
     static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
     long x,y,buttons,modifiers,token;
     (void)argument;
-    /* Announce fresh input only after the leader has admitted its wait. */
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    /* Force one observation while the leader can only be running or
+     * parked in Syield. This observation must grant no input admission. */
+    if (wait_admission(native_resume.leader)!=0) { native_resume.error=1; return; }
+    native_resume.checked_before_wait=1;
+#endif
+    if (!input_wait_admitted(native_resume.leader)) { native_resume.error=1; return; }
     conws("CUIS resume first: READY\r\n");
     do {
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
@@ -1203,10 +1237,15 @@ static void native_resume_peer(void *argument)
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
         if (buttons&1) (void)Syield();
     } while (buttons&1);
-    /* The host's second press waits for this (via the leader's adopt
-     * marker): this loop samples the current state, not queued events, and
-     * would never see a release that a prompt second press superseded. */
+    /* A second press must leave both peers time to sample the release. */
     native_resume.released=1;
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    while (!native_resume.adopting && !native_resume.error) (void)Syield();
+    if (native_resume.error || !input_wait_admitted(native_resume.leader)) {
+        native_resume.error=1; return;
+    }
+    conws("CUIS resume adopt: READY\r\n");
+#endif
     do {
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
         if (!(buttons&1)) (void)Syield();
@@ -1407,16 +1446,14 @@ static void test_native_streams(void)
 }
 static struct {
     volatile long session, mode, adopt, error, returned, first_tick, wait_result, initial_count;
+    long leader;
 } native_cancel;
 static void native_cancel_peer(void *argument)
 {
     static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
     long x,y,buttons=0,modifiers,token,launched;
     (void)argument;
-    /* Pclone publishes without dispatching. With preemption disabled this
-     * peer first runs after the leader admits SESSION_WAIT and blocks. An
-     * earlier marker permits a legal initial held-button quick-check result
-     * before this peer has requested cancellation. */
+    if (!input_wait_admitted(native_cancel.leader)) { native_cancel.error=1; return; }
     conws(native_cancel.mode?"CUIS cancel resume first: READY\r\n":"CUIS cancel button: READY\r\n");
     do {
         if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
@@ -1433,9 +1470,7 @@ static void native_cancel_peer(void *argument)
             printf("resume observer launch token=%ld result=%ld\r\n",token,launched); return;
         }
         while (!native_cancel.adopt) (void)Syield();
-        /* The leader publishes adopt and enters SESSION_WAIT without yielding.
-         * This peer can run again only after that resumed wait blocks. Gate
-         * the second physical press here, not at the leader's pre-wait flag. */
+        if (!input_wait_admitted(native_cancel.leader)) { native_cancel.error=1; return; }
         conws("CUIS cancel resume admitted: READY\r\n");
         do {
             if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
@@ -1483,6 +1518,10 @@ static void native_cancel_leader(void *argument)
         native_cancel.returned=1;
         return;
     }
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    native_cancel.leader=wait_admission(0);
+    if (native_cancel.leader<=0) { native_cancel.error=1; return; }
+#endif
     if (launch_entry(native_cancel_peer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&tid)<=0) {
         native_cancel.error=1; return;
     }
@@ -1535,7 +1574,12 @@ static void test_native_input_cancel(void)
         if (ok) conws(mode?"native CUIS resumed button cancellation: PASS\r\n":
                           "native CUIS tracked button cancellation: PASS\r\n");
     }
-    if (ok) conws("native CUIS history cancellation: PASS\r\n");
+    if (ok) {
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+        conws("native CUIS input after observed wait admission: PASS\r\n");
+#endif
+        conws("native CUIS history cancellation: PASS\r\n");
+    }
 }
 static void test_native_resume(void)
 {
@@ -1547,7 +1591,12 @@ static void test_native_resume(void)
     (void)Fclose(marker);
 #define RESUME_CHECK(condition, message) do { int valid=(condition); if (!valid) ok=0; ptest_assert_msg(valid,message); } while (0)
     native_resume.error=0; native_resume.child=0; native_resume.first_tick=native_resume.second_tick=0;
-    native_resume.released=0;
+    native_resume.released=native_resume.checked_before_wait=native_resume.adopting=0;
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    native_resume.leader=wait_admission(0);
+    RESUME_CHECK(native_resume.leader>0,"native resume leader has an authenticated TID");
+    if (native_resume.leader<=0) return;
+#endif
     native_resume.session=native_cuis(0,0,0);
     RESUME_CHECK(native_resume.session>=0,"native resume session");
     if (native_resume.session<0) return;
@@ -1561,6 +1610,11 @@ static void test_native_resume(void)
     result=launch_entry(native_resume_peer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&pid,&tid);
     RESUME_CHECK(result>0,"native SAME_PROCESS child observer peer");
     if (result<=0) goto out;
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    while (!native_resume.checked_before_wait && !native_resume.error) (void)Syield();
+    RESUME_CHECK(!native_resume.error,"running or yielding leader is not admitted for input");
+    if (native_resume.error) goto joined;
+#endif
     result=native_cuis5(32,native_resume.session,0,16|2048|2,5000,0);
     RESUME_CHECK(result==2048 && !native_resume.error,"child wake checkpoints first click before deadline");
     if (result!=2048 || native_resume.error) goto joined;
@@ -1572,11 +1626,14 @@ static void test_native_resume(void)
         if (buttons&1) (void)Syield();
     } while (!result && (buttons&1));
     RESUME_CHECK(result==0,"first hardware release observed");
-    /* Announce adoption only once the peer has seen the release as well
-     * (#1021); nothing yields between this marker and the resumed wait. */
+    /* The peer must see the release before the host can send another press. */
     while (!native_resume.released && !native_resume.error) (void)Syield();
     RESUME_CHECK(!native_resume.error,"observer peer saw the first release");
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    native_resume.adopting=1;
+#else
     conws("CUIS resume adopt: READY\r\n");
+#endif
     result=native_cuis5(32,native_resume.session,0,16|2,5000,0);
     if (result!=16) printf("native resume completion=%ld interval=%ld\r\n",result,native_cuis6(46,native_resume.session,0,0,0,0,0));
     RESUME_CHECK(result==16,"resumed hardware click sequence completes as button input");
@@ -1648,7 +1705,7 @@ static void group_joiner(void *arg)
     (void)arg; group_ready_bit(2);
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
     if (group.mode==12) {
-#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_CUIS_WAIT_TEST)
         if(!group_wait_admitted())group.error=2;
 #endif
         *(volatile long *)0=1; /* sibling fault cannot abandon the active sampler */
@@ -1683,7 +1740,7 @@ static void group_killer(void *arg)
     while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
     if (!group.mode) { for (;;) (void)Syield(); }
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-#if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_CUIS_WAIT_TEST)
     if(group.mode>=5 && !group_wait_admitted())group.error=2;
     if(group.mode==12) {
         int32_t fault_status=0;

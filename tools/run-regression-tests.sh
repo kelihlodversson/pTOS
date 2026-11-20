@@ -587,6 +587,10 @@ if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ] &&
     else
         record "native GUI resume worker" FAIL "public GUI worker did not pass"
     fi
+    if grep -q '^#define CONF_WITH_CUIS_WAIT_TEST 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native CUIS input after observed wait admission: PASS' "$log"; then
+        record "native GUI wait admission" FAIL "physical presses did not complete the admitted waits"
+    fi
     stop_vm
 fi
 
