@@ -76,11 +76,17 @@ int main(void)
     assert(xclone(0x1000,28) == EINVFN); /* no managed source/backend */
     args.flags = CLONE_VM | CLONE_COPY_STANDARD_HANDLES | CLONE_COPY_CWD;
     put(0x1000,args); assert(xclone(0x1000,32) == EINVFN);
+    args.flags = CLONE_VM | CLONE_COPY_ALL_HANDLES;
+    put(0x1000,args); assert(xclone(0x1000,28) == EINVFN && xclone(0x1000,32) == EINVFN);
+    args.flags = CLONE_COPY_ALL_HANDLES;
+    put(0x1000,args); assert(xclone(0x1000,32) == EINVAL);
     args.flags = CLONE_SAME_PROCESS; put(0x1000,args);
     assert(xclone(0x1000,32) == EINVAL);
     args.flags = CLONE_VM | CLONE_SAME_PROCESS; put(0x1000,args);
     assert(xclone(0x1000,32) == EINVFN);
     args.flags = CLONE_VM | CLONE_SAME_PROCESS | CLONE_COPY_CWD; put(0x1000,args);
+    assert(xclone(0x1000,32) == EINVAL);
+    args.flags = CLONE_VM | CLONE_SAME_PROCESS | CLONE_COPY_ALL_HANDLES; put(0x1000,args);
     assert(xclone(0x1000,32) == EINVAL);
     args.flags = 0x80000000U; put(0x1000, args); assert(xclone(0x1000,28) == EINVAL);
     args = good(); args.tls = 0x7000; put(0x1000,args); assert(xclone(0x1000,28) == EINVAL);

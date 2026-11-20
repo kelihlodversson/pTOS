@@ -32,4 +32,5 @@ MATCH(child_pid, 28);
 ASSERT(prefix_size, PTOS_CLONE_ARGS_MIN_SIZE == 28 && PTOS_CLONE_ARGS_MIN_SIZE == offsetof(struct ptos_clone_args,child_pid));
 ASSERT(extended_size, PTOS_CLONE_ARGS_PID_SIZE == sizeof(struct ptos_clone_args));
 ASSERT(opcode, GEMDOS_PCLONE == 0x190);
-ASSERT(flags, CLONE_VM == 1 && CLONE_SAME_PROCESS == 2 && CLONE_COPY_STANDARD_HANDLES == 4 && CLONE_COPY_CWD == 8 && PTOS_CLONE_FLAG_MASK == 15);
+ASSERT(flags, CLONE_VM == 1 && CLONE_SAME_PROCESS == 2 && CLONE_COPY_STANDARD_HANDLES == 4 &&
+       CLONE_COPY_CWD == 8 && CLONE_COPY_ALL_HANDLES == 16 && PTOS_CLONE_FLAG_MASK == 31);

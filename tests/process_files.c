@@ -68,11 +68,11 @@ static WORD open_bound(void)
     CHECK(process_files_open_end(run,(WORD)descriptor,NUMSTD)==E_OK);
     return (WORD)descriptor;
 }
-static void inherit_all(void)
+static void inherit_files(UWORD policy)
 {
     KPROC_FILE_SNAPSHOT *snapshot=NULL;
     CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==E_OK);
-    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[1],PROCESS_FILES_ALL)==E_OK);
+    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[1],policy)==E_OK);
     CHECK(kproc_files_snapshot_validate(snapshot));
     CHECK(kproc_files_snapshot_seal(snapshot)==E_OK && kproc_files_snapshot_seal(snapshot)==E_OK);
     run=&other_pd;CHECK(!kproc_files_snapshot_validate(snapshot));
@@ -112,7 +112,7 @@ int main(void)
     for(order=0;order<2;order++) {
         run=&owner;descriptor=open_bound();CHECK(descriptor==NUMSTD);
         CHECK(ixforce(0,descriptor,&owner)==E_OK && sft[0].f_use==2);
-        inherit_all();CHECK(sft[0].f_use==4 && !sft[0].f_staged_refs);
+        inherit_files(PROCESS_FILES_DESCRIPTORS);CHECK(sft[0].f_use==4 && !sft[0].f_staged_refs);
         run=order?&owner:&child_pd;CHECK(getofd(descriptor)==&file);
         getofd(descriptor)->o_bytnum=37;
         CHECK(xclose(descriptor)==E_OK && xclose(descriptor)==EIHNDL);
@@ -129,7 +129,7 @@ int main(void)
     second=pfs_second();CHECK(second==NUMSTD+2);
     CHECK(process_files_resolve(&owner,duplicate,&backend,NULL)==E_OK && backend==NUMSTD);
     CHECK(getofd(duplicate)==&file && getpfsslot(second)==&sft[1] && !getofd(second));
-    sft[1].f_pfs.pos=29;inherit_all();
+    sft[1].f_pfs.pos=29;inherit_files(PROCESS_FILES_ALL);
     CHECK(sft[0].f_use==6 && sft[1].f_use==2);
     CHECK(xclose(descriptor)==E_OK && xclose(duplicate)==E_OK && xclose(0)==E_OK && xclose(second)==E_OK);
     run=&child_pd;CHECK(getofd(duplicate)==&file && getpfsslot(second)==&sft[1] && getpfsslot(second)->f_pfs.pos==29);
@@ -177,14 +177,14 @@ int main(void)
     descriptor=open_bound();pfs_second();
     CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==E_OK);
     sft[1].f_close_busy=TRUE;
-    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[1],PROCESS_FILES_ALL)==EIHNDL);
+    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[1],PROCESS_FILES_DESCRIPTORS)==EIHNDL);
     sft[1].f_close_busy=FALSE;kproc_files_snapshot_end(&snapshot);
     CHECK(sft[0].f_use==1 && !sft[0].f_staged_refs && sft[1].f_use==1 && !sft[1].f_staged_refs);
     CHECK(xclose(descriptor)==E_OK && xclose(NUMSTD+1)==E_OK);
     puts("Partial inherited-reference acquisition rolls back only its exact prefix: PASS");
     descriptor=open_bound();file.o_dmd=&media;
     CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==E_OK);
-    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[1],PROCESS_FILES_ALL)==E_OK);
+    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[1],PROCESS_FILES_DESCRIPTORS)==E_OK);
     incarnation=sft[0].f_incarnation;
     ofd_invalidate_drive(&media);CHECK(!kproc_files_snapshot_validate(snapshot));
     CHECK(process_files_resolve(&owner,descriptor,&backend,NULL)==EIHNDL);
@@ -209,9 +209,9 @@ int main(void)
     CHECK(fs_cleanup_retry(&residual,&report)==E_OK && !sft[0].f_use);
     CHECK(xclose(0)==E_OK && xclose(NUMSTD+1)==E_OK);
     puts("Retained close with callback successor transfers the old exact owner to canonical recovery: PASS");
-    descriptor=open_bound();inherit_all();
+    descriptor=open_bound();inherit_files(PROCESS_FILES_DESCRIPTORS);
     CHECK(kproc_files_snapshot_begin(&processes[0],&snapshot)==E_OK);
-    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[2],PROCESS_FILES_ALL)==E_OK);
+    CHECK(kproc_files_snapshot_prepare(snapshot,&processes[2],PROCESS_FILES_DESCRIPTORS)==E_OK);
     process_files_retire(&processes[0].files);processes[0].dead=TRUE;
     CHECK(!kproc_files_snapshot_validate(snapshot));kproc_files_snapshot_end(&snapshot);
     run=&child_pd;CHECK(getofd(descriptor)==&file && xclose(descriptor)==E_OK);
