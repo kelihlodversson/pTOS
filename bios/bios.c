@@ -1013,7 +1013,7 @@ static void run_reset_resident(void)
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
 static void fail_first_anchor(const char *launch, LONG status)
 {
-    kcprintf("native first managed launch: %s failed with status %ld\n", launch, status);
+    kcprintf("native first managed launch: %s failed with status %ld\n", launch, (long)status);
     halt();
 }
 
