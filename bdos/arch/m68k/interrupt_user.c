@@ -77,6 +77,25 @@ static void read_control(M68K_IRQ_BINDING *b)
 extern LONG m68k_fpu_save_complete(void *);
 extern void m68k_fpu_restore_complete(const void *);
 #endif
+#if CONF_WITH_IRQ_RESTART_TEST && CONF_M68K_ROM_WINDOW
+static BOOL b2_capture_needed(const KTHREAD_CONTEXT *execution,const M68K_USER_IRQ_FRAME *frame,UWORD model)
+{
+    const IRQ_RESTART *r=&execution->irq_restart;
+    if (r->state==IRQ_RESTART_ARMED && frame->pc>=r->code_address &&
+        frame->pc-r->code_address<r->code_bytes && frame->usp>=r->stack_address &&
+        frame->usp-r->stack_address<r->stack_bytes &&
+        !(r->capture_only && r->captured) && !(r->suppress_credit && r->transported)) return TRUE;
+#if CONF_WITH_EXIT_HANDOFF_TEST
+    /* Preserve the independent capture and fresh copy-back witnesses. An
+     * unarmed pattern needs only its first valid sample for each witness. */
+    if (frame->d[7]==0x71307137UL && (!irq_pattern_seen ||
+        (model==40 && !CONF_WITH_MFASTCALL && !irq_roundtrip_seen))) return TRUE;
+#else
+    UNUSED(model);
+#endif
+    return FALSE;
+}
+#endif
 void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
 {
     KTHREAD_CONTEXT *execution;
@@ -102,12 +121,20 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     binding.expected_root=aspace_root(kaspace_backend(space));
     binding.model=mcpu; binding.fpu_type=fputype;
     if (!m68k_irq_fpu_supported(binding.model,binding.fpu_type)) return;
-    read_control(&binding);
     binding.frame_address=(uintptr_t)frame;
     if (!m68k_process_irq_stack(run,&binding.stack_base,&binding.stack_top)) return;
     capture=&execution->interrupted_user;
     capture->valid=FALSE;
     if (!m68k_irq_user_valid(frame,&binding,USER_VA_LIMIT) || capture->sequence==~(UQUAD)0) return;
+#if CONF_WITH_IRQ_RESTART_TEST && CONF_M68K_ROM_WINDOW
+    /* A genuine peer USER IRQ is a witness even if there is no image to
+     * retain. Complete FPU capture on every tick can overwhelm progress on
+     * cycle-driven 040 emulation. Capture the active probe and standalone
+     * diagnostic witnesses, then keep ordinary IRQ return. */
+    ksched_irq_restart_observe_user(execution->identity);
+    if (!b2_capture_needed(execution,frame,binding.model)) return;
+#endif
+    read_control(&binding);
     memcpy(&capture->image,frame,sizeof(*frame));
     capture->binding=binding;
     memset(&capture->fpu,0,sizeof(capture->fpu));
@@ -178,6 +205,7 @@ ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame)
     if (!ksched_preempt_due()) return 0;
 #endif
     c=&execution->interrupted_user;
+    if (!c->valid) return 0;
     /* This prefix was freshly reconstructed after device-register restore.
      * Compare it to the entry-owned copy; never dereference the discarded
      * entry prefix after a handler, nor recapture after the handoff. */

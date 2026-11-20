@@ -1942,7 +1942,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(filter y,$(CONF_WITH_EXEC_HANDOFF_TEST)),-DTEST_WITH_EXEC_HANDOFF_TEST) \
               $(if $(filter y,$(CONF_WITH_PEXEC200)),-DTEST_WITH_PEXEC200) \
               $(if $(filter y,$(CONF_WITH_PFORK)),-DTEST_WITH_PFORK) \
-              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),$(if $(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_M68K_ROM_WINDOW)),,-DTEST_WITH_PRIVATE_CLONE_TEST)) \
+              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),$(if $(and $(filter y,$(CONF_WITH_NATIVE_PREEMPT) $(CONF_WITH_IRQ_RESTART_TEST)),$(CONF_M68K_ROM_WINDOW)),,-DTEST_WITH_PRIVATE_CLONE_TEST)) \
               $(if $(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_NATIVE_PREEMPT_PROBES) \
               $(if $(filter y,$(CONF_WITH_IRQ_RESTART_TEST)),-DTEST_WITH_IRQ_RESTART) \
               $(if $(filter y,$(CONF_WITH_NATIVE_PREEMPT)),-DTEST_WITH_NATIVE_PREEMPT) \
@@ -1958,8 +1958,9 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(filter y,$(CONF_WITH_CUIS)),-DTEST_WITH_CUIS) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
               $(if $(CONF_M68K_ROM_WINDOW),-DTEST_NO_RMW_FAULTS -DTEST_NO_CROSSING) \
+              $(if $(CONF_M68K_ROM_WINDOW),-DTEST_M68K_ROM_WINDOW) \
               $(if $(CONF_WITH_MMU_PROBE),-DTEST_WITH_MMU_PROBE) \
-              $(if $(or $(MACHINE_AMIGA),$(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_ATARI_HIGHER_HALF))),-DTEST_LOG_FILE) \
+              $(if $(or $(MACHINE_AMIGA),$(and $(filter y,$(CONF_WITH_NATIVE_PREEMPT) $(CONF_WITH_IRQ_RESTART_TEST)),$(CONF_ATARI_HIGHER_HALF))),-DTEST_LOG_FILE) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
               $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
               $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(ARCH_X86_64)),-DTEST_WITH_ELF_SHARED)) \
@@ -2100,22 +2101,23 @@ TOCLEAN += EXECHAND.TOS
 ifeq ($(CONF_WITH_EXEC_REPLACEMENT_TEST),y)
 ifeq ($(CONF_WITH_PCLONE),y)
 TEST_EXEC200_FILES = EXEC200.TOS EXEC200B.TOS
+TEST_EXEC200_IRQ = $(if $(CONF_WITH_IRQ_RESTART_TEST),obj/clone_irq_registers.o)
 obj/exec200_native.o: tests/pclone/exec200_native.c tests/pclone/exec200_probe.h tests/pclone/exec200_check.h $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 obj/exec200_image.o: tests/pclone/exec200_image.c tests/pclone/exec200_probe.h tests/pclone/exec200_check.h $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-EXEC200.TOS: $(TEST_STARTUP) obj/exec200_native.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_native.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+EXEC200.TOS: $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 ifdef ARCH_M68K
 TEST_EXEC200_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
-EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(LIBCMINI_LIB)
+EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
-	  $(TEST_STARTUP) obj/exec200_image.o -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
 	  -L$(TEST_EXEC200_LIBGCC_DIR) -lgcc -o $@
 else
-EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_image.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 endif
 endif
 endif

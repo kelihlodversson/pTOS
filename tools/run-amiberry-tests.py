@@ -94,6 +94,8 @@ def main():
                     help='040 only: require the fourth kernel counter to prove fresh owned IRQ copy-back')
     ap.add_argument('--require-native-preemption', action='store_true',
                     help='require CPU-bound timer handoff, FPU, wake and retirement verdicts')
+    ap.add_argument('--require-irq-restart', choices=('deferred', 'refused'),
+                    help='require gated B2 delayed restart or observable ordinary-return refusal')
     ap.add_argument('--caches', action='store_true', help='CPU caches on')
     ap.add_argument('--require-managed-threads', action='store_true',
                     help='require native clone/join/group/libc exit worker verdicts')
@@ -108,6 +110,10 @@ def main():
 
     if a.require_native_preemption and not a.require_owned_irq_copy:
         ap.error('--require-native-preemption needs --require-owned-irq-copy')
+    if a.require_irq_restart and (a.require_native_preemption or not a.require_managed_threads or
+                                  a.irq_capture_state is None or not a.require_nonzero_fpiar or
+                                  (a.require_irq_restart == 'deferred' and not a.require_owned_irq_copy)):
+        ap.error('B2 needs managed threads, debugger capture and nonzero FPIAR; deferred also needs owned copy-back')
 
     if not os.path.exists(a.amiberry):
         sys.exit('run-amiberry-tests: no emulator at %s (doc/debugging.txt)' % a.amiberry)
@@ -201,6 +207,12 @@ def main():
     if a.require_nonzero_fpiar and 'native m68k nonzero FPIAR: PASS' not in text:
         print('run-amiberry-tests: nonzero FPIAR was not runtime-verified', file=sys.stderr)
         return 1
+    if a.require_irq_restart:
+        from irq_restart_evidence import missing_irq_evidence
+        errors = missing_irq_evidence(text, a.require_irq_restart)
+        if errors:
+            print('run-amiberry-tests: B2 evidence: ' + '; '.join(errors), file=sys.stderr)
+            return 1
     return 0
 
 

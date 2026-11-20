@@ -1,7 +1,23 @@
 /* Actual managed PROCESSes, GEMDOS mappings and architecture launchers. The
  * scoped prefix is a regression-kernel adapter to the trusted factory only. */
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+#if (defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)) || defined(TEST_WITH_IRQ_RESTART)
 #include "../../include/mapping_lifetime_test.h"
+static long mlt_snapshot(MAPPING_LIFETIME_SNAPSHOT *snapshot)
+{ return pclone_trap(snapshot,MLT_SNAPSHOT); }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) || defined(TEST_WITH_PTERMGRP)
+static void mlt_print(const char *name,const MAPPING_LIFETIME_SNAPSHOT *snapshot)
+{
+    unsigned i;
+    char text[64];
+    conws(name);
+    for(i=0;i<MLT_FIELDS;i++) {
+        sprintf(text," %lu",(unsigned long)snapshot->value[i]);conws(text);
+    }
+    conws("\r\n");
+}
+#endif
+#endif
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
 static struct {
     volatile int mode,error,ready,go,seen,done;
     volatile long parent,grandpid;
@@ -21,20 +37,8 @@ static long mlt_unmap(long address,long bytes)
 { return clone_test_sys6(GEMDOS_MUNMAP,address,bytes,0,0,0,0); }
 static long mlt_protect(long address,long bytes,long protection)
 { return clone_test_sys6(GEMDOS_MPROT,address,bytes,protection,0,0,0); }
-static long mlt_snapshot(MAPPING_LIFETIME_SNAPSHOT *snapshot)
-{ return pclone_trap(snapshot,MLT_SNAPSHOT); }
 static long mlt_claim(unsigned long operation,MAPPING_LIFETIME_CLAIM *claim)
 { return pclone_trap(claim,operation); }
-static void mlt_print(const char *name,const MAPPING_LIFETIME_SNAPSHOT *snapshot)
-{
-    unsigned i;
-    char text[64];
-    conws(name);
-    for(i=0;i<MLT_FIELDS;i++) {
-        sprintf(text," %lu",(unsigned long)snapshot->value[i]);conws(text);
-    }
-    conws("\r\n");
-}
 static void mlt_equal(const MAPPING_LIFETIME_SNAPSHOT *a,const MAPPING_LIFETIME_SNAPSHOT *b)
 {
     unsigned i;

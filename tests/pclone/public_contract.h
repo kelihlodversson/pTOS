@@ -278,12 +278,18 @@ static void phase1_account(const char *stage, long baseline)
 
 #if defined(TEST_WITH_PTHJOIN)
 static volatile long anchored_thief_stop, anchored_thief_taken, anchored_thief_polls;
+#if defined(TEST_WITH_IRQ_RESTART)
+static volatile long anchored_thief_excluded;
+#endif
 static void anchored_thief(void *argument)
 {
     (void)argument;
     while (!anchored_thief_stop) {
         long result = Pwaitpid(-1,1,0);
         if (result > 0) anchored_thief_taken = result;
+#if defined(TEST_WITH_IRQ_RESTART)
+        if (result == -36L) anchored_thief_excluded++;
+#endif
         anchored_thief_polls++;
         (void)Syield();
     }

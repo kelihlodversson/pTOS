@@ -199,15 +199,18 @@ LONG interrupt_restart_test(UQUAD address, UQUAD selector)
      * gone at the later USER IRQ boundary; never bypass or alter that scope. */
     if (!c) return EINVFN;
     r=&c->irq_restart;
-    if (selector==IRQ_RESTART_QUERY)
-        return !address && owner_valid(c) ? (LONG)r->state:EACCDN;
+    if (selector==IRQ_RESTART_QUERY) {
+        if (address) return EACCDN;
+        if (r->state==IRQ_RESTART_EMPTY) return !r->code && !r->stack ? IRQ_RESTART_EMPTY:EACCDN;
+        return owner_valid(c) ? (LONG)r->state:EACCDN;
+    }
     if (selector==IRQ_RESTART_FINISH || selector==IRQ_RESTART_ABORT) {
         LONG result;
         if (address || (r->state!=IRQ_RESTART_ARMED && r->state!=IRQ_RESTART_ACKED)) return EACCDN;
         if (!owner_valid(c)) return EACCDN;
         result=selector==IRQ_RESTART_ABORT || (r->state==IRQ_RESTART_ACKED && r->peer_ran) ? E_OK:EAGAIN;
         if (selector==IRQ_RESTART_FINISH && r->suppress_credit && !r->transported)
-            result=EINVFN; /* injected no-credit proof must actually hand off */
+            result=r->captured ? EINVFN:EACCDN; /* refusal and no IRQ are different verdicts */
         if (selector==IRQ_RESTART_FINISH && r->capture_only && r->captured && r->state==IRQ_RESTART_ARMED)
             result=1; /* explicitly capture/ordinary return, never a B2 success */
         release(r);
@@ -277,6 +280,9 @@ BOOL interrupt_restart_admit(KTHREAD_CONTEXT *c,UQUAD sequence,VADDR pc,VADDR sp
 {
     IRQ_RESTART *r=&c->irq_restart;
     if (r->state!=IRQ_RESTART_ARMED || r->capture_only || !sequence || ksched_cleanup_active()) return FALSE;
+#if CONF_WITH_IRQ_RESTART_TEST
+    if (r->suppress_credit && r->transported) return FALSE; /* one real uncredited transport per operation */
+#endif
 #if CONF_WITH_NATIVE_PREEMPT
     if (r->automatic) {
         if (!automatic_hold(c,pc,sp)) return FALSE;

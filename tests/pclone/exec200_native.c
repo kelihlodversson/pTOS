@@ -11,6 +11,10 @@
 #include "exec200_check.h"
 #include "../../include/mapping_lifetime_test.h"
 #include <mint/mintbind.h>
+#if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#include "exec200_irq.h"
+static int irq_retained;
+#endif
 
 static EXEC_REPLACE_TEST_STATE original;
 static long descriptor;
@@ -39,6 +43,10 @@ static void unchanged(const char *what)
     if (memcmp(&now, &original, sizeof(now))) fail(what, (long)now.generation[0]);
     if (Pgetpid() != (long)original.pid) fail("PID after failure", Pgetpid());
     if (Fwrite((short)descriptor, 1, "a") != 1) fail("descriptor after failure", descriptor);
+#if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    if (irq_retained && exec200_probe(0, IRT_QUERY) != IRT_ACKED)
+        fail("failed exec lost retained IRQ ownership", 0);
+#endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     if (!baseline) return;
     conserved(&before, what, 0);
@@ -128,6 +136,7 @@ static void replace(int nested)
     memset(&t, 0, sizeof(t));
     t.generation = 0; t.descriptor = descriptor;
     t.pid = original.pid; t.tid = original.tid;
+    t.process0 = original.process[0]; t.process1 = original.process[1];
     t.root0 = original.root[0]; t.root1 = original.root[1];
     t.parent = Pgetppid(); t.nested = nested;
     result = exec200_next("EXEC200B.TOS", 0, &t, environment);
@@ -142,6 +151,11 @@ static void clone_entry(void *argument)
 {
     (void)argument;
     clone_cell = 0xc10e1003UL;   /* a private write the parent must never see */
+#if defined(TEST_WITH_IRQ_RESTART)
+    exec200_irq_retain();
+    irq_retained = 1;
+    if (!clone_exec && exec200_probe(0, IRT_FINISH)) fail("control retained IRQ finish", 0);
+#endif
     if (!clone_exec) Pterm(70);  /* the control: the same clone, no exec */
     baseline = 0;
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("clone query", 0);
@@ -167,11 +181,24 @@ static void clone_run(int exec)
     args.entry = clone_entry; args.stack_base = stack; args.stack_size = 32768;
     child = exec200_probe(&args, 0xc8920000UL | sizeof(args));
     if (child <= 0 || child == Pgetpid()) fail("private clone", child);
+#if defined(TEST_WITH_IRQ_RESTART)
+    if (exec) {
+        long event = exec200_probe((const void *)(long)child, EXEC_REPLACE_WAIT);
+        long gate;
+        if ((event & 0x1ff) != 1 || Pwaitpid(child, 1, 0) != 0)
+            fail("retained IRQ replacement commit and live PROCESS", event);
+        gate = Fcreate(EXEC200_IRQ_GATE, 0);
+        if (gate < 0 || Fclose((short)gate)) fail("release retained IRQ replacement", gate);
+    }
+#endif
     status = Pwaitpid(child, 0, 0);
     if ((status >> 16) != child || (status & 65535) != 70) fail("clone Pexec(200) chain", status);
     if (Pwaitpid(child, 1, 0) >= 0) fail("clone reaped once", child);
     if (clone_cell != 0x5eed1003UL) fail("parent pages after the clone's exec", (long)clone_cell);
     if (Mfree(stack)) fail("clone stack release", 0);
+#if defined(TEST_WITH_IRQ_RESTART)
+    if (exec && Fdelete(EXEC200_IRQ_GATE)) fail("retained IRQ replacement gate cleanup", 0);
+#endif
     if (exec && Fdelete("EXEC200C.TMP")) fail("clone descriptor closed", 0);
 }
 /* Cloning leaves this program's own pages copy-on-write tracked, so the

@@ -144,11 +144,14 @@ void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
         b.syscall_top!=c->binding.syscall_top || b.irq_top!=c->binding.irq_top ||
         !x86_irq_user_valid(&c->image,&b,USER_VA_LIMIT) ||
         memcmp(frame,&c->image,sizeof(*frame))) panic("IRQ restart: x32 retained return binding changed");
-    /* This corruption occurs only AFTER real B user execution was observed.
-     * A's native GPR/FXSAVE probe fails unless the frozen owned image wins. */
+    /* Exercise the owned image after a real root handoff, including when
+     * credit is suppressed. Volatile stores must survive optimization. */
 #if CONF_WITH_IRQ_RESTART_TEST
-    *(volatile UQUAD *)&frame->rax=0;
-    memset(frame->fx+160,0,256);
+    {
+        unsigned i;
+        *(volatile UQUAD *)&frame->rax=0;
+        for(i=160;i<416;i++) ((volatile UBYTE *)frame->fx)[i]=0;
+    }
 #endif
     memcpy(frame,&c->image,sizeof(*frame));
     interrupt_restart_ack(execution);

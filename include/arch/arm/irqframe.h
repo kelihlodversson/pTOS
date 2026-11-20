@@ -121,7 +121,7 @@ void arm_irq_capture_report(void);
     bl C_SYM(arm_capture_user_irq)
 .endm
 .macro ARM_IRQ_POP_CAPTURE
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_IRQ_RESTART && CPU_ARMV7
     clrex /* do not export a kernel/peer exclusive reservation through RFE */
 #endif
     FPU_POP_ALL r0

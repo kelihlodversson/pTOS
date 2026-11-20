@@ -33,6 +33,11 @@ if [ "${NATIVE_PREEMPT:-0}" = 1 ] &&
     echo "ci-amiberry: NATIVE_PREEMPT requires NATIVE_THREADS=1 IRQ_COPY_PROOF=1" >&2
     exit 2
 fi
+if [ "${IRQ_RESTART_TEST:-0}" = 1 ] &&
+   { [ "${NATIVE_THREADS:-0}" != 1 ] || [ "${NATIVE_PREEMPT:-0}" = 1 ]; }; then
+    echo "ci-amiberry: IRQ_RESTART_TEST requires native threads and no timer policy" >&2
+    exit 2
+fi
 
 combos=${*:-"amiga:68030 amiga:68040 amiga:68060 amiga-mmu:68030 amiga-mmu040:68040 amiga-mmu040:68060 amiga-aspace:68030 amiga-aspace040:68040 amiga-aspace040:68060"}
 mkdir -p logs
@@ -44,6 +49,7 @@ for combo in $combos; do
     name=$config-$cpu
     [ "${NATIVE_THREADS:-0}" != 1 ] || name=$name-native
     [ "${NATIVE_PREEMPT:-0}" != 1 ] || name=$name-preempt
+    [ "${IRQ_RESTART_TEST:-0}" != 1 ] || name=$name-b2
     echo "::group::$name"
 
     build_target() {
@@ -70,7 +76,7 @@ if os.environ.get('IRQ_COPY_PROOF') == '1':
         assert k.syms[name].str_value == 'y', name
     k.syms['CONF_WITH_MFASTCALL'].set_value(0)
     assert k.syms['CONF_WITH_MFASTCALL'].str_value == 'n'
-    if os.environ.get('NATIVE_PREEMPT') != '1':
+    if os.environ.get('NATIVE_PREEMPT') != '1' and os.environ.get('IRQ_RESTART_TEST') != '1':
         k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
         assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
         assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
@@ -87,6 +93,19 @@ if os.environ.get('NATIVE_PREEMPT') == '1':
     k.syms['CONF_WITH_PFORK'].set_value(0)
     k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(0)
     assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
+if os.environ.get('IRQ_RESTART_TEST') == '1':
+    fastcall = os.environ.get('IRQ_RESTART_FASTCALL') == '1'
+    k.syms['CONF_WITH_MFASTCALL'].set_value(2 if fastcall else 0)
+    assert k.syms['CONF_WITH_MFASTCALL'].str_value == ('y' if fastcall else 'n')
+    for name in ('CONF_WITH_ELF_LOADER', 'CONF_WITH_MMAP', 'CONF_WITH_PRIVATE_CLONE',
+                 'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_IRQ_RESTART_TEST'):
+        k.syms[name].set_value(2)
+        assert k.syms[name].str_value == 'y', name
+    assert k.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'n'
+    k.syms['CONF_WITH_PFORK'].set_value(0)
+    assert k.syms['CONF_WITH_PFORK'].str_value == 'n'
+    assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'n'
+    assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == ('n' if fastcall else 'y')
 k.write_config()
 PYCONFIG
         fi
@@ -95,6 +114,13 @@ PYCONFIG
     managed=
     [ "${NATIVE_PREEMPT:-0}" != 1 ] || managed=--require-native-preemption
     [ "${NATIVE_THREADS:-0}" != 1 ] || managed="$managed --require-managed-threads"
+    if [ "${IRQ_RESTART_TEST:-0}" = 1 ]; then
+        irq_profile=refused
+        if [ "$cpu" = 68040 ] && [ "${IRQ_RESTART_FASTCALL:-0}" != 1 ]; then
+            irq_profile=deferred
+        fi
+        managed="$managed --require-irq-restart $irq_profile"
+    fi
     fpu=
     [ -z "${AMIBERRY_FPU:-}" ] || fpu="--fpu $AMIBERRY_FPU"
     [ "${AMIBERRY_SOFTFLOAT:-0}" != 1 ] || fpu="$fpu --softfloat"
