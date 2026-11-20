@@ -288,16 +288,13 @@ void test_nested_exec(void)
 
     ptest_begin("nested_exec (#713)");
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-    /* A managed THREAD's Pexec(0) child is an anchor (#1015); the regression
-     * kernel keeps it on the nested carrier for the checks that follow. The
-     * refused-handoff regression keeps one launch per boot without a
-     * THREAD; it may be this one. The second is then associated. */
+    /* A managed THREAD's Pexec(0) child is an anchor (#1015); select the
+     * nested carrier explicitly for the checks that follow. */
     ptest_assert_msg(nested_query(NQ_TID) > 0, "the native driver must run as a managed THREAD");
     if (nested_query(NQ_TID) > 0) {
         long first;
         pclone_nest_synchronous(1);
         first = Pexec(0, NESTED_CHILD, identity_tail, (void *)environment);
-        if (first == 2) first = Pexec(0, NESTED_CHILD, identity_tail, (void *)environment);
         ptest_assert_msg(first == 1, "a managed THREAD's synchronous child is an associated THREAD");
         tracked = first == 1;
         if (tracked) {

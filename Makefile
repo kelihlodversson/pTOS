@@ -2424,6 +2424,14 @@ obj/global-stage/.stamp: GLBSRC.TOS GLBCHK.TOS obj/global_async.tos
 	@touch $@
 TEST_GLOBAL_FILES = GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS
 TEST_GLOBAL_BUILD = GLOBALCH.TOS obj/global-stage/.stamp
+ifneq ($(filter y,$(and $(CONF_WITH_PCLONE),$(CONF_WITH_PTHJOIN)) $(CONF_WITH_EXIT_HANDOFF_TEST)),)
+obj/first_anchor.o: tests/first_anchor/first.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+FIRST.TOS: $(TEST_STARTUP) obj/first_anchor.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/first_anchor.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_GLOBAL_FILES += FIRST.TOS
+TEST_GLOBAL_BUILD += FIRST.TOS
+endif
 endif
 
 ifdef CONF_WITH_PROCESS_EXEC_DISPATCH
@@ -2551,7 +2559,7 @@ TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
            halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
-           test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img
+           test-hd.img FIRST.TOS ACCPROBE.ACC pbench.prg pbench-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean

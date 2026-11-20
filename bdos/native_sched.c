@@ -1570,9 +1570,6 @@ static struct {
     UWORD fail_stage;
     BOOL untracked_next, reported;
     BOOL nest_synchronous; /* keep synchronous Pexec on the nested carrier (#1015) */
-#if CONF_WITH_EXIT_HANDOFF_TEST
-    BOOL handoff_subject;
-#endif
 } nested_probe;
 static BOOL nested_injected(UWORD stage)
 {
@@ -1589,17 +1586,10 @@ static ULONG nested_depth(const KERNEL_TASK *task)
     for (frame = task ? task->nested : NULL; frame; frame = frame->outer) depth++;
     return depth;
 }
-/* The refused-handoff regressions need one launch that still has no THREAD:
+/* The refused-handoff fixtures explicitly select a launch without a THREAD:
  * a managed THREAD may never fall back to in-context teardown. */
 static BOOL nested_keep_untracked(void)
 {
-#if CONF_WITH_EXIT_HANDOFF_TEST
-    if (!nested_probe.handoff_subject) {
-        nested_probe.handoff_subject = TRUE;
-        nested_probe.untracked++;
-        return TRUE;
-    }
-#endif
     if (!nested_probe.untracked_next) return FALSE;
     nested_probe.untracked_next = FALSE;
     nested_probe.untracked++;
@@ -1722,11 +1712,8 @@ BOOL ksched_anchor_launch_allowed(void)
 #endif
     if (!ksched_exit_thread(run) || !kproc_user_aspace(run)) return FALSE;
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
-    /* The nested-carrier suites and their untracked/handoff subjects. */
+    /* Only the nested-carrier suites and their explicitly selected subjects. */
     if (nested_probe.nest_synchronous || nested_probe.untracked_next) return FALSE;
-#if CONF_WITH_EXIT_HANDOFF_TEST
-    if (!nested_probe.handoff_subject) return FALSE;
-#endif
 #endif
     return ksched_async_allowed();
 }
