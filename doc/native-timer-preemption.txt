@@ -333,12 +333,11 @@ requires first-click, resumed-click and both cancellation waits. The resumed
 marker follows release observation by both peers. The intentional initial
 held-button quick-check case still takes input before admission.
 
-The read-only query is available under CONF_WITH_CUIS_WAIT_TEST, which the
-eager validation enables independently of private clone transports. The
-public CUIS and Pclone argument layouts are unchanged. General desktop tests
-retain their existing gesture pacing and verify application-side markers. The
-dedicated CUIS lane verifies actual input against managed waits with the
-timer gate enabled.
+CONF_WITH_CUIS_WAIT_TEST provides the read-only query for the x32 CUIS test
+configuration. The dedicated CUIS lane verifies physical input against
+managed waits with the timer gate enabled. General desktop tests use their
+existing gesture pacing and application-side markers. The eager timer lane
+covers CPU-bound execution and ownership without CUIS or private clone tests.
 
 The x32 arena-growth probe retains all twelve launched PROCESSes behind a
 shared gate, then verifies exact PID/TID identity and once-only consumption.

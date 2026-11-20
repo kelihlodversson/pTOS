@@ -744,8 +744,6 @@ jobs:
               assert config.syms[name].str_value == 'n', name
           for name in ('CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_SAVED_RETURN'):
               assert config.syms[name].str_value == 'y', name
-          config.syms['CONF_WITH_CUIS_WAIT_TEST'].set_value(2)
-          assert config.syms['CONF_WITH_CUIS_WAIT_TEST'].str_value == 'y'
           for name in ('CONF_WITH_MMAP', 'CONF_WITH_PFORK', 'CONF_WITH_IRQ_RESTART_TEST'):
               assert config.syms[name].str_value == 'n', name
           config.write_config()
