@@ -34,6 +34,11 @@
 #endif
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
 #include "../tests/first_anchor/contract.h"
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+#include "../bdos/kaspace.h"
+#include "../bdos/kproc.h"
+#include "../bdos/kthread.h"
+#endif
 #endif
 #include "gemerror.h"
 #include "lineavars.h"
@@ -1006,25 +1011,53 @@ static void run_reset_resident(void)
 #endif
 
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+static void fail_first_anchor(const char *launch, LONG status)
+{
+    kcprintf("native first managed launch: %s failed with status %ld\n", launch, status);
+    halt();
+}
+
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+static void first_anchor_counts(ULONG counts[8])
+{
+    PROCMEM_STATS memory;
+
+    procmem_stats(&memory);
+    counts[0] = memory.live_allocs;
+    counts[1] = kproc_count();
+    counts[2] = kproc_test_identities(FALSE);
+    counts[3] = kproc_test_identities(TRUE);
+    counts[4] = kthread_test_live();
+    counts[5] = kaspace_test_live();
+    counts[6] = kaspace_test_references();
+    counts[7] = kstack_test_live();
+}
+#endif
+
 static void test_first_anchor(void)
 {
     LONG status, pid;
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    ULONG before[8], after[8];
+
+    first_anchor_counts(before);
+#endif
 
     /* The first disk executable on the regression image starts with the
      * ordinary mode 0 call from AUTO's still-unmanaged boot controller. */
     status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
     if (status != FIRST_ANCHOR_STATUS || ksched_active())
-        panic("first managed launch: boot Pexec(0) status %ld", status);
+        fail_first_anchor("boot Pexec(0)", status);
     status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1m", NULL);
     if (status != FIRST_ANCHOR_STATUS || ksched_active())
-        panic("first managed launch: managed Pexec(0) status %ld", status);
+        fail_first_anchor("managed Pexec(0)", status);
     pid = Pexec(PE_ASYNC_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
     if (pid <= 0)
-        panic("first managed launch: boot Pexec(100) failed %ld", pid);
+        fail_first_anchor("boot Pexec(100)", pid);
     status = ksched_wait((WORD)pid, 0, 0);
     if ((ULONG)status != ((ULONG)pid << 16 | (FIRST_ANCHOR_STATUS & 255)) ||
         ksched_wait((WORD)pid, 1, 0) != EFILNF || ksched_active())
-        panic("first managed launch: boot Pexec(100) wait status %ld", status);
+        fail_first_anchor("boot Pexec(100) wait", status);
 #if CONF_WITH_EXIT_HANDOFF_TEST
     /* Select the refused exit-handoff subject only after the normal starts.
      * FIRST.TOS in the outer call is an anchor; its nested launch stays on
@@ -1032,7 +1065,30 @@ static void test_first_anchor(void)
     ksched_test_nested(0x20);
     status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1u", NULL);
     if (status != 0 || ksched_active())
-        panic("first managed launch: untracked Pexec(0) status %ld", status);
+        fail_first_anchor("untracked Pexec(0)", status);
+#endif
+#if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
+    first_anchor_counts(after);
+    if (memcmp(before, after, sizeof(before)))
+        fail_first_anchor("launch ownership accounting", 0);
+    kproc_test_fail_kernel_stack(TRUE);
+    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    kproc_test_fail_kernel_stack(FALSE);
+    if (status != ENSMEM || ksched_active())
+        fail_first_anchor("syscall-stack rollback", status);
+    kproc_test_fail_thread_space(TRUE);
+    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    kproc_test_fail_thread_space(FALSE);
+    if (status != ENSMEM || ksched_active())
+        fail_first_anchor("THREAD address-space retain rollback", status);
+    first_anchor_counts(after);
+    if (memcmp(before, after, sizeof(before)))
+        fail_first_anchor("rollback ownership accounting", 0);
+    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    first_anchor_counts(after);
+    if (status != FIRST_ANCHOR_STATUS || ksched_active() || memcmp(before, after, sizeof(before)))
+        fail_first_anchor("Pexec(0) after rollback", status);
+    kcprintf("native first managed launch ownership and rollback: PASS\n");
 #endif
     kcprintf("native first managed launch and both Pexec controls: PASS\n");
 }

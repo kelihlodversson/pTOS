@@ -78,3 +78,72 @@ directory of the boot device.
 
 At this point, desktop initialisation is complete, and EmuDesk waits
 for user input.
+
+First native MMU program (#1039)
+--------------------------------
+Routing audited at epic/889-process-scheduling commit cb868b1f9. When
+CONF_WITH_NATIVE_SCHED is enabled, the boot controller can call ordinary
+Pexec(0) even with a parked root and existing independent tasks.
+bdos/proc.c routes the loaded image to ksched_exec(). The dispatcher
+prepares a PROCESS, initial THREAD, address space and execution stacks
+before publishing it. The boot caller waits on a kernel admission result
+and receives the full 16-bit exit code. It never acquires a user THREAD
+identity. Failure before publication rolls back the admission and the
+loader drops the executable and inherited file and directory references.
+
+Entry path                            Execution and ownership
+-----------------------------------   ------------------------------------
+AUTO and COMMAND.PRG (all MMUs)       bios.c loads with mode 0. USER anchor.
+External CLI, including early CLI     bios.c try_shell uses mode 0 on all
+                                      three MMUs. USER anchor.
+External desktop or AES on x32        The boot shell is a disk program
+                                      loaded by try_shell. USER anchor.
+                                      The desktop's managed launches use
+                                      its existing CUIS admission.
+Embedded x32 EmuCON                   start_builtin_cli installs a native
+                                      image and uses internal mode 6.
+                                      USER anchor. ARM/m68k per-process
+                                      MMU profiles require external CLI.
+Ordinary mode 0 from a managed THREAD Independent USER anchor, with the
+                                      caller's exact-child wait (#1015).
+Mode 100                              Independent USER anchor. Returns a
+                                      PID for the existing PROCESS wait.
+Mode 200, where enabled               Replaces the current PROCESS image
+                                      under its own admission. It is not
+                                      a source of a new PROCESS identity.
+binfmt and shebang interpreters       bdos/proc.c resolves the image
+                                      before launch. The interpreter
+                                      takes the resolved mode 0 or mode
+                                      100 path. Native image interpreters
+                                      use the same THREAD and address
+                                      space as their main executable.
+True ROM and kernel entry             The boot controller and marked x32
+                                      exec_os entry have no USER anchor.
+                                      The legacy AES ROM profiles have
+                                      no per-process MMU scheduler.
+Legacy accessories and callbacks      Accessory and callback entry use
+                                      their own guarded launch or borrowed
+                                      execution context. No independent
+                                      anchor is granted by that entry.
+Deliberately nested launch            May have an associated THREAD, but
+                                      remains on the enclosing task's
+                                      carrier. No dependent admission.
+Legacy, scheduler-disabled kernels    Continue to use existing launch
+                                      paths without a native anchor.
+
+Pclone and Pthjoin require their respective feature gates. With the gates
+on, an ordinary program started as an anchor can create separate PROCESSes
+or sibling THREADs sharing its address space, including on the first launch.
+Those executions have their own TIDs and stacks. Pthjoin consumes sibling
+completion and Pwaitpid consumes child PROCESS completion. The capability
+comes from the authenticated anchor and PROCESS, independently of whether
+some unrelated scheduler task already exists.
+
+The regression boot disk starts FIRST.TOS through the ordinary boot
+Pexec(0) call before the global scheduler fixture or shell. It runs the
+same file via both launch controls, checks fault and normal completion,
+and uses the existing test hooks to check owner counts and launch rollback.
+At the audited baseline CONF_WITH_EXIT_HANDOFF_TEST forced the first
+synchronous launch from a managed caller onto an untracked carrier. The
+test now explicitly selects a separate nested launch to exercise the
+refused handoff and the Pclone guard.

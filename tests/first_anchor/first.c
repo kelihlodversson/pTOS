@@ -51,7 +51,7 @@ static int exercise_clone(void)
         pid = tid = worker_entered = worker_pid = 0;
         result = nested_trap2(GEMDOS_PCLONE, (long)&args, sizeof(args));
         if (pid <= 0 || tid <= 0 || tid == previous_tid ||
-            result != (sibling ? tid : pid) || ((pid == self) != sibling))
+            result != tid || ((pid == self) != sibling))
             return 2 + mode;
         previous_tid = tid;
         if (sibling) {
@@ -61,7 +61,9 @@ static int exercise_clone(void)
                 return 6 + mode;
         } else {
             completion = Pwaitpid((short)pid, 0, 0);
-            if ((unsigned long)completion != ((unsigned long)pid << 16 | (unsigned long)expected) ||
+            /* Pwaitpid packs the signal into the high byte of the wait
+             * status, while Pthjoin writes the full termination code. */
+            if ((unsigned long)completion != ((unsigned long)pid << 16 | (fault ? 11U << 8 : 47U)) ||
                 Pwaitpid((short)pid, 1, 0) != -33L)
                 return 6 + mode;
         }

@@ -32,9 +32,8 @@ syscall: when #1008 replaces public Pexec on ARM/x32 with Pexecve(200), that
 same-PID replacement releases the parent the same way. A multi-THREAD or
 shared-root caller gets EACCDN. Only an anchor execution may fork: one
 started with Pexec(100), Pexec(104) where it is public (m68k only), a clone,
-or, as in FreeMiNT, Pexec(0) from a managed THREAD (below). A program the
-kernel or a user callback runs nested in its launcher's Pexec(0) gets EINVFN,
-as for Pclone. The return image is admitted
+or an ordinary Pexec(0) (below). A nested carrier gets EINVFN, as for
+Pclone. The return image is admitted
 on x86-64 with the default segment registers and no FS/GS base (no TLS), on
 ARMv7 (A32) with an idle VFP and on a 68040 format-0 trap frame with an idle
 FPU; on any other CPU or state (68030/6888x, 68060, fastcall, Thumb)
@@ -42,7 +41,7 @@ both calls return EINVFN. No general signals/TLS/preemption support is
 implied. See fork.txt and
 phase6-acceptance.txt for the current supported configuration and evidence.
 
-Pexec(0) children are anchors (#1015)
+Pexec(0) children are anchors (#1015, #1039)
 -------------------------------------
 As in FreeMiNT, Pexec(0) from a managed THREAD with an address space of its
 own starts the child as Pexec(100) would, as a PROCESS with a scheduler task
@@ -55,6 +54,10 @@ carries. If the calling THREAD is cancelled while it waits (Ptermgrp, group
 exit), it releases its claim and the child lives on as an orphan, as in
 FreeMiNT; the child is never killed with its launcher.
 
-The kernel itself, user callbacks (AES and VDI handlers) and the THREAD-less
-legacy launcher still run Pexec(0) children nested on the launcher's carrier
-continuation (#713), where they own no dependents.
+The first ordinary program started by the boot controller also enters with
+an anchor. The controller waits on the kernel's synchronous admission
+result, and the new PROCESS can create and wait for its own dependents.
+The controller executes no synthetic user THREAD. See doc/startup.txt for
+the entry paths. A deliberately nested launcher executes on its carrier
+and cannot own dependents. User callbacks cannot perform process-control
+system calls.

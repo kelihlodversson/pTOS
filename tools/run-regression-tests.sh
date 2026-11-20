@@ -804,6 +804,11 @@ if grep -q '^#define CONF_WITH_NATIVE_SCHED 1$' "$top/obj/autoconf.h" &&
    ! grep -aqF 'native first managed launch and both Pexec controls: PASS' "$suite_log"; then
     record "native first managed launch" FAIL "boot or managed parent launch failed"
 fi
+if grep -q '^#define CONF_WITH_PTHJOIN 1$' "$top/obj/autoconf.h" &&
+   grep -Eq '^#define CONF_WITH_(EXIT_HANDOFF_TEST|PRIVATE_CLONE_TEST|X86_64_MEMTEST) 1$' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native first managed launch ownership and rollback: PASS' "$suite_log"; then
+    record "native first managed launch ownership" FAIL "owner conservation or rollback did not pass"
+fi
 
 # Compilation and legacy compatibility are insufficient evidence of native
 # startup. Require managed startup and scheduler evidence on all three MMUs.
