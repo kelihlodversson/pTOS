@@ -143,6 +143,8 @@ config CONF_WITH_PCLONE
       with CLONE_VM, or add a thread to the current process with
       CLONE_VM | CLONE_SAME_PROCESS. Unsupported policies, private-VM startup
       and unmanaged execution contexts return EINVFN.
+      When PROCESS-local descriptors are enabled, CLONE_VM can also request
+      CLONE_COPY_ALL_HANDLES for an independent descriptor table.
       Kernels without user address spaces return EINVFN without reading args.
 
 config CONF_PCLONE_STACK_ALIGNMENT

@@ -16,7 +16,8 @@
 #define CLONE_SAME_PROCESS          (1U << 1) /* requires VM; resource-copy bits invalid */
 #define CLONE_COPY_STANDARD_HANDLES (1U << 2)
 #define CLONE_COPY_CWD              (1U << 3)
-#define PTOS_CLONE_FLAG_MASK        15U
+#define CLONE_COPY_ALL_HANDLES      (1U << 4) /* independent table; requires VM and NEW_PROCESS */
+#define PTOS_CLONE_FLAG_MASK        31U
 #define PTOS_CLONE_ARGS_MIN_SIZE    28U
 #define PTOS_CLONE_ARGS_PID_SIZE    32U
 
@@ -27,7 +28,10 @@
  * policies fail EINVFN after argument validation, without output/publication.
  * Outputs are native-aligned writable words, disjoint from each other and the
  * startup stack, entry page and trusted return-bridge page. These are initial
- * snapshots, not exit stores.
+ * snapshots, not exit stores. ALL_HANDLES supersedes STANDARD_HANDLES and
+ * gives the child its own bindings to the same open files, at the same
+ * descriptor numbers. It requires PROCESS-local descriptor support and
+ * does not copy DTA or search state. CWD is independently selectable.
  * The void entry's normal return terminates that THREAD with status zero. */
 struct ptos_clone_args {
     uint32_t flags;             /* CLONE_* policy bits */

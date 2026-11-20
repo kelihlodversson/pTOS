@@ -145,6 +145,11 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         target = args->source;
     } else if (args->process_policy == PROC_CLONE_NEW_PROCESS) {
         if ((args->prepared_process && !loaded_shared) || (args->resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
+#if CONF_WITH_PROCESS_FILES
+        if ((args->resources & PROC_CLONE_COPY_DESCRIPTORS) &&
+            ((args->resources & PROC_CLONE_COPY_FILES) || args->vm_policy != PROC_CLONE_SHARE_VM))
+            return EINVAL;
+#endif
         target = loaded_shared ? args->prepared_process : NULL;
 #if CONF_WITH_NATIVE_SCHED
         if(loaded_shared && (!target || !kproc_shared_exec_constructible(target))) return EACCDN;
@@ -204,10 +209,11 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     if (tx->policy == PROC_CLONE_NEW_PROCESS && !loaded_shared) {
         UWORD resources=args->resources;
 #if CONF_WITH_PROCESS_FILES
-        if (resources&PROC_CLONE_COPY_FILES) {
+        UWORD file_policy = (resources & PROC_CLONE_COPY_FILES) ? PROCESS_FILES_ALL : PROCESS_FILES_DESCRIPTORS;
+        if (resources & (PROC_CLONE_COPY_FILES | PROC_CLONE_COPY_DESCRIPTORS)) {
             error=kproc_files_snapshot_begin(tx->source,&tx->files);
             if (error) goto failed;
-            resources&=~(PROC_CLONE_COPY_FILES|PROC_CLONE_COPY_STANDARD_HANDLES);
+            resources &= ~(PROC_CLONE_COPY_FILES | PROC_CLONE_COPY_DESCRIPTORS | PROC_CLONE_COPY_STANDARD_HANDLES);
         }
 #endif
         error = proc_create_clone_process(tx->source, resources, &tx->process);
@@ -215,7 +221,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         tx->owns_process = TRUE;
 #if CONF_WITH_PROCESS_FILES
         if (tx->files) {
-            error=kproc_files_snapshot_prepare(tx->files,tx->process,PROCESS_FILES_ALL);
+            error=kproc_files_snapshot_prepare(tx->files,tx->process,file_policy);
             if (error) goto failed;
         }
 #endif

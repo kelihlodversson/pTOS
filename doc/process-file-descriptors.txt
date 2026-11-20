@@ -50,7 +50,7 @@ The opaque KPROC_FILE_SNAPSHOT is a move-only trusted transaction owner.
     While admitted, descriptor mutations fail EACCDN before publication; normal
     open/create reject before filesystem callbacks. Reads remain available.
 
-  prepare(snapshot, target, STANDARD|ALL) requires an empty distinct live target,
+  prepare(snapshot, target, STANDARD|DESCRIPTORS|ALL) requires an empty distinct live target,
     retains it, reserves child generations, acquires one #943 checked staged
     reference for EACH selected binding. Every acquisition prefix is reversible.
     No allocation, I/O, destructor or callback occurs under a descriptor lock;
@@ -73,29 +73,36 @@ The opaque KPROC_FILE_SNAPSHOT is a move-only trusted transaction owner.
     snapshots. On commit it never touches a successor admission. All reference
     cleanup uses existing bounded close/invalidation/residual machinery.
 
-The existing trusted proc_clone transaction owns COPY_FILES (internal test-gated
-resource policy, no public Pclone ABI flag). It begins admission before its
-resource factory, asks the factory for an empty descriptor target, prepares all
-bindings, seals at final creator preflight and commits beside existing mapping,
-THREAD and scheduler publication. Abort releases snapshot ownership before other
-resource destructors. Identity-only rejection of a startup draft is readonly.
-The raw resource factory rejects COPY_FILES because it cannot itself promise the
-final publication check. A Pexec child inherits every descriptor (DESCRIPTORS:
-like ALL without the DTA/search state), as in FreeMiNT and as TOS programs
-expect from the global handle table; the clone factory's
-COPY_STANDARD_HANDLES keeps STANDARD (descriptors 0..2); a nonmanaged boot
-caller hands on its standard handles only;
-CWD remains independently selectable. No SFT counters are mutated by proc_clone.
+The trusted proc_clone transaction owns the DESCRIPTORS snapshot for public
+Pclone(CLONE_VM | CLONE_COPY_ALL_HANDLES) and the ALL snapshot for fork.
+It begins admission before its resource factory, asks for an empty descriptor
+target, prepares all bindings, seals at final creator preflight and commits
+beside mapping, THREAD and scheduler publication. Abort releases snapshot
+ownership before other resource destructors. The raw factory rejects these
+policies because the caller must seal at publication. Pexec uses DESCRIPTORS
+too. The clone factory's COPY_STANDARD_HANDLES keeps STANDARD (descriptors
+0..NUMSTD-1). A nonmanaged boot caller hands on its standard handles only.
+CWD remains independently selectable. The snapshot code owns the SFT accounting.
 
 Supported resource policy
 --------------------------
-ALL copies every supported descriptor, standard and nonstandard, including BIOS
+DESCRIPTORS and ALL copy every supported descriptor, including BIOS
 bindings, to the same local number. Open-file cursor/status state is shared at
 the canonical backend. Each PROCESS owns its close rights. CWD/drive inheritance
-continues through existing checked PROCESS directory preparation. Search/DTA
-buffers are not open descriptors and are not copied by this owner; the existing
-factory initializes the child DTA in its own basepage. No new signal, directory
-search continuation, close-on-exec or public fork policy is claimed here.
+continues through existing checked PROCESS directory preparation. DESCRIPTORS
+leaves the factory's default child DTA and empty searches. ALL also clones
+trusted DTA/search state using its existing owner.
+
+Public NEW_PROCESS extension (#1040)
+------------------------------------
+Audited against epic/889-process-scheduling e5e1959a8212d60c533f34b39a871b0a2feb0748.
+See clone-public-integration.txt for the append-only flag and v1 ABI rules.
+ParaTOS can use the child_pid output as the native PROCESS identity for a
+guest that runs in the shared emulator address space. Pclone's return value
+is the TID. Each PROCESS owns its initial descriptor table independently.
+The emulator must account for later guest handle changes per PROCESS and
+use the native PROCESS wait for each child PID. The snapshot shares the
+underlying open descriptions and their offsets.
 
 Synchronization is the existing cooperative single CPU model: no callback/I/O
 or yield at final seal/commit, no IRQ mutation of filesystem descriptors. Future

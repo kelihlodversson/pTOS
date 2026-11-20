@@ -1365,8 +1365,8 @@ LONG proc_create_clone_process(KPROC *source, UWORD resources, KPROC **result)
 
     if (!result || *result || (resources & ~PROC_CLONE_RESOURCE_MASK)) return EINVAL;
 #if CONF_WITH_PROCESS_FILES
-    /* The factory alone cannot admit full inheritance through publication. */
-    if (resources&PROC_CLONE_COPY_FILES) return EINVAL;
+    /* Full descriptor snapshots belong to the publication transaction. */
+    if (resources & (PROC_CLONE_COPY_FILES | PROC_CLONE_COPY_DESCRIPTORS)) return EINVAL;
 #endif
     parent = kproc_live_pd(source);
     if (!parent) return EACCDN;

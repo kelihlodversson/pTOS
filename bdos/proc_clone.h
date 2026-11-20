@@ -31,8 +31,9 @@ typedef enum { PROC_CLONE_SHARE_VM, PROC_CLONE_PRIVATE_VM,
 #define PROC_CLONE_COPY_STANDARD_HANDLES 1U
 #define PROC_CLONE_COPY_CWD              2U
 #if CONF_WITH_PROCESS_FILES
-#define PROC_CLONE_COPY_FILES            4U /* all local bindings, final-boundary snapshot */
-#define PROC_CLONE_RESOURCE_MASK         7U
+#define PROC_CLONE_COPY_FILES            4U /* every descriptor plus DTA/search (fork) */
+#define PROC_CLONE_COPY_DESCRIPTORS      8U /* every descriptor (shared-VM Pclone) */
+#define PROC_CLONE_RESOURCE_MASK        15U
 #else
 #define PROC_CLONE_RESOURCE_MASK         3U
 #endif
@@ -48,9 +49,9 @@ typedef struct {
     struct kproc *prepared_process; /* NULL for SAME_PROCESS and NEW_PROCESS */
     PROC_CLONE_PROCESS_POLICY process_policy;
     PROC_CLONE_VM_POLICY vm_policy;
-    /* Must be zero except for NEW_PROCESS. Independently select Pexec-style standard-handle and
-     * CWD inheritance. The test-only COPY_FILES policy supersedes standard
-     * inheritance with every PROCESS binding and a final publication check.
+    /* Must be zero except for NEW_PROCESS. CWD inheritance is independent.
+     * COPY_FILES and COPY_DESCRIPTORS are mutually exclusive snapshots and
+     * each supersedes COPY_STANDARD_HANDLES at final publication.
      * Environment is initially empty; loader/image/startup remain separate. */
     UWORD resources;
     /* LOADED_PROCESS/PREPARED_VM only. source is the loader-created target,

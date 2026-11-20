@@ -43,7 +43,8 @@ enum clone_validate_result clone_validate_v1(const CLONE_ARGS *args,
 
     if ((args->flags & ~PTOS_CLONE_FLAG_MASK) ||
         ((args->flags & CLONE_SAME_PROCESS) && (!(args->flags & CLONE_VM) ||
-          (args->flags & (CLONE_COPY_STANDARD_HANDLES | CLONE_COPY_CWD)))) ||
+          (args->flags & (CLONE_COPY_STANDARD_HANDLES | CLONE_COPY_CWD | CLONE_COPY_ALL_HANDLES)))) ||
+        ((args->flags & CLONE_COPY_ALL_HANDLES) && !(args->flags & CLONE_VM)) ||
         tls || args->stack_size < abi->minimum_stack) return CLONE_INVALID;
     if (!entry || !stack || stack > UINT32_MAX ||
         (uint64_t)stack + args->stack_size > UINT64_C(0x100000000) ||
