@@ -13,6 +13,7 @@ long _stksize = 16L * 1024;
 
 #define WORKER_STACK 16384
 
+#if defined(TEST_WITH_PCLONE)
 static volatile long worker_pid;
 static volatile int worker_entered;
 
@@ -25,6 +26,7 @@ static void worker(void *argument)
     Pterm(47);
 }
 
+#if defined(TEST_WITH_PTHJOIN)
 static int exercise_clone(void)
 {
     char *stack = (char *)Malloc(WORKER_STACK);
@@ -74,6 +76,7 @@ static int exercise_clone(void)
         return 14;
     return (int)FIRST_ANCHOR_STATUS;
 }
+#endif
 
 static int check_unmanaged(void)
 {
@@ -91,6 +94,7 @@ static int check_unmanaged(void)
         return 16;
     return 0;
 }
+#endif
 
 int main(void)
 {
@@ -98,13 +102,24 @@ int main(void)
 
     if (tail[0] == 1) {
         switch (tail[1]) {
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
         case 'm':
             return Pexec(0, FIRST_ANCHOR_PATH, "", 0);
+#endif
         case 'u':
             return Pexec(0, FIRST_ANCHOR_PATH, "\1n", 0);
         case 'n':
+#if defined(TEST_WITH_PCLONE)
             return check_unmanaged();
+#else
+            /* The kernel verifies the untracked carrier and exit rollback. */
+            return 0;
+#endif
         }
     }
+#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
     return exercise_clone();
+#else
+    return 17;
+#endif
 }

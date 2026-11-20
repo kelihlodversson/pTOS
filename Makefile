@@ -2424,7 +2424,7 @@ obj/global-stage/.stamp: GLBSRC.TOS GLBCHK.TOS obj/global_async.tos
 	@touch $@
 TEST_GLOBAL_FILES = GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS
 TEST_GLOBAL_BUILD = GLOBALCH.TOS obj/global-stage/.stamp
-ifeq ($(CONF_WITH_PCLONE)$(CONF_WITH_PTHJOIN),yy)
+ifneq ($(filter y,$(and $(CONF_WITH_PCLONE),$(CONF_WITH_PTHJOIN)) $(CONF_WITH_EXIT_HANDOFF_TEST)),)
 obj/first_anchor.o: tests/first_anchor/first.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 FIRST.TOS: $(TEST_STARTUP) obj/first_anchor.o $(LIBCMINI_LIB)

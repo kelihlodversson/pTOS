@@ -32,7 +32,7 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && ((CONF_WITH_PCLONE && CONF_WITH_PTHJOIN) || CONF_WITH_EXIT_HANDOFF_TEST)
 #include "../tests/first_anchor/contract.h"
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 #include "../bdos/kaspace.h"
@@ -1010,7 +1010,7 @@ static void run_reset_resident(void)
 #include "procmem.h"
 #endif
 
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && ((CONF_WITH_PCLONE && CONF_WITH_PTHJOIN) || CONF_WITH_EXIT_HANDOFF_TEST)
 static void fail_first_anchor(const char *launch, LONG status)
 {
     kcprintf("native first managed launch: %s failed with status %ld\n", launch, (long)status);
@@ -1036,13 +1036,17 @@ static void first_anchor_counts(ULONG counts[8])
 
 static void test_first_anchor(void)
 {
-    LONG status, pid;
+    LONG status;
+#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+    LONG pid;
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     ULONG before[8], after[8];
 
     first_anchor_counts(before);
 #endif
 
+#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
     /* The first disk executable on the regression image starts with the
      * ordinary mode 0 call from AUTO's still-unmanaged boot controller. */
     status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
@@ -1058,19 +1062,25 @@ static void test_first_anchor(void)
     if ((ULONG)status != ((ULONG)pid << 16 | (FIRST_ANCHOR_STATUS & 255)) ||
         ksched_wait((WORD)pid, 1, 0) != EFILNF || ksched_active())
         fail_first_anchor("boot Pexec(100) wait", status);
+#endif
 #if CONF_WITH_EXIT_HANDOFF_TEST
-    /* Select the refused exit-handoff subject only after the normal starts.
-     * FIRST.TOS in the outer call is an anchor; its nested launch stays on
-     * the explicitly armed THREAD-less carrier. */
-    ksched_test_nested(0x20);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1u", NULL);
-    if (status != 0 || ksched_active())
-        fail_first_anchor("untracked Pexec(0)", status);
+    {
+        LONG untracked = ksched_test_nested(7);
+
+        /* FIRST.TOS in the outer call is an anchor. Its nested launch
+         * is explicitly selected to keep the THREAD-less carrier, even
+         * when the public Pclone or Pthjoin gates are disabled. */
+        ksched_test_nested(0x20);
+        status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1u", NULL);
+        if (status != 0 || ksched_active() || ksched_test_nested(7) != untracked + 1)
+            fail_first_anchor("untracked Pexec(0)", status);
+    }
 #endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
     first_anchor_counts(after);
     if (memcmp(before, after, sizeof(before)))
         fail_first_anchor("launch ownership accounting", 0);
+#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
     kproc_test_fail_kernel_stack(TRUE);
     status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
     kproc_test_fail_kernel_stack(FALSE);
@@ -1090,7 +1100,10 @@ static void test_first_anchor(void)
         fail_first_anchor("Pexec(0) after rollback", status);
     kcprintf("native first managed launch ownership and rollback: PASS\n");
 #endif
+#endif
+#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
     kcprintf("native first managed launch and both Pexec controls: PASS\n");
+#endif
 }
 #endif
 
@@ -1105,7 +1118,7 @@ static void run_auto_program(const char* filename)
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS
     if(!strcmp(filename,"GLBTEST.PRG")) {
         LONG pid, result;
-#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if (CONF_WITH_PCLONE && CONF_WITH_PTHJOIN) || CONF_WITH_EXIT_HANDOFF_TEST
         test_first_anchor();
 #endif
         pid=Pexec(PE_ASYNC_LOADGO,path,"",NULL);
