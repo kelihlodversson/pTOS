@@ -19,12 +19,12 @@ static void files_entry(void *argument)
     long duplicate;
     (void)argument;files_probe.entered=1;files_probe.pid=Pgetpid();
     while (!files_probe.gate) (void)Syield();
-    if (Fgetdta() || Fsnext()!=-49L || Fsfirst(files_pattern,0)!=-40L) files_probe.error|=8;
+    if (Fgetdta() || Fsnext()!=-40L || Fsfirst(files_pattern,0)!=-40L) files_probe.error|=8;
     (void)Fsetdta(&files_dta);
     if (Fsnext()!=-49L) files_probe.error|=8;
     (void)Fsetdta(&own_dta);
     if ((_DTA *)Fgetdta()!=&own_dta || Fsfirst(files_pattern,0) || Fsnext() || Fsnext()!=-49L)
-        files_probe.error|=8;
+        files_probe.error|=64;
     if (Dgetpath(cwd,3) || ((!strcmp(cwd,files_parent_cwd)) != files_probe.inherit_cwd))
         files_probe.error|=16;
     if (Fread(files_probe.later,1,&c)!=-37L) files_probe.error|=32;
@@ -76,6 +76,7 @@ static void files_orphan_source(void *argument)
     files_orphan.pid=pid;
 #if defined(TEST_WITH_PTERMGRP)
     (void)term_group(74); /* retire just the source PROCESS */
+    files_orphan.error=1;
 #endif
     Pterm(74);
 }

@@ -343,9 +343,6 @@ static LONG admitted_search(char *name,WORD attr,DTAINFO *dta,BOOL first,BOOL he
     LONG result;
 #if CONF_WITH_NATIVE_SCHED
     KSCHED_CLEANUP_SCOPE scope={0};
-#endif
-    if (header && !dta) return first ? EIMBA : ENMFIL;
-#if CONF_WITH_NATIVE_SCHED
     ksched_cleanup_begin(&scope);
 #endif
     result=process_files_search_begin(process,&operation);
