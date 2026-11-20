@@ -100,3 +100,32 @@ under the managed Debian workspace. CI additionally covers the full build and
 release matrix, ARM/m68k regression suites, native ELF/libaes/VDI and desktop
 consumers, Hatari, Amiberry, pBench and macOS Homebrew builds. Final results and
 any additional local runs are linked from the PR.
+
+## SDK 1.0.3 and optional m68k LRA
+
+CI now pins SDK 1.0.3's Debian packages and matching tested Homebrew tap
+commit in `tools/ptos-toolchain.sha256`. The installer requires SDK 1.0.3
+or newer, including the m68k LRA address-displacement compiler fix.
+
+The Toolchain menu exposes `BUILD_M68K_LRA` separately from the CPU flags.
+It defaults to `y` for the standard pTOS m68k toolchain when the installed
+compiler reports GCC 16 or newer and compiles a small `-mlra` probe. It
+defaults to `n` with a missing/older compiler, another selected toolchain
+or a nonstandard prefix. Such installations can opt in manually. The
+option is unavailable on ARM and x86-64.
+
+`BUILD_M68K_LRA=y` appends `-mlra` to the effective m68k `CPUFLAGS`, including
+command-line CPU overrides. Locally built libcmini, standalone EmuCON and
+the runtime linker/shared-library programs receive the allocator flag through
+their own architecture flag paths. `BUILD_M68K_LRA=n` leaves the compiler's
+allocator default in effect. Clean before rebuilding after changing it.
+Prebuilt SDK libraries such as libgcc retain their original allocator.
+
+The generic non-LTO AES stack default is now 640 LONGs (2560 bytes), up
+from 590. SDK 1.0.3 stack-ABI/-O2 measurements over pBench and desktop
+window/dialog operations reached 1988 bytes with reload and 1904 with LRA.
+The new default leaves 572 and 656 bytes respectively, covering the stack
+tracer's 512-byte reserve with either allocator. It costs 200 additional
+bytes per AES process. The LTO default remains 768 LONGs; ARM, x86-64 and
+the larger ColdFire defaults are unchanged. These observed maxima are not
+worst-case bounds.

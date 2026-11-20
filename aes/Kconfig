@@ -62,7 +62,7 @@ config AES_STACK_SIZE
 	default 2048 if MACHINE_FIREBEE || MACHINE_M548X
 	default 1024 if ARCH_ARM
 	default 768 if BUILD_LTO
-	default 590
+	default 640
 	help
 	  Size of the private stack of each AES process.  It is used for the
 	  AES itself, including every call it makes to the VDI, the BIOS and
@@ -77,7 +77,7 @@ config AES_STACK_SIZE
 	  -mno-red-zone, so every call frame in a deep chain (AES -> VDI ->
 	  the truecolor32 backend -> font blitting) is real, explicit stack
 	  space unlike the smaller frames m68k/ARM generate for the same
-	  call chain; 590 LONGs (the generic default) overflowed into
+	  call chain; the previous generic default of 590 LONGs overflowed into
 	  adjacent memory the first time this arch actually exercised a
 	  SMALL-font desktop text draw (#375), corrupting THEGLO and causing
 	  a division by zero in aes/gemgraf.c's gsx_tcalc() shortly after.
@@ -92,10 +92,16 @@ config AES_STACK_SIZE
 
 	  A suitable value can be estimated by enabling CONF_DEBUG_AES_STACK.
 
+	  The generic 640-LONG default leaves at least 512 bytes of reserve
+	  above the observed non-LTO maxima with SDK 1.0.3 (GCC 16.2): 1988
+	  bytes with reload and 1904 with LRA, using the stack ABI and -O2.
+	  These measurements cover pBench and desktop window/dialog operations;
+	  they are observed high-water values, not worst-case bounds.
+
 	  On m68k, BUILD_LTO needs more than the generic default: it inlines
 	  the VDI text blit helpers into text_blt() and the like, making the
 	  call chain's frames bigger.  The deepest AES call of pBench, with
-	  the 590 LONGs of the default, takes 488 (-O2) or 486 (-Os) LONGs
+	  the former 590-LONG default, takes 488 (-O2) or 486 (-Os) LONGs
 	  without LTO, 631 or 630 with it, and 576 or 589 with it and
 	  -mfastcall, whose frames are smaller.  The two without fastcall
 	  overflow the stack, which hangs pBench in the first text drawn

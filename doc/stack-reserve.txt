@@ -1,0 +1,137 @@
+Measured AES and desktop stack reserves
+======================================
+
+The Stack reserve workflow guards the RAM margin of the m68k kernel AES
+and resident desktop (#1035). It fails when
+
+    allocation - observed peak < 512 bytes
+
+for either stack. Exactly 512 bytes remaining passes. The desktop uses
+the same explicit 512-byte reserve as the AES tracer's heuristic. An
+overflow, malformed/missing telemetry, unfinished workload, emulator exit
+or timeout also fails; a successful boot alone cannot pass the check.
+
+Coverage
+--------
+
+Each job builds one instrumented ROM and its own pBench with the pinned
+pTOS SDK and runs the pinned Hatari. Profiles are:
+
+    stack-o2           atari512, stack ABI, -O2, no LTO
+    fastcall-o2        atari512-fastcall, -O2, no LTO
+    fastcall-os-lto    atari256, fastcall, -Os, LTO
+    stack-o2-lto       atari512, stack ABI, -O2, LTO
+
+Every profile runs with BUILD_M68K_LRA on and off. Off uses the compiler's
+default allocator (reload in SDK 1.0.3); it does not force a future GCC to
+use reload. Eight separate checkouts/jobs prevent mixed compiler flags or
+stale sub-build objects. They build independently, including libcmini.
+Effective compiler flags must match the requested allocator, ABI, LTO and
+optimization profile; a disabled flag cannot silently remove coverage.
+
+Pull requests run low resolution without the blitter and high resolution
+with it: 16 emulator runs. Pushes to master/epics, nightly runs and manual
+runs cover all low/medium/high and blitter-on/off combinations: 48 runs.
+The stable aggregate job "Stack reserve" fails if the parser tests or any
+profile fails or is skipped. Repository branch protection can require it.
+The workflow also accepts the #1034 feature base while this PR is stacked.
+
+Every run completes all ten named pBench tests with fixed -q -r 1 options.
+These timings are not performance baselines. It then opens/closes the
+desktop About dialog repeatedly. Three distinct About-entry stack samples
+prove that two prior dialog cycles returned; an opened dialog alone is not
+completion. The CI-only CONF_DEBUG_STACK_CI_END option then emits the
+producer's final trace count and uses Native Features to exit Hatari.
+The controller requires that marker, a clean guest exit and complete
+workloads before recording success. Interactive tracing leaves this new
+option off (its default). pBench's GEM Window exercises window operations too.
+Wrong/ambiguous screen modes, missing/duplicate tests, nonpositive work
+counts and malformed result rows fail. Invalid extra rows are not dropped
+before checking completeness.
+
+Budget and telemetry
+--------------------
+
+production.config records the profile before enabling CONF_DEBUG_AES_STACK
+and CONF_DEBUG_DESK_STACK, plus the CI-only termination handshake. The
+AES budget is AES_STACK_SIZE * 4 bytes; the
+desktop budget is the distance from deskstackbottom to deskustack in the
+compiled obj/deskstart.o. No default budget is hardcoded. Instrumentation
+does not enlarge either allocation, and the logged AES addresses must
+match the production allocation. A crash from exhausted space fails too.
+
+For every AES exit, total usage is top - current + used: the marker scan's
+used value excludes the prefix already occupied at AES entry. Neither
+max_usage alone nor the rounded recommendation in LONGs is a valid total
+budget comparison. At each exit, the cumulative max_usage must equal the
+largest per-call used value observed so far across all AES processes. A
+larger value reveals a missing earlier peak and a smaller value violates
+the producer's cumulative-counter contract; both fail. A later matching
+sample cannot recover a missing call's entry prefix.
+The producer scans the exiting process's own marker range, so another
+process entering during a wait cannot replace its bounds. The rounded
+recommendation tracks the largest total usage in bytes across processes,
+independent of their stack addresses.
+
+Every entry is validated too. Its top - current is a lower bound on usage,
+including when a call remains outstanding. Entry/exit frames must pair by
+AES process; ordinary outstanding event waits are allowed at capture end.
+The global producer sequence must start at one and increase on every
+entry/exit. Gaps, duplicate/reordered rows and unmatched frames fail.
+The final producer count must match the last observed event, catching a
+dropped exit or entire call at EOF even when max_usage did not increase.
+An entry alone cannot reveal additional stack growth before its exit;
+the guard retains its observed occupied-prefix lower bound in that case.
+
+The parser accepts LTO's _max_usage spelling and keeps the highest total
+for every AES process. Desktop usage is its allocation
+minus the minimum available bytes reported at About entry.
+
+This is an empirical regression guard for these executed paths, not a
+worst-case bound. It does not measure kernel/interrupt stacks, arbitrary
+application stacks, FreeType workloads or other architectures/CPUs.
+
+Local use and diagnostics
+-------------------------
+
+Use a dedicated checkout with initialized libcmini/gemlib submodules,
+kconfiglib==14.1.0, SDK 1.0.3 or newer and the pinned Hatari on PATH. The
+regression tests also require a native C compiler (cc, or HOSTCC); they
+compile the actual AES debug producer to exercise interleaved processes. See
+doc/install.txt and tools/build-hatari.sh. The runner cleans build outputs
+and replaces .config temporarily; do not run profiles concurrently in one
+checkout. The original .config is restored and generated configuration
+files are invalidated afterward. Each output directory must be new.
+
+    python3 tools/test-stack-reserve.py
+    python3 tools/ci-stack-reserve.py --profile stack-o2 --lra on \
+        --coverage pr --out /tmp/stack-o2-on
+
+Use --coverage full for the six display/blitter combinations. The other
+profiles and --lra off use the same command interface. --timeout is the
+per-run wall-clock limit (180 seconds by default); --jobs controls make.
+
+metadata.json contains SDK pin, compiler/emulator versions, effective
+compiler flags and allocations. Every run retains PBENCH.TXT, emulator
+output, controller command, screenshots and result.json. ROMs, pBench,
+production/instrumented configs, build log, compiled desktop symbols,
+results.json and a Markdown budget table are retained too, also on failure.
+The workflow uploads these artifacts and adds the table to the job summary.
+Hatari diagnostics and traces go to hatari.log and hatari-trace.log, keeping
+screenshot messages out of the guest's AES telemetry. Fatal diagnostics in
+either file fail before the controller writes its completion marker.
+
+Replay the byte comparison without rebuilding or running an emulator:
+
+    python3 tools/stack_usage.py --metadata /tmp/stack-o2-on/metadata.json \
+        --log /tmp/stack-o2-on/low-off/emulator.log \
+        --pbench /tmp/stack-o2-on/low-off/drive/PBENCH.TXT --resolution low \
+        --output /tmp/replayed-stack-result.json
+
+This returns nonzero for a reserve violation or incomplete evidence.
+Unsequenced historical/interactive traces cannot prove continuity and
+are rejected; create fresh artifacts with the CI runner to replay them.
+The controller marker is only written after complete workloads and the
+producer's final-count/clean-shutdown handshake. Timeouts/crashes have none.
+The controller observes process status before reading the final log, so a
+guest exiting between those operations cannot hide its flushed end marker.

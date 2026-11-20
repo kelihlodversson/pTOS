@@ -10,8 +10,8 @@ description: >-
 
 # pTOS toolchain installation
 
-Use SDK 1.0.1 or newer, which fixes the m68k auto-inc-dec and reload
-constant-mode miscompilations.
+Use SDK 1.0.3 or newer, which includes the m68k auto-inc-dec, reload
+constant-mode and LRA address-displacement fixes.
 The installer is shared with
 `.github/actions/setup-toolchain/action.yml`:
 
@@ -164,4 +164,14 @@ SDK 1.0.1 fixes [toolchain issue #18](https://github.com/kelihlodversson/pTOS-to
 reload shared one register between an asm's long and short inputs of the same
 constant, so libcmini's `Fseek(0, handle, 0)` could push a stale upper word as
 the offset. Do not work around it with `-fno-late-combine-instructions`;
-require 1.0.1 instead.
+use SDK 1.0.3 or newer, which also contains the LRA fix below.
+
+
+SDK 1.0.3 includes the m68k LRA address-displacement fix from
+[toolchain PR #25](https://github.com/kelihlodversson/pTOS-toolchain/pull/25).
+The Toolchain menu's `BUILD_M68K_LRA` option adds `-mlra` to m68k builds.
+It defaults to y for the standard pTOS prefix with an installed GCC 16 or
+newer that accepts the flag; otherwise it defaults to n. Prefix overrides
+can opt in manually. Set `BUILD_M68K_LRA=n` to retain the compiler's default
+allocator, and clean before rebuilding after changing it. SDK libraries
+prebuilt with reload, including libgcc, keep their original allocator.

@@ -424,3 +424,15 @@ an asm's long and short inputs of the same constant (pTOS-toolchain #18).
 The kernel and userspace use pTOS compiler prefixes on both platforms;
 CI does not silently fall back to a distro or native target compiler.
 The native host compiler remains responsible for build tools and host tests.
+
+Stack safety reserve
+--------------------
+
+stack-reserve.yml is an independent measured AES/desktop stack check.
+Its aggregate job "Stack reserve" requires parser tests and all eight
+m68k compiler/allocator profiles. PRs run 16 display/blitter cases; push,
+nightly and manual runs cover 48. Any remaining space below 512 bytes,
+incomplete workload or missing telemetry fails. Budgets come from the
+tested configuration and compiled desktop, not fixed defaults. Evidence
+is uploaded on failure too. See doc/stack-reserve.txt for workloads,
+limitations and local commands.

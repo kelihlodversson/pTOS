@@ -190,6 +190,15 @@ CPP = $(CC) -E
 OBJDUMP = $(CROSS_COMPILE)objdump
 OBJCOPY = $(CROSS_COMPILE)objcopy
 
+# Keep the allocator in CPUFLAGS for the kernel, utilities, tests and LTO
+# links; sub-builds with their own architecture flags receive it separately.
+M68K_LRA_FLAGS = $(if $(filter yy,$(ARCH_M68K)$(BUILD_M68K_LRA)),-mlra)
+ifeq ($(ARCH_M68K)$(BUILD_M68K_LRA),yy)
+ifeq (,$(filter -mlra,$(CPUFLAGS)))
+override CPUFLAGS += $(M68K_LRA_FLAGS)
+endif
+endif
+
 # The native C compiler, used for the build tools.
 NATIVECC = gcc -std=gnu90 -pedantic $(WARNFLAGS) -W -O
 
@@ -1665,6 +1674,10 @@ LIBCMINI_INC  = $(LIBCMINI_DIR)/include
 LIBCMINI_BUILDDIR = $(abspath obj/libcmini-build)
 LIBCMINI_MAKE = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) \
     CROSSPREFIX=$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
+ifdef ARCH_M68K
+# Pass only the allocator: libcmini supplies its own CPU and ABI flags.
+LIBCMINI_MAKE += ARCH_CFLAGS="$(M68K_LRA_FLAGS)"
+endif
 ifdef ARCH_X86_64
 # libcmini's x86-64 port is the x32 userland: built with the same compiler and
 # flags as the other x32 programs (X32_CROSS_COMPILE/X32_CFLAGS), not the
@@ -1676,7 +1689,7 @@ LIBCMINI_OBJDIR = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB  = $(LIBCMINI_BUILDDIR)/./libcmini.a
 LIBCMINI_STAMP = $(LIBCMINI_BUILDDIR)/.ptos-config-stamp
-LIBCMINI_BUILD_ID = $(LIBCMINI_DEFCONFIG):$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE))
+LIBCMINI_BUILD_ID = $(LIBCMINI_DEFCONFIG):$(if $(ARCH_X86_64),$(X32_CROSS_COMPILE),$(CROSS_COMPILE)):$(M68K_LRA_FLAGS)
 
 # Build libcmini from the submodule.  The defconfig is arch-specific; for
 # m68k we use mintelf_defconfig, which produces ELF-compatible objects
@@ -1766,12 +1779,19 @@ ifdef ARCH_X86_64
 $(EMUCON_TOS): FORCE obj/x32/emucon.elf
 	@cmp -s obj/x32/emucon.elf $@ || { rm -f cli/.arch-*; cp obj/x32/emucon.elf $@; }
 else
+EMUCON_MAKE = $(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) \
+    BUILD_M68K_LRA=$(if $(M68K_LRA_FLAGS),y,n) \
+    CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) \
+    M68K_ELF=$(BUILD_TOOLCHAIN_ELF) \
+    M68K_PRG_FLAGS="$(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf)" \
+    CROSS_COMPILE=$(CROSS_COMPILE) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) \
+    NLS=1 BUG=$(abspath bug)
 # FORCE: cli/emucon.tos is also what "make -C cli" leaves there for another
 # ARCH or NLS, so the sub-make always gets to compare the build identity (the
 # stamp) and its own dependencies; the file's time only changes when it builds.
 $(EMUCON_TOS): FORCE $(wildcard cli/*.c cli/*.h cli/*.S cli/Makefile cli/potfiles.in) po/LINGUAS $(POFILES) bug version.mk $(AUTOCONF_H) $(LIBCMINI_LIB)
 	@echo '  EMUCON'
-	@$(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) M68K_ELF=$(BUILD_TOOLCHAIN_ELF) M68K_PRG_FLAGS="$(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf)" CROSS_COMPILE=$(CROSS_COMPILE) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) NLS=1 BUG=$(abspath bug)
+	+@$(EMUCON_MAKE)
 endif
 endif
 

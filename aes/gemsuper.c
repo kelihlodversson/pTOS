@@ -30,6 +30,10 @@
 #include "gem_rsc.h"
 
 #include "gemsuper.h"
+#if CONF_DEBUG_STACK_CI_END
+#include "../bios/natfeat.h"
+LONG aes_stack_trace_finish(void); /* Supexec callback of the CI desktop */
+#endif
 #include "gempd.h"
 #include "gemaplib.h"
 #include "geminit.h"
@@ -478,10 +482,22 @@ void trapaes_debug_exit(void);
 
 #define MARKER_BYTE 0xaa
 
-UBYTE* check_min; /* Minimum stack address to check */
-UBYTE* check_max; /* Maximum stack address to check */
 ULONG max_usage = 0; /* Maximum stack usage for an AES call, since the beginning */
-UBYTE* min_pointer = NULL; /* Minimum detected stack pointer, since the beginning */
+static ULONG max_stack_usage; /* Largest total usage, independent of stack address */
+static ULONG stack_trace_sequence; /* Detect missing/reordered debug records */
+
+#if CONF_DEBUG_STACK_CI_END
+LONG aes_stack_trace_finish(void)
+{
+    if (has_nf_shutdown())
+    {
+        /* No AES calls follow this authoritative end-of-capture count. */
+        kprintf("AES end seq=%lu\n", stack_trace_sequence);
+        nf_shutdown();
+    }
+    return 0;
+}
+#endif
 
 /* Called when entering AES trap #2 */
 void trapaes_debug_enter(void)
@@ -490,16 +506,11 @@ void trapaes_debug_enter(void)
     UBYTE* current = (UBYTE*)rlr->p_uda->u_spsuper;
     UBYTE* top = bottom + sizeof rlr->p_uda->u_super;
 
-    kprintf("AES enter rlr=%p bottom=%p current=%p top=%p free=%ld\n",
-        rlr, bottom, current, top, current - bottom);
-
-    if (!min_pointer)
-        min_pointer = top;
+    kprintf("AES enter seq=%lu rlr=%p bottom=%p current=%p top=%p free=%ld\n",
+        ++stack_trace_sequence, rlr, bottom, current, top, current - bottom);
 
     /* Fill unused stack stack space with the marker */
-    check_min = bottom;
-    check_max = current;
-    memset(check_min, MARKER_BYTE, check_max - check_min);
+    memset(bottom, MARKER_BYTE, current - bottom);
 }
 
 /* Called when exiting AES trap #2 */
@@ -510,21 +521,24 @@ void trapaes_debug_exit(void)
     UBYTE* top = bottom + sizeof rlr->p_uda->u_super;
     UBYTE* p;
     ULONG used;
+    ULONG total;
     ULONG recommended;
 
     /* Detect the minimum used stack pointer during this AES call */
-    for (p = check_min; p < check_max && *p == MARKER_BYTE; p++);
-    used = check_max - p;
+    /* Another AES process can enter while this one waits. Its marker bounds
+     * must not replace the range belonging to the process now exiting. */
+    for (p = bottom; p < current && *p == MARKER_BYTE; p++);
+    used = current - p;
     if (used > max_usage)
         max_usage = used;
 
-    if (p < min_pointer)
-        min_pointer = p;
+    total = top - p;
+    if (total > max_stack_usage)
+        max_stack_usage = total;
+    recommended = max_stack_usage + 512; /* Heuristic */
 
-    recommended = (top - min_pointer) + 512; /* Heuristic */
-
-    kprintf("AES exit  rlr=%p bottom=%p current=%p top=%p free=%ld, used=%ld, max_usage=%ld, recommended AES_STACK_SIZE=%ld\n",
-        rlr, bottom, current, top, current - bottom, used, max_usage, recommended/4);
+    kprintf("AES exit  seq=%lu rlr=%p bottom=%p current=%p top=%p free=%ld, used=%ld, max_usage=%ld, recommended AES_STACK_SIZE=%ld\n",
+        ++stack_trace_sequence, rlr, bottom, current, top, current - bottom, used, max_usage, recommended/4);
 }
 
 #endif /* CONF_DEBUG_AES_STACK */

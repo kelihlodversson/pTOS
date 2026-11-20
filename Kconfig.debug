@@ -137,6 +137,18 @@ config CONF_DEBUG_DESK_STACK
 	depends on !CONF_EXTERNAL_DESK
 	default n
 
+config CONF_DEBUG_STACK_CI_END
+	bool "Finish the Hatari stack CI workload after two About dialog cycles"
+	depends on ARCH_M68K && DETECT_NATIVE_FEATURES
+	depends on CONF_DEBUG_AES_STACK && CONF_DEBUG_DESK_STACK
+	default n
+	help
+	  CI-only termination handshake: on the third desktop About entry,
+	  print the final AES trace sequence and shut down the emulator with
+	  Native Features. This proves two prior dialog cycles completed and
+	  lets the host detect dropped records even at the end of the trace.
+	  Leave disabled for interactive stack tracing.
+
 config CONF_DEBUG_FORCE_MC68000
 	bool "Force CPU auto-detection to report a plain 68000"
 	depends on ARCH_M68K_CLASSIC
