@@ -31,7 +31,8 @@
  * snapshots, not exit stores. ALL_HANDLES supersedes STANDARD_HANDLES and
  * gives the child its own bindings to the same open files, at the same
  * descriptor numbers. It requires PROCESS-local descriptor support and
- * does not copy DTA or search state. CWD is independently selectable.
+ * starts with no selected DTA or search state. The child can select a
+ * writable DTA with Fsetdta. CWD is independently selectable.
  * The void entry's normal return terminates that THREAD with status zero. */
 struct ptos_clone_args {
     uint32_t flags;             /* CLONE_* policy bits */

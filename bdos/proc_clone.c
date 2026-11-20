@@ -221,6 +221,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         tx->owns_process = TRUE;
 #if CONF_WITH_PROCESS_FILES
         if (tx->files) {
+            if (file_policy == PROCESS_FILES_DESCRIPTORS) kproc_clone_clear_dta(tx->process);
             error=kproc_files_snapshot_prepare(tx->files,tx->process,file_policy);
             if (error) goto failed;
         }

@@ -8,20 +8,23 @@ static volatile struct {
 } files_probe;
 static _DTA files_dta;
 static char files_parent_cwd[128];
+static char files_pattern[]="C:\\FD969?.TMP";
 static long files_query(unsigned index)
 { return pclone_trap(0,FILES_CLONE_TAG+0x100+index); }
 static void files_entry(void *argument)
 {
     char a=0,b=0,c=0;
     char cwd[128];
-    _DTA *own_dta=(_DTA *)Fgetdta();
+    _DTA own_dta;
     long duplicate;
     (void)argument;files_probe.entered=1;files_probe.pid=Pgetpid();
     while (!files_probe.gate) (void)Syield();
-    if (own_dta==&files_dta || Fsnext()!=-49L) files_probe.error|=8;
+    if (Fgetdta() || Fsnext()!=-49L || Fsfirst(files_pattern,0)!=-40L) files_probe.error|=8;
     (void)Fsetdta(&files_dta);
     if (Fsnext()!=-49L) files_probe.error|=8;
-    (void)Fsetdta(own_dta);
+    (void)Fsetdta(&own_dta);
+    if ((_DTA *)Fgetdta()!=&own_dta || Fsfirst(files_pattern,0) || Fsnext() || Fsnext()!=-49L)
+        files_probe.error|=8;
     if (Dgetpath(cwd,3) || ((!strcmp(cwd,files_parent_cwd)) != files_probe.inherit_cwd))
         files_probe.error|=16;
     if (Fread(files_probe.later,1,&c)!=-37L) files_probe.error|=32;
@@ -50,8 +53,8 @@ static void test_process_files(void)
     int mode,stage;
     char c=0;
     char saved_cwd[130]="C:";
-    char pattern[]="C:\\FD969?.TMP";
     _DTA *saved_dta=(_DTA *)Fgetdta();
+    void *parent_dta_mirror;
     const char *first,*second;
     ptest_begin("Public Pclone descriptor inheritance (#1040)");
     ptest_assert_msg(Fclose(81)==-37L && Fclose(32767)==-37L,"invalid local descriptors retain EIHNDL ABI");
@@ -70,7 +73,7 @@ static void test_process_files(void)
 
         first=mode<2?"C:\\FD969A.TMP":"Q:\\FD969A.TMP";
         second=mode<2?"C:\\FD969B.TMP":"Q:\\FD969B.TMP";
-        pattern[0]=first[0];
+        files_pattern[0]=first[0];
         memset((void *)&files_probe,0,sizeof(files_probe));files_probe.parent=Pgetpid();
         files_probe.inherit_cwd=!(mode&1);
         args.flags=CLONE_VM|CLONE_COPY_ALL_HANDLES|
@@ -87,7 +90,8 @@ static void test_process_files(void)
         ptest_assert_msg(Cconin()=='a' && Crawcin()=='b' && Cnecin()=='c' &&
                          Fseek(0,files_probe.file,0)==0,"actual standard-input traps route local descriptor zero");
         (void)Fsetdta(&files_dta);
-        ptest_assert_msg(!Fsfirst(pattern,0),"keep a live parent search through clone");
+        parent_dta_mirror=_base->p_dta;
+        ptest_assert_msg(!Fsfirst(files_pattern,0),"keep a live parent search through clone");
         files_counts(prepared);
         for(stage=1;stage<=9;stage++) {
             unsigned long injection=FILES_CLONE_TAG+(stage<=4?0x200+stage:0x300+stage-4);
@@ -149,7 +153,8 @@ static void test_process_files(void)
         } else {
             (void)Fclose(files_probe.file);(void)Fclose(files_probe.duplicate);(void)Fclose(0);(void)Fclose(files_probe.second);
         }
-        ptest_assert_msg((_DTA *)Fgetdta()==&files_dta && !Fsnext() && Fsnext()==-49L,
+        ptest_assert_msg((_DTA *)Fgetdta()==&files_dta && _base->p_dta==parent_dta_mirror &&
+                         !Fsnext() && Fsnext()==-49L,
                          "parent retains its own DTA and active search");
         (void)Fsetdta(saved_dta);
         ptest_assert_msg(Fdelete(first)==0 && Fdelete(second)==0,"descriptor fixtures have no leaked file lifetime");

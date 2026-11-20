@@ -160,6 +160,9 @@ struct kproc {
     /* Logical user context survives generic shared descendants independently
      * of each PROCESS's supervisor-only compatibility allocations. */
     BOOL logical_context;
+#if CONF_WITH_PROCESS_FILES
+    BOOL independent_dta;     /* leave the source's shared basepage mirror alone */
+#endif
     VADDR logical_basepage,logical_environment,logical_bp_bytes,logical_env_bytes;
 #endif
     ASPACE *aspace;      /* borrowed from active_space */
@@ -892,6 +895,19 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     target->stack_size = source->stack_size;
     return TRUE;
 }
+#if CONF_WITH_PROCESS_FILES && CONF_WITH_NATIVE_SCHED
+/* A descriptor-only shared-VM child selects its own writable user DTA.
+ * The compatibility PD is supervisor-only and the logical basepage is shared. */
+void kproc_clone_clear_dta(KPROC *target)
+{
+    if (!kproc_clone_target_ready(target, NULL)) panic("clone DTA: invalid target");
+    target->dta = NULL;
+    target->pd->p_xdta = 0;
+#if CONF_WITH_PRIVATE_CLONE
+    target->independent_dta = TRUE;
+#endif
+}
+#endif
 enum { MAPPING_PREPARING=1,MAPPING_PREPARED,MAPPING_ABORTING };
 #if CONF_WITH_PRIVATE_CLONE || CONF_WITH_EXEC_REPLACE
 /* A constructor may own a root before active_space/pending_space adoption.
@@ -2472,6 +2488,9 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
             s->clone_compat = NULL; s->clone_maps = 0;
         }
         s->logical_context = FALSE;
+#if CONF_WITH_PROCESS_FILES
+        s->independent_dta = FALSE;
+#endif
         s->logical_basepage = s->logical_environment = 0;
         s->logical_bp_bytes = s->logical_env_bytes = 0;
         s->clone_guarded = FALSE; s->clone_top_stack = FALSE;
@@ -3330,7 +3349,11 @@ void kproc_set_dta(PD *pd, DTAINFO *dta)
 #endif
     kproc->dta = dta;
 #if CONF_WITH_PRIVATE_CLONE
-    if (kproc->aspace) {
+    if (kproc->aspace
+#if CONF_WITH_PROCESS_FILES
+        && !kproc->independent_dta
+#endif
+        ) {
         VADDR basepage=kproc->logical_context?kproc->logical_basepage:(VADDR)(uintptr_t)kproc->user_start;
         USERPTR_T(DTA) mirror=PTR_TO_USERPTR_UNCHECKED((DTA *)dta);
         /* The mirror is user memory, never authority. Resolve COW through the

@@ -90,8 +90,10 @@ DESCRIPTORS and ALL copy every supported descriptor, including BIOS
 bindings, to the same local number. Open-file cursor/status state is shared at
 the canonical backend. Each PROCESS owns its close rights. CWD/drive inheritance
 continues through existing checked PROCESS directory preparation. DESCRIPTORS
-leaves the factory's default child DTA and empty searches. ALL also clones
-trusted DTA/search state using its existing owner.
+does not transfer DTA or search state. Managed Pexec keeps the new image's
+default DTA. Public Pclone ALL_HANDLES starts with no selected DTA because the
+logical user basepage is shared. ALL also clones trusted DTA/search state using
+its existing owner.
 
 Public NEW_PROCESS extension (#1040)
 ------------------------------------

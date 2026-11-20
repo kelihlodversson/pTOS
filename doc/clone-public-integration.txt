@@ -20,7 +20,10 @@ CLONE_COPY_ALL_HANDLES = 1<<4 (#1040) copies all open descriptor bindings,
 including BIOS/device aliases, at the same numbers in the new PROCESS.
 ALL_HANDLES includes standard bindings even if STANDARD_HANDLES is also
 specified. The snapshot acquires each binding once and is atomic at
-publication. It leaves the child's default DTA and empty search state alone.
+publication. The child has no selected DTA or active searches. Fgetdta returns
+NULL and Fsnext returns ENMFIL. Fsfirst requires selecting a writable buffer
+with Fsetdta first, or returns EIMBA. Use Fgetdta to read the child's selection:
+the logical basepage is shared and its original DTA field is unchanged.
 Each PROCESS keeps its own descriptor table and close rights. Inherited open
 files share their underlying file position and description. Later open, close,
 duplication and rebinding operations update the caller's table. CWD still
