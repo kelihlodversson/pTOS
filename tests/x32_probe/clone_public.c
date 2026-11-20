@@ -11,11 +11,13 @@ static volatile int entered;
 static volatile int mode;
 static volatile int child_seen;
 static volatile int early;
+static volatile int arena_gate;
 static volatile int resource_result;
 static char parent_path[128], child_path[128];
 static unsigned resource_flags;
 static void entry(void *argument)
 {
+    while (early && !arena_gate) CALL(0xff,0,0,0);
     child_seen = (int)CALL(0x10b,0,0,0);
     if ((unsigned long)argument != 0xfedcba98UL) CALL(0x4c,99,0,0);
     entered++;
@@ -88,8 +90,8 @@ int x32_public_clone_checks(void)
     unsigned size;
     int m;
     unsigned long stacks[12];
-    int32_t pids[12];
-    int i;
+    int32_t pids[12], tids[12];
+    int i, j;
     if (stack <= 0) return 1;
     args.entry=entry; args.argument=(void *)0xfedcba98UL;
     args.stack_base=(void *)(unsigned long)stack; args.stack_size=8192;
@@ -102,7 +104,9 @@ int x32_public_clone_checks(void)
             if (result<=0) return 0x100-(int)result;
             if (result!=tid) return 0x200;
             if (size<32 ? pid!=-9 : pid<=0) return 0x201;
-            if (entered) return 3; /* no dispatch during publication */
+#if !CONF_WITH_NATIVE_PREEMPT
+            if (entered) return 3; /* cooperative publication cannot dispatch */
+#endif
             /* Wait for any child when the old prefix omitted PID. */
             waited=x32_probe_call(0x13a,size<32 ? -1 : pid,0,0);
             if (waited<0) return 4;
@@ -162,29 +166,34 @@ int x32_public_clone_checks(void)
         args.stack_base=(void *)(unsigned long)stack;
     }
 #endif
-    /* Grow past the bootstrap arena without yielding, then wait/reclaim every
-     * independently identified PROCESS. */
-    early=1;
+    /* Keep all twelve processes live until the arena has grown. A timer
+     * can dispatch children between publications while this gate is closed. */
+    arena_gate=0; early=1;
     args.child_tid=&tid; args.child_pid=&pid;
     for (i=0;i<11;i++) {
         S64 allocated=CALL(0x48,8192,0,0);
-        if (allocated<=0) return 13;
+        if (allocated<=0) { arena_gate=1; return 13; }
         stacks[i]=(unsigned long)allocated;
         args.stack_base=(void *)stacks[i];
-        if (CALL(GEMDOS_PCLONE,&args,32,0)<=0) return 14;
-        pids[i]=pid;
+        result=CALL(GEMDOS_PCLONE,&args,32,0);
+        if (result<=0 || result!=tid || pid<=0) { arena_gate=1; return 14; }
+        pids[i]=pid; tids[i]=tid;
     }
     args.stack_base=(void *)(unsigned long)stack;
     tid=-7;pid=-9;
     *(volatile unsigned long *)((unsigned long)stack+8184)=0x12345678UL;
     result=CALL(GEMDOS_PCLONE,&args,32,0);
-    if (result<=0) return 0x1500-(int)result;
-    if (tid!=result || pid<=0) return 15;
-    pids[11]=pid;
+    if (result<=0) { arena_gate=1; return 0x1500-(int)result; }
+    if (tid!=result || pid<=0) { arena_gate=1; return 15; }
+    pids[11]=pid; tids[11]=tid;
+    arena_gate=1;
     for (i=0;i<12;i++) {
         S64 finished=x32_probe_call(0x13a,pids[i],0,0);
-        if (finished<0 || (finished&0xffff) || (i<11 && CALL(0x49,stacks[i],0,0))) return 16;
+        if (finished!=((S64)pids[i]<<16) || x32_probe_call(0x13a,pids[i],1,0)!=-33L ||
+            (i<11 && CALL(0x49,stacks[i],0,0))) return 16;
+        for (j=0;j<i;j++) if (pids[i]==pids[j] || tids[i]==tids[j]) return 16;
     }
+    early=0;
     if (CALL(0x49,stack,0,0)) return 12;
     return 0;
 }

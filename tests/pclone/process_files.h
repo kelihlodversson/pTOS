@@ -77,7 +77,7 @@ static void test_process_files(void)
                              "publication owns all four inherited references and releases admission");
             if(mode&1) {
                 ptest_assert_msg(Fclose(files_probe.file)==0 && Fclose(files_probe.duplicate)==0 &&
-                                 Fclose(0)==0 && Fclose(files_probe.second)==0,"parent closes independently before child runs");
+                                 Fclose(0)==0 && Fclose(files_probe.second)==0,"parent closes before the child accesses its bindings");
             }
             files_probe.gate=1;status=Pwaitpid(pid,0,0);
             ptest_assert_msg((status>>16)==pid && (status&65535)==73 && !files_probe.error &&

@@ -322,3 +322,25 @@ producing the expected final 0x66 status, rather than racing its 0x44 return.
 The host fixture model runs the actual publication/join/completion branches
 with a forced child-first interleaving; the old selection deterministically
 left 0x44 final. The cooperative child selection remains unchanged.
+
+Integrated client synchronization
+---------------------------------
+The native x32 input driver waits for guest markers from a sibling that has
+observed the exact leader's admitted cancelable wait. The same PROCESS test
+query reads the existing scheduler state and excludes parked Syield calls.
+The fixture forces an observation before the first wait, then separately
+requires first-click, resumed-click and both cancellation waits. The resumed
+marker follows release observation by both peers. The intentional initial
+held-button quick-check case still takes input before admission.
+
+CONF_WITH_CUIS_WAIT_TEST provides the read-only query for the x32 CUIS test
+configuration. The dedicated CUIS lane verifies physical input against
+managed waits with the timer gate enabled. General desktop tests use their
+existing gesture pacing and application-side markers. The eager timer lane
+covers CPU-bound execution and ownership without CUIS or private clone tests.
+
+The x32 arena-growth probe retains all twelve launched PROCESSes behind a
+shared gate, then verifies exact PID/TID identity and once-only consumption.
+The private search continuation waits for the kernel to report orphaning
+before its first Fsnext. The descriptor test gates the first descriptor
+access, so child dispatch before the parent's close is harmless.

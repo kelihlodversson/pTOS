@@ -162,6 +162,10 @@ KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *
                                                  const struct ksched_wait_observation *observation);
 #endif
 BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
+#if CONF_WITH_CUIS_WAIT_TEST
+#define KSCHED_TEST_WAIT_ADMISSION 0xc713c103UL
+LONG ksched_test_wait_admission(ULONG tid); /* zero returns the caller's TID */
+#endif
 #if CONF_WITH_FORK_CORE
 /* Private native assertion: find existing blocked parent execution whose
  * THREAD-owned dependency names this exact current child, never a PID lookup. */

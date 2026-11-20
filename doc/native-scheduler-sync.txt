@@ -1,4 +1,4 @@
-Current B1 owner synchronization work (#713)
+B1 owner synchronization (#713)
 ============================================
 
 This section supersedes the B0 implementation status in the historical audit
@@ -6,7 +6,8 @@ below. Base: b0970a7558aaa10c21f388c733a0fd2ecaa4ce72 (merged #1022).
 B1 here means concurrency-safe resource owners and operation admission in the
 current #713 plan. Older B1a/B1b/B1c names describe the merged capture foundation.
 The architecture capture and gated delayed A -> B -> A restart remain unchanged.
-Production timer preemption, arbitrary kernel preemption and SMP stay disabled.
+The later Phase C work uses these owners for optional USER timer preemption.
+See native-timer-preemption.txt for the capability gate and return boundary.
 
 Implementation
 --------------
@@ -69,11 +70,12 @@ resource destruction, readiness evaluation or continuation handoff. Filesystem
 and CUIS operation policies still use their existing epochs/in-flight contracts;
 this work does not make kernel filesystem or callback execution preemptible.
 
-Validation status
------------------
-Development checks are recorded here provisionally; final-source and CI evidence
-must be recorded with exact SHAs before acceptance. Hosted tests model CPU/MMU
-endpoints while executing production owners; they are not native execution.
+Validation
+----------
+#1024 records the final B1 source and merge evidence, with the native
+x32/ARM/m68k, legacy ROM and hosted sanitizer results. The integrated
+matrix and its exact source are in native-scheduler-plan.txt. Hosted tests
+execute production owners with modeled CPU/MMU endpoints.
 
 - Owner domain tests: ordered scopes, exact IRQ restoration, wrong CPU, stale
   guard/LIFO/rank rejection, exhaustion and forbidden handoff.
@@ -82,11 +84,7 @@ endpoints while executing production owners; they are not native execution.
   failed copies/allocations, stale actor and exact resource conservation.
 - Existing host scheduler: completion in check/block gap, false wake, coincident
   cancellation, exact-child identity/claim isolation and balanced error release.
-- Development Cortex-A7/PFS run: 30 tests and 5 shutdown checks passed, including
-  gated delayed IRQ restart; subsequent source changes require a final rerun.
 - CUIS host suite and standard ELF startup (all three architecture models) passed.
-- Final x32/m68k/ARM FAT/PFS, legacy/scheduler-disabled ROM, sanitizers/fortified,
-  exact source/synthetic-merge CI and independent review remain acceptance work.
 
 Independent review and corrections
 ----------------------------------

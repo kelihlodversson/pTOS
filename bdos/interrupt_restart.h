@@ -32,14 +32,12 @@ void ksched_preempt_tick(void); /* 200 Hz IRQ: CPU metadata only */
 BOOL ksched_preempt_capture_needed(void); /* IRQ entry, before device tick */
 BOOL ksched_preempt_due(void); /* masked authenticated outer USER IRQ */
 #if CONF_WITH_PRIVATE_CLONE_TEST
-LONG ksched_preempt_test_blocked(ULONG tid); /* canonical cancelable-wait observation */
 LONG ksched_preempt_test_patterns(BOOL reset); /* regression proof query/reset */
 void ksched_preempt_probe_return(UWORD pattern); /* bounded CPU-local proof stamp */
 LONG interrupt_preempt_test_delay(ULONG ticks); /* regression transport only */
 #define IRQ_PREEMPT_TEST_DELAY 0xc713c100UL
 #define IRQ_PREEMPT_TEST_RESET 0xc713c101UL
 #define IRQ_PREEMPT_TEST_PATTERNS 0xc713c102UL
-#define IRQ_PREEMPT_TEST_BLOCKED 0xc713c103UL
 #endif
 #endif
 /* Test-only Pclone transport, not a public syscall/clone flag. */
