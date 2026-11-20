@@ -796,6 +796,15 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
     fi
 fi
 
+# The same executable must own a live anchor from both boot launch modes and
+# from the already-managed mode 0 path, before the regression shell runs.
+if grep -q '^#define CONF_WITH_NATIVE_SCHED 1$' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1$' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PTHJOIN 1$' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native first managed launch and both Pexec controls: PASS' "$suite_log"; then
+    record "native first managed launch" FAIL "boot or managed parent launch failed"
+fi
+
 # Compilation and legacy compatibility are insufficient evidence of native
 # startup. Require managed startup and scheduler evidence on all three MMUs.
 case "$machine" in

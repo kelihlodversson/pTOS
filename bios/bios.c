@@ -32,6 +32,9 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #endif
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#include "../tests/first_anchor/contract.h"
+#endif
 #include "gemerror.h"
 #include "lineavars.h"
 #include "vt52.h"
@@ -1002,6 +1005,39 @@ static void run_reset_resident(void)
 #include "procmem.h"
 #endif
 
+#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+static void test_first_anchor(void)
+{
+    LONG status, pid;
+
+    /* The first disk executable on the regression image starts with the
+     * ordinary mode 0 call from AUTO's still-unmanaged boot controller. */
+    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    if (status != FIRST_ANCHOR_STATUS || ksched_active())
+        panic("first managed launch: boot Pexec(0) status %ld", status);
+    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1m", NULL);
+    if (status != FIRST_ANCHOR_STATUS || ksched_active())
+        panic("first managed launch: managed Pexec(0) status %ld", status);
+    pid = Pexec(PE_ASYNC_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    if (pid <= 0)
+        panic("first managed launch: boot Pexec(100) failed %ld", pid);
+    status = ksched_wait((WORD)pid, 0, 0);
+    if ((ULONG)status != ((ULONG)pid << 16 | (FIRST_ANCHOR_STATUS & 255)) ||
+        ksched_wait((WORD)pid, 1, 0) != EFILNF || ksched_active())
+        panic("first managed launch: boot Pexec(100) wait status %ld", status);
+#if CONF_WITH_EXIT_HANDOFF_TEST
+    /* Select the refused exit-handoff subject only after the normal starts.
+     * FIRST.TOS in the outer call is an anchor; its nested launch stays on
+     * the explicitly armed THREAD-less carrier. */
+    ksched_test_nested(0x20);
+    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1u", NULL);
+    if (status != 0 || ksched_active())
+        panic("first managed launch: untracked Pexec(0) status %ld", status);
+#endif
+    kcprintf("native first managed launch and both Pexec controls: PASS\n");
+}
+#endif
+
 static void run_auto_program(const char* filename)
 {
     char path[30];
@@ -1012,7 +1048,11 @@ static void run_auto_program(const char* filename)
     KDEBUG(("Loading %s ...\n", path));
 #if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS
     if(!strcmp(filename,"GLBTEST.PRG")) {
-        LONG pid=Pexec(PE_ASYNC_LOADGO,path,"",NULL), result;
+        LONG pid, result;
+#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+        test_first_anchor();
+#endif
+        pid=Pexec(PE_ASYNC_LOADGO,path,"",NULL);
         if(pid<=0) panic("native global async admission failed");
         result=ksched_wait((WORD)pid,0,0);
         if((ULONG)result!=((ULONG)pid<<16)) panic("native global async wait failed");
