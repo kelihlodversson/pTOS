@@ -7,16 +7,73 @@ The independent default-off CONF_WITH_NATIVE_PREEMPT gate now drives the
 existing B1/B2 owners, dispatcher and authentic IRQ-return transaction from
 the 200 Hz timer. See native-timer-preemption.txt for the 20 ms quantum,
 automatic preallocated lease slots, deferred kernel/callback behavior and
-exact native acceptance boundary. The checkpoints below retain their
-historical cooperative meaning; they are not current timer-preemption proof.
+exact native acceptance boundary.
 
-Current A2c architecture
-------------------------
-bdos/native_sched.c owns one cooperative round-robin for x32, ARM MMU and m68k
-MMU. CPU backends provide only continuation entry, CPU/FPU/MMU/IRQ save/restore,
-root context setup and idle. CUIS/libaes is not required. No preemption or SMP
-is enabled. A1 stable growth, A2a permanent root, A2b durable controller/results
-and A2c detached cooperative admission use this same dispatcher and queue.
+Integrated scheduler acceptance
+-------------------------------
+B1 owner synchronization entered the epic in #1024, with the managed Pexec(0)
+anchor and exact-child wait from #1017. The boot-CPU owner order is PROCESS and
+KTHREAD, KASPACE, admission and tickets, then runqueue publication. The last
+rank serializes the generation comparison with publishing BLOCKED. Detachment
+precedes last puts. Existing copy and fault operations retain the exact owner
+and mapping through ordinary retirement. See native-scheduler-sync.txt.
+
+B2 capture and deferred return entered through #1020 and #1022. #1041
+qualified the gated hardware A -> B -> A on the epic, including distinct
+roots, ordinary refusal, exact-child wait and replacement, and acknowledged
+fault and cancellation cleanup. The B2 lanes disable the timer policy.
+
+Phase C entered in #1037. The native 200 Hz tick expires a 20 ms quantum.
+Expiry survives ineligible IRQs. Only an authenticated outer USER IRQ return
+may dispatch, through the established root and B2 owner acknowledgment.
+The native timer lanes require repeated CPU-bound progress without Syield,
+peer USER execution before restoration, and exact retirement. Hosted IRQ
+and ownership models cover injected failures and remain separate evidence.
+
+Qualified single-CPU profiles:
+
+  x32       FAT, standard and eager. IRETQ and supported x87/MMX/SSE.
+            MEMTEST, desktop and CUIS remain covered. PFS is unavailable.
+  Cortex-A7 MMU FAT/PFS, A32 IRQ/RFE, D0-D31/FPSCR. The native probes also
+            require guarded stack boundaries and exclusive-monitor isolation.
+  68040     MMU FAT/PFS, format-0 RTE and stack ABI. Pinned Falcon/TT Hatari
+            and Amiberry use the supported FPU state with nonzero FPIAR.
+            Amiberry exercises caches off and on.
+
+The refusal matrix covers foreign x32 TLS/FS/GS, FSGSBASE and XSAVE/AVX;
+ARM Thumb, Jazelle/IT, FIQ and unsupported VFP/MMU states; and m68k 030/060
+deferred return, fastcall, non-format-0 and unsupported FSAVE states.
+Native fallback evidence and hosted control/frame validators are recorded
+individually in #1025. ROM-window tests use independent loader roots. QEMU
+also exercises private fork roots when the backend supports them.
+
+The cross-architecture suite covers exact-child waits and active sibling
+joins, orphan continuation, Pexec(200) rollback and committed replacement,
+descriptor and search inheritance, COW and mapping exclusion, CPU-bound
+cancellation and owner retirement. Production owner models include copy and
+allocation failure, false wakes, rejected stale identities and exact
+conservation. Build also runs normal, fortified and ASan/UBSan with leak
+detection, scheduler-disabled and small-ROM compatibility.
+
+Exact integrated baseline f33c0740a4f0ac3570834a3948399d33e841077f:
+  Build 44691058128       https://github.com/kelihlodversson/pTOS/actions/runs/44691058128
+  Amiberry 44691058131    https://github.com/kelihlodversson/pTOS/actions/runs/44691058131
+Both passed, including all twelve dedicated B2 lanes and the enabled timer
+matrix. #1024, #1037 and #1041 record their separate source, synthetic merge,
+native and hosted evidence. The closeout PR records its own run SHAs.
+
+Release defaults and the broader capability/ROM matrix belong to #897.
+The ownership and ABI audit is tracked in #1016. The boot-CPU owner protocol
+does not implement inter-CPU acquisition or SMP dispatch (#1019).
+
+A2c foundation and historical checkpoints
+-----------------------------------------
+bdos/native_sched.c owns one round-robin for x32, ARM MMU and m68k MMU.
+CPU backends provide continuation entry, CPU/FPU/MMU/IRQ save/restore, root
+context setup and idle. CUIS/libaes is optional. A1 stable growth, A2a
+permanent root, A2b durable controller/results and A2c detached admission use
+this same dispatcher and queue. The incremental evidence below describes
+cooperative configurations unless a gated capability is explicitly stated.
 
 Root existence, queue ownership and caller attachment are distinct:
 - Permanent root: one aligned 16 KiB BSS stack, resume continuation and pinned
