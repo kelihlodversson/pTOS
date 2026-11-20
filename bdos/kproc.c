@@ -895,14 +895,13 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     target->stack_size = source->stack_size;
     return TRUE;
 }
-#if CONF_WITH_PROCESS_FILES && CONF_WITH_NATIVE_SCHED
-/* A descriptor-only shared-VM child selects its own writable user DTA.
- * The compatibility PD is supervisor-only and the logical basepage is shared. */
+#if CONF_WITH_PROCESS_FILES
+/* Clear the authoritative DTA. The compatibility PD is not mapped here,
+ * and the logical user basepage is shared with the source. */
 void kproc_clone_clear_dta(KPROC *target)
 {
     if (!kproc_clone_target_ready(target, NULL)) panic("clone DTA: invalid target");
     target->dta = NULL;
-    target->pd->p_xdta = 0;
 #if CONF_WITH_PRIVATE_CLONE
     target->independent_dta = TRUE;
 #endif

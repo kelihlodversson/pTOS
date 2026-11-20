@@ -45,6 +45,66 @@ static void files_compare(const long *before,const char *message)
     long after[8];files_counts(after);
     ptest_assert_msg(!memcmp(before,after,sizeof(after)),message);
 }
+static const char files_orphan_path[]="C:\\FD969O.TMP";
+static volatile struct {
+    unsigned char *stack;
+    long file,gate,done,error;
+    int32_t pid;
+} files_orphan;
+static void files_orphan_entry(void *argument)
+{
+    char bytes[3];
+
+    (void)argument;
+    while (!files_orphan.gate) (void)Syield();
+    if (Pgetpid()!=files_orphan.pid || Fread(files_orphan.file,sizeof(bytes),bytes)!=sizeof(bytes) ||
+        memcmp(bytes,"ofs",sizeof(bytes)) || Fclose(files_orphan.file)) files_orphan.error=1;
+    files_orphan.done=1;
+    Pterm(75);
+}
+static void files_orphan_source(void *argument)
+{
+    int32_t pid=0;
+    long file;
+
+    (void)argument;
+    file=Fcreate(files_orphan_path,0);
+    files_orphan.file=file;
+    if (file<6 || Fwrite(file,3,"ofs")!=3 || Fseek(0,file,0)!=0 ||
+        launch_entry(files_orphan_entry,CLONE_VM|CLONE_COPY_ALL_HANDLES,files_orphan.stack,&pid,NULL)<=0)
+        files_orphan.error=1;
+    files_orphan.pid=pid;
+#if defined(TEST_WITH_PTERMGRP)
+    (void)term_group(74); /* retire just the source PROCESS */
+#endif
+    Pterm(74);
+}
+static void files_test_orphan(unsigned char *source_stack)
+{
+    long baseline[8],stack,result,status;
+    int32_t pid=0;
+    unsigned i;
+
+    stack=Malloc(RUNNABLE_STACK_SIZE);
+    ptest_assert_msg(stack>0,"descriptor orphan stack");
+    if (stack<=0) return;
+    files_orphan.stack=(unsigned char *)stack;
+    files_counts(baseline);
+    result=launch_entry(files_orphan_source,CLONE_VM,source_stack,&pid,NULL);
+    status=result>0 ? Pwaitpid(pid,0,0) : result;
+    ptest_assert_msg(result>0 && (status>>16)==pid && (status&65535)==74 &&
+                     files_orphan.pid>0 && !files_orphan.done && !files_orphan.error &&
+                     files_query(0)==baseline[0]+1 && files_query(3)==baseline[3]+1,
+                     "source exit leaves the orphan's one exact binding alive");
+    files_orphan.gate=1;
+    for (i=0; i<64 && !files_orphan.done; i++) (void)Syield();
+    (void)Syield(); (void)Syield();
+    ptest_assert_msg(files_orphan.done && !files_orphan.error && Pwaitpid(files_orphan.pid,1,0)==-33L,
+                     "orphan retains the shared offset and retires outside the grandparent's wait scope");
+    ptest_assert_msg(Fdelete(files_orphan_path)==0,"descriptor orphan releases its file");
+    files_compare(baseline,"orphan exit restores exact descriptor owners");
+    ptest_assert_msg(Mfree((void *)stack)==0,"descriptor orphan stack released");
+}
 static void test_process_files(void)
 {
     struct ptos_clone_args args={0};
@@ -161,6 +221,7 @@ static void test_process_files(void)
         files_compare(baseline,"both exit orders restore exact SFT/binding/admission/operation baselines");
     }
     ptest_assert_msg(!Dsetpath(saved_cwd),"restore the parent CWD");
+    files_test_orphan((unsigned char *)stack);
     ptest_assert_msg(Mfree((void *)stack)==0,"descriptor native stack released");
     ptest_pass();
     if(!ptest_failures())conws("native PROCESS descriptor inheritance/ownership: PASS\r\n");
