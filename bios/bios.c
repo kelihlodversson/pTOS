@@ -1072,7 +1072,7 @@ static void test_first_anchor(void)
          * when the public Pclone or Pthjoin gates are disabled. */
         ksched_test_nested(0x20);
         status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1u", NULL);
-        if (status != 0 || ksched_active() || ksched_test_nested(7) != untracked + 1)
+        if (status != FIRST_ANCHOR_STATUS || ksched_active() || ksched_test_nested(7) != untracked + 1)
             fail_first_anchor("untracked Pexec(0)", status);
     }
 #endif

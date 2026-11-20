@@ -92,7 +92,7 @@ static int check_unmanaged(void)
     if (nested_trap2(GEMDOS_PCLONE, (long)&args, sizeof(args)) != NESTED_EINVFN ||
         worker_entered || Mfree(stack))
         return 16;
-    return 0;
+    return (int)FIRST_ANCHOR_STATUS;
 }
 #endif
 
@@ -113,7 +113,7 @@ int main(void)
             return check_unmanaged();
 #else
             /* The kernel verifies the untracked carrier and exit rollback. */
-            return 0;
+            return (int)FIRST_ANCHOR_STATUS;
 #endif
         }
     }
