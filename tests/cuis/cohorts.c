@@ -27,6 +27,9 @@ static int cohort_checks(void)
     fail_allocation = FALSE;
     token = cuis_endpoint_barrier(a,CUIS_BARRIER_ACQUIRE,0);
     CHECK(token > 0 && cohort.remaining == 2);
+    CHECK(cuis_endpoint_barrier(a,CUIS_BARRIER_RELEASE,0x100000000ULL | token)==EINVAL);
+    CHECK(CJ(CUIS_BATCH_QUERY,a,CUIS_BATCH_STATE,1,0,0,0)==EINVAL);
+    CHECK(CJ(0x10000,a,token,0,0,0,0)==EINVFN);
     CHECK(CJ(CUIS_BATCH_QUERY,a,CUIS_BATCH_STATE,0,0,0,0) == 1);
     run = &fourth; CHECK(cuis_service(CUIS_SESSION_START,0) == EAGAIN);
     run = &second;

@@ -10,6 +10,39 @@ policy over the CUIS registration barrier and opaque stream batch.
 See process-exec.txt and cuis.txt for the current contracts. The design notes
 below describe the earlier gate, migration rationale and receipt prototype.
 
+Current operation and ownership map
+-----------------------------------
+
+Retired selectors       Current consumer path
+----------------------- ----------------------------------------------------
+66 CHILD_WATCH          libaes asks LAUNCH_ATTACH for an observation receipt
+                        before the PROCESS can run. Endpoint exit closes it.
+67 CHILD_RESULT         libaes reads the PROCESS SNAPSHOT and orders notices
+                        by the canonical 64-bit completion ordinal.
+68 CHILD_PUBLISH        libaes builds CH_EXIT. STREAM_RECEIPT atomically
+                        commits bytes and durable publication progress.
+69/90/91 launch         libaes uses Pexec(100) or PROCESS_EXEC_START for an
+                        ordinary child. LAUNCH_ATTACH uses the same PROCESS
+                        preparation and adds a receipt and/or console lease.
+70/92 defer             libaes uses PROCESS_EXEC_DEFER, including SW_DEFDIR.
+79/87 begin/cancel      libaes acquires or releases ENDPOINT_BARRIER.
+80/81 stage/commit      libaes stages and seals the opaque STREAM_BATCH.
+82/83 query/read        libaes and the desktop query exact batch generations
+                        and read provenance. libaes reads staged packets.
+84 publish              libaes emits the shutdown result and chooses whether
+                        STREAM_BATCH releases the barrier in that commit.
+85/86 ack/reject        libaes settles the consumed request with an
+                        acknowledgement or an opaque reply.
+
+PROCESS owns load arguments, executable resources, cancellation, completion
+and public waits. Receipt retirement consumes only the GUI's observation
+right. CUIS owns authenticated endpoint generations, the console lease,
+registration exclusion and atomic opaque stream delivery. libaes owns GEM
+message layout, participant consent and shutdown policy. The console lease
+follows the executing PROCESS, while receipts and barrier ownership follow
+the authenticated endpoint. Session wait keeps its existing sampler and
+timer contract, including the generic observer-array option.
+
 Activation prerequisite and review boundary
 ------------------------------------------
 
