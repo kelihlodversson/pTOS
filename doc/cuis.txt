@@ -2747,8 +2747,10 @@ PROCESS snapshot, selects the smallest terminal ordinal, and builds CH_EXIT.
 Normal exit retains its full status word. A crash uses signal << 8.
 
 CUIS_STREAM_RECEIPT (94) accepts the source endpoint, operation, aligned
-address of a 64-byte CUIS_RECEIPT_RECORD and its size. The layout and operation
-constants are in include/cuis_receipt.h. QUERY reads a non-consuming snapshot
+address of a 64-byte CUIS_RECEIPT_RECORD and its size. The record uses native
+byte order and 4-byte alignment. Its operation field and endpoint high words
+are reserved and equal zero. The endpoint low words match their endpoint IDs.
+The layout and operation constants are in include/cuis_receipt.h. QUERY reads a non-consuming snapshot
 of a slot. PREPARE snapshots the immutable bytes. COMMIT appends bytes and
 sender provenance while recording publication in the same critical section.
 ACK and RECLAIM finish cleanup, with RECLAIM gated by retirement of the exact
@@ -2916,7 +2918,8 @@ registration and delivers the existing single full-word-status CH_EXIT on
 normal/fault exit. Tails still use the ordinary 0..126-byte convention; ARGV,
 accessory and mode-1 text execution are not implied.
 
-CUIS_LAUNCH_ATTACH (93) takes six scalar arguments. The second argument
+CUIS_LAUNCH_ATTACH (93) takes the default endpoint and five scalar arguments.
+The second argument
 selects an optional console lease (bit 0) and/or an observation receipt
 (bit 1). A second console, foreign
 drawing ownership or modal mouse/keyboard capture rejects a console launch
