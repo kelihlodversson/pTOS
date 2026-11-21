@@ -1,5 +1,4 @@
 /* Actual SESSION_WAIT preflight/predicate/cleanup; only PROCESS helpers modeled. */
-#if CONF_WITH_CUIS_OBSERVER_TEST
 /* Native admission injection is inactive in this hosted scheduler fixture. */
 void x86_64_memtest_observer_wait_admitted(void) {}
 static struct { ULONG leases; BOOL ready; } wait_targets[2];
@@ -135,15 +134,3 @@ static int observer_wait_checks(void)
     next_handle=0; allocations=frees=stream_ring_count=0;
     return 0;
 }
-#else
-static int observer_wait_checks(void)
-{
-    LONG session=cuis_service(CUIS_SESSION_START,0);
-    CHECK(session>=0);
-    CHECK(cuis_session_wait(session,0,CUIS_READY_CHILD,0,0x10000,1)==EINVFN);
-    CHECK(cuis_service(CUIS_SESSION_END,session)==E_OK);
-    CHECK(!clients && allocations==frees);
-    next_handle=0; allocations=frees=0;
-    return 0;
-}
-#endif

@@ -868,7 +868,7 @@ Invalid non-NULL scalar output pointers are ordinary userspace faults;
 kernel teardown remains authoritative for cleanup.
 
 CUIS_SESSION_WAIT (32) takes (owned_session, minimum_bytes, ready_mask,
-unsigned_milliseconds) in flat registers and returns CUIS_READY_STREAM (1),
+unsigned_milliseconds, process_rights, process_right_count) in flat registers and returns CUIS_READY_STREAM (1),
 CUIS_READY_TIMER (2), their union, or a negative error. Masks must select
 at least one source. minimum_bytes is 1..32767 when selecting the stream;
 otherwise it is ignored. The interval is validated only when selecting the
@@ -878,6 +878,15 @@ owned session and four LONG output addresses for x, y, buttons and modifiers,
 returning E_OK or a negative error. It backs all outputs before sampling one
 logical state under IRQ exclusion. Kernel additions remain CUIS-configured;
 there are no versioned blocks, feature negotiation or new public CUIS setup.
+
+process_right_count is 0..16. A zero count requires a zero address. A
+nonzero count requires CUIS_READY_CHILD and an aligned 32-bit user address
+of that many native-endian ULONG PROCESS-owned rights. Duplicate, zero,
+foreign and stale rights fail before wait admission. A retained completion
+or abandonment sets CUIS_READY_CHILD without consuming the right or the
+public wait result. Independent leases remain valid until the predicate has
+been detached, even if another THREAD closes its handle. See
+cuis-observer-wait-test.txt for ownership and error ordering.
 
 Host tests cover all source combinations, simultaneous/early readiness,
 partial headers, opaque-queue separation, zero-yield arrival, full intervals,

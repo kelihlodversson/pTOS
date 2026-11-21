@@ -13,8 +13,8 @@
 #include "../bdos/fs.h"
 #include "../bdos/proc.h"
 #include "../bdos/uaccess.h"
-#if CONF_WITH_CUIS_OBSERVER_TEST
 #include "../bdos/process_exec_internal.h"
+#if CONF_WITH_CUIS_RECEIPT_TEST
 #include "cuis_receipt_test.h"
 #endif
 
@@ -2537,11 +2537,9 @@ typedef struct {
     CUIS_INPUT_WAIT *input;
     UQUAD operation;
     KSCHED_CLEANUP_SCOPE cleanup;
-#if CONF_WITH_CUIS_OBSERVER_TEST
     KPROC *owner;
-    PROCESS_OBSERVER *observers[16];
+    PROCESS_OBSERVER *observers[CUIS_PROCESS_WAIT_MAX];
     ULONG observer_count;
-#endif
 #if CONF_WITH_CUIS_RECEIPT_TEST
     BOOL receipt_observing;
 #endif
@@ -2681,13 +2679,11 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
         result |= CUIS_READY_STREAM;
     if ((wait->events & CUIS_READY_NOTICE) && notices_ready(wait->client)) result |= CUIS_READY_NOTICE;
     if ((wait->events & CUIS_READY_CHILD) && wait->client->child_count) result |= CUIS_READY_CHILD;
-#if CONF_WITH_CUIS_OBSERVER_TEST
     if (wait->events & CUIS_READY_CHILD) {
         ULONG i;
         for (i=0;i<wait->observer_count;i++)
             if (process_observer_ready(wait->observers[i])) { result |= CUIS_READY_CHILD; break; }
     }
-#endif
     if ((wait->events & CUIS_READY_TIMER) && (ULONG)(cuis_input_ticks() - wait->start) >= wait->duration)
         result |= CUIS_READY_TIMER;
     if ((wait->events & CUIS_READY_COHORT) && cohort_ready(wait->client) &&
@@ -2755,19 +2751,17 @@ static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG
     /* No scheduler predicate may retain wait here. The registry/operation has
      * been unpublished before final references can run reentrant destruction. */
     cuis_input_unlock(flags);
-#if CONF_WITH_CUIS_OBSERVER_TEST
     while (wait->observer_count) {
+#if CONF_WITH_CUIS_OBSERVER_TEST
         observer_wait_leases--;
+#endif
         process_observer_release(&wait->observers[--wait->observer_count]);
     }
-#endif
 #if CONF_WITH_CUIS_RECEIPT_TEST
     if (wait->receipt_observing) receipt_observation_end(client);
 #endif
     if (client) client_put(client);
-#if CONF_WITH_CUIS_OBSERVER_TEST
     if (wait->owner) kproc_release(wait->owner);
-#endif
     ksched_cleanup_end(&wait->cleanup);
 #if CONF_WITH_PTERMGRP
     if (cancel) ksched_cancel_point();
@@ -2834,39 +2828,28 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
     CUIS_SESSION_WAIT_STATE wait={0};
     UQUAD flags;
     LONG ready;
-#if CONF_WITH_CUIS_OBSERVER_TEST
-    ULONG handles[16], i, j;
-#endif
+    ULONG handles[CUIS_PROCESS_WAIT_MAX], i, j;
     if (handle > 0x7fffffffULL || !events || events > CUIS_READY_ALL ||
         ((events & CUIS_READY_STREAM) && (!minimum || minimum > CUIS_STREAM_MAX)) ||
         ((events & CUIS_READY_TIMER) && milliseconds > 0xffffffffULL)) return EINVAL;
-#if CONF_WITH_CUIS_OBSERVER_TEST
-    if (observer_count>16 || (!observer_count && observer_address) ||
+    if (observer_count>CUIS_PROCESS_WAIT_MAX || (!observer_count && observer_address) ||
         (observer_count && !(events & CUIS_READY_CHILD))) return EINVAL;
     if (observer_count && (!observer_address || observer_address>0xffffffffULL ||
         observer_count*4 > 0x100000000ULL-observer_address)) return EIMBA;
     if (observer_count && (observer_address & 3)) return EINVAL;
-#else
-    if (observer_address || observer_count) return EINVFN;
-#endif
     ksched_cleanup_begin(&wait.cleanup);
-#if CONF_WITH_CUIS_OBSERVER_TEST
     if (observer_count) wait.owner=kproc_retain(run);
-#endif
     flags = cuis_input_lock();
     client = observer_count ? owned_client(handle):*find_owner(run);
     if (client && client->handle!=handle) client=NULL;
-#if CONF_WITH_CUIS_OBSERVER_TEST
     if (observer_count && (!wait.owner || !client || client->process!=wait.owner))
         return finish_session_wait(&wait,flags,EACCDN,FALSE);
-#endif
     if (!client || !client_get(client)) return finish_session_wait(&wait,flags,EACCDN,FALSE);
     wait.client = client;
     wait.events=(ULONG)events; wait.minimum=(ULONG)minimum;
     wait.start=cuis_input_ticks();
     wait.duration=(events & CUIS_READY_TIMER) && milliseconds ?
         (ULONG)(milliseconds / 5 + (milliseconds % 5 != 0) + 1) : 0;
-#if CONF_WITH_CUIS_OBSERVER_TEST
     if (observer_count) {
 #if CONF_WITH_CUIS_RECEIPT_TEST
         if (client->receipt_observations==0xffffffffUL)
@@ -2885,12 +2868,14 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         if (!ready) for (i=0;i<(ULONG)observer_count;i++) {
             ready=proc_exec_retain_observer(wait.owner,handles[i],FALSE,&wait.observers[i]);
             if (ready) break;
-            wait.observer_count++; observer_wait_leases++;
+            wait.observer_count++;
+#if CONF_WITH_CUIS_OBSERVER_TEST
+            observer_wait_leases++;
+#endif
         }
         flags=cuis_input_lock();
         if (ready) return finish_session_wait(&wait,flags,ready,FALSE);
     }
-#endif
     /* Fallible preflight can yield. Neither PD reuse nor a new endpoint may
      * inherit this retained endpoint/PROCESS identity or tentative wait. */
     if (client->retired || owned_client(handle)!=client)
