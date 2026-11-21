@@ -3163,41 +3163,43 @@ configuration or machine lacks poweroff support. Live resolution changes
 currently return GEM failure before starting coordination or affecting clients;
 the desktop resolution command remains disabled on this x32 backend.
 
-The native closed-cohort transport is bounded to 128 opaque request/result
-bytes per client. Calls 79..87 take the following flat arguments:
+Registration and packet delivery use two native transport calls.
 
-  BEGIN: session -> positive token; fails if a cohort or GUI grab/lock is active
-  STAGE: session, token, peer, address, bytes, wait_exit -> E_OK
-  COMMIT: session, token, completion_address, completion_bytes -> E_OK
-  QUERY: session, selector -> ID, WORK, owner-only STATE or read provenance
-  READ: session, token, address, capacity -> request/result bytes
-  PUBLISH: session, token, optional rejection_address, rejection_bytes -> E_OK
-  ACK: session, token -> acknowledge an entirely consumed non-exiting request
-  REJECT: session, token, address, bytes, consumed_bytes -> E_OK
-  CANCEL: session, token -> E_OK (owner only)
+  CUIS_ENDPOINT_BARRIER (95)
+    ACQUIRE(session, 0, 0) freezes registration and returns a generation.
+    It requires no other barrier, GUI grab or display lock.
+    RELEASE(session, 1, token) requires the matching owner and generation.
+    Endpoint retirement releases its barrier automatically.
+  CUIS_STREAM_BATCH (96)
+    (session, command, a, b, c, d). The high 32 bits of command select an
+    operation. The low 32 bits carry the generation, or the QUERY field.
+    STAGE (peer, address, bytes, wait_for_retirement) snapshots an opaque
+      request for an endpoint captured by the barrier.
+    SEAL (result_bytes, 0, 0, 0) validates that all remaining endpoints
+      have a staged request and makes those requests available.
+    QUERY (0, 0, 0, 0) returns ID, WORK, owner STATE or read provenance.
+    READ (address, capacity, 0, 0) reads a staged request or opaque reply.
+    PUBLISH (address, bytes, release_barrier, 0) appends bytes in stream
+      order. A receiver publishes its staged request with zero arguments.
+      The owner supplies the drained result or forwards the reply.
+    SETTLE (0, 0, 0, 0) acknowledges a fully consumed request that does not
+      require retirement. SETTLE (address, bytes, consumed_bytes, 0)
+      records an opaque reply. A nonzero consumed_bytes must already
+      have been read from the current request.
 
-STAGE and COMMIT snapshot bounded data with identities rechecked after user
-copies. COMMIT requires every remaining captured participant to be staged;
-exiting participants leave the cohort automatically. WORK returns REQUEST,
-ACCEPT or RESULT only when actionable, and zero otherwise; CUIS_READY_COHORT
-wakes ordinary native waits for that internal work. Publication never blocks
-and waits for sufficient caller stream space. Reads preserve normal byte-stream
-ordering and track request consumption across preexisting data and split reads.
-REJECT with consumed_bytes zero allows rejecting unknown opaque requests before
-publication. A nonzero value requires that many request bytes already consumed;
-libaes uses 16 for AP_TFAIL to reject premature/stale replies. Tokens never
-recycle. Successful result publication sets owner STATE to FINISHED (4), which
-the desktop checks before accepting a queued SHUT_COMPLETED notification.
-READ_OFFSET and READ_BYTES authenticate the last successful stream read wholly
-inside a current participant request. Prefix/overlapping ordinary messages,
-failed reads and cancelled generations do not gain request provenance. Native
-CUIS still treats the payload as opaque bytes. RESULT_ID, RESULT_OFFSET and
-RESULT_BYTES identify a read wholly inside a published result, including after
-a refusal has cleared the cohort. That identity retains the producing token
-when a new operation starts. Ordinary writes and overlapping reads have no
-result provenance. libaes matches shutdown completion/refusal to its initiating
-token; the desktop also checks that token before clearing pending shutdown and
-does not cancel another operation on receipt of a refusal.
+The kernel bounds each staged packet to 128 bytes, revalidates exact endpoint
+and generation after user copies, and tracks whole-range read provenance.
+WORK reports REQUEST, ACCEPT, REPLY or DRAINED when actionable. The existing
+session wait reports CUIS_READY_BATCH for this work. Bytes and provenance
+are appended atomically. Partial or overlapping reads keep their ordinary
+stream behavior. A result retains its generation after barrier release.
+
+libaes assigns receiver roles and consent, constructs SHUT_COMPLETED when
+the batch drains, and validates or normalizes opaque refusals to AP_TFAIL.
+libaes requests barrier release in the same publication that delivers the
+refusal. On success it keeps the barrier until the coordinator exits or
+calls SD_ABORT. The desktop also checks the exact result identity and stream
+range before acting. The old CUIS selectors 79–87 are retired.
 
 libaes preflights the complete request against its private accessory status,
 NM_APTERM consent and registered entry IDs before publication. A malformed

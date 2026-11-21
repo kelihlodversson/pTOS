@@ -463,8 +463,11 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
              fn == CUIS_BACKGROUND_REGION ? cuis_background_region(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
              fn == CUIS_DISPLAY_INFO ? cuis_display_info(frame->rdi) :
              fn == CUIS_KEYMAP_LOOKUP ? keyboard_map_lookup(frame->rdi,frame->rsi) :
-             (fn >= CUIS_COHORT_BEGIN && fn <= CUIS_COHORT_CANCEL) ?
-                 cuis_cohort_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
+             fn == CUIS_ENDPOINT_BARRIER ?
+                 (frame->r10 || frame->r8 || frame->r9 ? EINVAL :
+                  cuis_endpoint_barrier(frame->rdi,frame->rsi,frame->rdx)) :
+             fn == CUIS_STREAM_BATCH ?
+                 cuis_stream_batch(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
              (fn >= CUIS_PEER_NEXT && fn <= CUIS_PEER_RAISE) ?
                  cuis_peer_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
              (fn >= CUIS_ENTRY_PUBLISH && fn <= CUIS_ENTRY_READ) ?
@@ -472,7 +475,8 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
              fn == CUIS_WINDOWS_RESET ? cuis_windows_reset(frame->rdi) :
              fn == CUIS_CONTEXT ? cuis_context(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
              fn == CUIS_LAUNCH_ATTACH ? cuis_launch_attach(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
-             fn == CUIS_STREAM_RECEIPT ? cuis_stream_receipt(frame->rdi,frame->rsi,frame->rdx,frame->r10) :
+             fn == CUIS_STREAM_RECEIPT ? (frame->r8 || frame->r9 ? EINVAL :
+                 cuis_stream_receipt(frame->rdi,frame->rsi,frame->rdx,frame->r10)) :
              fn == CUIS_SETTING ? cuis_setting(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              fn == CUIS_KEYBOARD_LOCK ? cuis_keyboard_lock(frame->rdi, frame->rsi) :
              fn == CUIS_DISPLAY_REDRAW ? cuis_display_redraw(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :

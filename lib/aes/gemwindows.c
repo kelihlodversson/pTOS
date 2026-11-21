@@ -972,7 +972,7 @@ LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token)
         result = cuis_call6(CUIS_DISPLAY_LOCK,session,1,!polling,0,0,0);
         if (result != E_OK) return result;
     }
-    if (token > 0 && cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0) != token) {
+    if (token > 0 && aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_ID,0,0,0,0) != token) {
         (void)cuis_call6(CUIS_DISPLAY_LOCK,session,0,0,0,0,0); return EACCDN;
     }
     result = cuis_call6(CUIS_WINDOWS_RESET,session,0,0,0,0,0);

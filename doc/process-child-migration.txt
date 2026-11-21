@@ -5,6 +5,8 @@
 libaes uses it for launch arguments and canonical observation. CUIS binds
 an endpoint publication receipt and optional console lease to preparations
 before they are runnable. The CHILD selectors 66–70, 90–92 are retired.
+The shutdown migration retires selectors 79–87. libaes handles result
+policy over the CUIS registration barrier and opaque stream batch.
 See process-exec.txt and cuis.txt for the current contracts. The design notes
 below describe the earlier gate, migration rationale and receipt prototype.
 

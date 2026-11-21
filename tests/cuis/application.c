@@ -215,18 +215,23 @@ static ULONG lifecycle_unread;
 static short lifecycle_packet[16] = { AC_CLOSE,0,0,0,0,0,0,0, AC_CLOSE,0,0,1,0,0,0,0 };
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
-    if (fn == CUIS_COHORT_QUERY) {
+    ULONG batch=~(ULONG)0;
+    if (fn==CUIS_STREAM_BATCH) {
+        batch=(ULONG)(b>>32);
+        b=(ULONG)b;
+    }
+    if (batch == CUIS_BATCH_QUERY) {
         if (!lifecycle_test) return EFILNF;
-        if (b == CUIS_COHORT_ID) return 900;
-        if (b == CUIS_COHORT_WORK) return lifecycle_work;
-        if (b == CUIS_COHORT_READ_OFFSET) return lifecycle_offset;
-        if (b == CUIS_COHORT_READ_BYTES) return lifecycle_read_bytes;
+        if (b == CUIS_BATCH_ID) return 900;
+        if (b == CUIS_BATCH_WORK) return lifecycle_work;
+        if (b == CUIS_BATCH_READ_OFFSET) return lifecycle_offset;
+        if (b == CUIS_BATCH_READ_BYTES) return lifecycle_read_bytes;
         return EFILNF;
     }
-    if (lifecycle_test && fn == CUIS_COHORT_READ) {
+    if (lifecycle_test && batch == CUIS_BATCH_READ) {
         __builtin_memcpy((void *)(uintptr_t)c,lifecycle_packet,32); return 32;
     }
-    if (lifecycle_test && fn == CUIS_COHORT_PUBLISH) {
+    if (lifecycle_test && batch == CUIS_BATCH_PUBLISH) {
         __builtin_memcpy(pipe_data+pipe_count,lifecycle_packet,32);
         pipe_count += 32; lifecycle_unread = pipe_count; lifecycle_work = 0; return E_OK;
     }
@@ -636,7 +641,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_COHORT)));
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_BATCH)));
     /* Absolute deadlines are expressed in the native five-millisecond ticks. */
     CHECK(!pipe_count && waited_interval == 10 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
@@ -1367,7 +1372,7 @@ static int lifecycle_poll_checks(void)
     CHECK(appl_init() == 7 && menu_register(7,"One") == 0 && menu_register(7,"Two") == 1);
     window = wind_create(0,10,10,100,100);
     CHECK(window > 0 && wind_open(window,10,10,100,100));
-    lifecycle_test = TRUE; lifecycle_work = CUIS_COHORT_REQUEST;
+    lifecycle_test = TRUE; lifecycle_work = CUIS_BATCH_REQUEST;
     CHECK(aes_lifecycle_messages(&aes_global) == E_OK && pipe_count == 32);
     display_error = EAGAIN;
     CHECK(appl_read(APR_NOWAIT,16,message) == 0 && pipe_count == 32 && !display_nesting);

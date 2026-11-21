@@ -65,6 +65,7 @@ int gem_lifecycle_checks(void)
     static const char bad_results[] = "fxsole";
     unsigned tries;
     char name[9];
+    VERIFY(gem_lifecycle_retired_selectors());
     app = launch('u',0); VERIFY(app > 0);
     VERIFY(ready(app,a));
     VERIFY(shel_write(SWM_REZCHANGE,2,0,0,0) == 0);
