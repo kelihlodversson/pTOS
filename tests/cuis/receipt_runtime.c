@@ -68,7 +68,7 @@ static LONG receipt_fixture_import(KPROC *owner,ULONG handle,BOOL prepared,PROCE
 }
 static BOOL receipt_fixture_ready(void *observer)
 {
-    return ((typeof(receipt_children[0]) *)observer)->completion.state>=PROCESS_COMPLETED;
+    return observer && ((typeof(receipt_children[0]) *)observer)->completion.state>=PROCESS_COMPLETED;
 }
 static void receipt_fixture_release(PROCESS_OBSERVER **observer)
 {
@@ -229,6 +229,20 @@ static int receipt_runtime_checks(void)
     before=find_handle(replacement)->stream_bytes;
     CHECK(cuis_receipt_test_commit(&a)==16 && find_handle(replacement)->stream_bytes==before &&
           receipt_fixture_close((KPROC *)run,a.tag)==EIHNDL && cuis_receipt_test_reclaim(&a)==E_OK);
+
+    /* A closed right may remain in an earlier receipt slot until RECLAIM.
+     * The implicit wait must still observe and release the later right. */
+    CHECK(cuis_receipt_test_launch(source,replacement,0,"child",tail,environment,&a)>0);
+    CHECK(cuis_receipt_test_launch(source,replacement,1,"child",tail,environment,&b)>0);
+    CHECK(receipt_fixture_close((KPROC *)run,a.tag)==E_OK);
+    complete_receipt_child(&b,15);
+    before=receipt_import_count;
+    CHECK(cuis_session_wait(source,0,CUIS_READY_CHILD|CUIS_READY_TIMER,0,0,0)==
+          (CUIS_READY_CHILD|CUIS_READY_TIMER));
+    CHECK(receipt_import_count==before+1 && receipt_release_count==receipt_import_count &&
+          !receipt_children[b.tag-100].leases && !find_handle(source)->receipt_observations);
+    CHECK(cuis_receipt_test_reclaim(&a)==E_OK);
+    CHECK(receipt_fixture_close((KPROC *)run,b.tag)==E_OK && cuis_receipt_test_reclaim(&b)==E_OK);
     CHECK(!receipt_active && receipt_import_count==receipt_release_count);
     /* Retirement closes each endpoint's generic right and preserves bytes
      * already committed to the unrelated receiver. */

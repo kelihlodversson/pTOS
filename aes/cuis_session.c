@@ -2892,9 +2892,10 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
             if (ready) break;
         }
         if (!ready) for (i=0;i<(ULONG)observer_count;i++) {
-            ready=proc_exec_retain_observer(wait.owner,handles[i],FALSE,&wait.observers[i]);
+            ready=proc_exec_retain_observer(wait.owner,handles[i],FALSE,
+                                            &wait.observers[wait.observer_count]);
             if (!explicit_observers && ready==EIHNDL) {
-                ready=E_OK; /* A peer already closed the acknowledged right. */
+                ready=E_OK; /* A peer closed the right before reclaiming the receipt. */
                 continue;
             }
             if (ready) break;
