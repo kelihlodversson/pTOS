@@ -879,7 +879,8 @@ returning E_OK or a negative error. It backs all outputs before sampling one
 logical state under IRQ exclusion. Kernel additions remain CUIS-configured;
 there are no versioned blocks, feature negotiation or new public CUIS setup.
 
-process_right_count is 0..16. A zero count requires a zero address. A
+process_right_count is 0..16. A zero count requires a zero address and
+selects endpoint receipt observation when CUIS_READY_CHILD is present. A
 nonzero count requires CUIS_READY_CHILD and an aligned 32-bit user address
 of that many native-endian ULONG PROCESS-owned rights. Duplicate, zero,
 foreign and stale rights fail before wait admission. A retained completion
@@ -2760,8 +2761,9 @@ step, and a stale generation cannot publish after slot reuse.
 Session retirement closes the session's rights while the PROCESS is live.
 PROCESS teardown uses its own right finalizer. Public PROCESS completion
 remains independently available to Pwaitpid and survives GUI cleanup.
-For CUIS_READY_CHILD, SESSION_WAIT imports operation-local canonical observer
-leases from the endpoint receipts. It also wakes for a new binding, pending
+For CUIS_READY_CHILD with a zero PROCESS right count, SESSION_WAIT imports
+operation-local canonical observer leases from the endpoint's BOUND and
+PREPARED receipts. It also wakes for a new binding, pending
 publication cleanup or a closed right found during import. While an implicit
 wait holds a receipt import fence, a PROCESS CLOSE by its owner wakes the
 wait to release the fence and rescan receipts. An unrelated right closed by

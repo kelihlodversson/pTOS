@@ -195,17 +195,21 @@ Attached THREAD exits still require their verified handoff and never use this
 fallback. Classic non-ASPACE KPROC omits observer-only metadata and is guarded
 against exceeding the shared fixed-pool payload at compile time.
 
-PROCESS-owned rights staging
----------------------------
-The initial trusted handle backend owns a per-KPROC list of rights, not another
-PROCESS registry. Each right owns either a private prepared admission or one
-canonical completion reference after publication. Positive handle numbers never
-wrap or recycle. PID, PD, TID and AES client identity never authenticate them.
+PROCESS-owned rights
+--------------------
+The trusted handle backend owns a per-KPROC list of rights. Each right retains
+one canonical PROCESS observer and may also own a private prepared admission.
+Publication consumes the admission and keeps the observation right. Positive
+handle numbers never wrap or recycle. The live PROCESS and scalar handle
+authenticate operations on the right.
 The current live PROCESS may prepare, commit once, snapshot without consumption,
 close, and retain operation-local observer leases. CLOSE of committed rights
 never cancels or reaps the child, including before it first executes. Final
 PROCESS teardown closes all owned preparations and observations before resource
 retirement; stopping a sibling THREAD does not run this cleanup. Leases survive
 handle closure and parent retirement without retaining heavy retired resources.
-The public 72-byte request and CANCEL_DEFERRED transport remain disabled while
-the deferred policy and argument/copyout frontdoor are completed and tested.
+A consuming CLOSE publishes the owning PROCESS's close sequence before
+cleanup. CUIS uses it to wake implicit receipt waits so they can release
+their observation leases. Explicit wait arrays retain their own leases
+until wait teardown. See process-exec.txt for the public 72-byte request and
+cuis-observer-wait-test.txt for the two wait modes.

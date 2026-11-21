@@ -90,14 +90,17 @@ completion region, leaving request controls unchanged. All completion inputs
 are ignored, so retry after partial copyout is valid. Failed copyout may alter
 a prefix of user output, but cannot consume completion, observation, or Pwait.
 
-CLOSE supplies operation and handle only. It unlinks owned rights before
-cleanup, aborts an uncommitted image or releases committed observation, and
-never reaps or cancels a committed child. Filesystem cleanup may return an
+CLOSE supplies operation and handle only. It unlinks the owned right and
+publishes the owning PROCESS's close sequence before cleanup. Cleanup aborts
+an uncommitted image or releases committed observation. Committed children
+remain independently runnable and waitable. Filesystem cleanup may return an
 error AFTER consumption: this is a diagnostic outcome, not a retryable launch
 right. The exact residual reference belongs to the SFT service, without retaining
-a PD/ASPACE/stack. Read canonical cleanup diagnostics before dropping the last
-observer; never reconstruct a handle after destruction. Other retained observer
-leases remain usable. Public dispatch remains disabled.
+a PD/ASPACE/stack. Read canonical cleanup diagnostics while an observer lease
+is still retained. Independently retained observer leases remain usable.
+CUIS uses the close sequence to wake implicit
+receipt waits and release their leases before reclaiming a receipt. See
+cuis-observer-wait-test.txt for explicit wait ownership.
 
 CANCEL_DEFERRED is designed as an idempotent current-PROCESS operation with zero
 handle and arguments. It cancels only the current owner's held, unexecuted

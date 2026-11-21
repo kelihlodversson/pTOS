@@ -1,5 +1,5 @@
-#907: PROCESS activation and CHILD adapter preparation
-=====================================================
+#907: PROCESS activation and CHILD migration
+============================================
 
 #907 activates the existing PROCESS transport on native MMU kernels.
 libaes uses it for launch arguments and canonical observation. CUIS binds
@@ -40,8 +40,19 @@ right. CUIS owns authenticated endpoint generations, the console lease,
 registration exclusion and atomic opaque stream delivery. libaes owns GEM
 message layout, participant consent and shutdown policy. The console lease
 follows the executing PROCESS, while receipts and barrier ownership follow
-the authenticated endpoint. Session wait keeps its existing sampler and
-timer contract, including the generic observer-array option.
+the authenticated endpoint. libaes waits implicitly on endpoint receipts.
+the explicit observer array remains available for exact PROCESS rights.
+Both modes hold operation-local leases. A consuming CLOSE wakes an implicit
+wait with an active receipt import envelope. Wait teardown releases the fence
+that protects RECLAIM before the caller rescans. See
+cuis-observer-wait-test.txt for the current wait and cleanup contract.
+
+Design history before public activation
+=======================================
+
+The following sections record the earlier proposals and gated validation.
+Use the ownership map above and the current transport documents for runtime
+behavior.
 
 Activation prerequisite and review boundary
 ------------------------------------------
