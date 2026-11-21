@@ -167,7 +167,7 @@ all: obj/libaes/ASYNC.TOS
 endif
 
 obj/libaes/GEM.TOS: GEM_TEST_FLAGS = $(LDSO_APP_LDFLAGS)
-obj/libaes/GEM.TOS: tests/cuis/gem_explicit.c tests/cuis/gem_explicit.h obj/libaes/EXPLICIT.PRG tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEM.TOS: tests/cuis/gem_explicit.c tests/cuis/gem_explicit.h obj/libaes/EXPLICIT.PRG tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(GEM_TEST_FLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
