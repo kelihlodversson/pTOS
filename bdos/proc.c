@@ -902,13 +902,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #else
         USERPTR_TO_PTR(run->p_env)
 #endif
-                           , &hdr, &fh, &interpreter,
-#if CONF_WITH_CUIS
-                           directory != NULL
-#else
-                           FALSE
-#endif
-                           );
+                           , &hdr, &fh, &interpreter, directory != NULL);
     if (!rc && interpreter.environment) {
         path = interpreter.path;
         tail = interpreter.tail;
