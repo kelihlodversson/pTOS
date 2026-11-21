@@ -1,20 +1,24 @@
 #!/bin/sh
-# Run after generating an enabled x32 configuration in obj/.
+# Hosted checks for the x32 Pclone handler and MMU permissions.
 set -eu
 cd "$(dirname "$0")/.."
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-clone-handler.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-# These fixtures were written for the enabled x32 core with Pclone but the
-# rest of the native process profile off: derive that from obj's .config
-# (tools/hosted-legacy-profile.config), keeping Pclone and ELF sharing.
+# These fixtures link the x32 Pclone handler with a small set of models.
+# Start with the CI preset so local GUI and native diagnostics cannot select
+# kernel services that the hosted executable does not link.
 mkdir "$work/base"
 CONFIG_= python3 - "$work/base/config" <<'PY'
 import kconfiglib, sys
 k = kconfiglib.Kconfig(warn_to_stderr=False)
-k.load_config('.config')
+k.load_config('configs/pc-x86_64_defconfig')
 k.load_config('tools/hosted-legacy-profile.config', replace=False)
+k.syms['CONF_WITH_ELF_SHARED'].set_value(2)
 k.syms['CONF_WITH_PCLONE'].set_value(2)
+assert k.syms['CONF_WITH_ELF_SHARED'].str_value == 'y'
 assert k.syms['CONF_WITH_PCLONE'].str_value == 'y'
+assert k.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'n'
+assert k.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'n'
 k.write_config(sys.argv[1])
 PY
 CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/base/config" \
