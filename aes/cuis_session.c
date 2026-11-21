@@ -1833,17 +1833,18 @@ LONG cuis_stream_batch(UQUAD session, UQUAD command, UQUAD a, UQUAD b, UQUAD c, 
     }
     if (function==CUIS_BATCH_PUBLISH) {
         WORD sender;
-        if (d || c>1) { result=EINVAL; goto out; }
-        if (work!=CUIS_BATCH_REQUEST && work!=CUIS_BATCH_REPLY && work!=CUIS_BATCH_DRAINED) {
-            result=EAGAIN; goto out;
-        }
         if (!owner) {
-            if (a || b || c) { result=EINVAL; goto out; }
+            if (a || b || c || d) { result=EINVAL; goto out; }
+            if (work!=CUIS_BATCH_REQUEST) { result=EAGAIN; goto out; }
             client->cohort_unread=client->stream_bytes+client->cohort_bytes;
             stream_append(client,client->cohort_data,client->cohort_bytes,cohort.owner->aes_id);
             client->cohort_delivered=TRUE;
             goto out;
         }
+        if (c>1 || (d!=CUIS_BATCH_DRAINED && d!=CUIS_BATCH_REPLY)) { result=EINVAL; goto out; }
+        /* The bytes were chosen for the caller's observed work state. A
+         * refusal may arrive between QUERY and PUBLISH or during copyin. */
+        if (work!=d) { result=EAGAIN; goto out; }
         if ((!a && (b || work==CUIS_BATCH_DRAINED)) ||
             (a && (!b || b>CUIS_BATCH_BYTES || (work==CUIS_BATCH_DRAINED && b!=cohort.bytes))) ||
             (work==CUIS_BATCH_REPLY && cohort.reply_publish_bytes &&
@@ -1857,10 +1858,11 @@ LONG cuis_stream_batch(UQUAD session, UQUAD command, UQUAD a, UQUAD b, UQUAD c, 
             if (!kproc_copy_from_user(data,a,length)) return EIMBA;
             flags=cuis_input_lock();
             client=owned_client(session);
-            if (!client || cohort.owner!=client || cohort.token!=token || cohort_work(client)!=work) {
+            if (!client || cohort.owner!=client || cohort.token!=token) {
                 result=EACCDN;
                 goto out;
             }
+            if (cohort_work(client)!=d) { result=EAGAIN; goto out; }
         } else length=cohort.bytes;
         if (CUIS_STREAM_BYTES-client->stream_bytes<length) { result=EAGAIN; goto out; }
         sender=cohort.sender;

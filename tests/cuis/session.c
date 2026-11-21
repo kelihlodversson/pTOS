@@ -62,6 +62,7 @@ static LONG stream_peer_handle;
 static ULONG input_packet_mode;
 static BOOL input_drop_focus;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
+static void (*copy_from_user_hook)(void);
 static void context_copy_hook(void);
 static void context_read_hook(void);
 static void child_idle_hook(void);
@@ -284,7 +285,13 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
         cuis_input_unlock(flags);
     }
     context_copy_hook();
-    memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
+    memcpy(destination, stream_input + (address - 0x10000), size);
+    if (copy_from_user_hook) {
+        void (*hook)(void)=copy_from_user_hook;
+        copy_from_user_hook=NULL;
+        hook();
+    }
+    return TRUE;
 }
 BOOL kproc_validate_user_range(UQUAD address, ULONG size)
 {
@@ -592,6 +599,8 @@ int main(void)
     rc = cohort_origin_checks();
     if (rc) return rc;
     rc = cohort_result_checks();
+    if (rc) return rc;
+    rc = cohort_publication_checks();
     if (rc) return rc;
     rc = launch_directory_checks();
     CHECK(!process_references);

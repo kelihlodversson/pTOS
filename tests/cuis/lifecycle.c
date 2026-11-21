@@ -14,7 +14,7 @@ static LONG result_id = EFILNF, result_offset, result_bytes;
 static ULONG bytes, queued, consumed, request_start, published, rejected, resets, windows;
 static BOOL reset_fails, reset_busy, last_poll, pending_notice, notice_blocked;
 static LONG phase, published_result_token;
-static BOOL published_result;
+static BOOL published_result, late_refusal;
 LONG aes_window_messages_poll(LONG session, AESGLOBAL *global)
 {
     (void)session; (void)global;
@@ -80,6 +80,11 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (batch == CUIS_BATCH_READ) { memcpy((void *)(uintptr_t)c,packet,bytes); return bytes; }
     if (batch == CUIS_BATCH_SETTLE) { rejected++; work = 0; return E_OK; }
     if (batch == CUIS_BATCH_PUBLISH) {
+        if (late_refusal) {
+            late_refusal=FALSE; work=CUIS_BATCH_REPLY; phase=3;
+            memset(packet,0,16); packet[0]=AP_TFAIL; packet[1]=23; bytes=16;
+        }
+        if (f != (work==CUIS_BATCH_REPLY || work==CUIS_BATCH_DRAINED ? (UQUAD)work:0)) return EAGAIN;
         if (c || d) { bytes = d; memcpy(packet,(void *)(uintptr_t)c,bytes); }
         published_result = work==CUIS_BATCH_REPLY || work==CUIS_BATCH_DRAINED;
         published_result_token = token;
@@ -220,6 +225,12 @@ int main(void)
         memset(stream+8,0,16); stream[8] = 4321; queued += 16;
         VERIFY(next(message) == E_OK && message[0] == 4321);
     }
+    begin(FALSE,0,request,16);
+    VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,&aes_global) == 1);
+    work=CUIS_BATCH_DRAINED; late_refusal=TRUE;
+    VERIFY(aes_lifecycle_messages(&aes_global) == E_OK && !published && token);
+    VERIFY(aes_lifecycle_messages(&aes_global) == E_OK && published == 1 && !token);
+    VERIFY(next(message) == E_OK && message[0] == AP_TFAIL && message[1] == 23);
     puts("Lifecycle receiver consent, complete preflight, provenance and ordered reset: PASS");
     return 0;
 }

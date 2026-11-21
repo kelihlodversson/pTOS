@@ -66,8 +66,9 @@ static int cohort_checks(void)
     run = &third; CHECK(cuis_service(CUIS_SESSION_END,c) == E_OK);
     run = &first;
     CHECK(CJ(CUIS_BATCH_QUERY,a,CUIS_BATCH_WORK,0,0,0,0) == CUIS_BATCH_DRAINED);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,a,token,0,0,0,0) == EINVAL);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,a,token,0x10000,16,0,0) == E_OK);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,a,token,0x10000,16,0,0) == EINVAL);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,a,token,0,0,0,CUIS_BATCH_DRAINED) == EINVAL);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,a,token,0x10000,16,0,CUIS_BATCH_DRAINED) == E_OK);
     CHECK(cuis_stream_service(CUIS_STREAM_READ,a,0x20000,16,0,0) == 16);
     CHECK(CJ(CUIS_BATCH_QUERY,a,CUIS_BATCH_STATE,0,0,0,0) == CUIS_BATCH_FINISHED);
     run = &fourth; CHECK(cuis_service(CUIS_SESSION_START,0) == EAGAIN);
@@ -88,7 +89,7 @@ static int cohort_checks(void)
     CHECK(CJ(CUIS_BATCH_SETTLE,b,token,0x10000,16,16,0) == E_OK);
     run = &first;
     CHECK(CJ(CUIS_BATCH_READ,a,token,0x20000,16,0,0) == 16 && stream_output[0] == 0x71);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,a,token,0,0,1,0) == E_OK && !cohort.owner);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,a,token,0,0,1,CUIS_BATCH_REPLY) == E_OK && !cohort.owner);
     CHECK(cuis_stream_service(CUIS_STREAM_READ,a,0x20000,16,0,0) == 16);
     token = cuis_endpoint_barrier(a,CUIS_BARRIER_ACQUIRE,0);
     fail_copy = TRUE;
@@ -187,7 +188,7 @@ static int cohort_result_checks(void)
     CHECK(cuis_stream_service(CUIS_STREAM_WRITE,owner,0x10000,16,0,0) == 16);
     CHECK(CJ(CUIS_BATCH_SETTLE,member,old_token,0x10000,16,0,0) == E_OK);
     run = &first;
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,old_token,0,0,1,0) == E_OK && !cohort.owner);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,old_token,0,0,1,CUIS_BATCH_REPLY) == E_OK && !cohort.owner);
     new_token = cuis_endpoint_barrier(owner,CUIS_BARRIER_ACQUIRE,0);
     CHECK(new_token > old_token);
     CHECK(CJ(CUIS_BATCH_STAGE,owner,new_token,member,0x10000,16,1) == E_OK);
@@ -204,7 +205,7 @@ static int cohort_result_checks(void)
     CHECK(CJ(CUIS_BATCH_QUERY,member,CUIS_BATCH_RESULT_ID,0,0,0,0) == EFILNF);
     CHECK(CJ(CUIS_BATCH_SETTLE,member,new_token,0x10000,16,0,0) == E_OK);
     run = &first;
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0,0,1,0) == E_OK && !cohort.owner);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0,0,1,CUIS_BATCH_REPLY) == E_OK && !cohort.owner);
     CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,8,0,0) == 8);
     CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_RESULT_ID,0,0,0,0) == new_token);
     CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_RESULT_BYTES,0,0,0,0) == 8);
@@ -230,19 +231,19 @@ static int cohort_result_checks(void)
     run = &first;
     CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_WORK,0,0,0,0) == 0);
     CHECK(cuis_session_wait(owner,0,CUIS_READY_BATCH|CUIS_READY_TIMER,0,0,0) == CUIS_READY_TIMER);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,0) == EAGAIN && cohort.bytes == 1);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,CUIS_BATCH_REPLY) == EAGAIN && cohort.bytes == 1);
     CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,8,0,0) == 8);
     CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_WORK,0,0,0,0) == CUIS_BATCH_REPLY);
     CHECK(cuis_session_wait(owner,0,CUIS_READY_BATCH|CUIS_READY_TIMER,0,0,0) ==
           (CUIS_READY_BATCH|CUIS_READY_TIMER));
     CHECK(CJ(CUIS_BATCH_READ,owner,new_token,0x20000,16,0,0) == 1);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0,0,1,0) == EINVAL);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,129,1,0) == EINVAL);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0,0,1,CUIS_BATCH_REPLY) == EINVAL);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,129,1,CUIS_BATCH_REPLY) == EINVAL);
     fail_copy = TRUE;
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,0) == EIMBA && cohort.bytes == 1);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,CUIS_BATCH_REPLY) == EIMBA && cohort.bytes == 1);
     fail_copy = FALSE;
     CHECK(CJ(CUIS_BATCH_READ,owner,new_token,0x20000,16,0,0) == 1);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,0) == E_OK && !cohort.owner);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,CUIS_BATCH_REPLY) == E_OK && !cohort.owner);
 
     /* A longer opaque refusal still fits once its replacement fits. */
     CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,16,0,0) == 16);
@@ -254,9 +255,59 @@ static int cohort_result_checks(void)
     run = &first;
     CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_WORK,0,0,0,0) == CUIS_BATCH_REPLY);
     CHECK(CJ(CUIS_BATCH_READ,owner,new_token,0x20000,17,0,0) == 17);
-    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,0) == E_OK && !cohort.owner);
+    CHECK(CJ(CUIS_BATCH_PUBLISH,owner,new_token,0x10000,16,1,CUIS_BATCH_REPLY) == E_OK && !cohort.owner);
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(!cuis_session_count() && allocations == frees && input_irqs);
+    return 0;
+}
+
+static LONG refusal_token, refusal_result;
+static void cohort_late_refusal(void)
+{
+    PD *saved=run;
+    run=&second;
+    refusal_result=CJ(CUIS_BATCH_SETTLE,(*find_owner(run))->handle,refusal_token,0x10010,16,0,0);
+    run=saved;
+}
+
+/* A refusal from an already accepted member can win up to publication. */
+static int cohort_publication_checks(void)
+{
+    LONG owner, member, previous_token=0;
+    unsigned int pass;
+    stream_ring_count=0;
+    run=&first; owner=cuis_service(CUIS_SESSION_START,0);
+    run=&second; member=cuis_service(CUIS_SESSION_START,0);
+    CHECK(owner>=0 && member>=0);
+    for (pass=0;pass<2;pass++) {
+        run=&first;
+        refusal_token=cuis_endpoint_barrier(owner,CUIS_BARRIER_ACQUIRE,0);
+        CHECK(refusal_token>0);
+        memset(stream_input,0x31,16);
+        memset(stream_input+16,0x42,16);
+        CHECK(CJ(CUIS_BATCH_STAGE,owner,refusal_token,member,0x10000,16,0)==E_OK);
+        CHECK(CJ(CUIS_BATCH_SEAL,owner,refusal_token,16,16,0,0)==E_OK);
+        run=&second;
+        CHECK(CJ(CUIS_BATCH_PUBLISH,member,refusal_token,0,0,0,0)==E_OK);
+        CHECK(cuis_stream_service(CUIS_STREAM_READ,member,0x20000,16,0,0)==16);
+        CHECK(CJ(CUIS_BATCH_SETTLE,member,refusal_token,0,0,0,0)==E_OK);
+        run=&first;
+        CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_WORK,0,0,0,0)==CUIS_BATCH_DRAINED);
+        refusal_result=EAGAIN;
+        if (pass) copy_from_user_hook=cohort_late_refusal;
+        else cohort_late_refusal();
+        CHECK(CJ(CUIS_BATCH_PUBLISH,owner,refusal_token,0x10000,16,0,CUIS_BATCH_DRAINED)==EAGAIN);
+        CHECK(!copy_from_user_hook && refusal_result==E_OK);
+        CHECK(find_handle(owner)->cohort_result_token==(ULONG)previous_token && !find_handle(owner)->stream_bytes);
+        CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_WORK,0,0,0,0)==CUIS_BATCH_REPLY);
+        CHECK(CJ(CUIS_BATCH_READ,owner,refusal_token,0x20000,16,0,0)==16 && stream_output[0]==0x42);
+        CHECK(CJ(CUIS_BATCH_PUBLISH,owner,refusal_token,0,0,1,CUIS_BATCH_REPLY)==E_OK && !cohort.owner);
+        CHECK(cuis_stream_service(CUIS_STREAM_READ,owner,0x20000,16,0,0)==16 && stream_output[0]==0x42);
+        CHECK(CJ(CUIS_BATCH_QUERY,owner,CUIS_BATCH_RESULT_ID,0,0,0,0)==refusal_token);
+        previous_token=refusal_token;
+    }
+    cuis_process_exit(&first); cuis_process_exit(&second);
+    CHECK(!cuis_session_count() && allocations==frees && input_irqs);
     return 0;
 }
 #undef CJ

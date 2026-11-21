@@ -78,7 +78,7 @@
 #define CUIS_BATCH_SEAL 1UL
 #define CUIS_BATCH_QUERY 2UL
 #define CUIS_BATCH_READ 3UL
-#define CUIS_BATCH_PUBLISH 4UL
+#define CUIS_BATCH_PUBLISH 4UL /* Owner supplies CUIS_BATCH_DRAINED or CUIS_BATCH_REPLY as argument d. */
 #define CUIS_BATCH_SETTLE 5UL
 #define CUIS_BATCH_COMMAND(operation,token) (((UQUAD)(operation) << 32) | (ULONG)(token))
 #define CUIS_STREAM_PEEK 88UL

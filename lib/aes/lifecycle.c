@@ -56,7 +56,7 @@ LONG aes_lifecycle_messages(AESGLOBAL *global)
         result = aes_batch_call(CUIS_BATCH_SETTLE,session,token,0,0,0,0);
     else if (work == CUIS_BATCH_DRAINED) {
         WORD completed[8]={SHUT_COMPLETED,0,0,0,0,0,0,0};
-        result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,(uintptr_t)completed,sizeof(completed),0,0);
+        result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,(uintptr_t)completed,sizeof(completed),0,work);
     } else {
         bytes = aes_batch_call(CUIS_BATCH_READ,session,token,(uintptr_t)data,sizeof(data),0,0);
         if (bytes < 0) return bytes == EACCDN || bytes == EAGAIN ? E_OK : bytes;
@@ -92,7 +92,7 @@ LONG aes_lifecycle_messages(AESGLOBAL *global)
                 data[1]=1;
             }
             /* The reply policy releases registration atomically with publication. */
-            result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,(uintptr_t)data,16,1,0);
+            result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,(uintptr_t)data,16,1,work);
         } else result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,0,0,0,0);
         if (result == E_OK && work == CUIS_BATCH_REQUEST) state->request_token = token;
     }

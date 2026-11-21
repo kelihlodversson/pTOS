@@ -3185,10 +3185,12 @@ Registration and packet delivery use two native transport calls.
       for readiness.
     QUERY (0, 0, 0, 0) returns ID, WORK, owner STATE or read provenance.
     READ (address, capacity, 0, 0) reads a staged request or opaque reply.
-    PUBLISH (address, bytes, release_barrier, 0) appends bytes in stream
-      order. A receiver publishes its staged request with zero arguments.
-      The owner supplies the drained result or forwards the reply. A
-      refusal publication must match a nonzero declared reply size. READ
+    PUBLISH (address, bytes, release_barrier, expected_work) appends bytes
+      in stream order. A receiver publishes its staged request with zero
+      arguments. The owner supplies DRAINED or REPLY as expected_work.
+      If the batch no longer reports that work, PUBLISH returns EAGAIN
+      without appending bytes or changing barrier ownership. A refusal
+      publication must match a nonzero declared reply size. READ
       still returns the original opaque reply and its actual length.
     SETTLE (0, 0, 0, 0) acknowledges a fully consumed request that does not
       require retirement. SETTLE (address, bytes, consumed_bytes, 0)
