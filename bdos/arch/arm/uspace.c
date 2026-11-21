@@ -297,6 +297,8 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
 {
     struct uspace_launch *launch = get_uspace_launch();
     KPROC *process;
+    struct kthread *thread = NULL;
+    BOOL final;
     if (!launch || launch->pd != pd || !launch->stack_phys || launch->exit_process)
         return FALSE;
     if ((uintptr_t)&process < (uintptr_t)pmem32_virt(launch->stack_phys) ||
@@ -318,16 +320,13 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
     }
 #endif
 #if CONF_WITH_NATIVE_SCHED
-    launch->exit_final = !ksched_exit_thread(pd) ||
-                         kproc_thread_is_sole(process, ksched_exit_thread(pd));
-    if (!kproc_prepare_thread_exit_handoff(process, ksched_exit_thread(pd))) {
-#else
-    launch->exit_final = TRUE;
-    if (!kproc_prepare_exit_handoff(process)) {
+    thread = ksched_exit_thread(pd);
 #endif
+    if (!kproc_prepare_thread_exit_handoff(process, thread, &final)) {
         kproc_release(process);
         return FALSE;
     }
+    launch->exit_final = final;
     launch->exit_status = status;
     launch->exit_resident = resident;
     launch->exit_resident_len = resident_len;
@@ -465,8 +464,7 @@ relaunch:
     if (launch.exit_process) {
         KPROC *process = launch.exit_process;
 #if CONF_WITH_NATIVE_SCHED
-        if (ksched_finish_exit(process, launch.pd, launch.exit_status) != launch.exit_final)
-            panic("thread exit finalization changed");
+        ksched_finish_exit(process, launch.pd, launch.exit_status, launch.exit_final);
 #endif
         if (launch.exit_final)
             proc_finalize_exit(process, launch.exit_status,

@@ -2043,13 +2043,13 @@ BOOL ksched_finalizing_process(const KPROC *process)
     return scheduler.active && task && task->state==TASK_RUNNING && task->process==process;
 }
 
-BOOL ksched_finish_exit(KPROC *process, PD *pd, UWORD status)
+void ksched_finish_exit(KPROC *process, PD *pd, UWORD status, BOOL final)
 {
     KTHREAD *thread = ksched_exit_thread(pd);
     KSCHED_NESTED *frame;
-    BOOL final;
-    if (!thread) return TRUE; /* Untracked legacy child: no THREAD membership to retire. */
-    final = kproc_exit_handoff_pending(process);
+    if ((!thread || kproc_exit_handoff_pending(process)) != final)
+        panic("thread exit finalization changed");
+    if (!thread) return; /* Untracked legacy child: no THREAD membership to retire. */
     frame = execution_cpu.current->nested;
     if (frame) {
         /* The launcher has left this THREAD's syscall stack. Detach its
@@ -2061,7 +2061,7 @@ BOOL ksched_finish_exit(KPROC *process, PD *pd, UWORD status)
         frame->program = NULL; /* the basepage is about to be released */
         frame->state = NESTED_STOPPED;
         nested_note_stopped(frame);
-        return TRUE;
+        return;
     }
     /* Fault intent belongs to this execution, never to a surviving sibling.
      * Group exit preserves its first normal status instead of a later fault. */
@@ -2074,7 +2074,6 @@ BOOL ksched_finish_exit(KPROC *process, PD *pd, UWORD status)
         panic("scheduler: invalid launcher exit handoff");
     execution_cpu.current->exited = TRUE;
     check_task_thread(execution_cpu.current, 3);
-    return final;
 }
 
 /* The thread is the sole owner of its backend scheduler stack. Called only

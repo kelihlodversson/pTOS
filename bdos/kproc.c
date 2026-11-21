@@ -2629,17 +2629,14 @@ static BOOL kproc_prepare_thread_exit_handoff_owned(KPROC *process, KTHREAD *thr
     process->disposal_state = PROCESS_EXIT_HANDOFF;
     return TRUE;
 }
-BOOL kproc_prepare_thread_exit_handoff(KPROC *process, KTHREAD *thread)
+BOOL kproc_prepare_thread_exit_handoff(KPROC *process, KTHREAD *thread, BOOL *final)
 {
     KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
     BOOL result=kproc_prepare_thread_exit_handoff_owned(process,thread);
+    if (result)
+        *final = process->disposal_state == PROCESS_EXIT_HANDOFF;
     kowner_leave(&owner_guard);
     return result;
-}
-
-BOOL kproc_prepare_exit_handoff(KPROC *process)
-{
-    return kproc_prepare_thread_exit_handoff(process, NULL);
 }
 
 static BOOL kproc_finish_thread_handoff_owned(KPROC *process, KTHREAD *thread)

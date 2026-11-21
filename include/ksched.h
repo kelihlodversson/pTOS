@@ -136,7 +136,8 @@ LONG ksched_termgrp(UWORD status);
 /* Finalizer ownership survives THREAD stop; nested foreign PROCESSes do not
  * use this task's public-wait publication boundary. No reference transfer. */
 BOOL ksched_finalizing_process(const struct kproc *process);
-BOOL ksched_finish_exit(struct kproc *process, PD *pd, UWORD status);
+/* Called off the exiting stack. Validate the finality saved by KPROC. */
+void ksched_finish_exit(struct kproc *process, PD *pd, UWORD status, BOOL final);
 /* Saved with kernel process contexts, including legacy AES coroutines.
  * Zero is unmanaged; identities are never reused, even across groups. */
 UQUAD ksched_context_id(void);
