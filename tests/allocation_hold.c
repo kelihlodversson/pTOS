@@ -3,13 +3,12 @@
 #include <stdlib.h>
 #include "emutos.h"
 #if defined(ALLOCATION_HOLD_GENERIC)
-/* Headers for libc are already selected; only the production MMU-core guard
- * is changed for hosted compilation, never a kernel configuration. */
+/* Select the 32-bit physical-memory declarations after the host headers. */
 #undef __x86_64__
+#endif
 #include "../bios/procmem.c"
+#if defined(ALLOCATION_HOLD_GENERIC)
 #define __x86_64__ 1
-#else
-#include "../bios/machine/pc-x86_64/procmem.c"
 #endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"allocation hold:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static unsigned allocated, freed, fail_alloc, notices;
@@ -106,19 +105,11 @@ int main(void)
     CHECK(!procmem_hold_acquire(q,procmem_gen(q),&owner,0,1,ASPACE_PROT_USER,7,&canonical,&b));
     CHECK(procmem_hold_release(&a,&identity)); identity=NULL;
     CHECK(procmem_free(q));
-#if defined(ALLOCATION_HOLD_GENERIC)
     gens=0xfffffffeULL;
-#else
-    next_gen=0xffffffffULL;
-#endif
     p=procmem_alloc(4096,0); q=procmem_alloc(4096,0);
     CHECK(p && q && procmem_gen(p)==0xffffffffULL && procmem_gen(q)==0x100000000ULL);
     CHECK(procmem_free(p) && procmem_free(q));
-#if defined(ALLOCATION_HOLD_GENERIC)
     gens=~(UQUAD)0-2;
-#else
-    next_gen=~(UQUAD)0-1;
-#endif
     q=procmem_alloc(4096,0); CHECK(q && procmem_gen(q)==~(UQUAD)0-1);
     CHECK(!procmem_alloc(4096,0) && procmem_next_gen()==~(UQUAD)0);
     CHECK(procmem_free(q) && allocated==freed && free_pages==WINDOW_PAGES);
