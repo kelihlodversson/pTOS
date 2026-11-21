@@ -106,9 +106,15 @@ static void process_wait_second(void *argument)
     process_wait_contend(1);
 }
 
+static void process_wait_foreign(void *argument)
+{
+    (void)argument;
+    Pterm(Pwaitpid(process_wait_probe.child,1,0)==-33L ? 0 : 1);
+}
+
 static void test_process_wait_contention(void)
 {
-    int32_t child=0,tids[2]={0,0};
+    int32_t child=0,peer=0,tids[2]={0,0};
     long launched[2],expected,first,second;
     unsigned spin;
 
@@ -118,6 +124,9 @@ static void test_process_wait_contention(void)
         return;
     }
     process_wait_probe.child=child;
+    first=launch_entry(process_wait_foreign,CLONE_VM,runnable_stacks[1],&peer,NULL);
+    ptest_assert_msg(first>0 && Pwaitpid(peer,0,0)==((long)peer<<16) && Pwaitpid(child,1,0)==0,
+                     "shared ASPACE gives a peer no wait right and both PROCESSes remain separately waitable");
     launched[0]=launch_entry(process_wait_first,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[1],NULL,&tids[0]);
     launched[1]=launch_entry(process_wait_second,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],NULL,&tids[1]);
     for (spin=0; spin<128 && (!process_wait_probe.entered[0] || !process_wait_probe.entered[1]); spin++)

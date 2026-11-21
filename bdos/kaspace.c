@@ -433,7 +433,8 @@ LONG kaspace_copy_begin(KASPACE *space,VADDR address,VADDR bytes,BOOL write,KASP
         return EINVAL;
 #if CONF_WITH_PRIVATE_CLONE_TEST
     /* Only the arming continuation's next write to this address fails. */
-    if (write && address==space->fail_copy_address && mapping_actor()==space->fail_copy_actor) {
+    if (write && space->fail_copy_actor && address==space->fail_copy_address &&
+        mapping_actor()==space->fail_copy_actor) {
         space->fail_copy_actor=0;
         space->fail_copy_address=0;
         return ENSMEM;
