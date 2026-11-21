@@ -239,7 +239,7 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
         result = aes_batch_call(CUIS_BATCH_STAGE,session,token,peer,(uintptr_t)data,used*2,!acc || action == SD_COMPLETE);
         if (result != E_OK && result != EFILNF) goto failed;
     }
-    if (aes_batch_call(CUIS_BATCH_SEAL,session,token,16,0,0,0) != E_OK) goto failed;
+    if (aes_batch_call(CUIS_BATCH_SEAL,session,token,16,16,0,0) != E_OK) goto failed;
     return 1;
 failed:
     (void)cuis_call6(CUIS_ENDPOINT_BARRIER,session,CUIS_BARRIER_RELEASE,token,0,0,0);

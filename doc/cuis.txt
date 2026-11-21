@@ -3178,13 +3178,18 @@ Registration and packet delivery use two native transport calls.
     operation. The low 32 bits carry the generation, or the QUERY field.
     STAGE (peer, address, bytes, wait_for_retirement) snapshots an opaque
       request for an endpoint captured by the barrier.
-    SEAL (result_bytes, 0, 0, 0) validates that all remaining endpoints
-      have a staged request and makes those requests available.
+    SEAL (result_bytes, reply_publish_bytes, 0, 0) validates that all
+      remaining endpoints have a staged request and makes those requests
+      available. A nonzero reply_publish_bytes declares the required owner
+      publication size for a refusal. Zero uses the opaque reply's size
+      for readiness.
     QUERY (0, 0, 0, 0) returns ID, WORK, owner STATE or read provenance.
     READ (address, capacity, 0, 0) reads a staged request or opaque reply.
     PUBLISH (address, bytes, release_barrier, 0) appends bytes in stream
       order. A receiver publishes its staged request with zero arguments.
-      The owner supplies the drained result or forwards the reply.
+      The owner supplies the drained result or forwards the reply. A
+      refusal publication must match a nonzero declared reply size. READ
+      still returns the original opaque reply and its actual length.
     SETTLE (0, 0, 0, 0) acknowledges a fully consumed request that does not
       require retirement. SETTLE (address, bytes, consumed_bytes, 0)
       records an opaque reply. A nonzero consumed_bytes must already

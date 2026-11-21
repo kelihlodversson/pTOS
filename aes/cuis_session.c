@@ -176,7 +176,7 @@ enum {
 };
 static struct {
     CUIS_CLIENT *owner;
-    ULONG token, remaining, phase, bytes;
+    ULONG token, remaining, phase, bytes, reply_publish_bytes;
     WORD sender;
     UBYTE data[CUIS_BATCH_BYTES];
 } cohort;
@@ -1710,10 +1710,12 @@ static ULONG cohort_work(CUIS_CLIENT *client)
 {
     if (!cohort.owner) return 0;
     if (client == cohort.owner) {
-        if (CUIS_STREAM_BYTES-client->stream_bytes >= cohort.bytes) {
-            if (cohort.phase == BATCH_REPLIED) return CUIS_BATCH_REPLY;
-            if (cohort.phase == BATCH_SEALED && !cohort.remaining) return CUIS_BATCH_DRAINED;
-        }
+        ULONG space=CUIS_STREAM_BYTES-client->stream_bytes;
+        if (cohort.phase == BATCH_REPLIED) {
+            ULONG bytes=cohort.reply_publish_bytes ? cohort.reply_publish_bytes:cohort.bytes;
+            if (space >= bytes) return CUIS_BATCH_REPLY;
+        } else if (cohort.phase == BATCH_SEALED && !cohort.remaining && space >= cohort.bytes)
+            return CUIS_BATCH_DRAINED;
     } else if (cohort.phase == BATCH_SEALED && client->cohort_id == cohort.token) {
         if (!client->cohort_delivered && client->cohort_bytes &&
             CUIS_STREAM_BYTES-client->stream_bytes >= client->cohort_bytes) return CUIS_BATCH_REQUEST;
@@ -1843,7 +1845,9 @@ LONG cuis_stream_batch(UQUAD session, UQUAD command, UQUAD a, UQUAD b, UQUAD c, 
             goto out;
         }
         if ((!a && (b || work==CUIS_BATCH_DRAINED)) ||
-            (a && (!b || b>CUIS_BATCH_BYTES || (work==CUIS_BATCH_DRAINED && b!=cohort.bytes)))) {
+            (a && (!b || b>CUIS_BATCH_BYTES || (work==CUIS_BATCH_DRAINED && b!=cohort.bytes))) ||
+            (work==CUIS_BATCH_REPLY && cohort.reply_publish_bytes &&
+             (a ? b:cohort.bytes)!=cohort.reply_publish_bytes)) {
             result=EINVAL;
             goto out;
         }
@@ -1869,13 +1873,14 @@ LONG cuis_stream_batch(UQUAD session, UQUAD command, UQUAD a, UQUAD b, UQUAD c, 
         goto out;
     }
     if (function==CUIS_BATCH_SEAL) {
-        if (!owner || cohort.phase!=BATCH_STAGING || !a || a>CUIS_BATCH_BYTES || b || c || d) {
+        if (!owner || cohort.phase!=BATCH_STAGING || !a || a>CUIS_BATCH_BYTES || b>CUIS_BATCH_BYTES || c || d) {
             result=EINVAL;
             goto out;
         }
         for (peer=clients;peer;peer=peer->next)
             if (peer->cohort_id==token && !peer->cohort_bytes) { result=EAGAIN; goto out; }
         cohort.bytes=(ULONG)a; /* Only the expected size, supplied at seal. */
+        cohort.reply_publish_bytes=(ULONG)b;
         cohort.phase=BATCH_SEALED;
         goto out;
     }

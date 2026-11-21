@@ -46,7 +46,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     (void)a; (void)e; (void)f;
     if (fn == CUIS_ENDPOINT_BARRIER && b==CUIS_BARRIER_ACQUIRE) { work = 0; return ++token; }
     if (fn == CUIS_PEER_NEXT) return EFILNF;
-    if (batch == CUIS_BATCH_SEAL) return E_OK;
+    if (batch == CUIS_BATCH_SEAL) return c==16 && d==16 && !e && !f ? E_OK:EINVAL;
     if (fn == CUIS_ENDPOINT_BARRIER && b==CUIS_BARRIER_RELEASE) { token = 0; return E_OK; }
     if (fn == CUIS_STREAM_PENDING) return queued-consumed;
     if (fn == CUIS_STREAM_PEEK || fn == CUIS_STREAM_READ) {
