@@ -8,6 +8,7 @@ static LONG receipt_fixture_prepare(KPROC *,char *,char *,char *,char *,ULONG);
 static LONG receipt_fixture_commit(KPROC *,ULONG);
 static LONG receipt_fixture_close(KPROC *,ULONG);
 static LONG receipt_fixture_import(KPROC *,ULONG,BOOL,PROCESS_OBSERVER **);
+static UQUAD receipt_fixture_close_sequence(const KPROC *);
 static BOOL receipt_fixture_ready(void *);
 static BOOL receipt_fixture_snapshot(const PROCESS_OBSERVER *,PROCESS_COMPLETION *);
 static void receipt_fixture_release(PROCESS_OBSERVER **);
@@ -21,8 +22,11 @@ static struct {
 } receipt_children[512];
 static BOOL receipt_close_error;
 static ULONG receipt_next,receipt_import_count,receipt_release_count;
+static UQUAD receipt_closes;
 static CUIS_RECEIPT_TEST_RECORD *receipt_settling;
+static BOOL close_on_import, finish_on_close;
 static ULONG receipt_release_fences;
+static void receipt_wait_close(void);
 static LONG receipt_fixture_prepare(KPROC *owner,char *path,char *tail,char *environment,char *directory,ULONG policy)
 {
     ULONG i=receipt_next++;
@@ -55,12 +59,23 @@ static LONG receipt_fixture_close(KPROC *owner,ULONG handle)
     ULONG i=handle-100;
     if (owner!=(KPROC *)run || !input_irqs || i>=receipt_next) __builtin_abort();
     if (!receipt_children[i].open) return EIHNDL;
-    receipt_children[i].open=FALSE; return receipt_close_error ? EACCDN:E_OK;
+    receipt_children[i].open=FALSE;
+    receipt_closes++;
+    return receipt_close_error ? EACCDN:E_OK;
+}
+static UQUAD receipt_fixture_close_sequence(const KPROC *owner)
+{
+    if (owner!=(KPROC *)&first) __builtin_abort();
+    return receipt_closes;
 }
 static LONG receipt_fixture_import(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_OBSERVER **out)
 {
     ULONG i=handle-100;
     if (owner!=(KPROC *)run || !input_irqs || !cleanup_depth || *out) __builtin_abort();
+    if (close_on_import && receipt_settling && handle==receipt_settling->tag) {
+        close_on_import=FALSE;
+        receipt_wait_close();
+    }
     if (i>=receipt_next || !receipt_children[i].open) return EIHNDL;
     if (prepared && receipt_children[i].committed) return EACCDN;
     *out=(PROCESS_OBSERVER *)&receipt_children[i]; receipt_children[i].leases++; receipt_import_count++;
@@ -93,6 +108,10 @@ static void complete_receipt_child(CUIS_RECEIPT_TEST_RECORD *record,ULONG order)
     PROCESS_COMPLETION *c=&receipt_children[record->tag-100].completion;
     c->state=PROCESS_COMPLETED;c->kind=PROCESS_COMPLETION_NORMAL;c->status=0xffff;c->order_low=order;
 }
+static void receipt_wait_complete(void)
+{
+    complete_receipt_child(receipt_settling,12);
+}
 static void receipt_wait_close(void)
 {
     /* The hosted wait hook models the peer execution with its own IRQ state.
@@ -102,7 +121,7 @@ static void receipt_wait_close(void)
     if (!receipt_settling || !find_handle(receipt_settling->source)->receipt_observations ||
         receipt_fixture_close((KPROC *)run,receipt_settling->tag)!=E_OK ||
         cuis_receipt_test_reclaim(receipt_settling)!=EAGAIN) __builtin_abort();
-    complete_receipt_child(receipt_settling,12);
+    if (finish_on_close) lifetime_wait_hook=receipt_wait_complete;
     input_irqs=blocked_irqs;
 }
 static CUIS_RECEIPT_TEST_RECORD query_identity(CUIS_RECEIPT_TEST_RECORD receipt)
@@ -191,9 +210,10 @@ static int receipt_runtime_checks(void)
      * RECLAIM fails both while blocked and during final reference release. */
     CHECK(cuis_receipt_test_launch(source,destination,2,"child",tail,environment,&c)>0);
     memcpy(stream_input,&c.tag,sizeof(c.tag));
+    finish_on_close=TRUE;
     receipt_settling=&c;lifetime_wait_hook=receipt_wait_close;
     CHECK(cuis_session_wait(source,0,CUIS_READY_CHILD,0,0x10000,1)==CUIS_READY_CHILD);
-    receipt_settling=NULL;
+    receipt_settling=NULL;finish_on_close=FALSE;
     CHECK(!lifetime_wait_hook && receipt_release_fences==1 &&
           !find_handle(source)->receipt_observations && !receipt_children[c.tag-100].leases);
     CHECK(cuis_receipt_test_reclaim(&c)==E_OK);
@@ -243,6 +263,22 @@ static int receipt_runtime_checks(void)
           !receipt_children[b.tag-100].leases && !find_handle(source)->receipt_observations);
     CHECK(cuis_receipt_test_reclaim(&a)==E_OK);
     CHECK(receipt_fixture_close((KPROC *)run,b.tag)==E_OK && cuis_receipt_test_reclaim(&b)==E_OK);
+
+    /* A running child need not exit to release the implicit wait's fence.
+     * Test CLOSE during import, after import while blocked, and before the
+     * wait snapshots the already-closed receipt. The timer bounds failure. */
+    for (j=0;j<3;j++) {
+        CHECK(cuis_receipt_test_launch(source,replacement,0,"child",tail,environment,&c)>0);
+        receipt_settling=&c;
+        if (j==0) close_on_import=TRUE;
+        else if (j==1) lifetime_wait_hook=receipt_wait_close;
+        else CHECK(receipt_fixture_close((KPROC *)run,c.tag)==E_OK);
+        CHECK(cuis_session_wait(source,0,CUIS_READY_CHILD|CUIS_READY_TIMER,50,0,0)==CUIS_READY_CHILD);
+        receipt_settling=NULL;
+        CHECK(!close_on_import && !lifetime_wait_hook && !find_handle(source)->receipt_observations &&
+              receipt_children[c.tag-100].completion.state==PROCESS_RUNNING && !receipt_children[c.tag-100].leases);
+        CHECK(cuis_receipt_test_reclaim(&c)==E_OK);
+    }
     CHECK(!receipt_active && receipt_import_count==receipt_release_count);
     /* Retirement closes each endpoint's generic right and preserves bytes
      * already committed to the unrelated receiver. */

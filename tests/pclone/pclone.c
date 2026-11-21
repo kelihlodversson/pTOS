@@ -1218,6 +1218,63 @@ static long launch_observed_input_child(long session)
                         (uintptr_t)path,(uintptr_t)tail,(uintptr_t)group_env,0);
 }
 
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+static struct {
+    long waiter;
+    ULONG right;
+    long result;
+} receipt_close_probe;
+
+static void close_while_receipt_waits(void *argument)
+{
+    PROCESS_EXEC_REQUEST request={0};
+    (void)argument;
+    receipt_close_probe.result=-1;
+    if (!input_wait_admitted(receipt_close_probe.waiter)) return;
+    request.operation=PROCESS_EXEC_CLOSE;
+    request.handle=receipt_close_probe.right;
+    receipt_close_probe.result=Ssystem(PROCESS_EXEC_SSYSTEM,(long)(uintptr_t)&request,sizeof(request));
+}
+
+static void test_native_receipt_close(void)
+{
+    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'C',0};
+    CUIS_RECEIPT_RECORD receipt={0};
+    int32_t peer_pid,tid,status;
+    long session, child, result;
+    (void)Fdelete("C:\\CLOSEGO.ON");
+    session=native_cuis(CUIS_SESSION_START,0,0);
+    ptest_assert_msg(session>=0,"open endpoint for native receipt CLOSE wake");
+    if (session<0) return;
+    child=native_cuis6(CUIS_LAUNCH_ATTACH,session,CUIS_LAUNCH_OBSERVE,
+                       (uintptr_t)path,(uintptr_t)tail,(uintptr_t)group_env,0);
+    ptest_assert_msg(child>0,"launch an observed PROCESS held live until after receipt reclamation");
+    if (child<=0) goto end_session;
+    receipt.source=receipt.source_low=(ULONG)session;
+    result=native_cuis6(CUIS_STREAM_RECEIPT,session,CUIS_RECEIPT_QUERY,(uintptr_t)&receipt,sizeof(receipt),0,0);
+    ptest_assert_msg(!result && receipt.state==CUIS_RECEIPT_BOUND && receipt.tag,"query bound native receipt");
+    if (result || !receipt.tag) goto release_child;
+    receipt_close_probe.waiter=wait_admission(0);
+    receipt_close_probe.right=receipt.tag;
+    result=launch_entry(close_while_receipt_waits,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&peer_pid,&tid);
+    ptest_assert_msg(result>0,"start sibling closer for blocked implicit receipt wait");
+    if (result<=0) goto release_child;
+    result=native_cuis6(CUIS_SESSION_WAIT,session,0,CUIS_READY_CHILD|CUIS_READY_TIMER,1000,0,0);
+    ptest_assert_msg(result==CUIS_READY_CHILD,"closing an imported receipt right wakes the blocked native waiter");
+    ptest_assert_msg(join_tid(tid,&status)==0 && status==0 && !receipt_close_probe.result,"sibling closed the exact owned right");
+    ptest_assert_msg(Pwaitpid((short)child,1,0)==0,"CLOSE wake does not finish or consume the child");
+    ptest_assert_msg(native_cuis6(CUIS_STREAM_RECEIPT,session,CUIS_RECEIPT_RECLAIM,
+                     (uintptr_t)&receipt,sizeof(receipt),0,0)==0,"woken waiter releases its receipt fence before child exit");
+release_child:
+    group_mark("CLOSEGO.ON");
+    result=Pwaitpid((short)child,0,0);
+    ptest_assert_msg(result>0 && (result&65535)==19,"independent public wait reaps the released child");
+    (void)Fdelete("C:\\CLOSEGO.ON");
+end_session:
+    (void)native_cuis(CUIS_SESSION_END,session,0);
+}
+#endif
+
 static long wait_for_input_child(long session, CUIS_RECEIPT_RECORD *receipt)
 {
     const ULONG events=CUIS_READY_BUTTON|CUIS_READY_CHILD|CUIS_READY_TIMER;
@@ -2132,6 +2189,9 @@ static void test_runnable(void)
     test_group_exit();
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_PTHJOIN)
     test_native_streams();
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    test_native_receipt_close();
+#endif
     test_native_resume();
 #endif
 #endif

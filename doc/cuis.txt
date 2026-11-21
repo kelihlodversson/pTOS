@@ -2761,8 +2761,12 @@ Session retirement closes the session's rights while the PROCESS is live.
 PROCESS teardown uses its own right finalizer. Public PROCESS completion
 remains independently available to Pwaitpid and survives GUI cleanup.
 For CUIS_READY_CHILD, SESSION_WAIT imports operation-local canonical observer
-leases from the endpoint receipts. It also wakes for a new binding or pending
-publication cleanup. Explicit wait arrays retain the existing wire layout.
+leases from the endpoint receipts. It also wakes for a new binding, pending
+publication cleanup or a closed right found during import. While an implicit
+wait holds a receipt import fence, a PROCESS CLOSE by its owner wakes the
+wait to release the fence and rescan receipts. An unrelated right closed by
+the same PROCESS may cause a rescan. Explicit wait arrays keep their
+independent leases and continue to wait for completion or abandonment.
 
 CUIS_READY_CHILD is a public readiness source in CUIS_SESSION_WAIT, alongside
 stream/notice/input/timer readiness. It wakes MU_MESAG immediately, including

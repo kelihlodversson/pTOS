@@ -17,6 +17,7 @@ struct identity {
     struct process_exec_handle *handles;
     PD *pd;
     unsigned refs;
+    UQUAD exec_closes;
     BOOL resources;
     LONG cleanup_error;
     PROCESS_COMPLETION completion;
@@ -35,6 +36,7 @@ LONG kproc_ref_file_cleanup(const KPROC *p,ULONG *transferred)
 PD *run=&first_pd;
 struct process_exec_handle **kproc_exec_handles(KPROC *p)
 { return p ? &((struct identity *)p)->handles : NULL; }
+void kproc_publish_exec_close(KPROC *p) { ((struct identity *)p)->exec_closes++; }
 PD *kproc_live_pd(const KPROC *p) { return p ? ((const struct identity *)p)->pd : NULL; }
 void *kalloc(ULONG bytes) { void *p; if(fail_allocate || fail_after==0)return NULL; if(fail_after>0)fail_after--; p=calloc(1,bytes); if(p)allocations++; return p; }
 void kfree(void *p) { CHECK(p); frees++; free(p); }
@@ -92,6 +94,7 @@ int main(void)
     children[0].cleanup_error=EWRITF;
     CHECK(proc_exec_handle_close(owner,one)==EWRITF && cancellations==1 && !children[0].resources);
     CHECK(proc_exec_handle_close(owner,one)==EIHNDL && children[0].refs==1);
+    CHECK(first.exec_closes==1 && !second.exec_closes);
     CHECK(process_observer_snapshot(lease,&result) && result.state==PROCESS_ABANDONED);
     process_observer_release(&lease); CHECK(!children[0].refs);
     two=proc_exec_handle_prepare(owner,"p","t","e","d",PROCESS_EXEC_ASYNC); CHECK(two>one);

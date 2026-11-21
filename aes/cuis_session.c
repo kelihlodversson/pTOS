@@ -2569,8 +2569,8 @@ typedef struct {
     KPROC *owner;
     PROCESS_OBSERVER *observers[CUIS_PROCESS_WAIT_MAX];
     ULONG observer_count;
-    BOOL receipt_observing, track_receipts;
-    UQUAD receipt_epoch;
+    BOOL receipt_observing, track_receipts, receipt_right_closed;
+    UQUAD receipt_epoch, exec_close_sequence;
 } CUIS_SESSION_WAIT_STATE;
 
 static BOOL client_window(CUIS_CLIENT *client, CUIS_WINDOW *window)
@@ -2709,7 +2709,8 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if (wait->events & CUIS_READY_CHILD) {
         ULONG i;
         if (wait->track_receipts && (wait->receipt_epoch!=wait->client->receipt_epoch ||
-            receipt_pending_cleanup(wait->client)))
+            receipt_pending_cleanup(wait->client) || wait->receipt_right_closed ||
+            (wait->receipt_observing && wait->exec_close_sequence!=kproc_exec_close_sequence(wait->owner))))
             result |= CUIS_READY_CHILD;
         for (i=0;i<wait->observer_count;i++)
             if (process_observer_ready(wait->observers[i])) { result |= CUIS_READY_CHILD; break; }
@@ -2883,6 +2884,7 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
         wait.track_receipts=TRUE;
         wait.receipt_epoch=client->receipt_epoch;
         observer_count=receipt_wait_handles(client,handles);
+        if (observer_count) wait.exec_close_sequence=kproc_exec_close_sequence(wait.owner);
     }
     if (observer_count) {
         if (client->receipt_observations==0xffffffffUL)
@@ -2902,7 +2904,9 @@ LONG cuis_session_wait(UQUAD handle, UQUAD minimum, UQUAD events, UQUAD millisec
             ready=proc_exec_retain_observer(wait.owner,handles[i],FALSE,
                                             &wait.observers[wait.observer_count]);
             if (!explicit_observers && ready==EIHNDL) {
-                ready=E_OK; /* A peer closed the right before reclaiming the receipt. */
+                /* Return for recovery even if CLOSE preceded our snapshot. */
+                wait.receipt_right_closed=TRUE;
+                ready=E_OK;
                 continue;
             }
             if (ready) break;

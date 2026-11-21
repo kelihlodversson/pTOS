@@ -5,12 +5,14 @@
 #undef main
 #include "../bdos/process_exec.c"
 static struct process_exec_handle *rights;
-static unsigned cleanup_depth, observer_releases, handle_frees;
+static unsigned cleanup_depth, observer_releases, handle_frees, exec_closes;
 static LONG cleanup_error;
 static char observer_identity;
 PD *kproc_live_pd(const KPROC *p) { CHECK(p==(KPROC *)&owner); return &owner; }
 struct process_exec_handle **kproc_exec_handles(KPROC *p)
 { CHECK(p==(KPROC *)&owner); return &rights; }
+void kproc_publish_exec_close(KPROC *p)
+{ CHECK(p==(KPROC *)&owner && !rights); exec_closes++; }
 void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(!scope->active); scope->active=TRUE; cleanup_depth++; }
 void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
@@ -18,7 +20,7 @@ void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
 void ksched_process_cancel(void **prepared)
 {
     FS_CLOSE_REPORT result;
-    CHECK(cleanup_depth && *prepared==&sft[0]);
+    CHECK(cleanup_depth && exec_closes==1 && *prepared==&sft[0]);
     *prepared=NULL;
     CHECK(fs_close_bounded(NUMSTD,TRUE,&result)==EWRITF);
     CHECK(result.disposition==FS_CLOSE_CONSUMED && !sft[0].f_cleanup_refs);
@@ -49,7 +51,7 @@ int main(void)
     CHECK(!sft[0].f_use && !sft[0].f_own && !sft[0].f_cleanup_refs &&
           owner.p_uft[0]<0 && closes==1 && releases==1);
     CHECK(proc_exec_handle_close((KPROC *)&owner,1)==EIHNDL &&
-          observer_releases==1 && handle_frees==1 && closes==1 && releases==1);
+          observer_releases==1 && handle_frees==1 && closes==1 && releases==1 && exec_closes==1);
     puts("Production prepared CLOSE: consuming PFS finalizer error, lost right and exactly-once release: PASS (host)");
     return 0;
 }

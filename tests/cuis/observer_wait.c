@@ -19,6 +19,14 @@ LONG kproc_copy_from_user_checked(void *out,VADDR address,ULONG bytes)
     wait_array_copied=copied;
     return copied ? E_OK:EIMBA;
 }
+UQUAD kproc_exec_close_sequence(const KPROC *owner)
+{
+#ifdef RECEIPT_RUNTIME_FIXTURE
+    if (receipt_fixture_active) return receipt_fixture_close_sequence(owner);
+#endif
+    (void)owner;
+    return 0;
+}
 LONG proc_exec_retain_observer(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_OBSERVER **out)
 {
     ULONG index;

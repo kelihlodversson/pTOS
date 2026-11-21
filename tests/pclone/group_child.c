@@ -21,6 +21,10 @@ int main(void)
     int depth = _base->p_cmdlin[1] - '0';
     char tail[] = "\1" "0";
     char result[] = "C:\\GRET0.ON";
+    if (_base->p_cmdlin[1] == 'C') {
+        while (!exists("C:\\CLOSEGO.ON")) (void)Syield();
+        return 19;
+    }
     if (depth > 0 && depth <= 2) {
         tail[1] = '0' + depth - 1;
         if (Pexec(0,"C:\\GROUPCH.TOS",tail,(void *)environment) != 19) Pterm(91);
