@@ -166,6 +166,9 @@ BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
 #define KSCHED_TEST_WAIT_ADMISSION 0xc713c103UL
 LONG ksched_test_wait_admission(ULONG tid); /* zero returns the caller's TID */
 #endif
+#if CONF_WITH_PRIVATE_CLONE_TEST
+LONG ksched_test_process_waiters(WORD pid);
+#endif
 #if CONF_WITH_FORK_CORE
 /* Private native assertion: find existing blocked parent execution whose
  * THREAD-owned dependency names this exact current child, never a PID lookup. */

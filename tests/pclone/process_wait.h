@@ -7,7 +7,7 @@
 #define WAIT_BAD_USAGE 0x80001000UL
 
 static volatile struct {
-    long release, fault, timed, entered[2], result[2];
+    long release, fault, timed, result[2];
     int32_t child;
 } process_wait_probe;
 
@@ -87,10 +87,9 @@ static void test_process_wait_copy_oom(long *usage)
 }
 #endif
 
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_PTHJOIN) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static void process_wait_contend(unsigned index)
 {
-    process_wait_probe.entered[index]=1;
     process_wait_probe.result[index]=Pwaitpid(process_wait_probe.child,0,0);
 }
 
@@ -115,7 +114,7 @@ static void process_wait_foreign(void *argument)
 static void test_process_wait_contention(void)
 {
     int32_t child=0,peer=0,tids[2]={0,0};
-    long launched[2],expected,first,second;
+    long launched[2],expected,first,second,blocked=0;
     unsigned spin;
 
     process_wait_probe.release=0;
@@ -127,13 +126,18 @@ static void test_process_wait_contention(void)
     first=launch_entry(process_wait_foreign,CLONE_VM,runnable_stacks[1],&peer,NULL);
     ptest_assert_msg(first>0 && Pwaitpid(peer,0,0)==((long)peer<<16) && Pwaitpid(child,1,0)==0,
                      "shared ASPACE gives a peer no wait right and both PROCESSes remain separately waitable");
+    ptest_assert_msg(pclone_trap((void *)(uintptr_t)child,MLT_PROCESS_WAITERS)==0,
+                     "live child without an admitted waiter is not counted as a wait");
     launched[0]=launch_entry(process_wait_first,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[1],NULL,&tids[0]);
     launched[1]=launch_entry(process_wait_second,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],NULL,&tids[1]);
-    for (spin=0; spin<128 && (!process_wait_probe.entered[0] || !process_wait_probe.entered[1]); spin++)
+    for (spin=0; spin<128; spin++) {
+        blocked=pclone_trap((void *)(uintptr_t)child,MLT_PROCESS_WAITERS);
+        if (blocked==2) break;
         (void)Syield();
-    ptest_assert_msg(launched[0]>0 && launched[1]>0 && process_wait_probe.entered[0] &&
-                     process_wait_probe.entered[1] && !process_wait_probe.result[0] &&
-                     !process_wait_probe.result[1],"both THREADs wait on the same live child PROCESS");
+    }
+    ptest_assert_msg(launched[0]>0 && launched[1]>0 && blocked==2 &&
+                     !process_wait_probe.result[0] && !process_wait_probe.result[1],
+                     "both THREADs are blocked in Pwaitpid on the same live child PROCESS");
     process_wait_probe.release=1;
     if (launched[0]>0) ptest_assert_msg(!join_tid(tids[0],NULL),"join the first PROCESS waiter");
     if (launched[1]>0) ptest_assert_msg(!join_tid(tids[1],NULL),"join the second PROCESS waiter");
@@ -227,7 +231,7 @@ static void test_process_wait(void)
                      "Pwaitpid reports fault signal in the high status byte with usage");
     process_wait_probe.fault=0;
     test_process_wait_zombie_orphan();
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_PTHJOIN) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     test_process_wait_contention();
 #endif
 }

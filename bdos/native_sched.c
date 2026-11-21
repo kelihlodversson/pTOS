@@ -2991,6 +2991,32 @@ static BOOL child_ready(void *argument)
     return result;
 }
 
+#if CONF_WITH_PRIVATE_CLONE_TEST
+LONG ksched_test_process_waiters(WORD pid)
+{
+    KTHREAD *caller=ksched_exit_thread(run);
+    KERNEL_TASK *task;
+    KPROC *process;
+    LONG count=0;
+    RUNQUEUE_GUARD guard;
+
+    if (!caller) return EINVFN;
+    process=kthread_process(caller);
+    /* Observe all waiters together, while their blocked frames still own
+     * the CHILD_WAIT arguments. A runnable THREAD or Syield cannot count. */
+    runqueue_enter(&guard);
+    for (task=scheduler.tasks; task; task=task->next_task) {
+        if (task->process==process && task->state==TASK_BLOCKED && task->ready==child_ready &&
+            task->observation.source==&process_events && task->argument) {
+            const CHILD_WAIT *wait=task->argument;
+            if (wait->parent==run && wait->pid==pid) count++;
+        }
+    }
+    runqueue_leave(&guard);
+    return count;
+}
+#endif
+
 static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETION *completion,LONG *raw)
 {
     CHILD_WAIT wait;
