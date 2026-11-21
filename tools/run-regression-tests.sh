@@ -822,6 +822,9 @@ case "$machine" in
             if ! grep -aq 'native Pclone ABI prefix/flags/pointers/atomic outputs: PASS' "$suite_log"; then
                 record "native Pclone ABI contract" FAIL "public trap matrix did not execute successfully"
             fi
+            if ! grep -aqF 'native public PROCESS wait ABI and reaping: PASS' "$suite_log"; then
+                record "native PROCESS wait ABI" FAIL "public status, copyout or reaping checks did not pass"
+            fi
             if grep -q '^#define CONF_WITH_USER_ASPACE 1' "$top/obj/autoconf.h" &&
                ! grep -aqF 'native anchored Pexec(0) child owns dependents: PASS' "$suite_log"; then
                 record "native anchored Pexec(0)" FAIL "a Pexec(0) child did not run as an anchor (#1015)"
