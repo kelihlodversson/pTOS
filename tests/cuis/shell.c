@@ -145,15 +145,13 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     native_calls++;
     if (a != 9) return EACCDN;
     if (fn == CUIS_CHILD_RESULT) return completion_error;
-    if (fn == CUIS_CHILD_LAUNCH_DIRECTORY || fn == CUIS_CONSOLE_LAUNCH_DIRECTORY) {
-        strcpy(launched_directory,(const char *)(uintptr_t)f);
-        f = fn == CUIS_CONSOLE_LAUNCH_DIRECTORY;
-        fn = CUIS_CHILD_LAUNCH;
-    } else launched_directory[0] = 0;
-    if (fn == CUIS_CHILD_LAUNCH) {
-        if ((b != 17 && b != 0) || f > 1) return EINVAL;
+    if (fn == CUIS_LAUNCH_ATTACH) {
+        launched_console = (b & CUIS_LAUNCH_CONSOLE) != 0;
+        b &= ~CUIS_LAUNCH_CONSOLE;
+        if (b != 17 && b != 0) return EINVAL;
+        if (f) strcpy(launched_directory,(const char *)(uintptr_t)f);
+        else launched_directory[0] = 0;
         save_environment(e);
-        launched_console = f;
         strcpy(launched_path,(const char *)(uintptr_t)c);
         memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
         observed_launches++; launches++;

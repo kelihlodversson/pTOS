@@ -25,6 +25,13 @@ LONG proc_exec_retain_observer(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_O
 #ifdef RECEIPT_RUNTIME_FIXTURE
     if (receipt_fixture_active) return receipt_fixture_import(owner,handle,prepared,out);
 #endif
+    if (handle==70 && prepared) {
+        if (!input_irqs || !cleanup_depth || *out || owner!=(KPROC *)run ||
+            !modeled_children[2].references) __builtin_abort();
+        modeled_children[2].references++;
+        *out=kproc_retain(&third);
+        return E_OK;
+    }
     if (!input_irqs || !cleanup_depth || !wait_array_copied || prepared || *out) __builtin_abort();
     if (owner!=(KPROC *)run) return EACCDN;
     if (handle==31) return EACCDN;

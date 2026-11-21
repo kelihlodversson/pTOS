@@ -19,8 +19,7 @@ LONG cuis_call6(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d,UQUAD e,UQUAD f)
     unsigned i;
     VERIFY(a == (UQUAD)session_id);
     calls++; last_function=function;
-    if (function == CUIS_CHILD_LAUNCH || function == CUIS_CHILD_LAUNCH_DIRECTORY ||
-        function == CUIS_CONSOLE_LAUNCH_DIRECTORY) launches++;
+    if (function == CUIS_LAUNCH_ATTACH) launches++;
     last[0]=a; last[1]=b; last[2]=c; last[3]=d; last[4]=e; last[5]=f;
     if (function == CUIS_CHILD_RESULT) {
         VERIFY(!b && !c && !d && !e && !f);
@@ -101,17 +100,17 @@ int main(void)
     VERIFY(last_function == CUIS_CHILD_WATCH && !launches); /* Never publish without a slot. */
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,TRUE) == 123);
-    VERIFY(last_function == CUIS_CHILD_LAUNCH && last[1] == 17 && launches == 1);
+    VERIFY(last_function == CUIS_LAUNCH_ATTACH && last[1] == 17 && launches == 1);
     VERIFY(last[2] == (uintptr_t)path && last[3] == (uintptr_t)tail && last[4] == (uintptr_t)env && !last[5]);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,directory,TRUE,TRUE) == 123);
-    VERIFY(last_function == CUIS_CONSOLE_LAUNCH_DIRECTORY && last[1] == 17 && last[5] == (uintptr_t)directory && launches == 1);
+    VERIFY(last_function == CUIS_LAUNCH_ATTACH && last[1] == (17 | CUIS_LAUNCH_CONSOLE) && last[5] == (uintptr_t)directory && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,directory,FALSE,FALSE) == 123);
     VERIFY(last_function == PROCESS_EXEC_START && last[3] == (ULONG)(uintptr_t)directory && calls == 1 && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,TRUE,FALSE) == 123);
-    VERIFY(last_function == CUIS_CHILD_LAUNCH && !last[1] && last[5] == TRUE && calls == 1 && launches == 1);
+    VERIFY(last_function == CUIS_LAUNCH_ATTACH && last[1] == CUIS_LAUNCH_CONSOLE && !last[5] && calls == 1 && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,FALSE) == 321);
     VERIFY(last_function == 0x4b && calls == 1 && launches == 1); /* Ordinary Pexec stays independent. */

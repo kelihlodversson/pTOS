@@ -3590,34 +3590,30 @@ static LONG bind_child(CUIS_CLIENT *client, ULONG token, PROCESS_OBSERVER **obse
     *observer = NULL;
     return E_OK;
 }
-/* Copy before loader I/O can yield or fault. No user pointer survives launch. */
-static LONG launch_directory(UQUAD address, char *directory, ULONG size)
-{
-    ULONG i;
-    if (!address) return E_OK;
-    for (i = 0; i < size; i++) {
-        if (address+i < address || !kproc_copy_from_user(directory+i,address+i,1)) return EIMBA;
-        if (!directory[i]) return i ? E_OK : EPTHNF;
-    }
-    return ERANGE;
-}
 static BOOL console_launch_available(const CUIS_CLIENT *client)
 {
     return !console_owner && (!display_owner || display_owner == client) &&
         !mouse_owner && !keyboard_owner;
 }
 
-static LONG child_launch_owned(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console, UQUAD directory, BOOL unobserved)
+static LONG attach_launch_owned(UQUAD session, UQUAD authorization, UQUAD path,
+                              UQUAD tail, UQUAD environment, UQUAD directory)
 {
     CUIS_CLIENT *client;
+    PROCESS_EXEC_REQUEST request = {0};
     PROCESS_OBSERVER *observer = NULL;
-    void *prepared = NULL;
+    KPROC *owner;
     UQUAD flags;
+    ULONG token;
     UWORD i;
-    LONG result;
-    long args[7];
-    char dir[260];
-    if (session > 0x7fffffffULL || token > 0x7fffffffULL || console > 1 || (!token && !console && !unobserved)) return EINVAL;
+    LONG result, right;
+    BOOL console;
+    if (session > 0x7fffffffULL || authorization > 0xffffffffULL ||
+        path > 0xffffffffULL || tail > 0xffffffffULL ||
+        environment > 0xffffffffULL || directory > 0xffffffffULL) return EINVAL;
+    console = (authorization & CUIS_LAUNCH_CONSOLE) != 0;
+    token = (ULONG)authorization & ~CUIS_LAUNCH_CONSOLE;
+    if (!token && !console) return EINVAL;
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
@@ -3626,28 +3622,25 @@ static LONG child_launch_owned(UQUAD session, UQUAD token, UQUAD path, UQUAD tai
             if (client->children[i].token == token && !client->children[i].observer) break;
         if (i == CUIS_CHILDREN_PER_SESSION) { cuis_input_unlock(flags); return EACCDN; }
     }
-    cuis_input_unlock(flags);
     if (console) {
         /* Own update nesting is released by the resident desktop after the
          * launch returns. Foreign drawing and all modal grabs must be idle. */
-        flags = cuis_input_lock();
         if (console_launcher || !console_launch_available(client)) {
             cuis_input_unlock(flags);
             if (token) (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
             return EAGAIN;
         }
         console_launcher = client;
-        cuis_input_unlock(flags);
     }
-    args[0] = 0x4b; args[1] = PE_ASYNC_LOADGO;
-    args[2] = (long)path; args[3] = (long)tail; args[4] = (long)environment;
-    args[5] = args[6] = 0;
-    result = launch_directory(directory,dir,sizeof(dir));
-    if (!result) result = (LONG)bdos_check_user_args(args);
-    if (result == E_OK)
-        result = proc_exec_prepare((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
-            (char *)(uintptr_t)environment,directory ? dir : NULL,PROCESS_EXEC_ASYNC,
-            &observer,&prepared);
+    cuis_input_unlock(flags);
+    owner = kproc_retain(run);
+    request.path = (ULONG)path;
+    request.tail = (ULONG)tail;
+    request.environment = (ULONG)environment;
+    request.directory = (ULONG)directory;
+    right = proc_exec_prepare_user_args(owner,&request);
+    result = right;
+    if (right > 0) result = proc_exec_retain_observer(owner,(ULONG)right,TRUE,&observer);
     flags = cuis_input_lock();
     client = owned_client(session);
     if (result == E_OK) {
@@ -3655,7 +3648,7 @@ static LONG child_launch_owned(UQUAD session, UQUAD token, UQUAD path, UQUAD tai
         if (!client || !child || ksched_cancellation_pending() ||
             (console && console_launcher != client)) result = EACCDN;
         else if (console && !console_launch_available(client)) result = EAGAIN;
-        else if (token) result = bind_child(client,(ULONG)token,&observer);
+        else if (token) result = bind_child(client,token,&observer);
         if (result == E_OK) {
             if (console) {
                 CUIS_CLIENT *peer;
@@ -3679,38 +3672,29 @@ static LONG child_launch_owned(UQUAD session, UQUAD token, UQUAD path, UQUAD tai
             }
             /* The private slot and GUI attachments are both complete.
              * Publication is the only runnable store and cannot yield. */
-            result = ksched_process_publish(&prepared);
+            result = proc_exec_handle_commit(owner,(ULONG)right);
             if (result <= 0) panic("CUIS launch lost prepared PROCESS");
         }
     }
     if (console && console_launcher == client) console_launcher = NULL;
     cuis_input_unlock(flags);
-    if (prepared) ksched_process_cancel(&prepared);
+    if (right > 0) (void)proc_exec_handle_close(owner,(ULONG)right);
     if (observer) process_observer_release(&observer);
+    if (owner) kproc_release(owner);
     if (result < 0 && token)
         (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
     return result;
 }
 
-static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail,
-                         UQUAD environment, UQUAD console, UQUAD directory, BOOL unobserved)
+LONG cuis_launch_attach(UQUAD session, UQUAD authorization, UQUAD path,
+                        UQUAD tail, UQUAD environment, UQUAD directory)
 {
     KSCHED_CLEANUP_SCOPE scope = {0};
     LONG result;
     ksched_cleanup_begin(&scope);
-    result = child_launch_owned(session,token,path,tail,environment,console,directory,unobserved);
+    result = attach_launch_owned(session,authorization,path,tail,environment,directory);
     ksched_cleanup_end(&scope);
     return result;
-}
-
-LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console)
-{
-    return child_launch(session,token,path,tail,environment,console,0,FALSE);
-}
-LONG cuis_child_launch_directory(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory, BOOL console)
-{
-    if (!directory) return EINVAL;
-    return child_launch(session,token,path,tail,environment,console,directory,TRUE);
 }
 
 #if CONF_WITH_CUIS_RECEIPT_TEST

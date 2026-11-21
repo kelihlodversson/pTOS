@@ -51,11 +51,8 @@ LONG aes_child_launch(LONG session, const char *path, const char *tail,
         watch = cuis_call6(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0,0,0);
         if (watch <= 0) return watch;
     }
-    if (directory)
-        return cuis_call6(console ? CUIS_CONSOLE_LAUNCH_DIRECTORY : CUIS_CHILD_LAUNCH_DIRECTORY,
-            session,watch,(uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment,(uintptr_t)directory);
-    return cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,
-        (uintptr_t)tail,(uintptr_t)environment,console);
+    return cuis_call6(CUIS_LAUNCH_ATTACH,session,(ULONG)watch | (console ? CUIS_LAUNCH_CONSOLE : 0),
+                      (uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment,(uintptr_t)directory);
 }
 LONG aes_child_defer(const char *path, const char *tail,
                      const char *environment, const char *directory)
