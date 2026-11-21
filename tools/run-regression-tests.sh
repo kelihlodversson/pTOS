@@ -810,6 +810,12 @@ if grep -q '^#define CONF_WITH_PTHJOIN 1$' "$top/obj/autoconf.h" &&
     record "native first managed launch ownership" FAIL "owner conservation or rollback did not pass"
 fi
 
+if grep -q '^#define CONF_WITH_NATIVE_SCHED 1$' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PCLONE 1$' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native public PROCESS wait ABI and reaping: PASS' "$suite_log"; then
+    record "native PROCESS wait ABI" FAIL "public status, copyout or reaping checks did not pass"
+fi
+
 # Compilation and legacy compatibility are insufficient evidence of native
 # startup. Require managed startup and scheduler evidence on all three MMUs.
 case "$machine" in

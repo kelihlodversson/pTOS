@@ -253,6 +253,7 @@ ULONG kaspace_test_references(void);
 struct aspace;
 void kaspace_test_mapping_snapshot(const struct aspace *,uint32_t *values);
 void kaspace_test_fail_mapping_after(UWORD count);
+LONG kaspace_test_fail_copy_at(KASPACE *space,VADDR address);
 #endif
 #if CONF_WITH_X86_64_MEMTEST
 /* Fail the next adoption, leaving backend ownership with its caller. */

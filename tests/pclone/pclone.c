@@ -1921,6 +1921,7 @@ static void test_group_exit(void)
 #include "public_contract.h"
 #include "mapping_lifetime.h"
 #include "process_files.h"
+#include "process_wait.h"
 #include "irq_restart.h"
 #include "preempt.h"
 
@@ -1954,6 +1955,7 @@ static void test_runnable(void)
         for (page = 0; page < RUNNABLE_STACK_SIZE; page += 4096)
             runnable_stacks[cycle][page] = 0;
     }
+    test_process_wait();
 #if defined(TEST_WITH_NATIVE_PREEMPT)
     test_preempt();
 #endif
@@ -2212,6 +2214,7 @@ void pclone_run_managed_tests(void)
             conws("native m68k nonzero FPIAR: PASS\r\n");
 #endif
         conws("pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS\r\n");
+        conws("native public PROCESS wait ABI and reaping: PASS\r\n");
 #if defined(TEST_WITH_PTHJOIN)
         conws("native Pthjoin: PASS\r\n");
 #endif

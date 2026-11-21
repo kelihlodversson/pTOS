@@ -43,6 +43,10 @@ struct kaspace {
     BOOL reaping;
     BOOL mutating;
     UQUAD mutation_actor,reap_actor;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    UQUAD fail_copy_actor;
+    VADDR fail_copy_address;
+#endif
     struct kaspace *next;
 #if CONF_WITH_MMAP
     KASPACE_MMAP mmap;
@@ -408,6 +412,18 @@ LONG kaspace_lease_acquire(KASPACE *space, VADDR address, VADDR bytes,
     }
 }
 
+#if CONF_WITH_PRIVATE_CLONE_TEST
+LONG kaspace_test_fail_copy_at(KASPACE *space,VADDR address)
+{
+    UQUAD actor=mapping_actor();
+
+    if (!space || !actor || !address || address>=USER_VA_LIMIT) return EINVAL;
+    space->fail_copy_actor=actor;
+    space->fail_copy_address=address;
+    return E_OK;
+}
+#endif
+
 LONG kaspace_copy_begin(KASPACE *space,VADDR address,VADDR bytes,BOOL write,KASPACE_LEASE **out)
 {
     KASPACE_LEASE *lease;
@@ -415,6 +431,15 @@ LONG kaspace_copy_begin(KASPACE *space,VADDR address,VADDR bytes,BOOL write,KASP
     KOWNER_GUARD guard;
     if(!space || !out || *out || !bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address)
         return EINVAL;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    /* Only the arming continuation's next write to this address fails. */
+    if (write && space->fail_copy_actor && address==space->fail_copy_address &&
+        mapping_actor()==space->fail_copy_actor) {
+        space->fail_copy_actor=0;
+        space->fail_copy_address=0;
+        return ENSMEM;
+    }
+#endif
     lease=kalloc(sizeof(*lease));if(!lease)return ENSMEM;
     memset(lease,0,sizeof(*lease));
     lease->space=space;lease->first=address&~(VADDR)(USER_PAGE_SIZE-1);
@@ -1813,6 +1838,10 @@ KASPACE *kaspace_adopt(ASPACE *backend)
     space->retiring_committed=space->reaping=FALSE;
     space->mutating=FALSE;
     space->mutation_actor=space->reap_actor=0;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+    space->fail_copy_actor=0;
+    space->fail_copy_address=0;
+#endif
     space->heap.blocks = NULL;
     space->heap.count = space->heap.capacity = 0;
 #if CONF_WITH_MMAP
