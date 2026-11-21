@@ -391,8 +391,9 @@ static void test_public_contract(unsigned char *stack)
 #define REJECT(error) phase1_reject(&bad,32,(error),&pid,&tid,stack)
     bad = good; bad.flags = 0; REJECT(-32L);
     bad = good; bad.flags = CLONE_SAME_PROCESS; REJECT(-25L);
-    for (bit = 4; bit < 32; bit++) { bad = good; bad.flags |= 1UL << bit; REJECT(-25L); }
-    for (bit = 2; bit <= 3; bit++) {
+    bad = good; bad.flags = CLONE_COPY_ALL_HANDLES; REJECT(-25L);
+    for (bit = 5; bit < 32; bit++) { bad = good; bad.flags |= 1UL << bit; REJECT(-25L); }
+    for (bit = 2; bit <= 4; bit++) {
         bad = good; bad.flags |= CLONE_SAME_PROCESS | (1UL << bit); REJECT(-25L);
     }
     bad = good; bad.tls = (void *)0x80001000UL; REJECT(-25L);

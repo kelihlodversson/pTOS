@@ -2732,7 +2732,11 @@ static LONG active_clone_construct(UWORD index)
     CHECK(aspace_copy_to_user(as,data,words,sizeof(words)), "seed active clone argument and rollback outputs");
     bzero(&args,sizeof(args)); args.source = source;
     args.process_policy = PROC_CLONE_NEW_PROCESS; args.vm_policy = PROC_CLONE_SHARE_VM;
-    args.resources = PROC_CLONE_RESOURCE_MASK;
+    args.resources = PROC_CLONE_COPY_STANDARD_HANDLES | PROC_CLONE_COPY_CWD;
+#if CONF_WITH_PROCESS_FILES
+    /* Exercise the full snapshot policy, including DTA/search state. */
+    args.resources |= PROC_CLONE_COPY_FILES;
+#endif
     startup.entry = 0x00600000; startup.argument = data; startup.stack_base = stack; startup.stack_size = 2*PAGE; startup.flags = 0;
     CHECK(proc_clone(&args,&tx) == E_OK && proc_clone_prepare_startup(tx,&startup) == E_OK &&
           proc_clone_retain_startup_stack(tx) == E_OK && proc_clone_prepare_outputs(tx,data+16,data+20) == E_OK,

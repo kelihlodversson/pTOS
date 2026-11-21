@@ -93,7 +93,11 @@ int main(void)
         assert(clone_validate_v1(&a,&abi,access_user,&calls) == CLONE_INVALID && !calls);
         a.flags = CLONE_VM | CLONE_SAME_PROCESS | CLONE_COPY_CWD;
         assert(clone_validate_v1(&a,&abi,access_user,&calls) == CLONE_INVALID && !calls);
-        a.flags = CLONE_VM | CLONE_COPY_CWD | CLONE_COPY_STANDARD_HANDLES;
+        a.flags = CLONE_COPY_ALL_HANDLES;
+        assert(clone_validate_v1(&a,&abi,access_user,&calls) == CLONE_INVALID && !calls);
+        a.flags = CLONE_VM | CLONE_SAME_PROCESS | CLONE_COPY_ALL_HANDLES;
+        assert(clone_validate_v1(&a,&abi,access_user,&calls) == CLONE_INVALID && !calls);
+        a.flags = CLONE_VM | CLONE_COPY_CWD | CLONE_COPY_STANDARD_HANDLES | CLONE_COPY_ALL_HANDLES;
         assert(clone_validate_v1(&a,&abi,access_user,&calls) == CLONE_VALID);
         a.child_pid = (int32_t *)(uintptr_t)0x4000; calls=0;
         assert(clone_validate_v1(&a,&abi,access_user,&calls) == CLONE_VALID && calls==4);

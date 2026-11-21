@@ -13,12 +13,25 @@ This is not an architecture capability negotiation ABI.
 Flags and results
 ------------------------
 
-Use #890's CLONE_VM = 1<<0 and CLONE_SAME_PROCESS = 1<<1. Use the following
-resource bits:
-CLONE_COPY_STANDARD_HANDLES = 1<<2, CLONE_COPY_CWD = 1<<3. These map to the
-existing trusted factory's independent copy policies; they do not share mutable
-PROCESS tables. Resource bits default to neither copy. Explicit/nonstandard SFT
-handles are not duplicated. Priority/limits and parent identity follow the
+CLONE_VM = 1<<0 and CLONE_SAME_PROCESS = 1<<1 select the execution policy.
+CLONE_COPY_STANDARD_HANDLES = 1<<2 copies the standard bindings.
+CLONE_COPY_CWD = 1<<3 copies the selected drive and per-drive directories.
+CLONE_COPY_ALL_HANDLES = 1<<4 (#1040) copies all open descriptor bindings,
+including BIOS/device aliases, at the same numbers in the new PROCESS.
+ALL_HANDLES includes standard bindings even if STANDARD_HANDLES is also
+specified. The snapshot acquires each binding once and is atomic at
+publication. The child has no selected DTA or active searches. Fgetdta returns
+NULL. Fsfirst and Fsnext require selecting a writable buffer with Fsetdta
+first, or return EIMBA. Use Fgetdta to read the child's selection:
+the logical basepage is shared and its original DTA field is unchanged.
+Shared-VM descendants keep that mirror isolation even when they request
+plain CLONE_VM or only standard handles. A private clone or replacement
+image can update its own basepage mirror.
+Each PROCESS keeps its own descriptor table and close rights. Inherited open
+files share their underlying file position and description. Later open, close,
+duplication and rebinding operations update the caller's table. CWD still
+requires its own flag. The default policy copies neither descriptors nor CWD.
+Priority/limits and parent identity follow the
 factory's documented inherited identity policy; environment starts empty.
 No signal-policy, TLS, detached-thread, exit-scope or sync/async flag is added.
 
@@ -30,9 +43,11 @@ Explicit Pterm follows the existing THREAD completion and public Pwait encoding.
 flag is introduced. A prepared internal LONG-return image is not proof that the
 public void-entry return convention has been implemented.
 
-flags & ~0x0f: EINVAL.
+flags & ~0x1f: EINVAL. Kernels predating #1040 reject bit 4 as unknown.
 SAME_PROCESS without VM: EINVAL.
 SAME_PROCESS with resource-copy bits: EINVAL (resources already belong to PROCESS).
+ALL_HANDLES without VM: EINVAL.
+ALL_HANDLES without CONF_WITH_PROCESS_FILES: EINVFN on a valid request.
 VM alone, optionally with resource-copy bits: NEW_PROCESS/SHARE_VM.
 VM|SAME_PROCESS: add a THREAD/TID to the current PROCESS/ASPACE on managed
 x32, ARM MMU or m68k MMU.
