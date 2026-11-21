@@ -258,6 +258,8 @@ static long clone_request(uint64_t address, uint64_t size)
         if (!address && size==MLT_WAIT_COUNT) return (LONG)kproc_test_mapping_wait_count();
         if (size==MLT_PROCESS_WAITERS)
             return address && address<=32767 ? ksched_test_process_waiters((WORD)address) : EINVAL;
+        if (size==MLT_PROCESS_ZOMBIE)
+            return address && address<=32767 ? ksched_test_process_zombie((WORD)address) : EINVAL;
         if (size==MLT_FAIL_COPY) {
             KPROC *source=kproc_retain(run);
             LONG error=kaspace_test_fail_copy_at(kproc_active_space(source),(VADDR)address);

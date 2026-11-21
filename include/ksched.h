@@ -168,6 +168,7 @@ LONG ksched_test_wait_admission(ULONG tid); /* zero returns the caller's TID */
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 LONG ksched_test_process_waiters(WORD pid);
+LONG ksched_test_process_zombie(WORD pid);
 #endif
 #if CONF_WITH_FORK_CORE
 /* Private native assertion: find existing blocked parent execution whose

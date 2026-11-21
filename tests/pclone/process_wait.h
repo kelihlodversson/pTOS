@@ -5,11 +5,17 @@
 #endif
 
 #define WAIT_BAD_USAGE 0x80001000UL
+#define WAIT_TIMEOUT_TICKS 1000UL
 
 static volatile struct {
-    long release, fault, timed, result[2];
+    long release, fault, result[2];
     int32_t child;
 } process_wait_probe;
+
+static unsigned long process_wait_ticks(void)
+{
+    return (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+}
 
 static long process_wait_identity(long pid,PROCESS_IDENTITY *identity)
 {
@@ -24,21 +30,27 @@ static void process_wait_child(void *argument)
     (void)argument;
     while (!process_wait_probe.release) (void)Syield();
     if (process_wait_probe.fault) *(volatile long *)0x80001000UL=1;
-    if (process_wait_probe.timed) {
-        unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
-        unsigned long spin;
-
-        /* The exported accounting is tick-based. Wait for nonzero usage so
-         * credit applied on failure or twice on retry would be detected. */
-        for (spin=0; spin<65536UL && (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start<2; spin++)
-            (void)Syield();
-    }
     Pterm(0x1234);
+}
+
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+static long process_wait_observe_zombie(int32_t child)
+{
+    unsigned long start=process_wait_ticks();
+    long zombie;
+
+    do {
+        zombie=pclone_trap((void *)(uintptr_t)child,MLT_PROCESS_ZOMBIE);
+        if (zombie) return zombie;
+        (void)Syield();
+    } while (process_wait_ticks()-start<WAIT_TIMEOUT_TICKS);
+    return 0;
 }
 
 static void process_wait_zombie_parent(void *argument)
 {
     int32_t child=0;
+    long zombie;
 
     (void)argument;
     if (launch_entry(process_wait_child,CLONE_VM,runnable_stacks[2],&child,NULL)<=0) {
@@ -46,7 +58,13 @@ static void process_wait_zombie_parent(void *argument)
         return;
     }
     process_wait_probe.child=child;
-    Pterm(Pwaitpid(child,0,WAIT_BAD_USAGE)==-40L ? 73 : 2);
+    zombie=pclone_trap((void *)(uintptr_t)child,MLT_PROCESS_ZOMBIE);
+    process_wait_probe.release=1;
+    if (zombie!=0) {
+        Pterm(2);
+        return;
+    }
+    Pterm(process_wait_observe_zombie(child)==1 ? 73 : 3);
 }
 
 static void test_process_wait_zombie_orphan(void)
@@ -54,9 +72,10 @@ static void test_process_wait_zombie_orphan(void)
     PROCESS_IDENTITY identity;
     int32_t parent=0;
     long found=0;
-    unsigned spin;
+    unsigned long start;
 
     process_wait_probe.child=0;
+    process_wait_probe.release=0;
     if (launch_entry(process_wait_zombie_parent,CLONE_VM,runnable_stacks[0],&parent,NULL)<=0) {
         ptest_fail("create parent of an abandoned zombie");
         return;
@@ -64,15 +83,16 @@ static void test_process_wait_zombie_orphan(void)
     ptest_assert_msg(Pwaitpid(parent,0,0)==(((long)parent<<16)|73) && process_wait_probe.child>0,
                      "parent exits after proving that its child has an unreaped status");
     if (!process_wait_probe.child) return;
-    for (spin=0; spin<128 && !found; spin++) {
+    start=process_wait_ticks();
+    do {
         found=process_wait_identity(process_wait_probe.child,&identity);
-        if (!found) (void)Syield();
-    }
+        if (found) break;
+        (void)Syield();
+    } while (process_wait_ticks()-start<WAIT_TIMEOUT_TICKS);
     ptest_assert_msg(found==-20L && Pwaitpid(process_wait_probe.child,1,0)==-33L,
                      "orphaned zombie is retired without transferring its status to the grandparent");
 }
 
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static void test_process_wait_copy_oom(long *usage)
 {
     static MAPPING_LIFETIME_SNAPSHOT before,after;
@@ -115,7 +135,7 @@ static void test_process_wait_contention(void)
 {
     int32_t child=0,peer=0,tids[2]={0,0};
     long launched[2],expected,first,second,blocked=0;
-    unsigned spin;
+    unsigned long start;
 
     process_wait_probe.release=0;
     if (launch_entry(process_wait_child,CLONE_VM,runnable_stacks[0],&child,NULL)<=0) {
@@ -130,11 +150,12 @@ static void test_process_wait_contention(void)
                      "live child without an admitted waiter is not counted as a wait");
     launched[0]=launch_entry(process_wait_first,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[1],NULL,&tids[0]);
     launched[1]=launch_entry(process_wait_second,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],NULL,&tids[1]);
-    for (spin=0; spin<128; spin++) {
+    start=process_wait_ticks();
+    do {
         blocked=pclone_trap((void *)(uintptr_t)child,MLT_PROCESS_WAITERS);
         if (blocked==2) break;
         (void)Syield();
-    }
+    } while (process_wait_ticks()-start<WAIT_TIMEOUT_TICKS);
     ptest_assert_msg(launched[0]>0 && launched[1]>0 && blocked==2 &&
                      !process_wait_probe.result[0] && !process_wait_probe.result[1],
                      "both THREADs are blocked in Pwaitpid on the same live child PROCESS");
@@ -156,7 +177,7 @@ static void test_process_wait(void)
     long parent_usage[8],credited,status;
     PROCESS_IDENTITY zombie,again;
     int32_t child=0;
-    unsigned long spin;
+    unsigned long start;
 
     ptest_assert_msg(Pwait()==-33L && Pwait3(1,WAIT_BAD_USAGE)==-33L,
                      "no children leave even an invalid output untouched");
@@ -169,7 +190,6 @@ static void test_process_wait(void)
                      "Pwait returns the child PID and low-byte normal status exactly once");
 
     process_wait_probe.release=0;
-    process_wait_probe.timed=1;
     if (launch_entry(process_wait_child,CLONE_VM,runnable_stacks[0],&child,NULL)<=0) {
         ptest_fail("create PROCESS for Pwait3 and Pwaitpid");
         return;
@@ -178,12 +198,20 @@ static void test_process_wait(void)
                      usage[1]==-102 && usage[2]==-103,"WNOHANG leaves usage alone while the child is live");
     ptest_assert_msg(Pwaitpid(child,4,0)==-25L && Pwaitpid(0,0,0)==-32L &&
                      Pwaitpid(-2,0,0)==-32L,"validate wait options and reject unsupported group selectors");
+    /* Accounting starts when the PROCESS is created. Keep it alive for two
+     * 200 Hz ticks so missing or double usage credit is observable. */
+    start=process_wait_ticks();
+    while (process_wait_ticks()-start<2) (void)Syield();
     process_wait_probe.release=1;
-    status=0;
-    for (spin=0; spin<65536UL && !status; spin++) {
-        (void)Syield();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    ptest_assert_msg(process_wait_observe_zombie(child)==1,"observe a waitable zombie before usage copyout");
+#endif
+    start=process_wait_ticks();
+    do {
         status=Pwait3(1,WAIT_BAD_USAGE);
-    }
+        if (status) break;
+        (void)Syield();
+    } while (process_wait_ticks()-start<WAIT_TIMEOUT_TICKS);
     ptest_assert_msg(status==-40L,"late nonblocking Pwait3 rejects invalid usage and keeps the zombie");
     ptest_assert_msg(process_wait_identity(child,&zombie)==0 && zombie.pid==child,
                      "unreaped PROCESS identity remains discoverable after exit");
@@ -218,7 +246,6 @@ static void test_process_wait(void)
     ptest_assert_msg(Prusage(parent_usage)==0 && parent_usage[3]==credited+usage[1] &&
                      process_wait_identity(child,&again)==-20L,
                      "one successful reap charges usage once and releases the zombie identity");
-    process_wait_probe.timed=0;
 
     process_wait_probe.fault=1;
     if (launch_entry(process_wait_child,CLONE_VM,runnable_stacks[0],&child,NULL)<=0) {
@@ -230,7 +257,9 @@ static void test_process_wait(void)
                      usage[1]>=0 && usage[2]==0 && usage[3]==-104 && Pwaitpid(child,1,0)==-33L,
                      "Pwaitpid reports fault signal in the high status byte with usage");
     process_wait_probe.fault=0;
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     test_process_wait_zombie_orphan();
+#endif
 #if defined(TEST_WITH_PTHJOIN) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     test_process_wait_contention();
 #endif

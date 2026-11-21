@@ -3015,6 +3015,25 @@ LONG ksched_test_process_waiters(WORD pid)
     runqueue_leave(&guard);
     return count;
 }
+
+LONG ksched_test_process_zombie(WORD pid)
+{
+    CHILD_WAIT wait={run,pid,0,0};
+    KERNEL_TASK *task;
+    BOOL zombie=FALSE;
+    RUNQUEUE_GUARD guard;
+
+    if (!ksched_exit_thread(run)) return EINVFN;
+    runqueue_enter(&guard);
+    for (task=async_tasks(); task; task=task->next_task) {
+        if (process_wait_target(task,&wait) && child_deliverable(task)) {
+            zombie=TRUE;
+            break;
+        }
+    }
+    runqueue_leave(&guard);
+    return zombie;
+}
 #endif
 
 static LONG wait_process(WORD pid, WORD options, UQUAD address,PROCESS_COMPLETION *completion,LONG *raw)
