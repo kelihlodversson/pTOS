@@ -280,11 +280,15 @@ jobs:
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
           make pc-x86_64-eager_defconfig
+          # The regression disk contains native test programs, not MEMTEST fixtures.
+          sed -i 's/^CONF_WITH_X86_64_MEMTEST=y$/# CONF_WITH_X86_64_MEMTEST is not set/' .config
+          make -j2 all test-dir
+          tools/run-regression-tests.sh pc-x86_64
           CONFIG_= python - <<'PYCONFIG'
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
-          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_NATIVE_SCHED", "CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP", "CONF_WITH_NATIVE_PREEMPT"):
+          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_NATIVE_PREEMPT"):
               config.syms[name].set_value(2)
               assert config.syms[name].str_value == "y"
           assert config.syms["CONF_WITH_DEMAND_PAGING"].str_value == "n"
@@ -744,9 +748,9 @@ jobs:
                        'CONF_WITH_X86_64_MEMTEST'):
               config.syms[name].set_value(0)
               assert config.syms[name].str_value == 'n', name
-          for name in ('CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_SAVED_RETURN'):
+          for name in ('CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_SAVED_RETURN', 'CONF_WITH_PFORK'):
               assert config.syms[name].str_value == 'y', name
-          for name in ('CONF_WITH_MMAP', 'CONF_WITH_PFORK', 'CONF_WITH_IRQ_RESTART_TEST'):
+          for name in ('CONF_WITH_MMAP', 'CONF_WITH_IRQ_RESTART_TEST'):
               assert config.syms[name].str_value == 'n', name
           config.write_config()
           PY

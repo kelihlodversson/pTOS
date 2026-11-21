@@ -62,7 +62,28 @@ Both passed, including all twelve dedicated B2 lanes and the enabled timer
 matrix. #1024, #1037 and #1041 record their separate source, synthetic merge,
 native and hosted evidence. The closeout PR records its own run SHAs.
 
-Release defaults and the broader capability/ROM matrix belong to #897.
+Native process profile
+----------------------
+
+User-address-space configurations default to CONF_WITH_NATIVE_SCHED.
+Pclone and PROCESS descriptors follow native scheduling, with descriptors
+requiring extended file lifetimes. Pthjoin and Ptermgrp follow Pclone and
+native scheduling. Pexec(200) still requires an ELF-capable replacement
+backend. The normal MMU presets need no diagnostic transports for these APIs.
+
+The old BUILD_FORK_PROFILE combined process scheduling with demand paging,
+the ELF loader and fork restrictions. The scheduler now supplies the common
+profile default. PFORK still requires private COW, PROCESS descriptors and
+exec replacement, and enables saved-return support. The 32-bit x86-64 ABI, ARMv7 and
+the supported 68040 stack-ABI profile qualify for default-on COW in both
+eager and demand-paged configurations. Classic ROM-window m68k, fastcall,
+and unsupported runtime frames retain their existing fork restrictions.
+
+CONF_WITH_USER_PAGE_FAULTS installs COW or demand-fault recovery. Eager
+allocation backs the initial mappings up front and can still split a COW
+page on a user write or kernel copyout. CONF_WITH_MMAP retains its own
+demand-paging prerequisite. Legacy non-MMU and scheduler-disabled kernels
+keep the reduced process ABI. Timer preemption remains separately opt-in.
 The ownership and ABI audit is tracked in #1016. The boot-CPU owner protocol
 does not implement inter-CPU acquisition or SMP dispatch (#1019).
 

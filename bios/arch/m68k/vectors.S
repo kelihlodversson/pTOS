@@ -119,8 +119,8 @@ set_vec:
 #else
         dbra    d0, set_vec
 #endif
-#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
-        // the bus error of a process may be a page of its lazy memory
+#if CONF_WITH_USER_ASPACE && CONF_WITH_USER_PAGE_FAULTS && !defined(__mcoldfire__)
+        // the bus error of a process may be recoverable
         lea     buserr_user(pc), a0
         move.l  a0, 8.w
 #endif
@@ -326,13 +326,12 @@ dump_kernel_stack:
         lea     panic_stack,sp
         jmp     C_SYM(dopanic)
 
-#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
+#if CONF_WITH_USER_ASPACE && CONF_WITH_USER_PAGE_FAULTS && !defined(__mcoldfire__)
 /*
- * Vector 2 in a kernel with address spaces and demand paging.  The frame of the
- * exception is at (sp), its status register first.  A fault of the kernel is
- * what it always was; one of a process in user mode may be a page of its memory
- * that is not there yet, in which case the registers it had come back and the
- * instruction runs again (m68k_user_busfault(), userfault.c).  Otherwise this
+ * Vector 2 on a kernel with recoverable user faults. The frame of the
+ * exception is at (sp), its status register first. A user fault may need
+ * lazy backing or a private copy. After recovery, restore the registers and
+ * retry the instruction (m68k_user_busfault(), userfault.c). Otherwise this
  * is the default handler, as if the table had sent the exception there.
  */
 buserr_user:

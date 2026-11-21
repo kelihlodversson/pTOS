@@ -96,8 +96,12 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
     for preset in ('atari256', 'pc-x86_64-eager'):
         config = kconfiglib.Kconfig(str(root), warn_to_stderr=False)
         config.load_config('configs/'+preset+'_defconfig')
+        if preset == 'pc-x86_64-eager':
+            assert config.syms['CONF_WITH_PROCESS_EXEC'].str_value == 'y', preset
+            assert config.syms['CONF_WITH_DEMAND_PAGING'].str_value == 'n', preset
+            config.syms['CONF_WITH_NATIVE_SCHED'].set_value(0)
         config.syms['PROCESS_EXEC_VALIDATION_SELECT'].set_value(2)
         config.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
         assert all(config.syms[x].str_value == 'n' for x in (
             'CONF_WITH_PROCESS_EXEC', 'CONF_WITH_PROCESS_EXEC_DISPATCH', 'CONF_WITH_PROCESS_EXEC_TEST'))
-        print('PROCESS gate unsupported '+preset+': no exposure PASS')
+        print('PROCESS gate without scheduler '+preset+': no exposure PASS')

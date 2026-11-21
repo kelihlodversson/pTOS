@@ -20,13 +20,6 @@ for preset in sorted(Path('configs').glob('*_defconfig')):
     assert ordinary.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n', str(preset)
     assert ordinary.syms['CONF_WITH_PROCESS_EXEC'].str_value==expected, str(preset)
     assert ordinary.syms['CONF_WITH_PROCESS_EXEC_DISPATCH'].str_value==expected, str(preset)
-for preset in ('atari256', 'pc-x86_64-eager'):
-    unsupported=kconfiglib.Kconfig(warn_to_stderr=False)
-    unsupported.load_config('configs/'+preset+'_defconfig')
-    unsupported.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
-    assert unsupported.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n'
-    assert unsupported.syms['CONF_WITH_PROCESS_EXEC'].str_value=='n'
-    assert unsupported.syms['CONF_WITH_PROCESS_EXEC_DISPATCH'].str_value=='n'
 with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     work=Path(directory)
     config=kconfiglib.Kconfig(warn_to_stderr=False)

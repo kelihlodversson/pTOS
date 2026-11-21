@@ -263,7 +263,7 @@ void any_vec(int vector_addr, exception_frame_t* stack_frame, ULONG fsr, ULONG f
         default: cause = "exception"; break;
         }
         __asm__ volatile ("cpsie i" : : : "memory");
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
         /* a page of its lazy memory that is not there (or a write to a private
          * copy of a file page): back it, and the instruction runs again */
         if ((vector_addr >> 2) == 2 || (vector_addr >> 2) == 3)

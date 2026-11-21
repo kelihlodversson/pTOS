@@ -576,6 +576,7 @@ static void shared_vm_last_thread(void)
             if(controller_tid<=0) {(void)Mfree(controller);(void)Mfree(image);(void)Mfree(env);continue;}
         }
         if(!asynchronous) {
+#if defined(TEST_WITH_DEMAND_PAGING)
             long cap=Psetlimit(0x100,-1);
             unsigned long distance=cap>32768?32768:((unsigned long)cap/2)&~4095UL;
             volatile uint32_t *deep=(volatile uint32_t *)(uintptr_t)(0x80000000UL-distance);
@@ -585,6 +586,14 @@ static void shared_vm_last_thread(void)
                 "shared THREAD lifetime: first sibling preserves original lazy top-stack ownership");
             *deep=0x894966UL;
             ptest_assert_msg(*deep==0x894966UL,"shared THREAD lifetime: untouched original stack page still materializes");
+#else
+            /* A classic PRG has its eager stack in the TPA. */
+            volatile uint32_t stack_word=0;
+            ptest_assert_msg(Mvalidate(0,(void *)&stack_word,4,0)==0,
+                "shared THREAD lifetime: first sibling preserves the eager PRG stack");
+            stack_word=0x894966UL;
+            ptest_assert_msg(stack_word==0x894966UL,"shared THREAD lifetime: original PRG stack remains writable");
+#endif
         }
         result=Pexec(asynchronous?104:4,0,image,0);
         if(asynchronous && result>0) {
