@@ -6,6 +6,19 @@
 #include "gemerror.h"
 #include "bdosdefs.h"
 #include "process_exec.h"
+
+static LONG direct_launch(ULONG operation, const char *path, const char *tail,
+                          const char *environment, const char *directory)
+{
+    PROCESS_EXEC_REQUEST request = {0};
+    request.operation = operation;
+    request.path = (ULONG)(uintptr_t)path;
+    request.tail = (ULONG)(uintptr_t)tail;
+    request.environment = (ULONG)(uintptr_t)environment;
+    request.directory = (ULONG)(uintptr_t)directory;
+    return (LONG)aes_gemdos_call(0x154,(UQUAD)(QUAD)PROCESS_EXEC_SSYSTEM,
+                                  (uintptr_t)&request,sizeof(request));
+}
 LONG aes_child_messages(LONG session)
 {
     ULONG i;
@@ -28,6 +41,10 @@ LONG aes_child_launch(LONG session, const char *path, const char *tail,
                       const char *environment, const char *directory, BOOL console, BOOL observed)
 {
     LONG watch = 0;
+    if (!observed && !console) {
+        if (directory) return direct_launch(PROCESS_EXEC_START,path,tail,environment,directory);
+        return (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment);
+    }
     if (observed) {
         LONG result = aes_child_messages(session);
         if (result < 0) return result;
@@ -37,20 +54,11 @@ LONG aes_child_launch(LONG session, const char *path, const char *tail,
     if (directory)
         return cuis_call6(console ? CUIS_CONSOLE_LAUNCH_DIRECTORY : CUIS_CHILD_LAUNCH_DIRECTORY,
             session,watch,(uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment,(uintptr_t)directory);
-    if (watch || console)
-        return cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,
-            (uintptr_t)tail,(uintptr_t)environment,console);
-    return (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment);
+    return cuis_call6(CUIS_CHILD_LAUNCH,session,watch,(uintptr_t)path,
+        (uintptr_t)tail,(uintptr_t)environment,console);
 }
 LONG aes_child_defer(const char *path, const char *tail,
                      const char *environment, const char *directory)
 {
-    PROCESS_EXEC_REQUEST request = {0};
-    request.operation = PROCESS_EXEC_DEFER;
-    request.path = (ULONG)(uintptr_t)path;
-    request.tail = (ULONG)(uintptr_t)tail;
-    request.environment = (ULONG)(uintptr_t)environment;
-    request.directory = (ULONG)(uintptr_t)directory;
-    return (LONG)aes_gemdos_call(0x154,(UQUAD)(QUAD)PROCESS_EXEC_SSYSTEM,
-                                  (uintptr_t)&request,sizeof(request));
+    return direct_launch(PROCESS_EXEC_DEFER,path,tail,environment,directory);
 }

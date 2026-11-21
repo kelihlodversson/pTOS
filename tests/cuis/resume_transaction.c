@@ -16,9 +16,14 @@ static void resume_wait_hook(void)
         resume_bad=1;
     if (resume_action==2) {
         ULONG before=frees;
+        BOOL saved_irqs=input_irqs;
+        /* Model a peer syscall during the parked wait. The test scheduler
+         * calls its hook before restoring the parked context's IRQ state. */
+        input_irqs=TRUE;
         if (cuis_service(CUIS_SESSION_END,resume_handle) || !resume_client->retired ||
             resume_client->input_wait || resume_client->references!=1 || frees!=before+1) resume_bad=1;
         resume_replacement=cuis_service(CUIS_SESSION_START,0);
+        input_irqs=saved_irqs;
         if (resume_replacement<=resume_handle || (*find_owner(run))->resume_operation ||
             (*find_owner(run))->button_resume_active) resume_bad=1;
         return;

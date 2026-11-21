@@ -128,9 +128,7 @@ typedef struct cuis_client {
 #endif
     UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
     ULONG stream_head, stream_bytes;
-    struct { ULONG token; WORD pid, signal; LONG result; } children[CUIS_CHILDREN_PER_SESSION];
-    UBYTE child_order[CUIS_CHILDREN_PER_SESSION];
-    UWORD child_count;
+    struct { ULONG token; PROCESS_OBSERVER *observer; } children[CUIS_CHILDREN_PER_SESSION];
     CUIS_BUTTON_EDGE button_history[CUIS_BUTTON_HISTORY_CAPACITY];
     UQUAD button_sequence, button_policy;
     UWORD history_head, history_count;
@@ -1499,6 +1497,7 @@ static void session_exit_client(CUIS_CLIENT *client)
     while (*link && *link!=client) link=&(*link)->next;
     if (*link) {
         CUIS_WINDOW *window;
+        PROCESS_OBSERVER *observers[CUIS_CHILDREN_PER_SESSION];
         ULONG i;
         UQUAD flags = cuis_input_lock();
         client->retired = TRUE; /* Predicates wake without targeting a replacement session. */
@@ -1508,6 +1507,11 @@ static void session_exit_client(CUIS_CLIENT *client)
         if (client->stream_read) client->stream_read->state = STREAM_RETIRED;
         if (client->stream_write) client->stream_write->state = STREAM_RETIRED;
         cohort_leave(client);
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++) {
+            observers[i] = client->children[i].observer;
+            client->children[i].observer = NULL;
+            client->children[i].token = 0;
+        }
         for (i = 0; i < CUIS_ENTRY_LIMIT; i++)
             if (directory_entries[i].owner == client) directory_entries[i].owner = NULL;
         /* A backing fault can terminate a syscall without unwinding its
@@ -1542,6 +1546,8 @@ static void session_exit_client(CUIS_CLIENT *client)
         client->owner = NULL;
         client_put(client);
         cuis_input_unlock(flags);
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+            process_observer_release(&observers[i]);
     }
 }
 
@@ -1650,7 +1656,6 @@ LONG cuis_service(ULONG function, UQUAD handle)
         client->button_resume_active = FALSE; client->resume_operation = 0;
         client->button_resume_head = client->button_resume_count = 0;
         memset(client->children,0,sizeof(client->children));
-        client->child_count = 0;
         client->isolated_mouse = FALSE;
         client->pointer_style_set = FALSE; client->pointer_hidden = 0;
         client->surface_height = client->surface_events = 0; client->surface_next = NULL;
@@ -2657,6 +2662,15 @@ static BOOL notices_ready(CUIS_CLIENT *client)
     return FALSE;
 }
 
+static BOOL child_notice_ready(const CUIS_CLIENT *client)
+{
+    UWORD i;
+    for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
+        if (client->children[i].observer &&
+            process_observer_ready(client->children[i].observer)) return TRUE;
+    return FALSE;
+}
+
 static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
 {
     CUIS_WINDOW *control;
@@ -2675,7 +2689,7 @@ static LONG session_ready(CUIS_SESSION_WAIT_STATE *wait)
     if ((wait->events & CUIS_READY_STREAM) && wait->client->stream_bytes >= wait->minimum)
         result |= CUIS_READY_STREAM;
     if ((wait->events & CUIS_READY_NOTICE) && notices_ready(wait->client)) result |= CUIS_READY_NOTICE;
-    if ((wait->events & CUIS_READY_CHILD) && wait->client->child_count) result |= CUIS_READY_CHILD;
+    if ((wait->events & CUIS_READY_CHILD) && child_notice_ready(wait->client)) result |= CUIS_READY_CHILD;
     if (wait->events & CUIS_READY_CHILD) {
         ULONG i;
         for (i=0;i<wait->observer_count;i++)
@@ -3436,72 +3450,46 @@ LONG cuis_stack_service(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUA
     cuis_input_unlock(flags); return E_OK;
 }
 
-/* Opaque process completion notices. GEM layout is supplied by libaes. */
-static void child_complete(CUIS_CLIENT *client, UWORD index, LONG result)
+/* The transitional wire format is derived from canonical PROCESS completion.
+ * CUIS holds only delivery authority and a non-consuming observer reference. */
+static LONG child_notice(const CUIS_CLIENT *client, UWORD *index)
 {
-    if (!client->children[index].result) {
-        client->children[index].result = result;
-        client->child_order[client->child_count++] = (UBYTE)index;
-    }
-}
-static void child_remove(CUIS_CLIENT *client, UWORD index)
-{
-    UWORD i, j;
-    for (i = 0; i < client->child_count; i++)
-        if (client->child_order[i] == index) {
-            for (j = i+1; j < client->child_count; j++) client->child_order[j-1] = client->child_order[j];
-            client->child_count--;
-            break;
+    UQUAD earliest = ~(UQUAD)0;
+    LONG result = 0;
+    UWORD i;
+    for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++) {
+        PROCESS_OBSERVER *observer = client->children[i].observer;
+        PROCESS_COMPLETION completion;
+        UQUAD order;
+        if (!observer || !process_observer_ready(observer) ||
+            !process_observer_snapshot(observer,&completion) ||
+            completion.state != PROCESS_COMPLETED) continue;
+        order = ((UQUAD)completion.order_high << 32) | completion.order_low;
+        if (!result || order < earliest) {
+            earliest = order;
+            *index = i;
+            result = (LONG)(((ULONG)completion.pid << 16) |
+                (completion.kind == PROCESS_COMPLETION_SIGNAL ?
+                 (ULONG)(UWORD)completion.signal << 8 : (ULONG)completion.status));
         }
-    memset(&client->children[index],0,sizeof(client->children[index]));
+    }
+    return result;
 }
-BOOL cuis_child_pid_reserved(WORD pid)
+
+static PROCESS_OBSERVER *child_remove(CUIS_CLIENT *client, UWORD index)
 {
-    CUIS_CLIENT *client;
-    UWORD i;
-    UQUAD flags;
-    if (pid <= 0) return FALSE;
-    flags = cuis_input_lock();
-    for (client = clients; client; client = client->next)
-        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
-            if (client->children[i].token && client->children[i].pid == pid) {
-                cuis_input_unlock(flags); return TRUE;
-            }
-    cuis_input_unlock(flags); return FALSE;
+    PROCESS_OBSERVER *observer = client->children[index].observer;
+    client->children[index].observer = NULL;
+    client->children[index].token = 0;
+    return observer;
 }
-/* Keep the first specific fault; proc_fault() may subsequently report its
- * generic fallback signal before terminating the process with Pterm(-1). */
-void cuis_child_fault(PD *parent, WORD pid, WORD signal)
-{
-    CUIS_CLIENT *client;
-    UWORD i;
-    UQUAD flags = cuis_input_lock();
-    client = *find_owner(parent);
-    if (client && signal > 0 && signal <= 255)
-        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
-            if (client->children[i].token && client->children[i].pid == pid &&
-                !client->children[i].result && !client->children[i].signal)
-                client->children[i].signal = signal;
-    cuis_input_unlock(flags);
-}
-void cuis_child_completed(PD *parent, WORD pid, UWORD status)
-{
-    CUIS_CLIENT *client;
-    UWORD i;
-    UQUAD flags = cuis_input_lock();
-    client = *find_owner(parent);
-    if (client)
-        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
-            if (client->children[i].token && client->children[i].pid == pid)
-                child_complete(client,i,(LONG)(((ULONG)(UWORD)pid << 16) |
-                    (client->children[i].signal ? (UWORD)client->children[i].signal << 8 : status)));
-    cuis_input_unlock(flags);
-}
-LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c)
+
+static LONG child_service_owned(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c)
 {
     CUIS_CLIENT *client;
     UQUAD flags;
-    UWORD i, index = 0, *senders;
+    UWORD i, index = 0, *senders, release_count = 0;
+    PROCESS_OBSERVER *released[CUIS_CHILDREN_PER_SESSION];
     ULONG token = 0, at;
     UBYTE data[32], *storage = NULL;
     BOOL need_storage = FALSE;
@@ -3525,18 +3513,24 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
         /* CANCEL; there is no other action. Binding an unlaunched staged
          * image (formerly 1) went with the x32 staged Pexec modes (#1018). */
         if (a != CUIS_CHILD_CANCEL || c) { result = EINVAL; goto child_done; }
-        child_remove(client,i); result = E_OK; goto child_done;
+        released[release_count++] = child_remove(client,i); result = E_OK; goto child_done;
     }
     if (function == CUIS_CHILD_RESULT) {
         if (a || b || c) { result = EINVAL; goto child_done; }
-        result = client->child_count ? client->children[client->child_order[0]].result : 0;
+        for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++) {
+            PROCESS_OBSERVER *observer = client->children[i].observer;
+            PROCESS_COMPLETION completion;
+            if (observer && process_observer_ready(observer) &&
+                process_observer_snapshot(observer,&completion) &&
+                completion.state == PROCESS_ABANDONED)
+                released[release_count++] = child_remove(client,i);
+        }
+        result = child_notice(client,&index);
         goto child_done;
     }
     if (function != CUIS_CHILD_PUBLISH) { result = EINVFN; goto child_done; }
     if (!a || a > 0x7fffffffULL || !c || c > sizeof(data)) { result = EINVAL; goto child_done; }
-    if (!client->child_count) { result = EACCDN; goto child_done; }
-    index = client->child_order[0];
-    if (client->children[index].result != (LONG)a) { result = EACCDN; goto child_done; }
+    if (child_notice(client,&index) != (LONG)a) { result = EACCDN; goto child_done; }
     token = client->children[index].token;
     need_storage = client->stream_data == NULL;
     cuis_input_unlock(flags);
@@ -3547,9 +3541,8 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
     }
     flags = cuis_input_lock();
     client = *find_owner(run);
-    if (!client || client->handle != session || !client->child_count) { result = EACCDN; goto child_done; }
-    index = client->child_order[0];
-    if (client->children[index].token != token || client->children[index].result != (LONG)a) { result = EACCDN; goto child_done; }
+    if (!client || client->handle != session || child_notice(client,&index) != (LONG)a ||
+        client->children[index].token != token) { result = EACCDN; goto child_done; }
     if (CUIS_STREAM_BYTES-client->stream_bytes < c) { result = EAGAIN; goto child_done; }
     if (!client->stream_data) {
         if (!storage) { result = EACCDN; goto child_done; }
@@ -3564,25 +3557,37 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
     client->stream_bytes += (ULONG)c;
     /* Publishing a GUI notice consumes only its adapter record. Public
      * PROCESS completion belongs exclusively to the independent Pwait path. */
-    child_remove(client,index);
+    released[release_count++] = child_remove(client,index);
     result = E_OK;
 child_done:
     cuis_input_unlock(flags);
     if (storage) kfree(storage);
+    while (release_count) process_observer_release(&released[--release_count]);
+    return result;
+}
+
+LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c)
+{
+    KSCHED_CLEANUP_SCOPE scope = {0};
+    LONG result;
+    ksched_cleanup_begin(&scope);
+    result = child_service_owned(function,session,a,b,c);
+    ksched_cleanup_end(&scope);
     return result;
 }
 
 /* Validate the exact observer destination before runnable publication. */
-static LONG bind_child(CUIS_CLIENT *client, ULONG token, WORD pid)
+static LONG bind_child(CUIS_CLIENT *client, ULONG token, PROCESS_OBSERVER **observer)
 {
     UWORD i, j;
-    if (pid <= 0) return EACCDN;
+    if (!observer || !*observer) return EACCDN;
     for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
-        if (client->children[i].token == token && !client->children[i].pid) break;
+        if (client->children[i].token == token && !client->children[i].observer) break;
     if (i == CUIS_CHILDREN_PER_SESSION) return EACCDN;
     for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
-        if (client->children[j].pid == pid) return EACCDN;
-    client->children[i].pid = pid;
+        if (client->children[j].observer == *observer) return EACCDN;
+    client->children[i].observer = *observer;
+    *observer = NULL;
     return E_OK;
 }
 /* Copy before loader I/O can yield or fault. No user pointer survives launch. */
@@ -3618,7 +3623,7 @@ static LONG child_launch_owned(UQUAD session, UQUAD token, UQUAD path, UQUAD tai
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
     if (token) {
         for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
-            if (client->children[i].token == token && !client->children[i].pid) break;
+            if (client->children[i].token == token && !client->children[i].observer) break;
         if (i == CUIS_CHILDREN_PER_SESSION) { cuis_input_unlock(flags); return EACCDN; }
     }
     cuis_input_unlock(flags);
@@ -3650,7 +3655,7 @@ static LONG child_launch_owned(UQUAD session, UQUAD token, UQUAD path, UQUAD tai
         if (!client || !child || ksched_cancellation_pending() ||
             (console && console_launcher != client)) result = EACCDN;
         else if (console && !console_launch_available(client)) result = EAGAIN;
-        else if (token) result = bind_child(client,(ULONG)token,kproc_pid(child));
+        else if (token) result = bind_child(client,(ULONG)token,&observer);
         if (result == E_OK) {
             if (console) {
                 CUIS_CLIENT *peer;

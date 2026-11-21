@@ -55,10 +55,12 @@ UQUAD aes_gemdos_call(ULONG function,UQUAD mode,UQUAD address,UQUAD size)
 {
     const PROCESS_EXEC_REQUEST *request=(const PROCESS_EXEC_REQUEST *)(uintptr_t)address;
     VERIFY(function == 0x154 && (QUAD)mode == PROCESS_EXEC_SSYSTEM && size == sizeof(*request));
-    VERIFY(request->operation == PROCESS_EXEC_DEFER && !request->policy && !request->handle);
+    VERIFY((request->operation == PROCESS_EXEC_DEFER || request->operation == PROCESS_EXEC_START) &&
+           !request->policy && !request->handle);
     last_function=request->operation;
     last[0]=request->path; last[1]=request->tail;
     last[2]=request->environment; last[3]=request->directory;
+    if (request->operation == PROCESS_EXEC_START) { calls++; launches++; return 123; }
     return E_OK;
 }
 static void reset(void)
@@ -106,7 +108,7 @@ int main(void)
     VERIFY(last_function == CUIS_CONSOLE_LAUNCH_DIRECTORY && last[1] == 17 && last[5] == (uintptr_t)directory && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,directory,FALSE,FALSE) == 123);
-    VERIFY(last_function == CUIS_CHILD_LAUNCH_DIRECTORY && !last[1] && calls == 1 && launches == 1);
+    VERIFY(last_function == PROCESS_EXEC_START && last[3] == (ULONG)(uintptr_t)directory && calls == 1 && launches == 1);
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,TRUE,FALSE) == 123);
     VERIFY(last_function == CUIS_CHILD_LAUNCH && !last[1] && last[5] == TRUE && calls == 1 && launches == 1);

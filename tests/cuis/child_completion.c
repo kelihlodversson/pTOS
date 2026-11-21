@@ -4,18 +4,49 @@ static ULONG child_reaps;
 static LONG child_session, child_token;
 static int child_copy_mode;
 static ULONG child_idle_at;
+static BOOL modeled_pid_reserved(WORD pid)
+{
+    return modeled_children[pid].references != 0;
+}
+static void fault_modeled_child(PD *parent, WORD pid, WORD signal)
+{
+    MODELED_CHILD *child=&modeled_children[pid];
+    if (child->parent==parent && child->completion.state<PROCESS_COMPLETED && !child->signal)
+        child->signal=signal;
+}
+static void complete_modeled_child(PD *parent, WORD pid, UWORD status)
+{
+    MODELED_CHILD *child=&modeled_children[pid];
+    if (child->parent!=parent || child->completion.state>=PROCESS_COMPLETED) return;
+    child->completion.state=PROCESS_COMPLETED;
+    child->completion.kind=child->signal ? PROCESS_COMPLETION_SIGNAL : PROCESS_COMPLETION_NORMAL;
+    child->completion.signal=child->signal;
+    child->completion.status=child->signal ? 0:status;
+    child->completion.order_low=++modeled_order;
+}
+static LONG bind_modeled_child(LONG session, LONG token, WORD pid)
+{
+    MODELED_CHILD *child=&modeled_children[pid];
+    PROCESS_OBSERVER *observer=(PROCESS_OBSERVER *)child;
+    LONG result;
+    if (!child->references) reset_modeled_child(child,pid);
+    child->references++;
+    result=bind_child(owned_client(session),(ULONG)token,&observer);
+    process_observer_release(&observer);
+    return result;
+}
 static void child_idle_hook(void)
 {
     if (child_idle_at && input_sleeps == child_idle_at) {
         child_idle_at = 0;
         test_children[0].status = (10L << 16) | 0x0400;
-        cuis_child_completed(&first,10,0x0400);
+        complete_modeled_child(&first,10,0x0400);
     }
 }
 /* A launched child's basepage, as spawn binds it; session.c's kproc_pid()
  * maps these page numbers back to the PID. */
 #define CHILD_IMAGE(pid) ((ULONG)(pid) * 4096UL)
-#define CHILD_BIND(s,t,pid) bind_child(owned_client(s),(ULONG)(t),(WORD)(pid))
+#define CHILD_BIND(s,t,pid) bind_modeled_child(s,t,pid)
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage)
 {
     int i;
@@ -41,7 +72,7 @@ static void child_copy_hook(void)
         child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
         CHILD_BIND(child_session,child_token,10);
         test_children[0].started = TRUE;
-        cuis_child_completed(&first,10,0x0400);
+        complete_modeled_child(&first,10,0x0400);
     } else if (mode == 2) cuis_process_exit(run);
 }
 static int child_completion_checks(void)
@@ -73,7 +104,7 @@ static int child_completion_checks(void)
     /* Action 1 bound an unlaunched staged image; it went with the x32
      * staged Pexec modes (#1018). */
     CHECK(CHILD_W(child_session,1,child_token,CHILD_IMAGE(10)) == EINVAL);
-    CHECK(CHILD_BIND(child_session,child_token,10) == E_OK && cuis_child_pid_reserved(10));
+    CHECK(CHILD_BIND(child_session,child_token,10) == E_OK && modeled_pid_reserved(10));
     tokens[0] = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
     CHECK(CHILD_BIND(child_session,tokens[0],10) == EACCDN);
     CHECK(CHILD_BIND(child_session,tokens[0],11) == E_OK);
@@ -81,13 +112,13 @@ static int child_completion_checks(void)
     /* Exit ordering, not reservation order, determines the notification head. */
     test_children[0].started = test_children[1].started = TRUE;
     second_status = test_children[1].status = (11L << 16) | 0x1234;
-    cuis_child_completed(&first,11,0x1234);
+    complete_modeled_child(&first,11,0x1234);
     status = test_children[0].status = (10L << 16) | 0x0400;
-    cuis_child_fault(&second,10,7); /* Another parent's watch cannot be modified. */
-    cuis_child_fault(&first,10,4);
-    cuis_child_fault(&first,10,11); /* A generic fallback must not replace SIGILL. */
-    cuis_child_completed(&first,10,0xffff);
-    cuis_child_completed(&first,10,0xffff);
+    fault_modeled_child(&second,10,7); /* Another parent's watch cannot be modified. */
+    fault_modeled_child(&first,10,4);
+    fault_modeled_child(&first,10,11); /* A generic fallback must not replace SIGILL. */
+    complete_modeled_child(&first,10,0xffff);
+    complete_modeled_child(&first,10,0xffff);
     CHECK(CHILD_R(child_session) == second_status);
     CHECK(cuis_session_wait(child_session,16,CUIS_READY_CHILD|CUIS_READY_TIMER,0,0,0) == (CUIS_READY_CHILD|CUIS_READY_TIMER));
     CHECK(CHILD_P(child_session,status,0x10000,16) == EACCDN);
@@ -96,11 +127,11 @@ static int child_completion_checks(void)
     CHECK(CHILD_P(child_session,second_status,0x10000,16) == EIMBA); fail_copy = FALSE;
     fail_allocation = TRUE;
     CHECK(CHILD_P(child_session,second_status,0x10000,16) == ENSMEM); fail_allocation = FALSE;
-    CHECK(CHILD_R(child_session) == second_status && !child_reaps && cuis_child_pid_reserved(11));
+    CHECK(CHILD_R(child_session) == second_status && !child_reaps && modeled_pid_reserved(11));
     /* An explicit MiNT wait cannot erase an already retained notification. */
     CHECK(ksched_wait(11,1,0) == second_status && child_reaps == 1);
     memset(stream_input,0x31,16);
-    CHECK(CHILD_P(child_session,second_status,0x10000,16) == E_OK && !cuis_child_pid_reserved(11));
+    CHECK(CHILD_P(child_session,second_status,0x10000,16) == E_OK && !modeled_pid_reserved(11));
     client = *find_owner(run);
     client->stream_bytes = CUIS_STREAM_BYTES-1;
     CHECK(CHILD_P(child_session,status,0x10000,16) == EAGAIN && child_reaps == 1 && CHILD_R(child_session) == status);
@@ -108,7 +139,7 @@ static int child_completion_checks(void)
     CHECK(CHILD_P(child_session,status,0x10000,16) == E_OK && child_reaps == 1);
     CHECK(!test_children[0].reaped && ksched_wait(10,1,0) == status && child_reaps == 2);
     CHECK(ksched_wait(10,1,0) == EFILNF && child_reaps == 2);
-    CHECK(CHILD_R(child_session) == 0 && !cuis_child_pid_reserved(10));
+    CHECK(CHILD_R(child_session) == 0 && !modeled_pid_reserved(10));
     CHECK(cuis_stream_service(CUIS_STREAM_READ,child_session,0x20000,32,0,0) == 32);
     CHECK(stream_output[0] == 0x31 && stream_output[31] == 0x31);
     /* A public completion must wake MU_MESAG during an unfinished double click,
@@ -136,7 +167,7 @@ static int child_completion_checks(void)
     test_children[0].reaped = test_children[0].started = FALSE;
     child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
     CHECK(CHILD_BIND(child_session,child_token,10) == E_OK);
-    test_children[0].started = TRUE; cuis_child_completed(&first,10,0x0400);
+    test_children[0].started = TRUE; complete_modeled_child(&first,10,0x0400);
     CHECK(CHILD_R(child_session) == status);
     /* Replacing the same PID/status while copying must invalidate the old token. */
     child_copy_mode = 1;
@@ -145,9 +176,9 @@ static int child_completion_checks(void)
     test_children[0].reaped = test_children[0].started = FALSE;
     child_token = CHILD_W(child_session,CUIS_CHILD_RESERVE,0,0);
     CHECK(CHILD_BIND(child_session,child_token,10) == E_OK);
-    test_children[0].started = TRUE; cuis_child_completed(&first,10,0x0400);
+    test_children[0].started = TRUE; complete_modeled_child(&first,10,0x0400);
     child_copy_mode = 2;
-    CHECK(CHILD_P(child_session,status,0x10000,16) == EACCDN && !cuis_child_pid_reserved(10));
+    CHECK(CHILD_P(child_session,status,0x10000,16) == EACCDN && !modeled_pid_reserved(10));
     CHECK(CHILD_R(child_session) == EACCDN);
     child_session = cuis_service(CUIS_SESSION_START,0);
     CHECK(CHILD_R(child_session) == 0);
@@ -193,6 +224,8 @@ long proc_exec_prepare(char *path, char *tail, char *environment, char *director
     child_start_calls++;
     if (child_start_error) return child_start_error;
     if (console_abort_stage == 2) abort_console_launch();
+    if (!modeled_children[2].references) reset_modeled_child(&modeled_children[2],2);
+    modeled_children[2].references++;
     *observer = kproc_retain(&third);
     *prepared = &third;
     if (retire_during_child_prepare)
@@ -206,7 +239,7 @@ LONG ksched_process_publish(void **prepared)
     *prepared = NULL;
     if (!child_stay_live) {
         test_children[0].status = (2L << 16) | 0x2468;
-        cuis_child_completed(run,2,0x2468);
+        complete_modeled_child(run,2,0x2468);
     }
     return 2;
 }
@@ -237,7 +270,7 @@ static int child_launch_checks(void)
     token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
     CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,0) == 2 && child_start_calls == 2);
     CHECK(cuis_child_service(CUIS_CHILD_RESULT,session,0,0,0) == ((2L << 16) | 0x2468));
-    CHECK(cuis_child_pid_reserved(2));
+    CHECK(modeled_pid_reserved(2));
     CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,0) == EACCDN && child_start_calls == 2);
     token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
     CHECK(token > 0);
@@ -246,7 +279,7 @@ static int child_launch_checks(void)
           child_abort_calls == 1 && !console_owner && !console_launcher);
     retire_during_child_prepare = FALSE;
     cuis_process_exit(&first); run = &second; cuis_process_exit(run); run = &first;
-    CHECK(!clients && allocations == frees && !cuis_child_pid_reserved(2));
+    CHECK(!clients && allocations == frees && !modeled_pid_reserved(2));
     return 0;
 }
 
@@ -302,7 +335,7 @@ static int console_launch_checks(void)
     CHECK(!console_owner && !console_launcher && !text_console_active);
     child_start_error = 0; child_stay_live = TRUE;
     CHECK(cuis_child_launch(session,0,0x11000,0x12000,0,1) == 2);
-    CHECK(console_owner == &third && text_console_active && !cuis_child_pid_reserved(2));
+    CHECK(console_owner == &third && text_console_active && !modeled_pid_reserved(2));
     cuis_process_exit(&third);
     CHECK(!console_owner && !text_console_active);
     CHECK(cuis_child_service(CUIS_CHILD_RESULT,session,0,0,0) == 0);

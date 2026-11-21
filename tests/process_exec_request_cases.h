@@ -145,6 +145,12 @@ static void test_request_engine(KPROC *owner)
           children[i].resources && children[i].refs==1 && !*kproc_exec_handles(owner) &&
           !output_copies && allocations==frees && !cleanup_nesting);
     children[i].resources=FALSE; children[i].refs=0; /* Model retirement after activation. */
+    r=request_fixture(); r->operation=PROCESS_EXEC_START;
+    i=loads;
+    CHECK(proc_exec_request(owner,0x1000,72)==42 && loads==i+1 &&
+          children[i].resources && children[i].refs==1 && !*kproc_exec_handles(owner) &&
+          !output_copies && allocations==frees && !cleanup_nesting);
+    children[i].resources=FALSE; children[i].refs=0;
     request_mode=FALSE;
     puts("Production PROCESS request: bounded copies, malformed ABI, partial copyout, scalar commit and retryable completion: PASS");
 }

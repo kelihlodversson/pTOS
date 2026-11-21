@@ -74,7 +74,7 @@ static void receipt_fixture_release(PROCESS_OBSERVER **observer)
     }
     child->leases--;receipt_release_count++;*observer=NULL;
 }
-BOOL process_observer_snapshot(const PROCESS_OBSERVER *observer,PROCESS_COMPLETION *out)
+static BOOL receipt_fixture_snapshot(const PROCESS_OBSERVER *observer,PROCESS_COMPLETION *out)
 {
     *out=((const typeof(receipt_children[0]) *)observer)->completion;return TRUE;
 }

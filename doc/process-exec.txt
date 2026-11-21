@@ -16,6 +16,12 @@ A failed preparation or commit preserves the previous successor. The
 operation reports the original error and performs no copyout. libaes uses
 this operation for SHW_CHAIN with or without SW_DEFDIR.
 
+PROCESS_EXEC_START is operation 6. It uses the same argument layout and
+prepares and publishes an asynchronous child. It closes its temporary
+observation right before returning the PID. A failed launch leaves no
+handle or published child. libaes uses START for unobserved graphical
+launches with SW_DEFDIR.
+
 arg1 is native long at xssystem and becomes (UQUAD)(uintptr_t)arg1: native32
 pointers are zero-extended, while genuine LP64 high bits are preserved for
 rejection. arg2 is validated at full native width and must equal exactly72;

@@ -36,21 +36,39 @@ LONG proc_exec_retain_observer(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_O
 }
 BOOL process_observer_ready(void *observer)
 {
+    MODELED_CHILD *child=modeled_child(observer);
+    if (child) return child->completion.state>=PROCESS_COMPLETED;
 #ifdef RECEIPT_RUNTIME_FIXTURE
     if (receipt_fixture_active) return receipt_fixture_ready(observer);
 #endif
     return observer==&wait_targets[0] ? wait_targets[0].ready:wait_targets[1].ready;
 }
+BOOL process_observer_snapshot(const PROCESS_OBSERVER *observer,PROCESS_COMPLETION *out)
+{
+    MODELED_CHILD *child=modeled_child(observer);
+    if (child) { *out=child->completion; return TRUE; }
+#ifdef RECEIPT_RUNTIME_FIXTURE
+    if (receipt_fixture_active) return receipt_fixture_snapshot(observer,out);
+#endif
+    return FALSE;
+}
 void process_observer_release(PROCESS_OBSERVER **out)
 {
-    ULONG index=*out==(PROCESS_OBSERVER *)&wait_targets[1];
+    MODELED_CHILD *child;
+    ULONG index;
+    if (!*out) return;
+    child=modeled_child(*out);
+    if (child) {
+        if (!input_irqs || !child->references) panic("invalid modeled child release");
+        if (*out==(PROCESS_OBSERVER *)&third) kproc_release(*out);
+        child->references--;
+        *out=NULL;
+        return;
+    }
+    index=*out==(PROCESS_OBSERVER *)&wait_targets[1];
 #ifdef RECEIPT_RUNTIME_FIXTURE
     if (receipt_fixture_active) { receipt_fixture_release(out); return; }
 #endif
-    if (*out == (PROCESS_OBSERVER *)&third) {
-        if (!input_irqs || !cleanup_depth) __builtin_abort();
-        kproc_release(*out); *out = NULL; return;
-    }
     if (!input_irqs || !cleanup_depth || !*out || !wait_targets[index].leases) __builtin_abort();
     wait_targets[index].leases--; wait_releases++; *out=NULL;
 }

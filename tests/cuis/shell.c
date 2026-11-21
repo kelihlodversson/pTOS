@@ -86,7 +86,8 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         /* The path, tail and directory are in the calling host stack. */
         uintptr_t high = (uintptr_t)b & ~(uintptr_t)0xffffffffUL;
         ULONG environment_offset = request->environment - (ULONG)(uintptr_t)last_allocation;
-        if (c != sizeof(*request) || request->operation != PROCESS_EXEC_DEFER ||
+        if (c != sizeof(*request) ||
+            (request->operation != PROCESS_EXEC_DEFER && request->operation != PROCESS_EXEC_START) ||
             request->policy || request->handle) return (QUAD)EINVAL;
         if (request->environment && (!last_allocation ||
             environment_offset >= last_allocation_size)) return (QUAD)EIMBA;
@@ -95,6 +96,11 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
         save_environment(request->environment ? (uintptr_t)last_allocation+environment_offset : 0);
         strcpy(launched_path,(const char *)(high | request->path));
         memcpy(launched_tail,(const char *)(high | request->tail),sizeof(launched_tail));
+        if (request->operation == PROCESS_EXEC_START) {
+            launched_console = FALSE;
+            launches++;
+            return (QUAD)launch_result;
+        }
         deferred_calls++;
         return (QUAD)deferred_result;
     }

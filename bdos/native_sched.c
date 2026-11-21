@@ -37,9 +37,6 @@
 #if CONF_WITH_X86_64_MEMTEST
 #include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
-#if CONF_WITH_CUIS
-#include "../aes/cuis.h"
-#endif
 extern PD *run;
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 #include "region_selftest.h"
@@ -2213,9 +2210,6 @@ void ksched_context_restore(UQUAD identity)
 BOOL ksched_pid_reserved(WORD pid)
 {
     KERNEL_TASK *task;
-#if CONF_WITH_CUIS
-    if (cuis_child_pid_reserved(pid)) return TRUE;
-#endif
     {
         BOOL found=FALSE;
         KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
@@ -2232,9 +2226,6 @@ void ksched_exiting(PD *pd, UWORD result)
 {
     KERNEL_TASK *task;
     KPROC *exiting;
-#if CONF_WITH_CUIS
-    BOOL asynchronous = FALSE;
-#endif
     exiting=kproc_retain(pd);
     ksched_admission_owner_exited(exiting);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
@@ -2256,10 +2247,6 @@ void ksched_exiting(PD *pd, UWORD result)
         ksched_admission_release(&waiter);
     }
     if (!scheduler.active) {
-#if CONF_WITH_CUIS
-        PD *parent=kproc_notification_parent(pd);
-        if (parent) cuis_child_completed(parent,kproc_pid(pd),result);
-#endif
         kproc_release(exiting); return;
     }
     for (task = scheduler.tasks; task; task = task->next_task) {
@@ -2279,9 +2266,6 @@ void ksched_exiting(PD *pd, UWORD result)
 #endif
             if (execution_cpu.current && execution_cpu.current->process == task->process)
                 task->signal = execution_cpu.current->signal;
-#if CONF_WITH_CUIS
-            asynchronous = task->asynchronous;
-#endif
             kproc_usage(pd, usage);
             task->usage[0] = usage[1] + usage[3];
             task->usage[1] = 0;
@@ -2293,15 +2277,6 @@ void ksched_exiting(PD *pd, UWORD result)
         }
     }
     kproc_release(exiting);
-#if CONF_WITH_CUIS
-    /* Nested synchronous children never return through task_entry(). Their
-     * trusted parent/PID still exist here; async tasks publish at task_entry
-     * after their final result/signal is known. */
-    if (!asynchronous) {
-        PD *parent = kproc_notification_parent(pd);
-        if (parent) cuis_child_completed(parent,kproc_pid(pd),result);
-    }
-#endif
 }
 
 /* Activate only the retained canonical predecessor, after PROCESS cleanup.
@@ -2340,10 +2315,6 @@ void ksched_fault(PD *pd, WORD signal)
     KERNEL_TASK *task;
     if (!scheduler.active) {
         kproc_note_fault(pd, signal);
-#if CONF_WITH_CUIS
-        PD *parent = kproc_notification_parent(pd);
-        if (parent) cuis_child_fault(parent,kproc_pid(pd),signal);
-#endif
         return;
     }
     /* A foreign callback changes run, but retains the invoking task's
@@ -2355,24 +2326,10 @@ void ksched_fault(PD *pd, WORD signal)
         if ((task->state == TASK_NEW || task->state == TASK_RUNNING ||
              task->state == TASK_BLOCKED) && task->program == pd) {
             if (!task->signal) task->signal = signal;
-#if CONF_WITH_CUIS
-            if (!completion_task(task)->asynchronous &&
-                kproc_thread_is_sole(task->process, task->thread)) {
-                PD *parent = kproc_notification_parent(pd);
-                if (parent) cuis_child_fault(parent,kproc_pid(pd),task->signal);
-            }
-#endif
             return;
         }
     }
     kproc_note_fault(pd, signal); /* Nested child: no THREAD slot or live siblings. */
-#if CONF_WITH_CUIS
-    /* Nested synchronous children have no task slot of their own. */
-    {
-        PD *parent = kproc_notification_parent(pd);
-        if (parent) cuis_child_fault(parent,kproc_pid(pd),signal);
-    }
-#endif
 }
 
 static void task_entry(void)
@@ -2425,11 +2382,6 @@ static void task_entry(void)
             if (owner->process_completed) kproc_publish_observers(owner->process);
             /* A refused unstarted task may still retain its association.
              * Retirement during root reap publishes abandonment, not status. */
-#if CONF_WITH_CUIS
-            if (owner->state == TASK_ZOMBIE)
-                cuis_child_completed(owner->parent,owner->pid,
-                    owner->signal ? (UWORD)owner->signal << 8 : (UWORD)owner->result);
-#endif
         } else if (owner == task) {
             RUNQUEUE_GUARD guard; runqueue_enter(&guard);
             /* Initial TID has stopped, but PID/resources/children remain live.

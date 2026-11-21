@@ -370,6 +370,30 @@ WORD kproc_pid(PD *pd)
     if (page && page < 0x100000 && !(page & 4095)) return (WORD)(page / 4096);
     return pd == &first ? 1 : 2;
 }
+/* Canonical PROCESS completion and reference model for CHILD transport. */
+typedef struct {
+    PROCESS_COMPLETION completion;
+    PD *parent;
+    unsigned references;
+    WORD signal;
+} MODELED_CHILD;
+static MODELED_CHILD modeled_children[16];
+static ULONG modeled_order;
+static MODELED_CHILD *modeled_child(const PROCESS_OBSERVER *observer)
+{
+    ULONG i;
+    if (observer == (PROCESS_OBSERVER *)&third) return &modeled_children[2];
+    for (i=0; i<ARRAY_SIZE(modeled_children); i++)
+        if (observer == (PROCESS_OBSERVER *)&modeled_children[i]) return &modeled_children[i];
+    return NULL;
+}
+static void reset_modeled_child(MODELED_CHILD *child, WORD pid)
+{
+    if (child->references) __builtin_abort();
+    memset(child,0,sizeof(*child));
+    child->completion.pid=pid;
+    child->parent=run;
+}
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "observer_wait.c"
 #include "windows.c"
