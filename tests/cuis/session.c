@@ -1,9 +1,8 @@
 /* Exercise the production scalar CUIS service and allocation failures. */
 #include "emutos.h"
 #include "bdosdefs.h"
-long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
+long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, char *directory);
 long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
-long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
 /* CUIS selects native scheduling in production. The broad hosted runner uses
  * a non-CUIS preset but includes this source explicitly. Match that dependency. */
 #undef CONF_WITH_NATIVE_SCHED
@@ -571,7 +570,7 @@ int main(void)
     if (rc) return rc;
     rc = cohort_result_checks();
     if (rc) return rc;
-    rc = process_defer_checks();
+    rc = launch_directory_checks();
     CHECK(!process_references);
     return rc;
 }

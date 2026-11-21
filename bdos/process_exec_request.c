@@ -1,5 +1,4 @@
-/* Fixed-width PROCESS request decoding. Public Ssystem dispatch stays gated
- * until deferred policy and the full transport contract are validated. */
+/* Fixed-width PROCESS request decoding. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "kheap.h"
@@ -56,8 +55,8 @@ static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
     result=kproc_copy_from_user_checked(&request,address,sizeof(request));
     if (result!=E_OK) return result;
     if (request.reserved || request.reserved_tail[0] || request.reserved_tail[1]) return EINVAL;
-    if (request.operation > PROCESS_EXEC_CANCEL_DEFERRED) return EINVFN;
-    if (request.operation != PROCESS_EXEC_PREPARE) {
+    if (request.operation > PROCESS_EXEC_DEFER) return EINVFN;
+    if (request.operation != PROCESS_EXEC_PREPARE && request.operation != PROCESS_EXEC_DEFER) {
         if (request.policy || request.path || request.tail || request.environment || request.directory) return EINVAL;
         switch (request.operation) {
         case PROCESS_EXEC_COMMIT:
@@ -77,7 +76,8 @@ static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
         }
         return EINVFN;
     }
-    if (request.handle || request.policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
+    if (request.handle || request.policy > PROCESS_EXEC_DEFER_REPLACEMENT ||
+        (request.operation == PROCESS_EXEC_DEFER && request.policy)) return EINVAL;
     result=copy_argument(request.path,EXEC_PATH_MAX,FALSE,&path);
     if (result != E_OK) goto done;
     result=copy_argument(request.tail,PDCLSIZE,FALSE,&tail);
@@ -94,7 +94,16 @@ static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
         result=copy_argument(request.directory,EXEC_PATH_MAX,FALSE,&directory);
         if (result != E_OK) goto done;
     }
-    result=proc_exec_handle_prepare(owner,path,tail,environment,directory,request.policy);
+    if (request.operation == PROCESS_EXEC_DEFER) {
+        LONG handle=proc_exec_handle_prepare(owner,path,tail,environment,directory,
+                                            PROCESS_EXEC_DEFER_REPLACEMENT);
+        result=handle;
+        if (handle > 0) {
+            result=proc_exec_handle_commit(owner,(ULONG)handle);
+            (void)proc_exec_handle_close(owner,(ULONG)handle);
+            if (result > 0) result=E_OK;
+        }
+    } else result=proc_exec_handle_prepare(owner,path,tail,environment,directory,request.policy);
  done:
     if (directory) kfree(directory);
     if (environment) kfree(environment);

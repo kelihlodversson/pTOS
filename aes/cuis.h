@@ -57,8 +57,6 @@ LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c
 void cuis_child_completed(PD *parent, WORD pid, UWORD status);
 void cuis_child_fault(PD *parent, WORD pid, WORD signal);
 LONG cuis_child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console);
-LONG cuis_process_defer(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment);
-LONG cuis_process_defer_directory(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory);
 LONG cuis_child_launch_directory(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory, BOOL console);
 LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *child);
 BOOL cuis_child_pid_reserved(WORD pid);

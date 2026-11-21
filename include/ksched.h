@@ -200,7 +200,6 @@ void ksched_process_cancel(void **slot);
 LONG ksched_defer_cancel(void);
 /* Internal observed launch, available only with CUIS. */
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token);
-LONG ksched_defer(PD *pd, ULONG session);
 #if CONF_WITH_USER_ASPACE
 struct kproc;
 void proc_dispose_process(struct kproc *process);

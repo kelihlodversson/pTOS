@@ -218,13 +218,6 @@ LONG kpgmld(PD *p, FH handle, PGMHDR01 *header, const char *path)
     return load_error;
 }
 BOOL ksched_spawn_allowed(void) { return !deny_start; }
-LONG ksched_defer(PD *p, ULONG session)
-{
-    CHECK(p == &image && session == 23 && pending_request == &pending);
-    CHECK(references[0] == 4 && references[1] == 2);
-    CHECK(dirtbl[3].use == 2 && dirtbl[4].use == 2);
-    return rejection; /* No task slot, or preparation failed before commit. */
-}
 LONG fs_set_process_directory(char *directory, PD *process)
 {
     CHECK(process == &image && !strcmp(directory,observer_mode ? "C:\\TARGET" : "C:\\MISSING"));
@@ -247,7 +240,14 @@ LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token)
 }
 LONG ksched_process_prepare(PD *p, BOOL deferred, void **slot)
 {
-    CHECK(observer_mode && p==&image && slot && !*slot && records==1);
+    CHECK(p==&image && slot && !*slot && records==1);
+    if (deferred) {
+        CHECK(!observer_mode && pending_request == &pending);
+        CHECK(references[0] == 4 && references[1] == 2);
+        CHECK(dirtbl[3].use == 2 && dirtbl[4].use == 2);
+        return rejection;
+    }
+    CHECK(observer_mode);
     CHECK(observer_refs==1 && observer_output && !*observer_output);
     CHECK(!publications);
     if (spawn_result < 0) return spawn_result;
@@ -279,6 +279,8 @@ int main(void)
     unsigned errors, returned_error, failure;
     static const LONG failures[] = { ENSMEM, EACCDN };
     char tail[2] = { 0,0 }, env[2] = { 0,0 };
+    KPROC *deferred_observer = NULL;
+    void *deferred_slot = NULL;
     run = &parent;
     parent_files[0] = parent_files[1] = NUMSTD;
     parent_files[2] = NUMSTD+1;
@@ -293,7 +295,8 @@ int main(void)
                 dirtbl[3].use = dirtbl[4].use = 1;
                 directory_releases = attempts = interrupted = invalidations = 0;
                 inject_errors = errors; return_close_error = returned_error;
-                CHECK(xexec_deferred("NEXT.PRG",tail,env,23) == rejection);
+                CHECK(proc_exec_prepare("NEXT.PRG",tail,env,NULL,1,&deferred_observer,&deferred_slot) == rejection);
+                CHECK(!deferred_observer && !deferred_slot);
                 CHECK(pending_request == &pending && run == &parent);
                 CHECK(!allocations && !records && attempts == errors+3);
                 CHECK(interrupted == errors && invalidations == errors);
@@ -305,7 +308,7 @@ int main(void)
     dirtbl[3].use = dirtbl[4].use = 1;
     directory_releases = attempts = interrupted = invalidations = 0;
     inject_errors = 0; return_close_error = FALSE;
-    CHECK(xexec_directory("NEXT.PRG",tail,env,23,0,TRUE,"C:\\MISSING") == EPTHNF);
+    CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\MISSING",1,&deferred_observer,&deferred_slot) == EPTHNF);
     CHECK(pending_request == &pending && run == &parent);
     CHECK(!allocations && !records && disposals == 13);
     /* Exercise notification ordering for an already committed completion;
@@ -314,7 +317,7 @@ int main(void)
     references[0] = 2; references[1] = 1;
     dirtbl[3].use = dirtbl[4].use = 1;
     directory_releases = attempts = interrupted = invalidations = 0;
-    CHECK(xexec_deferred("NEXT.PRG",tail,env,23) == rejection);
+    CHECK(proc_exec_prepare("NEXT.PRG",tail,env,NULL,1,&deferred_observer,&deferred_slot) == rejection);
     CHECK(completion_stage == 3 && !allocations && !records);
     observer_mode=TRUE; fake_completion=FALSE; inject_errors=0;
     {

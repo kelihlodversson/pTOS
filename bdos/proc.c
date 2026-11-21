@@ -635,13 +635,9 @@ long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG toke
 {
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL,NULL,NULL));
 }
-long xexec_deferred(char *path, char *tail, char *env, ULONG session)
+long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, char *directory)
 {
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,0,TRUE,NULL,NULL,NULL,NULL));
-}
-long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, BOOL deferred, char *directory)
-{
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,deferred,directory,NULL,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,directory,NULL,NULL,NULL));
 }
 #endif
 #if CONF_WITH_EXEC_REPLACE
@@ -1189,7 +1185,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             if (prepared) rc = ksched_process_prepare(cur_p, deferred, prepared);
             else
 #if CONF_WITH_CUIS
-            rc = deferred ? ksched_defer(cur_p,session) : ksched_spawn_observed(cur_p,session,token);
+            rc = ksched_spawn_observed(cur_p,session,token);
 #else
             rc = ksched_spawn(cur_p);
 #endif

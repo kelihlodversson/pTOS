@@ -2825,15 +2825,14 @@ options and SHW_SINGLE remain unsupported. AES_SHELL remains unadvertised
 until the complete launch/default-shell semantics are in place. Existing
 ordinary AES4 launches and SHW_PARALLEL keep their behavior.
 
-CUIS_PROCESS_DEFER(session, path, tail, environment) uses flat scalar/pointer
-arguments and the ordinary GEMDOS Pexec(100) validation/loader. The caller
-must own the live session and run in a managed native group. The loader keeps
-fixed-address executables at their link address and prepares a separate
-address space, command/environment snapshot, inherited standard files and
-working directory before returning. Native success is E_OK, errors negative;
-libaes translates those into the standard Boolean GEM result. A null path
-with null tail/environment cancels the caller's pending request, idempotently
-within the managed group; it does not add a new public GEM function.
+libaes implements SHW_CHAIN with Ssystem(S_PROCEXEC) and
+PROCESS_EXEC_DEFER. The caller must run in a managed native group.
+The generic loader prepares the private image, inherited resources and
+optional working directory before the scheduler replaces the previous
+successor. The operation closes its temporary PROCESS-owned right before
+return and supplies no observer or PID to the library. E_OK maps to the
+standard successful GEM result. PROCESS_EXEC_CANCEL_DEFERRED cancels only
+the caller's pending successor and is idempotent.
 
 The native scheduler owns at most one dormant successor per requesting
 process. It uses an ordinary bounded task slot/kernel stack; preparation
@@ -2859,8 +2858,8 @@ use that process-lifetime trigger. The handoff is detached: its PPID names
 the group's stable controller, not the former process. It holds no pointer
 to the dead caller and sends no child-exit notification to it. AES session
 teardown and re-registration do not remove the process-owned request. All
-kernel additions remain under CONF_WITH_CUIS; there is no kernel GEM shell
-policy, format negotiation or AES request block.
+generic scheduler and PROCESS operations are also available without
+CONF_WITH_CUIS. GEM shell policy is implemented in libaes.
 
 Host tests cover native ownership/argument validation, cancellation and GEM
 Boolean/error translation. Real loader, termination and scheduler host tests
@@ -3358,18 +3357,15 @@ Native calls remain flat and carry no GEM flags or SHELW structures:
       (session, token, path, tail, environment, directory) -> child PID/error
   CUIS_CONSOLE_LAUNCH_DIRECTORY (91)
       (session, token, path, tail, environment, directory) -> child PID/error
-  CUIS_PROCESS_DEFER_DIRECTORY (92)
-      (session, path, tail, environment, directory) -> zero/error
 
 The directory address must name a nonempty terminated string of at most
 259 bytes, copied before loader I/O. Filesystem path limits still apply.
 A zero observation token is allowed on either directory-aware immediate
 call; such children remain available to Pwait/Pwaitpid without CH_EXIT.
 The console opcode acquires the existing exclusive display/input lease.
-The original calls 69/70 keep their argument counts and inherited-directory
-behavior; unused registers never become implicit arguments. All native
-loader/directory support is guarded by CONF_WITH_CUIS, currently available
-only on x32 with the built-in FAT filesystem.
+Call 69 retains its inherited-directory behavior. Deferred directory
+selection uses the directory field of the generic PROCESS request and is
+independent of the CUIS launch selectors.
 
 Host regressions exercise flag isolation, absolute/drive-relative directory
 resolution, caller drive/path isolation, directory-reference replacement,

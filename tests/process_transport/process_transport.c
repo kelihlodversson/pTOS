@@ -1,4 +1,4 @@
-/* Real Ssystem trap/packed-call coverage; only explicit test kernels accept -9. */
+/* Real Ssystem trap/packed-call coverage on supported native MMU kernels. */
 #include "test.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
@@ -39,7 +39,7 @@ void test_process_transport(void)
 #endif
 #ifndef TEST_WITH_PROCESS_EXEC_DISPATCH
     ptest_assert_msg(Ssystem(PROCEXEC,0L,72L)==EINVFN,
-                     "normal/unsupported kernel exposed test-only PROCESS dispatch");
+                     "unsupported kernel exposed PROCESS dispatch");
 #else
     {
         REQUEST r;

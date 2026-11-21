@@ -5,6 +5,7 @@
 #include "transport.h"
 #include "gemerror.h"
 #include "bdosdefs.h"
+#include "process_exec.h"
 LONG aes_child_messages(LONG session)
 {
     ULONG i;
@@ -41,9 +42,15 @@ LONG aes_child_launch(LONG session, const char *path, const char *tail,
             (uintptr_t)tail,(uintptr_t)environment,console);
     return (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment);
 }
-LONG aes_child_defer(LONG session, const char *path, const char *tail,
+LONG aes_child_defer(const char *path, const char *tail,
                      const char *environment, const char *directory)
 {
-    return cuis_call6(directory ? CUIS_PROCESS_DEFER_DIRECTORY : CUIS_PROCESS_DEFER,
-        session,(uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment,(uintptr_t)directory,0);
+    PROCESS_EXEC_REQUEST request = {0};
+    request.operation = PROCESS_EXEC_DEFER;
+    request.path = (ULONG)(uintptr_t)path;
+    request.tail = (ULONG)(uintptr_t)tail;
+    request.environment = (ULONG)(uintptr_t)environment;
+    request.directory = (ULONG)(uintptr_t)directory;
+    return (LONG)aes_gemdos_call(0x154,(UQUAD)(QUAD)PROCESS_EXEC_SSYSTEM,
+                                  (uintptr_t)&request,sizeof(request));
 }

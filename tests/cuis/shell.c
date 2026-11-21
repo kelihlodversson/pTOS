@@ -7,6 +7,7 @@
 #include "gemerror.h"
 #include "string.h"
 #include "runtime.h"
+#include "process_exec.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell failure: %d\n",__LINE__); return __LINE__; } } while (0)
 static PD basepage;
 static DL_LAUNCH launch;
@@ -35,6 +36,8 @@ static UQUAD launched_console;
 static int launches, native_calls;
 static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
 static char launched_environment[AES_SHELL_ENV];
+static void *last_allocation;
+static size_t last_allocation_size;
 static LONG allocation_balance;
 static ULONG allocation_attempts;
 static BOOL fail_allocation, fail_release;
@@ -46,10 +49,13 @@ UQUAD aes_memory_call(ULONG function, UQUAD argument)
         if (fail_allocation) return (QUAD)ENSMEM;
         memory = __builtin_malloc((size_t)argument);
         if (!memory) return (QUAD)ENSMEM;
+        last_allocation = memory;
+        last_allocation_size = (size_t)argument;
         allocation_balance++; return (uintptr_t)memory;
     }
     if (function == 0x49) {
         if (fail_release) return (QUAD)EACCDN;
+        if ((uintptr_t)last_allocation == argument) last_allocation = NULL;
         allocation_balance--; __builtin_free((void *)(uintptr_t)argument); return E_OK;
     }
     return (QUAD)EINVFN;
@@ -75,6 +81,23 @@ unsigned long __ptos_getauxval(unsigned long type)
 { return !aux_ready ? 0 : type == 6 ? 4096 : type == DL_AT_PTOS_LAUNCH ? (uintptr_t)active_launch : type == 0x5000 ? (uintptr_t)&basepage : type == 31 ? (uintptr_t)executable : 0; }
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
+    if (function == 0x154 && (QUAD)a == PROCESS_EXEC_SSYSTEM) {
+        const PROCESS_EXEC_REQUEST *request = (const PROCESS_EXEC_REQUEST *)(uintptr_t)b;
+        /* The path, tail and directory are in the calling host stack. */
+        uintptr_t high = (uintptr_t)b & ~(uintptr_t)0xffffffffUL;
+        ULONG environment_offset = request->environment - (ULONG)(uintptr_t)last_allocation;
+        if (c != sizeof(*request) || request->operation != PROCESS_EXEC_DEFER ||
+            request->policy || request->handle) return (QUAD)EINVAL;
+        if (request->environment && (!last_allocation ||
+            environment_offset >= last_allocation_size)) return (QUAD)EIMBA;
+        if (request->directory) strcpy(launched_directory,(const char *)(high | request->directory));
+        else launched_directory[0] = 0;
+        save_environment(request->environment ? (uintptr_t)last_allocation+environment_offset : 0);
+        strcpy(launched_path,(const char *)(high | request->path));
+        memcpy(launched_tail,(const char *)(high | request->tail),sizeof(launched_tail));
+        deferred_calls++;
+        return (QUAD)deferred_result;
+    }
     (void)c;
     if (function == 0x19) { cwd_calls++; return drive; }
     if (function == 0x47) { cwd_calls++; strcpy((char *)(uintptr_t)a,cwd); return E_OK; }
@@ -116,14 +139,6 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     native_calls++;
     if (a != 9) return EACCDN;
     if (fn == CUIS_CHILD_RESULT) return completion_error;
-    if (fn == CUIS_PROCESS_DEFER || fn == CUIS_PROCESS_DEFER_DIRECTORY) {
-        if (f) return EINVAL;
-        if (e) strcpy(launched_directory,(const char *)(uintptr_t)e); else launched_directory[0] = 0;
-        save_environment(d);
-        strcpy(launched_path,(const char *)(uintptr_t)b);
-        memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
-        deferred_calls++; return deferred_result;
-    }
     if (fn == CUIS_CHILD_LAUNCH_DIRECTORY || fn == CUIS_CONSOLE_LAUNCH_DIRECTORY) {
         strcpy(launched_directory,(const char *)(uintptr_t)f);
         f = fn == CUIS_CONSOLE_LAUNCH_DIRECTORY;

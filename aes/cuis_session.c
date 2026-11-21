@@ -3665,7 +3665,7 @@ static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQU
     if (!result) result = (LONG)bdos_check_user_args(args);
     if (!result && directory)
         result = (LONG)xexec_directory((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
-            (char *)(uintptr_t)environment,token || console ? (ULONG)session : 0,(ULONG)token,FALSE,dir);
+            (char *)(uintptr_t)environment,token || console ? (ULONG)session : 0,(ULONG)token,dir);
     else if (!result)
         result = (LONG)xexec_observed((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
                                      (char *)(uintptr_t)environment,(ULONG)session,(ULONG)token);
@@ -3708,43 +3708,6 @@ LONG cuis_child_launch_directory(UQUAD session, UQUAD token, UQUAD path, UQUAD t
 {
     if (!directory) return EINVAL;
     return child_launch(session,token,path,tail,environment,console,directory,TRUE);
-}
-
-/* Privately prepare a detached successor. AES deregistration is deliberately
- * unrelated to the process-lifetime trigger held by the native scheduler. */
-static LONG process_defer(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory)
-{
-    char dir[260];
-    long args[7];
-    LONG result;
-    if (session > 0x7fffffffULL) return EINVAL;
-    if (cuis_service(CUIS_SESSION_QUERY,session) != E_OK) return EACCDN;
-    if (!path) {
-        if (tail || environment || directory) return EINVAL;
-        return ksched_defer_cancel();
-    }
-    args[0] = 0x4b; args[1] = PE_ASYNC_LOADGO;
-    args[2] = (long)path; args[3] = (long)tail; args[4] = (long)environment;
-    args[5] = args[6] = 0;
-    result = launch_directory(directory,dir,sizeof(dir));
-    if (!result) result = (LONG)bdos_check_user_args(args);
-    if (result) return result;
-    if (directory)
-        return (LONG)xexec_directory((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
-            (char *)(uintptr_t)environment,(ULONG)session,0,TRUE,dir);
-    return (LONG)xexec_deferred((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
-                                (char *)(uintptr_t)environment,(ULONG)session);
-}
-
-LONG cuis_process_defer(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment)
-{
-    return process_defer(session,path,tail,environment,0);
-}
-
-LONG cuis_process_defer_directory(UQUAD session, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory)
-{
-    if (!directory) return EINVAL;
-    return process_defer(session,path,tail,environment,directory);
 }
 
 #if CONF_WITH_CUIS_RECEIPT_TEST

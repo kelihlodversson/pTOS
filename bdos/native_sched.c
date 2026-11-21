@@ -2872,52 +2872,31 @@ void ksched_process_cancel(void **slot)
     discard_process_task(task);
 }
 #if CONF_WITH_CUIS
-static LONG spawn_configured_owned(PD *pd, ULONG session, ULONG token, BOOL deferred)
+static LONG spawn_configured_owned(PD *pd, ULONG session, ULONG token)
 {
     void *slot = NULL;
-    KPROC *owner = NULL;
     LONG result;
     if (!ksched_async_allowed()) return EINVFN;
-    if (deferred) {
-        if (cuis_service(CUIS_SESSION_QUERY, session) != E_OK) return EACCDN;
-        /* Legacy immediate launch must reject reentry before preparation can
-         * consume the loader's image. Generic owned rights may retry COMMIT. */
-        owner = kproc_retain(run);
-        if (!owner) return ENSMEM;
-        if (!kproc_exec_commit_begin(owner)) { kproc_release(owner); return EACCDN; }
-    } else if (session || token) {
+    if (session || token) {
         result = cuis_child_bind_spawn(session, token, pd);
         if (result != E_OK) return result;
     }
-    result = ksched_process_prepare(pd, deferred, &slot);
-    if (result != E_OK) {
-        if (owner) { kproc_exec_commit_end(owner); kproc_release(owner); }
-        return result;
-    }
-    if (owner) {
-        (void)finish_deferred_commit(&slot, owner);
-        kproc_release(owner);
-        return E_OK;
-    }
-    return ksched_process_publish(&slot);
+    result = ksched_process_prepare(pd, FALSE, &slot);
+    return result == E_OK ? ksched_process_publish(&slot) : result;
 }
-static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
+static LONG spawn_configured(PD *pd, ULONG session, ULONG token)
 {
     KSCHED_CLEANUP_SCOPE scope={0};
     LONG result;
-    /* The legacy loader also owns a prepared image and predecessor commit
-     * transaction across destructor callbacks. Protect through the final
-     * reference release; delivery belongs to the outer syscall boundary. */
+    /* The loader owns a prepared image until runnable publication. */
     ksched_cleanup_begin(&scope);
-    result=spawn_configured_owned(pd,session,token,deferred);
+    result=spawn_configured_owned(pd,session,token);
     ksched_cleanup_end(&scope);
     return result;
 }
-LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0,FALSE); }
+LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0); }
 LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
-{ return spawn_configured(pd,session,token,FALSE); }
-LONG ksched_defer(PD *pd, ULONG session)
-{ return spawn_configured(pd,session,0,TRUE); }
+{ return spawn_configured(pd,session,token); }
 #else
 LONG ksched_spawn(PD *pd)
 {

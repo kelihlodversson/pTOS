@@ -51,6 +51,16 @@ UQUAD aes_gemdos_call4(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d)
     last[0]=a; last[1]=b; last[2]=c; last[3]=d;
     return 321;
 }
+UQUAD aes_gemdos_call(ULONG function,UQUAD mode,UQUAD address,UQUAD size)
+{
+    const PROCESS_EXEC_REQUEST *request=(const PROCESS_EXEC_REQUEST *)(uintptr_t)address;
+    VERIFY(function == 0x154 && (QUAD)mode == PROCESS_EXEC_SSYSTEM && size == sizeof(*request));
+    VERIFY(request->operation == PROCESS_EXEC_DEFER && !request->policy && !request->handle);
+    last_function=request->operation;
+    last[0]=request->path; last[1]=request->tail;
+    last[2]=request->environment; last[3]=request->directory;
+    return E_OK;
+}
 static void reset(void)
 {
     memset(notices,0,sizeof(notices)); count=consumed=published=attempts=calls=launches=0;
@@ -103,10 +113,11 @@ int main(void)
     reset();
     VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,FALSE) == 321);
     VERIFY(last_function == 0x4b && calls == 1 && launches == 1); /* Ordinary Pexec stays independent. */
-    VERIFY(aes_child_defer(session_id,path,tail,env,directory) == 123);
-    VERIFY(last_function == CUIS_PROCESS_DEFER_DIRECTORY && last[4] == (uintptr_t)directory);
-    VERIFY(aes_child_defer(session_id,path,tail,env,NULL) == 123);
-    VERIFY(last_function == CUIS_PROCESS_DEFER && !last[4]);
+    VERIFY(aes_child_defer(path,tail,env,directory) == E_OK);
+    VERIFY(last_function == PROCESS_EXEC_DEFER && last[0] == (ULONG)(uintptr_t)path &&
+           last[1] == (ULONG)(uintptr_t)tail && last[2] == (ULONG)(uintptr_t)env &&
+           last[3] == (ULONG)(uintptr_t)directory);
+    VERIFY(aes_child_defer(path,tail,env,NULL) == E_OK && !last[3]);
     puts("Production libaes CHILD policy: status words, completion order, publication retry, exactly-once and launch routing: PASS");
     return 0;
 }

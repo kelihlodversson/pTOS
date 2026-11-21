@@ -375,53 +375,29 @@ static int button_resume_checks(void)
     return 0;
 }
 
-static LONG defer_result;
-static ULONG defer_calls, defer_cancels;
-long xexec_deferred(char *path, char *tail, char *environment, ULONG session)
-{
-    (void)session;
-    if ((uintptr_t)path != 0x11000 || (uintptr_t)tail != 0x12000 || environment || !input_irqs) return EINVAL;
-    defer_calls++; return defer_result;
-}
 static char launched_directory[260];
-long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory)
+long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, char *directory)
 {
     strcpy(launched_directory,directory);
-    if (deferred) return xexec_deferred(path,tail,environment,session);
     if (!session && !token) { child_start_calls++; return child_start_error ? child_start_error : 2; }
     return xexec_observed(path,tail,environment,session,token);
 }
-LONG ksched_defer_cancel(void) { defer_cancels++; return E_OK; }
-static int process_defer_checks(void)
+static int launch_directory_checks(void)
 {
     LONG session, other;
     CHECK(!clients && allocations == frees);
     run = &first; session = cuis_service(CUIS_SESSION_START,0);
     run = &second; other = cuis_service(CUIS_SESSION_START,0); run = &first;
-    CHECK(cuis_process_defer(other,0x11000,0x12000,0) == EACCDN && !defer_calls);
-    CHECK(cuis_process_defer(1ULL << 32,0x11000,0x12000,0) == EINVAL);
-    CHECK(cuis_process_defer(session,0,1,0) == EINVAL && !defer_cancels);
-    CHECK(cuis_process_defer(session,0,0,0) == E_OK && defer_cancels == 1);
-    child_validate_error = EIMBA;
-    CHECK(cuis_process_defer(session,0x11000,0x12000,0) == EIMBA && !defer_calls);
-    child_validate_error = 0; defer_result = ENSMEM;
-    CHECK(cuis_process_defer(session,0x11000,0x12000,0) == ENSMEM && defer_calls == 1);
-    defer_result = E_OK;
-    CHECK(cuis_process_defer(session,0x11000,0x12000,0) == E_OK && defer_calls == 2);
     strcpy((char *)stream_input+0x3000,"C:\\APPS");
-    CHECK(cuis_process_defer_directory(session,0x11000,0x12000,0,0x13000) == E_OK);
-    CHECK(!strcmp(launched_directory,"C:\\APPS") && defer_calls == 3);
-    CHECK(cuis_process_defer_directory(session,0,0,0,0x13000) == EINVAL);
-    CHECK(cuis_process_defer_directory(session,0x11000,0x12000,0,0) == EINVAL);
     CHECK(cuis_child_launch_directory(other,0,0x11000,0x12000,0,0x13000,FALSE) == EACCDN);
     CHECK(cuis_child_launch_directory(session,0,0x11000,0x12000,0,0,FALSE) == EINVAL);
     CHECK(cuis_child_launch_directory(session,0,0x11000,0x12000,0,0x13000,FALSE) == 2);
     CHECK(!strcmp(launched_directory,"C:\\APPS"));
     CHECK(cuis_child_launch_directory(session,0,0x11000,0x12000,0,0x18000,FALSE) == EIMBA);
     stream_input[0x3000] = 0;
-    CHECK(cuis_process_defer_directory(session,0x11000,0x12000,0,0x13000) == EPTHNF);
+    CHECK(cuis_child_launch_directory(session,0,0x11000,0x12000,0,0x13000,FALSE) == EPTHNF);
     memset(stream_input+0x3000,'X',260);
-    CHECK(cuis_process_defer_directory(session,0x11000,0x12000,0,0x13000) == ERANGE && defer_calls == 3);
+    CHECK(cuis_child_launch_directory(session,0,0x11000,0x12000,0,0x13000,FALSE) == ERANGE);
     cuis_process_exit(&first); run = &second; cuis_process_exit(run); run = &first;
     CHECK(!clients && allocations == frees);
     return 0;
