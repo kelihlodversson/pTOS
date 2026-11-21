@@ -53,8 +53,8 @@ void cuis_process_exit(PD *owner);
 #if CONF_WITH_EXEC_REPLACE
 void cuis_exec_rekey(PD *old, PD *new); /* Pexec(200) commit */
 #endif
-LONG cuis_child_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD c);
 LONG cuis_launch_attach(UQUAD session, UQUAD authorization, UQUAD path, UQUAD tail, UQUAD environment, UQUAD directory);
+LONG cuis_stream_receipt(UQUAD session, UQUAD action, UQUAD address, UQUAD bytes);
 #if CONF_WITH_X86_64_MEMTEST
 ULONG cuis_session_count(void);
 BOOL cuis_update_active(void);

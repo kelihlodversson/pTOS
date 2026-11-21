@@ -1,11 +1,12 @@
 #907: PROCESS activation and CHILD adapter preparation
 =====================================================
 
-The first #907 implementation activates the existing PROCESS transport
-on native MMU kernels and migrates the two deferred-successor operations.
-See process-exec.txt for the current public contract and cuis.txt for the
-remaining CUIS calls. The design notes below precede that migration and
-retain the rationale for the remaining CHILD and COHORT work.
+#907 activates the existing PROCESS transport on native MMU kernels.
+libaes uses it for launch arguments and canonical observation. CUIS binds
+an endpoint publication receipt and optional console lease to preparations
+before they are runnable. The CHILD selectors 66–70, 90–92 are retired.
+See process-exec.txt and cuis.txt for the current contracts. The design notes
+below describe the earlier gate, migration rationale and receipt prototype.
 
 Activation prerequisite and review boundary
 ------------------------------------------

@@ -21,7 +21,7 @@ static void resume_wait_hook(void)
          * calls its hook before restoring the parked context's IRQ state. */
         input_irqs=TRUE;
         if (cuis_service(CUIS_SESSION_END,resume_handle) || !resume_client->retired ||
-            resume_client->input_wait || resume_client->references!=1 || frees!=before+1) resume_bad=1;
+            resume_client->input_wait || resume_client->references!=1 || frees!=before+2) resume_bad=1;
         resume_replacement=cuis_service(CUIS_SESSION_START,0);
         input_irqs=saved_irqs;
         if (resume_replacement<=resume_handle || (*find_owner(run))->resume_operation ||
@@ -52,7 +52,7 @@ static void resume_wait_hook(void)
 }
 static int resume_transaction_checks(void)
 {
-    LONG window, token;
+    LONG window;
     ULONG interval=input_interval, before, visits;
     ULONG ticks_before=input_ticks, sleeps_before=input_sleeps, yields_before=delay_yields;
     int action, cycle;
@@ -63,10 +63,9 @@ static int resume_transaction_checks(void)
         pointer_buttons=0; pointer_suppressed=pointer_legacy_drag=FALSE; input_pointer_source=FALSE;
         window=cuis_window_service(CUIS_WINDOW_CREATE,0,0,300,300,0);
         CHECK(window>=0 && cuis_window_service(CUIS_WINDOW_SHOW,window,0,0,0,0)==0);
-        test_children[0].parent=run; test_children[0].pid=10;
-        test_children[0].reaped=test_children[0].started=FALSE; test_children[0].status=0;
-        token=cuis_child_service(CUIS_CHILD_WATCH,resume_handle,CUIS_CHILD_RESERVE,0,0);
-        CHECK(token>0 && CHILD_BIND(resume_handle,token,10)==0);
+        child_stay_live=TRUE;
+        CHECK(launch_child(resume_handle,CUIS_LAUNCH_OBSERVE)==2);
+        child_stay_live=FALSE;
         CHECK(cuis_input_config(CUIS_INPUT_INTERVAL,resume_handle,1000,1,0,0,0)==1000);
         CHECK(cuis_input_config(CUIS_INPUT_BUTTON,resume_handle,1,1,2,0,0)==0);
         resume_client->recent_count=0; input_sleeps=0; input_packet_mode=2; child_idle_at=2;
@@ -120,9 +119,9 @@ static int resume_transaction_checks(void)
             CHECK(cuis_service(CUIS_SESSION_END,resume_handle)==0);
         }
         CHECK(allocations==frees);
+        stream_ring_count=0;
     }
     input_interval=interval; input_ticks=ticks_before; input_sleeps=sleeps_before; delay_yields=yields_before;
-    memset(test_children,0,sizeof(test_children));
     next_handle=next_window_handle=0; allocations=frees=0;
     __builtin_printf("CUIS tentative resume reservation, live prefix commit, abort/retry, deadline and policy ownership: PASS (host)\n");
     return 0;

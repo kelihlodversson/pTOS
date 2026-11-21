@@ -64,7 +64,6 @@ static BOOL input_drop_focus;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
 static void context_copy_hook(void);
 static void context_read_hook(void);
-static void child_copy_hook(void);
 static void child_idle_hook(void);
 static void cohort_idle_hook(void);
 static PD *mouse_release_owner;
@@ -285,7 +284,6 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
         cuis_input_unlock(flags);
     }
     context_copy_hook();
-    child_copy_hook();
     memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
 }
 BOOL kproc_validate_user_range(UQUAD address, ULONG size)
@@ -392,8 +390,11 @@ static void reset_modeled_child(MODELED_CHILD *child, WORD pid)
     if (child->references) __builtin_abort();
     memset(child,0,sizeof(*child));
     child->completion.pid=pid;
+    child->completion.number_low=++modeled_order;
     child->parent=run;
 }
+#define MODELED_LAUNCH_RIGHT 70UL
+static BOOL modeled_launch_open, modeled_launch_pending;
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "observer_wait.c"
 #include "windows.c"
@@ -569,8 +570,6 @@ int main(void)
     rc = background_release_checks();
     if (rc) return rc;
     rc = context_checks();
-    if (rc) return rc;
-    rc = child_completion_checks();
     if (rc) return rc;
     rc = button_resume_checks();
     if (rc) return rc;

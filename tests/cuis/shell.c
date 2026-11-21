@@ -144,24 +144,24 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     (void)e; (void)f;
     native_calls++;
     if (a != 9) return EACCDN;
-    if (fn == CUIS_CHILD_RESULT) return completion_error;
+    if (fn == CUIS_STREAM_RECEIPT) return completion_error;
     if (fn == CUIS_LAUNCH_ATTACH) {
-        launched_console = (b & CUIS_LAUNCH_CONSOLE) != 0;
-        b &= ~CUIS_LAUNCH_CONSOLE;
-        if (b != 17 && b != 0) return EINVAL;
+        BOOL observe=(b & CUIS_LAUNCH_OBSERVE)!=0;
+        launched_console=(b & CUIS_LAUNCH_CONSOLE)!=0;
+        if (b & ~(CUIS_LAUNCH_CONSOLE | CUIS_LAUNCH_OBSERVE)) return EINVAL;
+        if (observe) {
+            reservations++;
+            if (watch_result<0) return watch_result;
+        }
         if (f) strcpy(launched_directory,(const char *)(uintptr_t)f);
         else launched_directory[0] = 0;
         save_environment(e);
         strcpy(launched_path,(const char *)(uintptr_t)c);
         memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
         observed_launches++; launches++;
-        if (launch_result < 0 && b) cancellations++;
+        if (launch_result < 0 && observe) cancellations++;
         return launch_result;
     }
-    if (fn != CUIS_CHILD_WATCH) return EINVFN;
-    if (b == CUIS_CHILD_RESERVE) { reservations++; return watch_result; }
-    if (c != 17) return EACCDN;
-    if (b == CUIS_CHILD_CANCEL) { cancellations++; return E_OK; }
     return EINVFN;
 }
 UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)

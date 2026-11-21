@@ -2740,31 +2740,27 @@ AES_SHELL remains unadvertised until its ordinary mode-1/chain semantics are
 implemented. No console, accessory, ARGV, chain/default-shell, shutdown or
 resolution-change support is implied by this slice.
 
-CUIS retains a bounded delivery reservation and a reference to the canonical
-PROCESS observer. PROCESS supplies completion, fault kind and terminal order.
-CUIS passes the following delivery operations without interpreting GEM headers:
+Observed launches bind a PROCESS right and 64-bit PROCESS identity to an
+endpoint receipt before runnable publication. The receipt keeps this right
+through publisher THREAD cancellation. libaes reads the full canonical
+PROCESS snapshot, selects the smallest terminal ordinal, and builds CH_EXIT.
+Normal exit retains its full status word. A crash uses signal << 8.
 
-  CUIS_CHILD_WATCH(session, action, token, reserved)
-    RESERVE (0), token=reserved=0: reserve one of 16 slots and return a
-    positive, never-reused token. CANCEL (2), reserved=0: drop an owned slot
-    without killing or reaping a child.
-  CUIS_LAUNCH_ATTACH(session, authorization, path, tail, environment, directory)
-    Prepare using PROCESS launch argument decoding and attach the exact
-    reservation and optional console lease before runnable publication.
-  CUIS_CHILD_RESULT(session)
-    Non-consuming peek in canonical terminal order. Zero means no completion;
-    the positive scalar has PID in its high WORD and status in its low WORD.
-    GEM receives signal << 8 for a crash and the full word for normal exit.
-  CUIS_CHILD_PUBLISH(session, expected_result, bytes_address, byte_count)
-    Append 1..32 opaque bytes to the caller's application stream if the same
-    completion and slot are still at its head. Failed copies, allocation or
-    stream capacity leave the notice pending.
+CUIS_STREAM_RECEIPT (94) accepts the source endpoint, operation, aligned
+address of a 64-byte CUIS_RECEIPT_RECORD and its size. The layout and operation
+constants are in include/cuis_receipt.h. QUERY reads a non-consuming snapshot
+of a slot. PREPARE snapshots the immutable bytes. COMMIT appends bytes and
+sender provenance while recording publication in the same critical section.
+ACK and RECLAIM finish cleanup, with RECLAIM gated by retirement of the exact
+PROCESS right and transient observation leases. A sibling can recover any
+step, and a stale generation cannot publish after slot reuse.
 
-Only successful publication consumes the adapter record. Public PROCESS
-completion remains independently available to Pwaitpid. Retained observers
-keep the PROCESS identity alive until publication, cancellation or session
-retirement. Session retirement releases the delivery slots without killing
-or reaping live children. New registrations have no inherited notifications.
+Session retirement closes the session's rights while the PROCESS is live.
+PROCESS teardown uses its own right finalizer. Public PROCESS completion
+remains independently available to Pwaitpid and survives GUI cleanup.
+For CUIS_READY_CHILD, SESSION_WAIT imports operation-local canonical observer
+leases from the endpoint receipts. It also wakes for a new binding or pending
+publication cleanup. Explicit wait arrays retain the existing wire layout.
 
 CUIS_READY_CHILD is a public readiness source in CUIS_SESSION_WAIT, alongside
 stream/notice/input/timer readiness. It wakes MU_MESAG immediately, including
@@ -2921,10 +2917,10 @@ normal/fault exit. Tails still use the ordinary 0..126-byte convention; ARGV,
 accessory and mode-1 text execution are not implied.
 
 CUIS_LAUNCH_ATTACH (93) takes six scalar arguments. The second argument
-contains the observer reservation in bits 0–30 and the console lease flag in
-bit 31. CUIS may attach either or both resources. A second console, foreign
+selects an optional console lease (bit 0) and/or an observation receipt
+(bit 1). A second console, foreign
 drawing ownership or modal mouse/keyboard capture rejects a console launch
-with EAGAIN and cancels the child reservation. The launcher's own update
+with EAGAIN and leaves no child reservation. The launcher's own update
 nesting remains balanced. CUIS calls the same PROCESS prepare used by
 S_PROCEXEC, revalidates the endpoint, installs requested resources and
 commits the prepared PROCESS. The commit makes the child runnable. Failed
@@ -3295,8 +3291,8 @@ exit and faults restore their drawing/input access. No single-task scheduler
 freeze or normal desktop chain load is introduced. ARGV and SW_ENVIRON use the
 same launch snapshots and caller ownership as the existing shell modes.
 
-A zero observation token is permitted for a console launch. It attaches the
-console to the child without reserving or consuming a notification slot.
+A console-only launch attaches the console to the child without reserving or
+consuming a notification slot.
 Other owned reservations remain intact, including when the table is full.
 Normal mode 0 and SHW_IMMED still bind their completion before execution.
 
