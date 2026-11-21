@@ -256,6 +256,12 @@ static long clone_request(uint64_t address, uint64_t size)
         if (address>=USER_VA_LIMIT) return EIMBA;
         if (!address && size==MLT_CONTENDED_ALLOC) return (LONG)kproc_test_contended_allocation();
         if (!address && size==MLT_WAIT_COUNT) return (LONG)kproc_test_mapping_wait_count();
+        if (size==MLT_FAIL_COPY) {
+            KPROC *source=kproc_retain(run);
+            LONG error=kaspace_test_fail_copy_at(kproc_active_space(source),(VADDR)address);
+            kproc_release(source);
+            return error;
+        }
         if (size==MLT_SNAPSHOT) return mapping_snapshot((VADDR)address);
         if (size>=MLT_INFO && size<=MLT_DETACH) {
             MAPPING_LIFETIME_CLAIM claim;
