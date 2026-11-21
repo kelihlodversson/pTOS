@@ -135,7 +135,7 @@ LDSO_START-$(ARCH_M68K) = lib/ldso/arch/m68k/start.S lib/ldso/arch/m68k/bootstra
                           lib/ldso/arch/m68k/support.c
 LDSO_START_FLAGS-$(ARCH_M68K) = -fno-tree-loop-distribute-patterns -fno-builtin
 LDSO_START_LIBS-$(ARCH_M68K) = -lgcc
-obj/ldso/ld.so: lib/ldso/runtime.c lib/ldso/launch.c lib/ldso/launch.h $(LDSO_START-y) obj/ldso/libldso.a $(AUTOCONF_H) \
+obj/ldso/ld.so: lib/ldso/runtime.c lib/ldso/launch.c lib/ldso/launch.h lib/ldso/bootstrap_image.h $(LDSO_START-y) obj/ldso/libldso.a $(AUTOCONF_H) \
                 lib/ldso/runtime.h lib/ldso/exports.map $(X32_PROBE_LDSO_HEADERS) lib/ldso/startup.h
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) $(LDSO_START_FLAGS-y) \
 	  -fvisibility=hidden -nostdlib -shared \
