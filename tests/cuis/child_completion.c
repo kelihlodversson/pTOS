@@ -15,7 +15,7 @@ static void child_idle_hook(void)
 /* A launched child's basepage, as spawn binds it; session.c's kproc_pid()
  * maps these page numbers back to the PID. */
 #define CHILD_IMAGE(pid) ((ULONG)(pid) * 4096UL)
-#define CHILD_BIND(s,t,pid) cuis_child_bind_spawn((ULONG)(s),(ULONG)(t),(PD *)(uintptr_t)CHILD_IMAGE(pid))
+#define CHILD_BIND(s,t,pid) bind_child(owned_client(s),(ULONG)(t),(WORD)(pid))
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage)
 {
     int i;
@@ -163,15 +163,16 @@ static int child_completion_checks(void)
 
 /* Observed load-and-go reuses GEMDOS validation and attaches inside spawn. */
 static LONG child_validate_error, child_start_error;
-static ULONG child_start_calls;
-static BOOL child_stay_live;
+static ULONG child_start_calls, child_abort_calls;
+static BOOL child_stay_live, retire_during_child_prepare;
 static ULONG console_abort_stage;
 static intptr_t console_launch_escape[5];
 static void abort_console_launch(void)
 {
     console_abort_stage = 0;
     cuis_process_exit(run);
-    /* Model process termination: the launch syscall never returns. */
+    /* Model process termination and retirement of its cleanup scope. */
+    cleanup_depth = 0;
     __builtin_longjmp(console_launch_escape,1);
 }
 long bdos_check_user_args(const long *args)
@@ -181,20 +182,39 @@ long bdos_check_user_args(const long *args)
     if (console_abort_stage == 1) abort_console_launch();
     return child_validate_error;
 }
-long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token)
+static char launched_directory[260];
+long proc_exec_prepare(char *path, char *tail, char *environment, char *directory, ULONG policy,
+                       PROCESS_OBSERVER **observer, void **prepared)
 {
-    LONG result;
-    if ((uintptr_t)path != 0x11000 || (uintptr_t)tail != 0x12000 || environment || !input_irqs) return EINVAL;
+    if ((uintptr_t)path != 0x11000 || (uintptr_t)tail != 0x12000 ||
+        environment || !input_irqs || policy != PROCESS_EXEC_ASYNC) return EINVAL;
+    if (!cleanup_depth || *observer || *prepared) __builtin_abort();
+    if (directory) strcpy(launched_directory,directory);
     child_start_calls++;
     if (child_start_error) return child_start_error;
-    result = cuis_child_bind_spawn(session,token,&third);
-    if (result != E_OK) return result;
     if (console_abort_stage == 2) abort_console_launch();
+    *observer = kproc_retain(&third);
+    *prepared = &third;
+    if (retire_during_child_prepare)
+        cuis_process_exit(run);
+    return E_OK;
+}
+LONG ksched_process_publish(void **prepared)
+{
+    if (input_irqs || !prepared || *prepared != &third ||
+        (console_launcher && console_owner != &third)) __builtin_abort();
+    *prepared = NULL;
     if (!child_stay_live) {
         test_children[0].status = (2L << 16) | 0x2468;
         cuis_child_completed(run,2,0x2468);
     }
     return 2;
+}
+void ksched_process_cancel(void **prepared)
+{
+    if (!input_irqs || !prepared || *prepared != &third) __builtin_abort();
+    *prepared = NULL;
+    child_abort_calls++;
 }
 static int child_launch_checks(void)
 {
@@ -219,6 +239,12 @@ static int child_launch_checks(void)
     CHECK(cuis_child_service(CUIS_CHILD_RESULT,session,0,0,0) == ((2L << 16) | 0x2468));
     CHECK(cuis_child_pid_reserved(2));
     CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,0) == EACCDN && child_start_calls == 2);
+    token = cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_RESERVE,0,0);
+    CHECK(token > 0);
+    retire_during_child_prepare = TRUE;
+    CHECK(cuis_child_launch(session,token,0x11000,0x12000,0,1) == EACCDN &&
+          child_abort_calls == 1 && !console_owner && !console_launcher);
+    retire_during_child_prepare = FALSE;
     cuis_process_exit(&first); run = &second; cuis_process_exit(run); run = &first;
     CHECK(!clients && allocations == frees && !cuis_child_pid_reserved(2));
     return 0;
@@ -303,7 +329,7 @@ static int console_abandoned_launch_checks(void)
             (void)cuis_child_launch(session,token,0x11000,0x12000,0,1);
             CHECK(FALSE);
         }
-        CHECK(!console_abort_stage && !console_launcher && !console_launch_image);
+        CHECK(!console_abort_stage && !console_launcher);
         CHECK(!console_owner && !text_console_active && !*find_owner(&first));
         /* Another client must be able to launch after the abandoned call. */
         run = &second;
@@ -375,13 +401,6 @@ static int button_resume_checks(void)
     return 0;
 }
 
-static char launched_directory[260];
-long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, char *directory)
-{
-    strcpy(launched_directory,directory);
-    if (!session && !token) { child_start_calls++; return child_start_error ? child_start_error : 2; }
-    return xexec_observed(path,tail,environment,session,token);
-}
 static int launch_directory_checks(void)
 {
     LONG session, other;

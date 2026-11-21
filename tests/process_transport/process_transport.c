@@ -113,6 +113,17 @@ void test_process_transport(void)
             r.operation=3;
             ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0,"CLOSE faulted observation");
         }
+        memset(&r,0,sizeof(r)); r.operation=5;
+        r.path=(unsigned long)"C:\\PROCXIT.TOS";
+        r.tail=(unsigned long)tail; r.environment=(unsigned long)env;
+        ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0,
+                         "schedule a detached successor without a GUI registration");
+        Syield();
+        ptest_assert_msg(Pwaitpid(-1,1,0)==EFILNF,
+                         "unpublished successor is outside the public child wait domain");
+        r.path=(unsigned long)"C:\\NOEXEC.TOS";
+        ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==EFILNF,
+                         "failed deferred replacement preserves the constructor error");
         memset(&r,0,sizeof(r)); r.operation=4;
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0 &&
                          Ssystem(PROCEXEC,(long)&r,72L)==0,"idempotent CANCEL_DEFERRED");

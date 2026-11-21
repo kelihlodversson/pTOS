@@ -3,6 +3,7 @@
 #include "cuis.h"
 #include "cuis_region.h"
 #include "cuis_input.h"
+#include "biosext.h"
 #include "ksched.h"
 #include "screen_mode.h"
 #include "gemerror.h"
@@ -208,7 +209,7 @@ static ULONG display_depth;
 static CUIS_RECT display_clip;
 /* One process owns the physical text console. The launcher remains an
  * ordinary GUI client; this lease survives its deregistration or exit. */
-static PD *console_owner, *console_launch_image;
+static PD *console_owner;
 static CUIS_CLIENT *console_launcher;
 extern void vdi_cuis_console(BOOL active);
 
@@ -1511,10 +1512,7 @@ static void session_exit_client(CUIS_CLIENT *client)
             if (directory_entries[i].owner == client) directory_entries[i].owner = NULL;
         /* A backing fault can terminate a syscall without unwinding its
          * launch frame. Never retain a session that teardown will free. */
-        if (console_launcher == client) {
-            console_launcher = NULL;
-            console_launch_image = NULL;
-        }
+        if (console_launcher == client) console_launcher = NULL;
         client->input_wait = NULL;
         if (windowless_focus == client) windowless_focus = NULL;
         background_remove(client);
@@ -1555,7 +1553,6 @@ void cuis_exec_rekey(PD *old, PD *new)
 {
     UQUAD flags = cuis_input_lock();
     if (console_owner == old) console_owner = new;
-    if (console_launch_image == old) console_launch_image = new;
     cuis_input_unlock(flags);
 }
 #endif
@@ -3575,32 +3572,18 @@ child_done:
     return result;
 }
 
-/* The existing GEMDOS loader keeps fixed-address ET_EXEC images at their link
- * address. A stack-scoped observer reaches spawn before user execution. */
-LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *child)
+/* Validate the exact observer destination before runnable publication. */
+static LONG bind_child(CUIS_CLIENT *client, ULONG token, WORD pid)
 {
-    CUIS_CLIENT *client;
-    LONG result = EACCDN, pid = kproc_pid(child);
     UWORD i, j;
-    UQUAD flags = cuis_input_lock();
-    client = *find_owner(run);
-    if (!client || client->handle != session || pid <= 0) goto spawn_bound;
-    if (!token) {
-        /* An unobserved launch may attach the console lease, without
-         * reserving an AES completion or collecting the child's exit. */
-        if (console_launcher == client) { console_launch_image = child; result = E_OK; }
-        goto spawn_bound;
-    }
+    if (pid <= 0) return EACCDN;
     for (i = 0; i < CUIS_CHILDREN_PER_SESSION; i++)
-        if (token && client->children[i].token == token && !client->children[i].pid) break;
-    if (i == CUIS_CHILDREN_PER_SESSION) goto spawn_bound;
+        if (client->children[i].token == token && !client->children[i].pid) break;
+    if (i == CUIS_CHILDREN_PER_SESSION) return EACCDN;
     for (j = 0; j < CUIS_CHILDREN_PER_SESSION; j++)
-        if (client->children[j].pid == pid) goto spawn_bound;
-    client->children[i].pid = (WORD)pid;
-    if (console_launcher == client) console_launch_image = child;
-    result = E_OK;
-spawn_bound:
-    cuis_input_unlock(flags); return result;
+        if (client->children[j].pid == pid) return EACCDN;
+    client->children[i].pid = pid;
+    return E_OK;
 }
 /* Copy before loader I/O can yield or fault. No user pointer survives launch. */
 static LONG launch_directory(UQUAD address, char *directory, ULONG size)
@@ -3613,9 +3596,17 @@ static LONG launch_directory(UQUAD address, char *directory, ULONG size)
     }
     return ERANGE;
 }
-static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console, UQUAD directory, BOOL unobserved)
+static BOOL console_launch_available(const CUIS_CLIENT *client)
+{
+    return !console_owner && (!display_owner || display_owner == client) &&
+        !mouse_owner && !keyboard_owner;
+}
+
+static LONG child_launch_owned(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQUAD environment, UQUAD console, UQUAD directory, BOOL unobserved)
 {
     CUIS_CLIENT *client;
+    PROCESS_OBSERVER *observer = NULL;
+    void *prepared = NULL;
     UQUAD flags;
     UWORD i;
     LONG result;
@@ -3635,12 +3626,12 @@ static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQU
         /* Own update nesting is released by the resident desktop after the
          * launch returns. Foreign drawing and all modal grabs must be idle. */
         flags = cuis_input_lock();
-        if (console_owner || console_launcher || (display_owner && display_owner != client) || mouse_owner || keyboard_owner) {
+        if (console_launcher || !console_launch_available(client)) {
             cuis_input_unlock(flags);
             if (token) (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
             return EAGAIN;
         }
-        console_launcher = client; console_launch_image = NULL;
+        console_launcher = client;
         cuis_input_unlock(flags);
     }
     args[0] = 0x4b; args[1] = PE_ASYNC_LOADGO;
@@ -3648,40 +3639,62 @@ static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail, UQU
     args[5] = args[6] = 0;
     result = launch_directory(directory,dir,sizeof(dir));
     if (!result) result = (LONG)bdos_check_user_args(args);
-    if (!result && directory)
-        result = (LONG)xexec_directory((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
-            (char *)(uintptr_t)environment,token || console ? (ULONG)session : 0,(ULONG)token,dir);
-    else if (!result)
-        result = (LONG)xexec_observed((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
-                                     (char *)(uintptr_t)environment,(ULONG)session,(ULONG)token);
+    if (result == E_OK)
+        result = proc_exec_prepare((char *)(uintptr_t)path,(char *)(uintptr_t)tail,
+            (char *)(uintptr_t)environment,directory ? dir : NULL,PROCESS_EXEC_ASYNC,
+            &observer,&prepared);
+    flags = cuis_input_lock();
+    client = owned_client(session);
+    if (result == E_OK) {
+        PD *child = kproc_live_pd(observer);
+        if (!client || !child || ksched_cancellation_pending() ||
+            (console && console_launcher != client)) result = EACCDN;
+        else if (console && !console_launch_available(client)) result = EAGAIN;
+        else if (token) result = bind_child(client,(ULONG)token,kproc_pid(child));
+        if (result == E_OK) {
+            if (console) {
+                CUIS_CLIENT *peer;
+                CUIS_WINDOW *window;
+                console_owner = child;
+                pointer_capture = pointer_hover = NULL;
+                pointer_activation_drag = pointer_control_drag = FALSE;
+                surface_capture = background_capture = NULL;
+                for (peer = clients; peer; peer = peer->next) {
+                    peer->key_head = peer->key_count = 0;
+                    button_history_policy(peer);
+                    peer->edge_count = peer->recent_count = 0;
+                    for (window = peer->windows; window; window = window->next) {
+                        window->key_head = window->key_count = 0;
+                        window->pointer_head = window->pointer_count = 0;
+                        cancel_controls(window);
+                    }
+                }
+                cuis_pointer_sync();
+                vdi_cuis_console(TRUE);
+            }
+            /* The private slot and GUI attachments are both complete.
+             * Publication is the only runnable store and cannot yield. */
+            result = ksched_process_publish(&prepared);
+            if (result <= 0) panic("CUIS launch lost prepared PROCESS");
+        }
+    }
+    if (console && console_launcher == client) console_launcher = NULL;
+    cuis_input_unlock(flags);
+    if (prepared) ksched_process_cancel(&prepared);
+    if (observer) process_observer_release(&observer);
     if (result < 0 && token)
         (void)cuis_child_service(CUIS_CHILD_WATCH,session,CUIS_CHILD_CANCEL,token,0);
-    if (console) {
-        flags = cuis_input_lock();
-        /* Pexec stages a ready task; cooperative scheduling cannot enter it
-         * before this syscall returns. The spawn observer retained identity. */
-        if (result > 0 && console_launch_image) {
-            CUIS_CLIENT *peer;
-            CUIS_WINDOW *window;
-            console_owner = console_launch_image;
-            pointer_capture = pointer_hover = NULL;
-            pointer_activation_drag = pointer_control_drag = FALSE;
-            surface_capture = background_capture = NULL;
-            for (peer = clients; peer; peer = peer->next) {
-                peer->key_head = peer->key_count = 0;
-                button_history_policy(peer);
-                peer->edge_count = peer->recent_count = 0;
-                for (window = peer->windows; window; window = window->next) {
-                    window->key_head = window->key_count = 0;
-                    window->pointer_head = window->pointer_count = 0;
-                    cancel_controls(window);
-                }
-            }
-            cuis_pointer_sync(); vdi_cuis_console(TRUE);
-        }
-        console_launcher = NULL; console_launch_image = NULL;
-        cuis_input_unlock(flags);
-    }
+    return result;
+}
+
+static LONG child_launch(UQUAD session, UQUAD token, UQUAD path, UQUAD tail,
+                         UQUAD environment, UQUAD console, UQUAD directory, BOOL unobserved)
+{
+    KSCHED_CLEANUP_SCOPE scope = {0};
+    LONG result;
+    ksched_cleanup_begin(&scope);
+    result = child_launch_owned(session,token,path,tail,environment,console,directory,unobserved);
+    ksched_cleanup_end(&scope);
     return result;
 }
 

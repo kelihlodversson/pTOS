@@ -47,6 +47,10 @@ void process_observer_release(PROCESS_OBSERVER **out)
 #ifdef RECEIPT_RUNTIME_FIXTURE
     if (receipt_fixture_active) { receipt_fixture_release(out); return; }
 #endif
+    if (*out == (PROCESS_OBSERVER *)&third) {
+        if (!input_irqs || !cleanup_depth) __builtin_abort();
+        kproc_release(*out); *out = NULL; return;
+    }
     if (!input_irqs || !cleanup_depth || !*out || !wait_targets[index].leases) __builtin_abort();
     wait_targets[index].leases--; wait_releases++; *out=NULL;
 }

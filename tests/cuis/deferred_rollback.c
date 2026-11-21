@@ -229,10 +229,9 @@ void invalidate_instruction_cache(const UBYTE *address, ULONG length) { }
 
 /* Other Pexec modes must not run during this regression. */
 BOOL ksched_active(void) { abort(); }
-LONG ksched_spawn(PD *p) { abort(); }
-LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token)
+LONG ksched_spawn(PD *p)
 {
-    CHECK(observer_mode && p==&image && !session && !token && records==1);
+    CHECK(observer_mode && p==&image && records==1);
     CHECK(observer_refs==1 && observer_output && !*observer_output);
     CHECK(references[0]==4 && references[1]==2 && dirtbl[3].use==2 && dirtbl[4].use==2);
     publications++;

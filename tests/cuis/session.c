@@ -1,8 +1,6 @@
 /* Exercise the production scalar CUIS service and allocation failures. */
 #include "emutos.h"
 #include "bdosdefs.h"
-long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, char *directory);
-long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
 /* CUIS selects native scheduling in production. The broad hosted runner uses
  * a non-CUIS preset but includes this source explicitly. Match that dependency. */
 #undef CONF_WITH_NATIVE_SCHED
@@ -359,6 +357,8 @@ void kproc_release(KPROC *process)
     if (!process || !process_references) __builtin_abort();
     process_references--;
 }
+PD *kproc_live_pd(const KPROC *process) { return (PD *)process; }
+void panic(const char *message, ...) { __builtin_printf("%s\n",message); __builtin_abort(); }
 UQUAD kproc_ref_number(const KPROC *process)
 {
     return process == (KPROC *)&first ? 0x100000001ULL : 0x200000001ULL;

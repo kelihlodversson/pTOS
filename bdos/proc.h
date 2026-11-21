@@ -42,10 +42,6 @@ long proc_exec_observe(char *path, char *tail, char *environment, char *director
 long proc_exec_prepare(char *path, char *tail, char *environment, char *directory, ULONG policy,
                        struct kproc **observer, void **prepared);
 #endif
-#if CONF_WITH_CUIS
-long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
-long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, char *directory);
-#endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
 #if CONF_WITH_USER_ASPACE

@@ -559,7 +559,7 @@ static WORD envsize(char *env)
 
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
+    BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
 /* #1018: the public modes of this platform. The historical staged modes are
  * 68k compatibility (doc/pexec-legacy-modes.txt); MMU ARM and x32 keep only
  * Pexec(0/100/200) until #1008. Non-MMU ARM is left unchecked: it has no
@@ -596,7 +596,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * FreeMiNT's mode 0 does. The result is the child's 16-bit exit code, as
      * from the nested carrier. */
     if (flag == PE_LOADGO && ksched_anchor_launch_allowed()) {
-        LONG pid = exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
+        LONG pid = exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,NULL,NULL,NULL,NULL);
         LONG result, error;
         if (pid <= 0) return pid ? pid : EINTRN;
         error = ksched_wait_exact((WORD)pid, &result);
@@ -604,7 +604,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     }
 #endif
     /* exec_common() learns whether this is the kernel's own request. */
-    return exec_common(flag|kernel,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
+    return exec_common(flag|kernel,path,tail,env,FALSE,NULL,NULL,NULL,NULL);
 }
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 /* The region self-test is kernel code running on behalf of a managed process
@@ -612,7 +612,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
  * has a user address space. Never reachable from a GEMDOS trap. */
 long xexec_selftest(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_common(flag|PE_KERNEL,path,tail,env,0,0,FALSE,NULL,NULL,NULL,NULL);
+    return exec_common(flag|PE_KERNEL,path,tail,env,FALSE,NULL,NULL,NULL,NULL);
 }
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
@@ -620,24 +620,14 @@ long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)
 {
     if (!out || *out) return EINVAL;
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,FALSE,directory,out,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,directory,out,NULL,NULL));
 }
 long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG policy,
                        PROCESS_OBSERVER **out, void **prepared)
 {
     if (!out || *out || !prepared || *prepared || policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,0,0,
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,
                      policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL));
-}
-#endif
-#if CONF_WITH_CUIS
-long xexec_observed(char *path, char *tail, char *env, ULONG session, ULONG token)
-{
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,NULL,NULL,NULL,NULL));
-}
-long xexec_directory(char *path, char *tail, char *env, ULONG session, ULONG token, char *directory)
-{
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,session,token,FALSE,directory,NULL,NULL,NULL));
 }
 #endif
 #if CONF_WITH_EXEC_REPLACE
@@ -647,14 +637,14 @@ LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *replacement,
     LONG result;
     if (kproc_exec_replacement_validate(replacement) || !path || !tail)
         return EACCDN;
-    result = DISK_CALL(exec_common(PE_LOAD,path,tail,env,0,0,FALSE,
+    result = DISK_CALL(exec_common(PE_LOAD,path,tail,env,FALSE,
                                   NULL,NULL,NULL,replacement));
     if (result < 0) return result;
     return kproc_exec_replacement_image_ready(replacement) ? E_OK : EPLFMT;
 }
 #endif
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    ULONG session, ULONG token, BOOL deferred, char *directory, struct kproc **observe, void **prepared,
+    BOOL deferred, char *directory, struct kproc **observe, void **prepared,
     void *replacement)
 {
     PD *p, *owner;
@@ -682,13 +672,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     UNUSED(observe);
     UNUSED(prepared);
 #endif
-#if !CONF_WITH_CUIS
-    UNUSED(session); UNUSED(token);
 #if !CONF_WITH_NATIVE_SCHED
     UNUSED(deferred);
-#endif
-#endif
-#if !CONF_WITH_NATIVE_SCHED
     UNUSED(directory);
 #endif
 
@@ -1183,12 +1168,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
         if (rc == E_OK) {
             if (prepared) rc = ksched_process_prepare(cur_p, deferred, prepared);
-            else
-#if CONF_WITH_CUIS
-            rc = ksched_spawn_observed(cur_p,session,token);
-#else
-            rc = ksched_spawn(cur_p);
-#endif
+            else rc = ksched_spawn(cur_p);
         }
         if (rc < 0) {
             proc_discard_scheduled(cur_p);

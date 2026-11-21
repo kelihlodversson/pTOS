@@ -198,8 +198,6 @@ void ksched_process_cancel(void **slot);
 /* Idempotent cancellation of only the current PROCESS's selected held successor.
  * Uncommitted preparations and already runnable children are unaffected. */
 LONG ksched_defer_cancel(void);
-/* Internal observed launch, available only with CUIS. */
-LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token);
 #if CONF_WITH_USER_ASPACE
 struct kproc;
 void proc_dispose_process(struct kproc *process);

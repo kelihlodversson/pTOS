@@ -23,7 +23,6 @@ void kproc_exec_commit_end(KPROC *p)
 { CHECK(p==(KPROC *)&owner && committing); committing=FALSE; }
 
 
-LONG cuis_child_bind_spawn(ULONG session, ULONG token, PD *pd) { (void)session; (void)token; (void)pd; abort(); }
 BOOL kproc_unlaunched(PD *pd) { return pd == &child; }
 ASPACE_ROOT kproc_user_root(PD *pd) { CHECK(pd == &child); return 0; }
 KPROC *kproc_retain(PD *pd)

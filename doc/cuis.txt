@@ -2945,9 +2945,11 @@ sixth scalar: 0 keeps graphical behavior, 1 requests the physical text console.
 Other values fail with EINVAL. A second console, foreign drawing ownership or
 modal mouse/keyboard capture rejects launch with EAGAIN and cancels the child
 reservation. The launcher's own update nesting remains balanced. Loader and
-spawn errors cancel the reservation without entering text mode. The existing
-spawn observer retains the new child's identity before user execution; the
-current cooperative scheduler cannot run it before launch setup returns.
+spawn errors cancel the reservation without entering text mode. CUIS obtains
+a private PROCESS preparation through the common loader. It revalidates the
+client and display state, attaches the requested console lease, and only then
+publishes the runnable PROCESS. No scheduler entry point takes a CUIS
+session or child token.
 
 The full-screen lease belongs to the child process, independently of the
 launcher's session and of the child's optional AES registration. Native VDI
