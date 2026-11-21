@@ -4,6 +4,10 @@
 #include <string.h>
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#ifdef PROCESS_DIRECTORY_TEST
+#include <mint/mintbind.h>
+#include "../../../include/process_exec.h"
+#endif
 
 long _stksize = 16384;
 static char environment[32768], large[1001];
@@ -40,6 +44,45 @@ static void make_environment(const char *kind, int classic)
     }
     *at++ = 0; *at = 0;
 }
+
+#ifdef PROCESS_DIRECTORY_TEST
+static int process_directory(void)
+{
+    PROCESS_EXEC_REQUEST request = {0};
+    char directory[16], tail[] = {0, 0};
+    long handle, pid, status;
+    unsigned int mode;
+    sprintf(directory, "%c:\\BIN", 'A' + boot);
+    if (Ssystem(-1, PROCESS_EXEC_SSYSTEM, 0L) || Dsetdrv(boot) < 0) return 1;
+    make_environment("PROCESSDIR", 1);
+    for (mode = 0; mode < 2; mode++) {
+        memset(&request, 0, sizeof(request));
+        request.operation = mode ? PROCESS_EXEC_PREPARE : PROCESS_EXEC_START;
+        request.path = (ULONG)(uintptr_t)"DEMO.FMT";
+        request.tail = (ULONG)(uintptr_t)tail;
+        request.environment = (ULONG)(uintptr_t)environment;
+        request.directory = (ULONG)(uintptr_t)directory;
+        pid = Ssystem(PROCESS_EXEC_SSYSTEM, (long)&request, sizeof(request));
+        if (mode && pid > 0) {
+            handle = pid;
+            memset(&request, 0, sizeof(request));
+            request.operation = PROCESS_EXEC_COMMIT;
+            request.handle = (ULONG)handle;
+            pid = Ssystem(PROCESS_EXEC_SSYSTEM, (long)&request, sizeof(request));
+            request.operation = PROCESS_EXEC_CLOSE;
+            if (Ssystem(PROCESS_EXEC_SSYSTEM, (long)&request, sizeof(request))) return 1;
+        }
+        status = pid > 0 ? Pwaitpid((short)pid, 0, 0) : pid;
+        if (pid <= 0 || (unsigned long)status != ((unsigned long)pid << 16 | 37)) {
+            printf("binfmt boot: FAIL PROCESS %s directory returned %ld, wait %ld\n",
+                   mode ? "PREPARE" : "START", pid, status);
+            return 1;
+        }
+    }
+    (void)Dsetdrv(0);
+    return 0;
+}
+#endif
 
 static int run(const char *name, const char *kind, int mode, int classic, long expected, int writes)
 {
@@ -172,6 +215,10 @@ int main(void)
             run("SUB\\NOEXIST.TOS", "ERROR", 0, 0, -33, 0) ||
             run("SUB\\SHORT.TOS", "ERROR", 0, 0, -66, 0)) goto failed;
     }
+#ifdef PROCESS_DIRECTORY_TEST
+    if (process_directory()) goto failed;
+    puts("binfmt PROCESS directory: PASS");
+#endif
     if (Fclose((short)shared)) goto failed;
     puts("binfmt boot: PASS");
     return 0;

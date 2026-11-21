@@ -94,7 +94,7 @@ static void stream_copy_hook(int phase)
     if (stream_action==9 && phase==2) {
         LONG token=(LONG)cohort.token;
         run=&second;
-        if (cuis_cohort_service(CUIS_COHORT_CANCEL,lifetime_receiver,token,0,0,0,0)) stream_bad=1;
+        if (cuis_endpoint_barrier(lifetime_receiver,CUIS_BARRIER_RELEASE,token)) stream_bad=1;
         run=saved; return;
     }
     if (stream_action==8 && phase==2) {
@@ -239,12 +239,12 @@ static int stream_lifetime_checks(void)
      * during a prepared copy. PEEK deliberately publishes metadata, not bytes. */
     run=&first; lifetime_source=cuis_service(CUIS_SESSION_START,0); lifetime_sender=find_handle(lifetime_source)->aes_id; lifetime_stream_source=*find_owner(run);
     run=&second; lifetime_receiver=cuis_service(CUIS_SESSION_START,0); lifetime_peer_sender=find_handle(lifetime_receiver)->aes_id;
-    result=cuis_cohort_service(CUIS_COHORT_BEGIN,lifetime_receiver,0,0,0,0,0);
+    result=cuis_endpoint_barrier(lifetime_receiver,CUIS_BARRIER_ACQUIRE,0);
     CHECK(result>0);
-    CHECK(!cuis_cohort_service(CUIS_COHORT_STAGE,lifetime_receiver,result,lifetime_source,0x10000,16,0) &&
-          !cuis_cohort_service(CUIS_COHORT_COMMIT,lifetime_receiver,result,0x10000,16,0,0));
+    CHECK(!cuis_stream_batch(lifetime_receiver,CUIS_BATCH_COMMAND(CUIS_BATCH_STAGE,result),lifetime_source,0x10000,16,0) &&
+          !cuis_stream_batch(lifetime_receiver,CUIS_BATCH_COMMAND(CUIS_BATCH_SEAL,result),16,0,0,0));
     run=&first;
-    CHECK(!cuis_cohort_service(CUIS_COHORT_PUBLISH,lifetime_source,result,0,0,0,0));
+    CHECK(!cuis_stream_batch(lifetime_source,CUIS_BATCH_COMMAND(CUIS_BATCH_PUBLISH,result),0,0,0,0));
     CHECK(cuis_stream_service(CUIS_STREAM_PEEK,lifetime_source,0x20000,4,0,0)==4 &&
           lifetime_stream_source->cohort_read_token==(ULONG)result && lifetime_stream_source->cohort_read_bytes==4);
     fail_copy_address=0x1000;

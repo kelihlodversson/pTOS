@@ -37,9 +37,6 @@
 #if CONF_WITH_X86_64_MEMTEST
 #include "../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
-#if CONF_WITH_CUIS
-#include "../aes/cuis.h"
-#endif
 extern PD *run;
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 #include "region_selftest.h"
@@ -2213,9 +2210,6 @@ void ksched_context_restore(UQUAD identity)
 BOOL ksched_pid_reserved(WORD pid)
 {
     KERNEL_TASK *task;
-#if CONF_WITH_CUIS
-    if (cuis_child_pid_reserved(pid)) return TRUE;
-#endif
     {
         BOOL found=FALSE;
         KOWNER_GUARD guard; kowner_enter(&guard,KOWNER_RUNQUEUE);
@@ -2232,9 +2226,6 @@ void ksched_exiting(PD *pd, UWORD result)
 {
     KERNEL_TASK *task;
     KPROC *exiting;
-#if CONF_WITH_CUIS
-    BOOL asynchronous = FALSE;
-#endif
     exiting=kproc_retain(pd);
     ksched_admission_owner_exited(exiting);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
@@ -2256,10 +2247,6 @@ void ksched_exiting(PD *pd, UWORD result)
         ksched_admission_release(&waiter);
     }
     if (!scheduler.active) {
-#if CONF_WITH_CUIS
-        PD *parent=kproc_notification_parent(pd);
-        if (parent) cuis_child_completed(parent,kproc_pid(pd),result);
-#endif
         kproc_release(exiting); return;
     }
     for (task = scheduler.tasks; task; task = task->next_task) {
@@ -2279,9 +2266,6 @@ void ksched_exiting(PD *pd, UWORD result)
 #endif
             if (execution_cpu.current && execution_cpu.current->process == task->process)
                 task->signal = execution_cpu.current->signal;
-#if CONF_WITH_CUIS
-            asynchronous = task->asynchronous;
-#endif
             kproc_usage(pd, usage);
             task->usage[0] = usage[1] + usage[3];
             task->usage[1] = 0;
@@ -2293,15 +2277,6 @@ void ksched_exiting(PD *pd, UWORD result)
         }
     }
     kproc_release(exiting);
-#if CONF_WITH_CUIS
-    /* Nested synchronous children never return through task_entry(). Their
-     * trusted parent/PID still exist here; async tasks publish at task_entry
-     * after their final result/signal is known. */
-    if (!asynchronous) {
-        PD *parent = kproc_notification_parent(pd);
-        if (parent) cuis_child_completed(parent,kproc_pid(pd),result);
-    }
-#endif
 }
 
 /* Activate only the retained canonical predecessor, after PROCESS cleanup.
@@ -2340,10 +2315,6 @@ void ksched_fault(PD *pd, WORD signal)
     KERNEL_TASK *task;
     if (!scheduler.active) {
         kproc_note_fault(pd, signal);
-#if CONF_WITH_CUIS
-        PD *parent = kproc_notification_parent(pd);
-        if (parent) cuis_child_fault(parent,kproc_pid(pd),signal);
-#endif
         return;
     }
     /* A foreign callback changes run, but retains the invoking task's
@@ -2355,24 +2326,10 @@ void ksched_fault(PD *pd, WORD signal)
         if ((task->state == TASK_NEW || task->state == TASK_RUNNING ||
              task->state == TASK_BLOCKED) && task->program == pd) {
             if (!task->signal) task->signal = signal;
-#if CONF_WITH_CUIS
-            if (!completion_task(task)->asynchronous &&
-                kproc_thread_is_sole(task->process, task->thread)) {
-                PD *parent = kproc_notification_parent(pd);
-                if (parent) cuis_child_fault(parent,kproc_pid(pd),task->signal);
-            }
-#endif
             return;
         }
     }
     kproc_note_fault(pd, signal); /* Nested child: no THREAD slot or live siblings. */
-#if CONF_WITH_CUIS
-    /* Nested synchronous children have no task slot of their own. */
-    {
-        PD *parent = kproc_notification_parent(pd);
-        if (parent) cuis_child_fault(parent,kproc_pid(pd),signal);
-    }
-#endif
 }
 
 static void task_entry(void)
@@ -2425,11 +2382,6 @@ static void task_entry(void)
             if (owner->process_completed) kproc_publish_observers(owner->process);
             /* A refused unstarted task may still retain its association.
              * Retirement during root reap publishes abandonment, not status. */
-#if CONF_WITH_CUIS
-            if (owner->state == TASK_ZOMBIE)
-                cuis_child_completed(owner->parent,owner->pid,
-                    owner->signal ? (UWORD)owner->signal << 8 : (UWORD)owner->result);
-#endif
         } else if (owner == task) {
             RUNQUEUE_GUARD guard; runqueue_enter(&guard);
             /* Initial TID has stopped, but PID/resources/children remain live.
@@ -2871,61 +2823,17 @@ void ksched_process_cancel(void **slot)
     *slot = NULL;
     discard_process_task(task);
 }
-#if CONF_WITH_CUIS
-static LONG spawn_configured_owned(PD *pd, ULONG session, ULONG token, BOOL deferred)
+LONG ksched_spawn(PD *pd)
 {
+    KSCHED_CLEANUP_SCOPE scope = {0};
     void *slot = NULL;
-    KPROC *owner = NULL;
     LONG result;
-    if (!ksched_async_allowed()) return EINVFN;
-    if (deferred) {
-        if (cuis_service(CUIS_SESSION_QUERY, session) != E_OK) return EACCDN;
-        /* Legacy immediate launch must reject reentry before preparation can
-         * consume the loader's image. Generic owned rights may retry COMMIT. */
-        owner = kproc_retain(run);
-        if (!owner) return ENSMEM;
-        if (!kproc_exec_commit_begin(owner)) { kproc_release(owner); return EACCDN; }
-    } else if (session || token) {
-        result = cuis_child_bind_spawn(session, token, pd);
-        if (result != E_OK) return result;
-    }
-    result = ksched_process_prepare(pd, deferred, &slot);
-    if (result != E_OK) {
-        if (owner) { kproc_exec_commit_end(owner); kproc_release(owner); }
-        return result;
-    }
-    if (owner) {
-        (void)finish_deferred_commit(&slot, owner);
-        kproc_release(owner);
-        return E_OK;
-    }
-    return ksched_process_publish(&slot);
-}
-static LONG spawn_configured(PD *pd, ULONG session, ULONG token, BOOL deferred)
-{
-    KSCHED_CLEANUP_SCOPE scope={0};
-    LONG result;
-    /* The legacy loader also owns a prepared image and predecessor commit
-     * transaction across destructor callbacks. Protect through the final
-     * reference release; delivery belongs to the outer syscall boundary. */
     ksched_cleanup_begin(&scope);
-    result=spawn_configured_owned(pd,session,token,deferred);
+    result = ksched_process_prepare(pd, FALSE, &slot);
+    if (result == E_OK) result = ksched_process_publish(&slot);
     ksched_cleanup_end(&scope);
     return result;
 }
-LONG ksched_spawn(PD *pd) { return spawn_configured(pd,0,0,FALSE); }
-LONG ksched_spawn_observed(PD *pd, ULONG session, ULONG token)
-{ return spawn_configured(pd,session,token,FALSE); }
-LONG ksched_defer(PD *pd, ULONG session)
-{ return spawn_configured(pd,session,0,TRUE); }
-#else
-LONG ksched_spawn(PD *pd)
-{
-    void *slot = NULL;
-    LONG result = ksched_process_prepare(pd, FALSE, &slot);
-    return result == E_OK ? ksched_process_publish(&slot) : result;
-}
-#endif
 
 typedef struct { PD *parent; WORD pid; UQUAD owner; ULONG tid; } CHILD_WAIT;
 static BOOL process_wait_target(const KERNEL_TASK *task,const CHILD_WAIT *wait)

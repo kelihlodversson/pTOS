@@ -17,6 +17,7 @@
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
 #include "ksched_lifetime.h"
+#include "ksched_sequence.h"
 #include "process_exec_internal.h"
 #endif
 #if CONF_WITH_CUIS
@@ -185,6 +186,7 @@ struct kproc {
     BOOL exec_image_staging; /* loader container bound to a replacement root */
 #endif
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
+    KSCHED_WAIT_SEQUENCE exec_closes;
     BOOL clone_guarded;
 #if CONF_WITH_PTERMGRP
     BOOL group_exiting;
@@ -592,6 +594,16 @@ KPROC *kproc_retain_identity(KPROC *process)
 struct process_exec_handle **kproc_exec_handles(KPROC *owner)
 {
     return owner && !owner->retired ? &owner->exec_handles : NULL;
+}
+UQUAD kproc_exec_close_sequence(const KPROC *owner)
+{
+    KSCHED_WAIT_OBSERVATION observation;
+    ksched_sequence_observe(&owner->exec_closes,&observation);
+    return observation.value;
+}
+void kproc_publish_exec_close(KPROC *owner)
+{
+    ksched_wake_sequence(&owner->exec_closes);
 }
 static BOOL kproc_exec_commit_begin_owned(KPROC *owner)
 {

@@ -10,6 +10,11 @@
 #include <string.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+#include "../../include/cuis.h"
+#include "../../include/cuis_receipt.h"
+#include "../../include/process_exec.h"
+#endif
 #if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
 #include "exec200_probe.h"
 #endif
@@ -1205,14 +1210,99 @@ static int input_wait_admitted(long tid)
     return 1;
 #endif
 }
+
+static long launch_observed_input_child(long session)
+{
+    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
+    return native_cuis6(CUIS_LAUNCH_ATTACH,session,CUIS_LAUNCH_OBSERVE,
+                        (uintptr_t)path,(uintptr_t)tail,(uintptr_t)group_env,0);
+}
+
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+static struct {
+    long waiter;
+    ULONG right;
+    long result;
+} receipt_close_probe;
+
+static void close_while_receipt_waits(void *argument)
+{
+    PROCESS_EXEC_REQUEST request={0};
+    (void)argument;
+    receipt_close_probe.result=-1;
+    if (!input_wait_admitted(receipt_close_probe.waiter)) return;
+    request.operation=PROCESS_EXEC_CLOSE;
+    request.handle=receipt_close_probe.right;
+    receipt_close_probe.result=Ssystem(PROCESS_EXEC_SSYSTEM,(long)(uintptr_t)&request,sizeof(request));
+}
+
+static void test_native_receipt_close(void)
+{
+    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'C',0};
+    CUIS_RECEIPT_RECORD receipt={0};
+    int32_t peer_pid,tid,status;
+    long session, child, result;
+    (void)Fdelete("C:\\CLOSEGO.ON");
+    session=native_cuis(CUIS_SESSION_START,0,0);
+    ptest_assert_msg(session>=0,"open endpoint for native receipt CLOSE wake");
+    if (session<0) return;
+    child=native_cuis6(CUIS_LAUNCH_ATTACH,session,CUIS_LAUNCH_OBSERVE,
+                       (uintptr_t)path,(uintptr_t)tail,(uintptr_t)group_env,0);
+    ptest_assert_msg(child>0,"launch an observed PROCESS held live until after receipt reclamation");
+    if (child<=0) goto end_session;
+    receipt.source=receipt.source_low=(ULONG)session;
+    result=native_cuis6(CUIS_STREAM_RECEIPT,session,CUIS_RECEIPT_QUERY,(uintptr_t)&receipt,sizeof(receipt),0,0);
+    ptest_assert_msg(!result && receipt.state==CUIS_RECEIPT_BOUND && receipt.tag,"query bound native receipt");
+    if (result || !receipt.tag) goto release_child;
+    receipt_close_probe.waiter=wait_admission(0);
+    receipt_close_probe.right=receipt.tag;
+    result=launch_entry(close_while_receipt_waits,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[0],&peer_pid,&tid);
+    ptest_assert_msg(result>0,"start sibling closer for blocked implicit receipt wait");
+    if (result<=0) goto release_child;
+    result=native_cuis6(CUIS_SESSION_WAIT,session,0,CUIS_READY_CHILD|CUIS_READY_TIMER,1000,0,0);
+    ptest_assert_msg(result==CUIS_READY_CHILD,"closing an imported receipt right wakes the blocked native waiter");
+    ptest_assert_msg(join_tid(tid,&status)==0 && status==0 && !receipt_close_probe.result,"sibling closed the exact owned right");
+    ptest_assert_msg(Pwaitpid((short)child,1,0)==0,"CLOSE wake does not finish or consume the child");
+    ptest_assert_msg(native_cuis6(CUIS_STREAM_RECEIPT,session,CUIS_RECEIPT_RECLAIM,
+                     (uintptr_t)&receipt,sizeof(receipt),0,0)==0,"woken waiter releases its receipt fence before child exit");
+release_child:
+    group_mark("CLOSEGO.ON");
+    result=Pwaitpid((short)child,0,0);
+    ptest_assert_msg(result>0 && (result&65535)==19,"independent public wait reaps the released child");
+    (void)Fdelete("C:\\CLOSEGO.ON");
+end_session:
+    (void)native_cuis(CUIS_SESSION_END,session,0);
+}
+#endif
+
+static long wait_for_input_child(long session, CUIS_RECEIPT_RECORD *receipt)
+{
+    const ULONG events=CUIS_READY_BUTTON|CUIS_READY_CHILD|CUIS_READY_TIMER;
+    const ULONG timeout=5000;
+    ULONG start=(ULONG)Ssystem(S_GETLVAL,0x4baL,0L), elapsed;
+    long result=native_cuis5(CUIS_SESSION_WAIT,session,0,events,timeout,0);
+    if (result!=CUIS_READY_CHILD) return result;
+
+    /* These fixtures start a fresh endpoint and launch one observed child.
+     * The first wake may report a new binding. Adopt the click checkpoint
+     * while waiting on the exact PROCESS right for its terminal wake. */
+    receipt->source=receipt->source_low=(ULONG)session;
+    result=native_cuis5(CUIS_STREAM_RECEIPT,session,CUIS_RECEIPT_QUERY,
+                        (long)(uintptr_t)receipt,sizeof(*receipt),0);
+    if (result || receipt->state!=CUIS_RECEIPT_BOUND || !receipt->tag) return result;
+    elapsed=(ULONG)Ssystem(S_GETLVAL,0x4baL,0L)-start;
+    if (elapsed>=timeout/5) return CUIS_READY_TIMER;
+    return native_cuis6(CUIS_SESSION_WAIT,session,0,events,timeout-elapsed*5,
+                        (uintptr_t)&receipt->tag,1);
+}
+
 static struct {
     volatile long error, first_tick, second_tick, released, checked_before_wait, adopting;
     long session, child, leader;
 } native_resume;
 static void native_resume_peer(void *argument)
 {
-    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
-    long x,y,buttons,modifiers,token;
+    long x,y,buttons,modifiers;
     (void)argument;
 #if defined(TEST_WITH_CUIS_WAIT_TEST)
     /* Force one observation while the leader can only be running or
@@ -1229,9 +1319,7 @@ static void native_resume_peer(void *argument)
         if (!(buttons&1)) (void)Syield();
     } while (!(buttons&1));
     native_resume.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
-    token=native_cuis5(66,native_resume.session,0,0,0,0);
-    if (token<=0) { native_resume.error=1; return; }
-    native_resume.child=native_cuis6(69,native_resume.session,token,(unsigned long)path,(unsigned long)tail,0,0);
+    native_resume.child=launch_observed_input_child(native_resume.session);
     if (native_resume.child<=0) { native_resume.error=1; return; }
     do {
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
@@ -1450,8 +1538,7 @@ static struct {
 } native_cancel;
 static void native_cancel_peer(void *argument)
 {
-    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
-    long x,y,buttons=0,modifiers,token,launched;
+    long x,y,buttons=0,modifiers,launched;
     (void)argument;
     if (!input_wait_admitted(native_cancel.leader)) { native_cancel.error=1; return; }
     conws(native_cancel.mode?"CUIS cancel resume first: READY\r\n":"CUIS cancel button: READY\r\n");
@@ -1463,11 +1550,10 @@ static void native_cancel_peer(void *argument)
     } while (!(buttons&1));
     native_cancel.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
     if (native_cancel.mode) {
-        token=native_cuis5(66,native_cancel.session,0,0,0,0);
-        launched=token>0?native_cuis6(69,native_cancel.session,token,(unsigned long)path,(unsigned long)tail,(unsigned long)group_env,0):token;
+        launched=launch_observed_input_child(native_cancel.session);
         if (launched<=0) {
             native_cancel.error=launched?launched:1;
-            printf("resume observer launch token=%ld result=%ld\r\n",token,launched); return;
+            printf("resume observer launch result=%ld\r\n",launched); return;
         }
         while (!native_cancel.adopt) (void)Syield();
         if (!input_wait_admitted(native_cancel.leader)) { native_cancel.error=1; return; }
@@ -1484,6 +1570,7 @@ static void native_cancel_peer(void *argument)
 }
 static void native_cancel_leader(void *argument)
 {
+    CUIS_RECEIPT_RECORD receipt={0};
     int32_t pid,tid;
     long x,y,buttons=0,modifiers,result;
     (void)argument;
@@ -1525,8 +1612,9 @@ static void native_cancel_leader(void *argument)
     if (launch_entry(native_cancel_peer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&tid)<=0) {
         native_cancel.error=1; return;
     }
-    result=native_cuis5(32,native_cancel.session,0,16|2|(native_cancel.mode?2048:0),5000,0);
-    if (native_cancel.mode && result==2048) {
+    result=native_cancel.mode ? wait_for_input_child(native_cancel.session,&receipt) :
+        native_cuis5(CUIS_SESSION_WAIT,native_cancel.session,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,5000,0);
+    if (native_cancel.mode && result==CUIS_READY_CHILD) {
         conws("CUIS cancel resume checkpoint: READY\r\n");
         do {
             if (native_cuis5(33,native_cancel.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) {
@@ -1583,6 +1671,7 @@ static void test_native_input_cancel(void)
 }
 static void test_native_resume(void)
 {
+    CUIS_RECEIPT_RECORD receipt={0};
     long window=-1, interval, result, values[5]={0}, x,y,buttons=0,modifiers;
     int32_t pid,tid,status;
     int ok=1;
@@ -1615,9 +1704,9 @@ static void test_native_resume(void)
     RESUME_CHECK(!native_resume.error,"running or yielding leader is not admitted for input");
     if (native_resume.error) goto joined;
 #endif
-    result=native_cuis5(32,native_resume.session,0,16|2048|2,5000,0);
-    RESUME_CHECK(result==2048 && !native_resume.error,"child wake checkpoints first click before deadline");
-    if (result!=2048 || native_resume.error) goto joined;
+    result=wait_for_input_child(native_resume.session,&receipt);
+    RESUME_CHECK(result==CUIS_READY_CHILD && !native_resume.error,"child wake checkpoints first click before deadline");
+    if (result!=CUIS_READY_CHILD || native_resume.error) goto joined;
     conws("CUIS resume checkpoint: READY\r\n");
     RESUME_CHECK(native_cuis5(32,native_resume.session,0,16|2,0,0)==2,
                      "zero timer commits resume ownership without restarting clicks");
@@ -1651,9 +1740,16 @@ joined:
     if (result!=16 && native_resume.child<=0) (void)native_cuis(2,native_resume.session,0);
     RESUME_CHECK(join_tid(tid,&status)==0 && status==0,"native observer peer reaped");
     if (native_resume.child>0) {
+        PROCESS_EXEC_REQUEST request={0};
         result=Pwaitpid(native_resume.child,0,0);
         RESUME_CHECK((result>>16)==native_resume.child && (result&65535)==92,"native observed child exits once");
-        RESUME_CHECK((native_cuis5(67,native_resume.session,0,0,0,0)&65535)==92,"CUIS notice survives PROCESS wait");
+        request.operation=PROCESS_EXEC_SNAPSHOT;
+        request.handle=receipt.tag;
+        RESUME_CHECK(Ssystem(PROCESS_EXEC_SSYSTEM,(long)(uintptr_t)&request,(long)sizeof(request))==0 &&
+                     request.completion.pid==native_resume.child && request.completion.state==PROCESS_COMPLETED &&
+                     request.completion.kind==PROCESS_COMPLETION_NORMAL && request.completion.status==92 &&
+                     request.completion.number_low==receipt.key_low && request.completion.number_high==receipt.key_high,
+                     "CUIS receipt retains the exact PROCESS completion after public reaping");
     }
 out:
     (void)native_cuis5(47,native_resume.session,0,0,0,0);
@@ -2093,6 +2189,9 @@ static void test_runnable(void)
     test_group_exit();
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_PTHJOIN)
     test_native_streams();
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    test_native_receipt_close();
+#endif
     test_native_resume();
 #endif
 #endif

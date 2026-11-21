@@ -17,6 +17,7 @@ struct identity {
     struct process_exec_handle *handles;
     PD *pd;
     unsigned refs;
+    UQUAD exec_closes;
     BOOL resources;
     LONG cleanup_error;
     PROCESS_COMPLETION completion;
@@ -24,7 +25,7 @@ struct identity {
 static PD first_pd, second_pd;
 static struct identity first, second, children[16];
 static unsigned loads, allocations, frees, cancellations, publications;
-static LONG load_error;
+static LONG load_error, commit_error;
 static unsigned cancel_requests;
 static BOOL request_mode;
 static BOOL fail_allocate;
@@ -35,6 +36,7 @@ LONG kproc_ref_file_cleanup(const KPROC *p,ULONG *transferred)
 PD *run=&first_pd;
 struct process_exec_handle **kproc_exec_handles(KPROC *p)
 { return p ? &((struct identity *)p)->handles : NULL; }
+void kproc_publish_exec_close(KPROC *p) { ((struct identity *)p)->exec_closes++; }
 PD *kproc_live_pd(const KPROC *p) { return p ? ((const struct identity *)p)->pd : NULL; }
 void *kalloc(ULONG bytes) { void *p; if(fail_allocate || fail_after==0)return NULL; if(fail_after>0)fail_after--; p=calloc(1,bytes); if(p)allocations++; return p; }
 void kfree(void *p) { CHECK(p); frees++; free(p); }
@@ -69,7 +71,7 @@ void ksched_process_cancel(void **slot)
     *slot=NULL; child->resources=FALSE; child->completion.state=PROCESS_ABANDONED;
     child->refs--; cancellations++;
 }
-LONG ksched_process_commit(void **slot) { return ksched_process_publish(slot); }
+LONG ksched_process_commit(void **slot) { return commit_error ? commit_error : ksched_process_publish(slot); }
 LONG ksched_defer_cancel(void) { cancel_requests++; return E_OK; }
 int main(void)
 {
@@ -77,6 +79,7 @@ int main(void)
     PROCESS_OBSERVER *lease=NULL;
     PROCESS_COMPLETION result;
     LONG one,two,three;
+    unsigned loads_before_exhaustion;
     first.pd=&first_pd; second.pd=&second_pd;
     CHECK(proc_exec_handle_prepare(foreign,"p","t","e","d",PROCESS_EXEC_ASYNC)==EACCDN && !loads);
     fail_allocate=TRUE;
@@ -91,6 +94,7 @@ int main(void)
     children[0].cleanup_error=EWRITF;
     CHECK(proc_exec_handle_close(owner,one)==EWRITF && cancellations==1 && !children[0].resources);
     CHECK(proc_exec_handle_close(owner,one)==EIHNDL && children[0].refs==1);
+    CHECK(first.exec_closes==1 && !second.exec_closes);
     CHECK(process_observer_snapshot(lease,&result) && result.state==PROCESS_ABANDONED);
     process_observer_release(&lease); CHECK(!children[0].refs);
     two=proc_exec_handle_prepare(owner,"p","t","e","d",PROCESS_EXEC_ASYNC); CHECK(two>one);
@@ -119,8 +123,9 @@ int main(void)
     CHECK(proc_exec_handle_snapshot(foreign,two,&result)==EIHNDL);
     CHECK(proc_exec_handle_snapshot(owner,two,&result)==EACCDN);
     test_request_engine(foreign);
+    loads_before_exhaustion=loads;
     last_handle=0x7fffffffUL; /* Private host cursor only: production never resets. */
-    CHECK(proc_exec_handle_prepare(foreign,"p","t","e","d",PROCESS_EXEC_ASYNC)==EAGAIN && loads==4);
+    CHECK(proc_exec_handle_prepare(foreign,"p","t","e","d",PROCESS_EXEC_ASYNC)==EAGAIN && loads==loads_before_exhaustion);
     puts("Production PROCESS rights: private preparation, one commit, close, retained leases, owner retirement and stale handles: PASS");
     return 0;
 }

@@ -868,7 +868,7 @@ Invalid non-NULL scalar output pointers are ordinary userspace faults;
 kernel teardown remains authoritative for cleanup.
 
 CUIS_SESSION_WAIT (32) takes (owned_session, minimum_bytes, ready_mask,
-unsigned_milliseconds) in flat registers and returns CUIS_READY_STREAM (1),
+unsigned_milliseconds, process_rights, process_right_count) in flat registers and returns CUIS_READY_STREAM (1),
 CUIS_READY_TIMER (2), their union, or a negative error. Masks must select
 at least one source. minimum_bytes is 1..32767 when selecting the stream;
 otherwise it is ignored. The interval is validated only when selecting the
@@ -878,6 +878,16 @@ owned session and four LONG output addresses for x, y, buttons and modifiers,
 returning E_OK or a negative error. It backs all outputs before sampling one
 logical state under IRQ exclusion. Kernel additions remain CUIS-configured;
 there are no versioned blocks, feature negotiation or new public CUIS setup.
+
+process_right_count is 0..16. A zero count requires a zero address and
+selects endpoint receipt observation when CUIS_READY_CHILD is present. A
+nonzero count requires CUIS_READY_CHILD and an aligned 32-bit user address
+of that many native-endian ULONG PROCESS-owned rights. Duplicate, zero,
+foreign and stale rights fail before wait admission. A retained completion
+or abandonment sets CUIS_READY_CHILD without consuming the right or the
+public wait result. Independent leases remain valid until the predicate has
+been detached, even if another THREAD closes its handle. See
+cuis-observer-wait-test.txt for ownership and error ordering.
 
 Host tests cover all source combinations, simultaneous/early readiness,
 partial headers, opaque-queue separation, zero-yield arrival, full intervals,
@@ -2731,51 +2741,34 @@ AES_SHELL remains unadvertised until its ordinary mode-1/chain semantics are
 implemented. No console, accessory, ARGV, chain/default-shell, shutdown or
 resolution-change support is implied by this slice.
 
-CUIS retains bounded, opaque process completion records, without interpreting
-GEM headers. All kernel additions are selected only by CONF_WITH_CUIS:
+Observed launches bind a PROCESS right and 64-bit PROCESS identity to an
+endpoint receipt before runnable publication. The receipt keeps this right
+through publisher THREAD cancellation. libaes reads the full canonical
+PROCESS snapshot, selects the smallest terminal ordinal, and builds CH_EXIT.
+Normal exit retains its full status word. A crash uses signal << 8.
 
-  CUIS_CHILD_WATCH(session, action, token, image)
-    RESERVE (0), token=image=0: reserve one of 16 records; return a positive,
-    never-reused token or a negative error. No allocation is needed.
-    BIND (1): associate the reservation with an owned, live, unlaunched
-    Pexec(3) basepage. Kernel image metadata supplies its PID; no allocation
-    is needed. Started, freed/replaced, duplicate or foreign images fail.
-    Completion is recorded for synchronous Pexec(4/6) as well as asynchronous
-    starts; the ordinary retained/freeing ownership of those modes is kept.
-    Bound synchronous children retain their first fault signal even without
-    a scheduler task slot. CH_EXIT reports signal << 8 for a crash, while an
-    ordinary Pterm(-1) remains the full 0xffff termination result.
-    CANCEL (2), image=0: drop an owned reservation/notice, without killing or
-    reaping a child. Tokens from another session or an earlier lifetime fail.
-  CUIS_CHILD_LAUNCH(session, token, path, tail, environment)
-    Validate ordinary Pexec(100) arguments and load at the executable's link
-    address in private child pages, using the existing GEMDOS loader. Bind
-    the reserved observer inside spawn, before the child can execute. Return
-    its positive PID or a negative error; failures cancel the reservation.
-    The observer is an explicit kernel call argument, never a global latch.
-    Fixed-address ET_EXEC programs need no retained relocation tables.
-  CUIS_CHILD_RESULT(session)
-    Non-consuming FIFO peek. Zero means no completion; a positive scalar has
-    PID in its high WORD and exit status in its low WORD; errors are negative.
-  CUIS_CHILD_PUBLISH(session, expected_result, bytes_address, byte_count)
-    Append 1..32 opaque bytes to the caller's existing application pipe, only
-    if the same completion is still at its head. Failed copies, allocation,
-    or pipe capacity leave it pending; reentrant reservation changes cannot
-    publish or consume a replacement notice. Only a successful publication
-    consumes the adapter record. It never consumes public PROCESS completion;
-    Pwaitpid can independently reap the child before or after publication.
+CUIS_STREAM_RECEIPT (94) accepts the source endpoint, operation, aligned
+address of a 64-byte CUIS_RECEIPT_RECORD and its size. The record uses native
+byte order and 4-byte alignment. Its operation field and endpoint high words
+are reserved and equal zero. The endpoint low words match their endpoint IDs.
+The layout and operation constants are in include/cuis_receipt.h. QUERY reads a non-consuming snapshot
+of a slot. PREPARE snapshots the immutable bytes. COMMIT appends bytes and
+sender provenance while recording publication in the same critical section.
+ACK and RECLAIM finish cleanup, with RECLAIM gated by retirement of the exact
+PROCESS right and transient observation leases. A sibling can recover any
+step, and a stale generation cannot publish after slot reuse.
 
-Capacity is reserved before CUIS_CHILD_LAUNCH, which runs the standard
-asynchronous load-and-go path with a stack-scoped observer. The observer is
-bound before the child can start. Early native waits cannot erase a notice or
-reorder completions through delayed binding. Validation/load/start failures
-cancel the reservation; the GEMDOS loader retains its ordinary image cleanup
-and fixed-address loading behavior. The optional BIND operation remains for
-callers explicitly using editable Pexec(3) images. Completed
-notices survive an explicit application Pwaitpid, and hold their PID identity until publication/cancellation/session
-teardown even if the native zombie was already reaped. A session close drops
-its records, releasing PID reservations; it neither kills nor reaps live
-children. Subsequent registrations do not inherit old notifications.
+Session retirement closes the session's rights while the PROCESS is live.
+PROCESS teardown uses its own right finalizer. Public PROCESS completion
+remains independently available to Pwaitpid and survives GUI cleanup.
+For CUIS_READY_CHILD with a zero PROCESS right count, SESSION_WAIT imports
+operation-local canonical observer leases from the endpoint's BOUND and
+PREPARED receipts. It also wakes for a new binding, pending
+publication cleanup or a closed right found during import. While an implicit
+wait holds a receipt import fence, a PROCESS CLOSE by its owner wakes the
+wait to release the fence and rescan receipts. An unrelated right closed by
+the same PROCESS may cause a rescan. Explicit wait arrays keep their
+independent leases and continue to wait for completion or abandonment.
 
 CUIS_READY_CHILD is a public readiness source in CUIS_SESSION_WAIT, alongside
 stream/notice/input/timer readiness. It wakes MU_MESAG immediately, including
@@ -2825,15 +2818,14 @@ options and SHW_SINGLE remain unsupported. AES_SHELL remains unadvertised
 until the complete launch/default-shell semantics are in place. Existing
 ordinary AES4 launches and SHW_PARALLEL keep their behavior.
 
-CUIS_PROCESS_DEFER(session, path, tail, environment) uses flat scalar/pointer
-arguments and the ordinary GEMDOS Pexec(100) validation/loader. The caller
-must own the live session and run in a managed native group. The loader keeps
-fixed-address executables at their link address and prepares a separate
-address space, command/environment snapshot, inherited standard files and
-working directory before returning. Native success is E_OK, errors negative;
-libaes translates those into the standard Boolean GEM result. A null path
-with null tail/environment cancels the caller's pending request, idempotently
-within the managed group; it does not add a new public GEM function.
+libaes implements SHW_CHAIN with Ssystem(S_PROCEXEC) and
+PROCESS_EXEC_DEFER. The caller must run in a managed native group.
+The generic loader prepares the private image, inherited resources and
+optional working directory before the scheduler replaces the previous
+successor. The operation closes its temporary PROCESS-owned right before
+return and supplies no observer or PID to the library. E_OK maps to the
+standard successful GEM result. PROCESS_EXEC_CANCEL_DEFERRED cancels only
+the caller's pending successor and is idempotent.
 
 The native scheduler owns at most one dormant successor per requesting
 process. It uses an ordinary bounded task slot/kernel stack; preparation
@@ -2859,8 +2851,8 @@ use that process-lifetime trigger. The handoff is detached: its PPID names
 the group's stable controller, not the former process. It holds no pointer
 to the dead caller and sends no child-exit notification to it. AES session
 teardown and re-registration do not remove the process-owned request. All
-kernel additions remain under CONF_WITH_CUIS; there is no kernel GEM shell
-policy, format negotiation or AES request block.
+generic scheduler and PROCESS operations are also available without
+CONF_WITH_CUIS. GEM shell policy is implemented in libaes.
 
 Host tests cover native ownership/argument validation, cancellation and GEM
 Boolean/error translation. Real loader, termination and scheduler host tests
@@ -2932,14 +2924,16 @@ registration and delivers the existing single full-word-status CH_EXIT on
 normal/fault exit. Tails still use the ordinary 0..126-byte convention; ARGV,
 accessory and mode-1 text execution are not implied.
 
-CUIS_CHILD_LAUNCH(session, token, path, tail, environment, console) adds a flat
-sixth scalar: 0 keeps graphical behavior, 1 requests the physical text console.
-Other values fail with EINVAL. A second console, foreign drawing ownership or
-modal mouse/keyboard capture rejects launch with EAGAIN and cancels the child
-reservation. The launcher's own update nesting remains balanced. Loader and
-spawn errors cancel the reservation without entering text mode. The existing
-spawn observer retains the new child's identity before user execution; the
-current cooperative scheduler cannot run it before launch setup returns.
+CUIS_LAUNCH_ATTACH (93) takes the default endpoint and five scalar arguments.
+The second argument
+selects an optional console lease (bit 0) and/or an observation receipt
+(bit 1). A second console, foreign
+drawing ownership or modal mouse/keyboard capture rejects a console launch
+with EAGAIN and leaves no child reservation. The launcher's own update
+nesting remains balanced. CUIS calls the same PROCESS prepare used by
+S_PROCEXEC, revalidates the endpoint, installs requested resources and
+commits the prepared PROCESS. The commit makes the child runnable. Failed
+prepare releases tentative resources without entering text mode.
 
 The full-screen lease belongs to the child process, independently of the
 launcher's session and of the child's optional AES registration. Native VDI
@@ -3178,41 +3172,50 @@ configuration or machine lacks poweroff support. Live resolution changes
 currently return GEM failure before starting coordination or affecting clients;
 the desktop resolution command remains disabled on this x32 backend.
 
-The native closed-cohort transport is bounded to 128 opaque request/result
-bytes per client. Calls 79..87 take the following flat arguments:
+Registration and packet delivery use two native transport calls.
 
-  BEGIN: session -> positive token; fails if a cohort or GUI grab/lock is active
-  STAGE: session, token, peer, address, bytes, wait_exit -> E_OK
-  COMMIT: session, token, completion_address, completion_bytes -> E_OK
-  QUERY: session, selector -> ID, WORK, owner-only STATE or read provenance
-  READ: session, token, address, capacity -> request/result bytes
-  PUBLISH: session, token, optional rejection_address, rejection_bytes -> E_OK
-  ACK: session, token -> acknowledge an entirely consumed non-exiting request
-  REJECT: session, token, address, bytes, consumed_bytes -> E_OK
-  CANCEL: session, token -> E_OK (owner only)
+  CUIS_ENDPOINT_BARRIER (95)
+    ACQUIRE(session, 0, 0) freezes registration and returns a generation.
+    It requires no other barrier, GUI grab or display lock.
+    RELEASE(session, 1, token) requires the matching owner and generation.
+    Endpoint retirement releases its barrier automatically.
+  CUIS_STREAM_BATCH (96)
+    (session, command, a, b, c, d). The high 32 bits of command select an
+    operation. The low 32 bits carry the generation, or the QUERY field.
+    STAGE (peer, address, bytes, wait_for_retirement) snapshots an opaque
+      request for an endpoint captured by the barrier.
+    SEAL (result_bytes, reply_publish_bytes, 0, 0) validates that all
+      remaining endpoints have a staged request and makes those requests
+      available. A nonzero reply_publish_bytes declares the required owner
+      publication size for a refusal. Zero uses the opaque reply's size
+      for readiness.
+    QUERY (0, 0, 0, 0) returns ID, WORK, owner STATE or read provenance.
+    READ (address, capacity, 0, 0) reads a staged request or opaque reply.
+    PUBLISH (address, bytes, release_barrier, expected_work) appends bytes
+      in stream order. A receiver publishes its staged request with zero
+      arguments. The owner supplies DRAINED or REPLY as expected_work.
+      If the batch no longer reports that work, PUBLISH returns EAGAIN
+      without appending bytes or changing barrier ownership. A refusal
+      publication must match a nonzero declared reply size. READ
+      still returns the original opaque reply and its actual length.
+    SETTLE (0, 0, 0, 0) acknowledges a fully consumed request that does not
+      require retirement. SETTLE (address, bytes, consumed_bytes, 0)
+      records an opaque reply. A nonzero consumed_bytes must already
+      have been read from the current request.
 
-STAGE and COMMIT snapshot bounded data with identities rechecked after user
-copies. COMMIT requires every remaining captured participant to be staged;
-exiting participants leave the cohort automatically. WORK returns REQUEST,
-ACCEPT or RESULT only when actionable, and zero otherwise; CUIS_READY_COHORT
-wakes ordinary native waits for that internal work. Publication never blocks
-and waits for sufficient caller stream space. Reads preserve normal byte-stream
-ordering and track request consumption across preexisting data and split reads.
-REJECT with consumed_bytes zero allows rejecting unknown opaque requests before
-publication. A nonzero value requires that many request bytes already consumed;
-libaes uses 16 for AP_TFAIL to reject premature/stale replies. Tokens never
-recycle. Successful result publication sets owner STATE to FINISHED (4), which
-the desktop checks before accepting a queued SHUT_COMPLETED notification.
-READ_OFFSET and READ_BYTES authenticate the last successful stream read wholly
-inside a current participant request. Prefix/overlapping ordinary messages,
-failed reads and cancelled generations do not gain request provenance. Native
-CUIS still treats the payload as opaque bytes. RESULT_ID, RESULT_OFFSET and
-RESULT_BYTES identify a read wholly inside a published result, including after
-a refusal has cleared the cohort. That identity retains the producing token
-when a new operation starts. Ordinary writes and overlapping reads have no
-result provenance. libaes matches shutdown completion/refusal to its initiating
-token; the desktop also checks that token before clearing pending shutdown and
-does not cancel another operation on receipt of a refusal.
+The kernel bounds each staged packet to 128 bytes, revalidates exact endpoint
+and generation after user copies, and tracks whole-range read provenance.
+WORK reports REQUEST, ACCEPT, REPLY or DRAINED when actionable. The existing
+session wait reports CUIS_READY_BATCH for this work. Bytes and provenance
+are appended atomically. Partial or overlapping reads keep their ordinary
+stream behavior. A result retains its generation after barrier release.
+
+libaes assigns receiver roles and consent, constructs SHUT_COMPLETED when
+the batch drains, and validates or normalizes opaque refusals to AP_TFAIL.
+libaes requests barrier release in the same publication that delivers the
+refusal. On success it keeps the barrier until the coordinator exits or
+calls SD_ABORT. The desktop also checks the exact result identity and stream
+range before acting. The old CUIS selectors 79–87 are retired.
 
 libaes preflights the complete request against its private accessory status,
 NM_APTERM consent and registered entry IDs before publication. A malformed
@@ -3306,13 +3309,10 @@ exit and faults restore their drawing/input access. No single-task scheduler
 freeze or normal desktop chain load is introduced. ARGV and SW_ENVIRON use the
 same launch snapshots and caller ownership as the existing shell modes.
 
-CUIS_CHILD_LAUNCH keeps its flat session, observer-token, path, tail,
-environment, console arguments. A zero token is permitted only for a console
-launch: the scheduler's spawn hook attaches the console identity without an
-AES child observation, queue entry or automatic reap. Other owned reserved
-observations remain intact, even when that table is full. Normal mode 0 and
-SHW_IMMED still reserve/bind their completion before execution. All kernel
-changes remain gated by CONF_WITH_CUIS.
+A console-only launch attaches the console to the child without reserving or
+consuming a notification slot.
+Other owned reservations remain intact, including when the table is full.
+Normal mode 0 and SHW_IMMED still bind their completion before execution.
 
 SHW_CHAIN retains the existing deferred GEM handoff. Explicit TOSAPP chain
 handoff, SHW_DOS, SHW_SINGLE and further extended launch flags remain
@@ -3352,24 +3352,12 @@ A failed directory setup releases the child image, environment, handles
 and inherited directory references; a previous deferred successor survives.
 Console failure also releases its tentative lease and child observation.
 
-Native calls remain flat and carry no GEM flags or SHELW structures:
-
-  CUIS_CHILD_LAUNCH_DIRECTORY (90)
-      (session, token, path, tail, environment, directory) -> child PID/error
-  CUIS_CONSOLE_LAUNCH_DIRECTORY (91)
-      (session, token, path, tail, environment, directory) -> child PID/error
-  CUIS_PROCESS_DEFER_DIRECTORY (92)
-      (session, path, tail, environment, directory) -> zero/error
-
-The directory address must name a nonempty terminated string of at most
-259 bytes, copied before loader I/O. Filesystem path limits still apply.
-A zero observation token is allowed on either directory-aware immediate
-call; such children remain available to Pwait/Pwaitpid without CH_EXIT.
-The console opcode acquires the existing exclusive display/input lease.
-The original calls 69/70 keep their argument counts and inherited-directory
-behavior; unused registers never become implicit arguments. All native
-loader/directory support is guarded by CONF_WITH_CUIS, currently available
-only on x32 with the built-in FAT filesystem.
+The native launch inputs stay independent of GEM flags and SHELW layout.
+Unobserved graphical SW_DEFDIR uses PROCESS_EXEC_START. Observed launches
+and console launches use CUIS_LAUNCH_ATTACH for the pre-publication
+attachments. A nonzero directory address needs a nonempty terminated path.
+The shared PROCESS request copier snapshots the path before loader I/O.
+Deferred directory selection uses the directory field of PROCESS_EXEC_DEFER.
 
 Host regressions exercise flag isolation, absolute/drive-relative directory
 resolution, caller drive/path isolation, directory-reference replacement,

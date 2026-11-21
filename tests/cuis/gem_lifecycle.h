@@ -6,4 +6,5 @@
 #define LIFE_STOP 0x6d12
 int gem_lifecycle_checks(void);
 int gem_lifecycle_false_success(char mode);
+int gem_lifecycle_retired_selectors(void);
 #endif

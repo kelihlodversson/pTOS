@@ -1,5 +1,4 @@
-/* Fixed-width PROCESS request decoding. Public Ssystem dispatch stays gated
- * until deferred policy and the full transport contract are validated. */
+/* Fixed-width PROCESS request decoding. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "kheap.h"
@@ -42,13 +41,45 @@ static LONG copy_argument(ULONG address, ULONG capacity, BOOL environment, char 
     }
     return ERANGE;
 }
+LONG proc_exec_prepare_user_args(KPROC *owner, const PROCESS_EXEC_REQUEST *request)
+{
+    char *path=NULL, *tail=NULL, *environment=NULL, *directory=NULL;
+    ULONG env_address;
+    LONG result;
+    if (!owner || kproc_live_pd(owner) != run) return EACCDN;
+    if (request->handle || request->policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
+    result=copy_argument(request->path,EXEC_PATH_MAX,FALSE,&path);
+    if (result != E_OK) goto done;
+    result=copy_argument(request->tail,PDCLSIZE,FALSE,&tail);
+    if (result != E_OK) goto done;
+    env_address=request->environment ? request->environment :
+#if CONF_WITH_PRIVATE_CLONE
+        (ULONG)kproc_private_environment(run);
+#else
+        (ULONG)(uintptr_t)USERPTR_TO_PTR(run->p_env);
+#endif
+    result=copy_argument(env_address,EXEC_ENV_MAX,TRUE,&environment);
+    if (result != E_OK) goto done;
+    if (request->directory) {
+        result=copy_argument(request->directory,EXEC_PATH_MAX,FALSE,&directory);
+        if (result != E_OK) goto done;
+        if (!directory[0]) { result=EPTHNF; goto done; }
+    }
+    result=proc_exec_handle_prepare(owner,path,tail,environment,directory,request->policy);
+ done:
+    if (directory) kfree(directory);
+    if (environment) kfree(environment);
+    if (tail) kfree(tail);
+    if (path) kfree(path);
+    return result;
+}
 static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
 {
     PROCESS_EXEC_REQUEST request;
     PROCESS_COMPLETION completion;
     LONG result;
-    char *path=NULL, *tail=NULL, *environment=NULL, *directory=NULL;
-    ULONG env_address;
+    LONG handle;
+    BOOL direct, deferred;
     if (!owner || kproc_live_pd(owner) != run) return EACCDN;
     if (size != sizeof(request)) return EINVAL;
     if (!address || address > 0xffffffffULL - (sizeof(request)-1)) return EIMBA;
@@ -56,8 +87,9 @@ static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
     result=kproc_copy_from_user_checked(&request,address,sizeof(request));
     if (result!=E_OK) return result;
     if (request.reserved || request.reserved_tail[0] || request.reserved_tail[1]) return EINVAL;
-    if (request.operation > PROCESS_EXEC_CANCEL_DEFERRED) return EINVFN;
-    if (request.operation != PROCESS_EXEC_PREPARE) {
+    if (request.operation > PROCESS_EXEC_START) return EINVFN;
+    direct=request.operation == PROCESS_EXEC_DEFER || request.operation == PROCESS_EXEC_START;
+    if (request.operation != PROCESS_EXEC_PREPARE && !direct) {
         if (request.policy || request.path || request.tail || request.environment || request.directory) return EINVAL;
         switch (request.operation) {
         case PROCESS_EXEC_COMMIT:
@@ -77,29 +109,14 @@ static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
         }
         return EINVFN;
     }
-    if (request.handle || request.policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
-    result=copy_argument(request.path,EXEC_PATH_MAX,FALSE,&path);
-    if (result != E_OK) goto done;
-    result=copy_argument(request.tail,PDCLSIZE,FALSE,&tail);
-    if (result != E_OK) goto done;
-    env_address=request.environment ? request.environment :
-#if CONF_WITH_PRIVATE_CLONE
-        (ULONG)kproc_private_environment(run);
-#else
-        (ULONG)(uintptr_t)USERPTR_TO_PTR(run->p_env);
-#endif
-    result=copy_argument(env_address,EXEC_ENV_MAX,TRUE,&environment);
-    if (result != E_OK) goto done;
-    if (request.directory) {
-        result=copy_argument(request.directory,EXEC_PATH_MAX,FALSE,&directory);
-        if (result != E_OK) goto done;
-    }
-    result=proc_exec_handle_prepare(owner,path,tail,environment,directory,request.policy);
- done:
-    if (directory) kfree(directory);
-    if (environment) kfree(environment);
-    if (tail) kfree(tail);
-    if (path) kfree(path);
+    if (direct && request.policy) return EINVAL;
+    deferred=request.operation == PROCESS_EXEC_DEFER;
+    if (deferred) request.policy=PROCESS_EXEC_DEFER_REPLACEMENT;
+    handle=proc_exec_prepare_user_args(owner,&request);
+    if (!direct || handle <= 0) return handle;
+    result=proc_exec_handle_commit(owner,(ULONG)handle);
+    (void)proc_exec_handle_close(owner,(ULONG)handle);
+    if (deferred && result > 0) result=E_OK;
     return result;
 }
 

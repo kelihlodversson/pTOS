@@ -1,9 +1,6 @@
 /* Exercise the production scalar CUIS service and allocation failures. */
 #include "emutos.h"
 #include "bdosdefs.h"
-long xexec_directory(char *path, char *tail, char *environment, ULONG session, ULONG token, BOOL deferred, char *directory);
-long xexec_observed(char *path, char *tail, char *environment, ULONG session, ULONG token);
-long xexec_deferred(char *path, char *tail, char *environment, ULONG session);
 /* CUIS selects native scheduling in production. The broad hosted runner uses
  * a non-CUIS preset but includes this source explicitly. Match that dependency. */
 #undef CONF_WITH_NATIVE_SCHED
@@ -65,9 +62,9 @@ static LONG stream_peer_handle;
 static ULONG input_packet_mode;
 static BOOL input_drop_focus;
 static BOOL region_exit_on_output, notice_withdraw_on_copy;
+static void (*copy_from_user_hook)(void);
 static void context_copy_hook(void);
 static void context_read_hook(void);
-static void child_copy_hook(void);
 static void child_idle_hook(void);
 static void cohort_idle_hook(void);
 static PD *mouse_release_owner;
@@ -288,8 +285,13 @@ BOOL kproc_copy_from_user(void *destination, UQUAD address, ULONG size)
         cuis_input_unlock(flags);
     }
     context_copy_hook();
-    child_copy_hook();
-    memcpy(destination, stream_input + (address - 0x10000), size); return TRUE;
+    memcpy(destination, stream_input + (address - 0x10000), size);
+    if (copy_from_user_hook) {
+        void (*hook)(void)=copy_from_user_hook;
+        copy_from_user_hook=NULL;
+        hook();
+    }
+    return TRUE;
 }
 BOOL kproc_validate_user_range(UQUAD address, ULONG size)
 {
@@ -360,6 +362,8 @@ void kproc_release(KPROC *process)
     if (!process || !process_references) __builtin_abort();
     process_references--;
 }
+PD *kproc_live_pd(const KPROC *process) { return (PD *)process; }
+void panic(const char *message, ...) { __builtin_printf("%s\n",message); __builtin_abort(); }
 UQUAD kproc_ref_number(const KPROC *process)
 {
     return process == (KPROC *)&first ? 0x100000001ULL : 0x200000001ULL;
@@ -371,6 +375,33 @@ WORD kproc_pid(PD *pd)
     if (page && page < 0x100000 && !(page & 4095)) return (WORD)(page / 4096);
     return pd == &first ? 1 : 2;
 }
+/* Canonical PROCESS completion and reference model for CHILD transport. */
+typedef struct {
+    PROCESS_COMPLETION completion;
+    PD *parent;
+    unsigned references;
+    WORD signal;
+} MODELED_CHILD;
+static MODELED_CHILD modeled_children[16];
+static ULONG modeled_order;
+static MODELED_CHILD *modeled_child(const PROCESS_OBSERVER *observer)
+{
+    ULONG i;
+    if (observer == (PROCESS_OBSERVER *)&third) return &modeled_children[2];
+    for (i=0; i<ARRAY_SIZE(modeled_children); i++)
+        if (observer == (PROCESS_OBSERVER *)&modeled_children[i]) return &modeled_children[i];
+    return NULL;
+}
+static void reset_modeled_child(MODELED_CHILD *child, WORD pid)
+{
+    if (child->references) __builtin_abort();
+    memset(child,0,sizeof(*child));
+    child->completion.pid=pid;
+    child->completion.number_low=++modeled_order;
+    child->parent=run;
+}
+#define MODELED_LAUNCH_RIGHT 70UL
+static BOOL modeled_launch_open, modeled_launch_pending;
 #define CHECK(condition) do { if (!(condition)) { __builtin_printf("%s:%d\n", __FILE__, __LINE__); return __LINE__; } } while (0)
 #include "observer_wait.c"
 #include "windows.c"
@@ -547,8 +578,6 @@ int main(void)
     if (rc) return rc;
     rc = context_checks();
     if (rc) return rc;
-    rc = child_completion_checks();
-    if (rc) return rc;
     rc = button_resume_checks();
     if (rc) return rc;
     rc = child_launch_checks();
@@ -571,7 +600,9 @@ int main(void)
     if (rc) return rc;
     rc = cohort_result_checks();
     if (rc) return rc;
-    rc = process_defer_checks();
+    rc = cohort_publication_checks();
+    if (rc) return rc;
+    rc = launch_directory_checks();
     CHECK(!process_references);
     return rc;
 }

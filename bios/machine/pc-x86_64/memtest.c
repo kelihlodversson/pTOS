@@ -3378,7 +3378,7 @@ static void test_native_receipt_runtime(KPROC *owner)
         CHECK(cuis_service(CUIS_SESSION_END,source)==E_OK,"retire native source at every receipt state");
         query.source=query.source_low=source;query.slot=record.slot;
         CHECK(cuis_receipt_test_query(&query)==EACCDN &&
-              proc_exec_handle_close(owner,record.tag)==(i==4 ? EIHNDL:E_OK),
+              proc_exec_handle_close(owner,record.tag)==EIHNDL,
               "retired endpoint cannot revive a receipt or consume an unrelated PROCESS right");
         if(i>=2) CHECK(cuis_stream_service(CUIS_STREAM_READ,destination,data+128,sizeof(packet),0,0)==sizeof(packet) &&
               kproc_copy_from_user_checked(copied,data+128,sizeof(copied))==E_OK && copied[3]==child,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test-gated PROCESS dispatch and native-width adapter ownership."""
+"""PROCESS dispatch configuration and native-width adapter ownership."""
 import os
 from pathlib import Path
 import shlex
@@ -11,13 +11,15 @@ ROOT=Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
 os.environ['CONFIG_']=''
 subprocess.run([sys.executable,'tools/test-process-exec-gates.py'],check=True)
-# No shipped preset opts ordinary applications into this validation interface.
 for preset in sorted(Path('configs').glob('*_defconfig')):
     ordinary=kconfiglib.Kconfig(warn_to_stderr=False)
     ordinary.load_config(str(preset))
+    enabled = all(ordinary.syms[name].str_value == 'y' for name in (
+        'CONF_WITH_USER_ASPACE', 'CONF_WITH_NATIVE_SCHED', 'CONF_WITH_SSYSTEM'))
+    expected = 'y' if enabled else 'n'
     assert ordinary.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n', str(preset)
-    assert ordinary.syms['CONF_WITH_PROCESS_EXEC'].str_value=='n', str(preset)
-    assert ordinary.syms['CONF_WITH_PROCESS_EXEC_DISPATCH'].str_value=='n', str(preset)
+    assert ordinary.syms['CONF_WITH_PROCESS_EXEC'].str_value==expected, str(preset)
+    assert ordinary.syms['CONF_WITH_PROCESS_EXEC_DISPATCH'].str_value==expected, str(preset)
 for preset in ('atari256', 'pc-x86_64-eager'):
     unsupported=kconfiglib.Kconfig(warn_to_stderr=False)
     unsupported.load_config('configs/'+preset+'_defconfig')

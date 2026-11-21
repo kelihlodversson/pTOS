@@ -40,6 +40,10 @@ for key, value in (("CONF_WITH_BINFMT", 2), ("CONF_WITH_MMAP", 2),
 c.write_config()
 PY
 make CROSS_COMPILE="$prefix" -j4
+process_directory=
+if grep -qx '#define CONF_WITH_PROCESS_EXEC 1' obj/autoconf.h; then
+    process_directory=-DPROCESS_DIRECTORY_TEST
+fi
 build=$PWD/obj/binfmt/$arch$suffix
 libc=$build/libcmini
 mkdir -p "$build"
@@ -57,7 +61,7 @@ for fixture in driver interpreter; do
         if [ "$fixture" = interpreter ]; then address=0x41000000; fi
         link="$link -Wl,-Ttext-segment=$address,-z,max-page-size=0x1000,-z,noseparate-code,-z,noexecstack"
     fi
-    ${prefix}gcc $flags $common $staged -std=gnu90 -Os -Wall -Wextra -Werror \
+    ${prefix}gcc $flags $common $staged $process_directory -std=gnu90 -Os -Wall -Wextra -Werror \
         -Wdeclaration-after-statement -ffreestanding -fno-builtin -nostdinc \
         -isystem lib/libcmini/include -isystem "$includes" \
         -nostdlib -static -no-pie $link "$libc/objs/crt0.o" \

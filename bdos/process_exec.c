@@ -104,6 +104,7 @@ static LONG handle_close_owned(KPROC *owner, ULONG number)
     handle = *link;
     if (handle->committing) return EACCDN;
     *link = handle->next; /* Reentrant cleanup cannot close it a second time. */
+    kproc_publish_exec_close(owner);
     return dispose_handle(handle);
 }
 LONG proc_exec_retain_observer(KPROC *owner, ULONG number, BOOL require_prepared, PROCESS_OBSERVER **out)

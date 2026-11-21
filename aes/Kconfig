@@ -15,12 +15,12 @@ config CONF_WITH_CUIS
     select CONF_WITH_NATIVE_SCHED
 
 config CONF_WITH_CUIS_OBSERVER_TEST
-    bool "TEST ONLY: bounded CUIS PROCESS observer waits"
+    bool "TEST ONLY: CUIS PROCESS observer diagnostics"
     depends on CONF_WITH_CUIS && CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
     default n
     help
-      Default-off #907 prototype of SESSION_WAIT scalar handle-array preflight.
-      No production activation, receipt selector or CHILD API removal.
+      Count operation-local observer references and enable the native
+      ownership and cancellation probes for SESSION_WAIT.
 
 config CONF_WITH_LIBAES
     bool "Experimental userspace GEM AES library over CUIS"
@@ -209,9 +209,9 @@ endif
 endmenu
 
 config CONF_WITH_CUIS_RECEIPT_TEST
-    bool "TEST ONLY: bounded CUIS publication receipt runtime"
+    bool "TEST ONLY: native CUIS publication receipt probes"
     depends on CONF_WITH_CUIS_OBSERVER_TEST
     default n
     help
-      Internal C prototype only. No public selector, production CHILD migration,
-      or PROCESS activation. Requires independent native recovery acceptance.
+      Enable the internal hooks used by native publisher-stop, recovery and
+      retirement probes. Production endpoint receipts use the same runtime.

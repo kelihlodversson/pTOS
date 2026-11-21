@@ -1,5 +1,4 @@
 /* Actual SESSION_WAIT preflight/predicate/cleanup; only PROCESS helpers modeled. */
-#if CONF_WITH_CUIS_OBSERVER_TEST
 /* Native admission injection is inactive in this hosted scheduler fixture. */
 void x86_64_memtest_observer_wait_admitted(void) {}
 static struct { ULONG leases; BOOL ready; } wait_targets[2];
@@ -20,12 +19,28 @@ LONG kproc_copy_from_user_checked(void *out,VADDR address,ULONG bytes)
     wait_array_copied=copied;
     return copied ? E_OK:EIMBA;
 }
+UQUAD kproc_exec_close_sequence(const KPROC *owner)
+{
+#ifdef RECEIPT_RUNTIME_FIXTURE
+    if (receipt_fixture_active) return receipt_fixture_close_sequence(owner);
+#endif
+    (void)owner;
+    return 0;
+}
 LONG proc_exec_retain_observer(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_OBSERVER **out)
 {
     ULONG index;
 #ifdef RECEIPT_RUNTIME_FIXTURE
     if (receipt_fixture_active) return receipt_fixture_import(owner,handle,prepared,out);
 #endif
+    if (handle==MODELED_LAUNCH_RIGHT) {
+        if (!input_irqs || !cleanup_depth || *out || owner!=(KPROC *)run) __builtin_abort();
+        if (!modeled_launch_open) return EIHNDL;
+        if (prepared && !modeled_launch_pending) return EACCDN;
+        modeled_children[2].references++;
+        *out=kproc_retain(&third);
+        return E_OK;
+    }
     if (!input_irqs || !cleanup_depth || !wait_array_copied || prepared || *out) __builtin_abort();
     if (owner!=(KPROC *)run) return EACCDN;
     if (handle==31) return EACCDN;
@@ -37,14 +52,36 @@ LONG proc_exec_retain_observer(KPROC *owner,ULONG handle,BOOL prepared,PROCESS_O
 }
 BOOL process_observer_ready(void *observer)
 {
+    MODELED_CHILD *child=modeled_child(observer);
+    if (child) return child->completion.state>=PROCESS_COMPLETED;
 #ifdef RECEIPT_RUNTIME_FIXTURE
     if (receipt_fixture_active) return receipt_fixture_ready(observer);
 #endif
     return observer==&wait_targets[0] ? wait_targets[0].ready:wait_targets[1].ready;
 }
+BOOL process_observer_snapshot(const PROCESS_OBSERVER *observer,PROCESS_COMPLETION *out)
+{
+    MODELED_CHILD *child=modeled_child(observer);
+    if (child) { *out=child->completion; return TRUE; }
+#ifdef RECEIPT_RUNTIME_FIXTURE
+    if (receipt_fixture_active) return receipt_fixture_snapshot(observer,out);
+#endif
+    return FALSE;
+}
 void process_observer_release(PROCESS_OBSERVER **out)
 {
-    ULONG index=*out==(PROCESS_OBSERVER *)&wait_targets[1];
+    MODELED_CHILD *child;
+    ULONG index;
+    if (!*out) return;
+    child=modeled_child(*out);
+    if (child) {
+        if (!input_irqs || !child->references) panic("invalid modeled child release");
+        if (*out==(PROCESS_OBSERVER *)&third) kproc_release(*out);
+        child->references--;
+        *out=NULL;
+        return;
+    }
+    index=*out==(PROCESS_OBSERVER *)&wait_targets[1];
 #ifdef RECEIPT_RUNTIME_FIXTURE
     if (receipt_fixture_active) { receipt_fixture_release(out); return; }
 #endif
@@ -135,15 +172,3 @@ static int observer_wait_checks(void)
     next_handle=0; allocations=frees=stream_ring_count=0;
     return 0;
 }
-#else
-static int observer_wait_checks(void)
-{
-    LONG session=cuis_service(CUIS_SESSION_START,0);
-    CHECK(session>=0);
-    CHECK(cuis_session_wait(session,0,CUIS_READY_CHILD,0,0x10000,1)==EINVFN);
-    CHECK(cuis_service(CUIS_SESSION_END,session)==E_OK);
-    CHECK(!clients && allocations==frees);
-    next_handle=0; allocations=frees=0;
-    return 0;
-}
-#endif

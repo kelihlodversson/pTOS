@@ -96,6 +96,10 @@ KPROC *kproc_retain_identity(KPROC *process);
 #if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
 struct process_exec_handle;
 struct process_exec_handle **kproc_exec_handles(KPROC *owner);
+/* Read from a retained PROCESS. Publish when CLOSE consumes a right, before
+ * cleanup can yield or report an error. Independent observers stay valid. */
+UQUAD kproc_exec_close_sequence(const KPROC *owner);
+void kproc_publish_exec_close(KPROC *owner);
 /* Logical nonblocking transaction admission under the cooperative owner
  * protocol. Prevent reentrant successor selection across destructor callbacks. */
 BOOL kproc_exec_commit_begin(KPROC *owner);

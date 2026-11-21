@@ -162,7 +162,7 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
             environment ? environment : parse || (UBYTE)tail[0] == 127 ? state->environment : NULL,
             environment ? 32766UL : state->environment_bytes,&arguments,global)) return 0;
     if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN) {
-        pid = aes_child_defer(session,path,arguments.tail,arguments.environment,
+        pid = aes_child_defer(path,arguments.tail,arguments.environment,
                               set_directory ? directory : NULL) == E_OK ? 1 : 0;
         goto finished;
     }
