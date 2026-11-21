@@ -4,6 +4,7 @@
 #include "cuis.h"
 #include "ptos.h"
 #include "gem_chain.h"
+#include "process_exec.h"
 static int failure(unsigned line)
 {
     const char *digits = "0123456789abcdef";
@@ -49,7 +50,7 @@ int gem_chain_client(int argc, char **argv)
 {
     char role, target[128] = { 25 }, state[5] = { 0 }, directory[128], *value;
     short parent, me = gl_apid, message[8] = { 0x7d10,0,0,0,0,0,0,0 };
-    int32_t session, output = -1;
+    int32_t output = -1;
     const char *program;
     VERIFY(argc == 2);
     role = argv[1][0]; parent = (short)decode(argv[1]+1);
@@ -101,9 +102,10 @@ int gem_chain_client(int argc, char **argv)
     }
     VERIFY(!shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,"ABSENT.PRG",target));
     if (role == 'c') {
-        session = call(CUIS_SERVICE_CLASS,CUIS_SESSION_START,0,0,0,0);
-        VERIFY(session >= 0 && call(CUIS_SERVICE_CLASS,CUIS_PROCESS_DEFER,session,0,0,0) == 0);
-        VERIFY(call(CUIS_SERVICE_CLASS,CUIS_PROCESS_DEFER,session,0,0,0) == 0);
+        PROCESS_EXEC_REQUEST request = {0};
+        request.operation = PROCESS_EXEC_CANCEL_DEFERRED;
+        VERIFY(call(1,0x154,(uint64_t)(int64_t)PROCESS_EXEC_SSYSTEM,(uintptr_t)&request,sizeof(request),0) == 0);
+        VERIFY(call(1,0x154,(uint64_t)(int64_t)PROCESS_EXEC_SSYSTEM,(uintptr_t)&request,sizeof(request),0) == 0);
     }
     if (role == 'j') VERIFY(call(1,0x41,(uintptr_t)"C:\\APPS\\DELETED.PRG",0,0,0) == 0);
     VERIFY(shel_envrn(&value,"CHAIN_ENV=") == 1 && value && equal(value,"original"));

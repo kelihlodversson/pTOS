@@ -15,9 +15,9 @@ static PD owner, parent, child, successor, other;
 static KERNEL_TASK tasks[KSCHED_LIMIT];
 static SBYTE owner_files[NUMSTD], child_files[NUMSTD], successor_files[NUMSTD];
 static UBYTE owner_dirs[NUMCURDIR], child_dirs[NUMCURDIR];
-static BOOL owner_record, child_record, owner_memory, nested, returned_error, parent_retired;
+static BOOL owner_record, child_record, owner_memory, nested, returned_error;
 static unsigned references[4], directories, close_errors, injected, attempts;
-static unsigned fail_handle, invalidations, term_handlers, completions;
+static unsigned fail_handle, invalidations, term_handlers;
 static unsigned successor_aliases, explicit_open;
 static unsigned identity_completions, cleanup_commits;
 static unsigned thread_destroys;
@@ -57,10 +57,6 @@ UBYTE *kproc_curdir(PD *p)
     return p == &owner ? owner_dirs : child_dirs;
 }
 PD *kproc_get_parent(PD *p) { CHECK(p == &owner && owner_record); return &parent; }
-PD *kproc_notification_parent(PD *p)
-{
-    return parent_retired ? NULL : kproc_get_parent(p);
-}
 WORD kproc_pid(PD *p) { CHECK(p == &owner && owner_record); return 11; }
 static unsigned observer_publications;
 void kproc_publish_observers(KPROC *p)
@@ -83,11 +79,6 @@ void kproc_usage(PD *p, ULONG usage[8])
 {
     CHECK(p == &owner && owner_record); still_deferred();
     memset(usage,0,8*sizeof(*usage)); usage[1] = 3; usage[3] = 5;
-}
-void cuis_child_completed(PD *p, WORD pid, UWORD status)
-{
-    CHECK(nested && p == &parent && pid == 11 && status == 37);
-    still_deferred(); completions++;
 }
 void kproc_destroy(PD *p)
 {
@@ -183,7 +174,6 @@ void termuser(void)
     CHECK(tasks[1].state == TASK_NEW && !tasks[1].deferred_owner_identity);
     CHECK(tasks[1].thread == (KTHREAD *)&successor && !thread_destroys);
     CHECK(tasks[2].state == TASK_DEFERRED && tasks[2].deferred_owner_identity == (KPROC *)&other);
-    CHECK(completions == (unsigned)(nested && !parent_retired));
     CHECK(references[0] == successor_aliases && sft[0].f_use == (int)successor_aliases);
     if (successor_aliases)
         CHECK(sft[0].f_own && sft[0].f_own != &owner);
@@ -223,7 +213,7 @@ static void exit_check(void)
     }
     for (i = 3; i <= 5; i++) dirtbl[i].use = 1;
     owner_record = child_record = owner_memory = TRUE;
-    directories = injected = invalidations = attempts = term_handlers = completions = 0;
+    directories = injected = invalidations = attempts = term_handlers = 0;
     identity_completions = cleanup_commits = 0;
     thread_destroys = 0;
     run = &owner;
@@ -248,12 +238,6 @@ int main(void)
                         for (close_errors = 0; close_errors <= 2; close_errors++) exit_check();
         }
     }
-    nested = TRUE;
-    parent_retired = TRUE;
-    returned_error = FALSE;
-    successor_aliases = explicit_open = close_errors = 0;
-    fail_handle = NUMSTD;
-    exit_check();
     puts("Deferred successor waits for complete owner/child cleanup despite close errors: PASS");
     puts("Exit sweep preserves successor stdout aliases with explicit handle open or closed: PASS");
     return 0;

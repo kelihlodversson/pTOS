@@ -463,21 +463,19 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
              fn == CUIS_BACKGROUND_REGION ? cuis_background_region(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
              fn == CUIS_DISPLAY_INFO ? cuis_display_info(frame->rdi) :
              fn == CUIS_KEYMAP_LOOKUP ? keyboard_map_lookup(frame->rdi,frame->rsi) :
-             (fn >= CUIS_COHORT_BEGIN && fn <= CUIS_COHORT_CANCEL) ?
-                 cuis_cohort_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
+             fn == CUIS_ENDPOINT_BARRIER ?
+                 cuis_endpoint_barrier(frame->rdi,frame->rsi,frame->rdx) :
+             fn == CUIS_STREAM_BATCH ?
+                 cuis_stream_batch(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
              (fn >= CUIS_PEER_NEXT && fn <= CUIS_PEER_RAISE) ?
                  cuis_peer_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
              (fn >= CUIS_ENTRY_PUBLISH && fn <= CUIS_ENTRY_READ) ?
                  cuis_entry_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
              fn == CUIS_WINDOWS_RESET ? cuis_windows_reset(frame->rdi) :
              fn == CUIS_CONTEXT ? cuis_context(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9) :
-             fn == CUIS_PROCESS_DEFER ? cuis_process_defer(frame->rdi,frame->rsi,frame->rdx,frame->r10) :
-             fn == CUIS_PROCESS_DEFER_DIRECTORY ? cuis_process_defer_directory(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8) :
-             fn == CUIS_CHILD_LAUNCH_DIRECTORY || fn == CUIS_CONSOLE_LAUNCH_DIRECTORY ?
-                cuis_child_launch_directory(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9,fn == CUIS_CONSOLE_LAUNCH_DIRECTORY) :
-             fn == CUIS_CHILD_LAUNCH ? cuis_child_launch(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
-             (fn == CUIS_CHILD_WATCH || fn == CUIS_CHILD_RESULT || fn == CUIS_CHILD_PUBLISH) ?
-                 cuis_child_service(fn,frame->rdi,frame->rsi,frame->rdx,frame->r10) :
+             fn == CUIS_LAUNCH_ATTACH ? cuis_launch_attach(frame->rdi,frame->rsi,frame->rdx,frame->r10,frame->r8,frame->r9) :
+             fn == CUIS_STREAM_RECEIPT ?
+                 cuis_stream_receipt(frame->rdi,frame->rsi,frame->rdx,frame->r10) :
              fn == CUIS_SETTING ? cuis_setting(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :
              fn == CUIS_KEYBOARD_LOCK ? cuis_keyboard_lock(frame->rdi, frame->rsi) :
              fn == CUIS_DISPLAY_REDRAW ? cuis_display_redraw(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8) :

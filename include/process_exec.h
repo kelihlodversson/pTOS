@@ -1,24 +1,29 @@
-/* DRAFT transport layout for #907 review. Ordinary kernels return EINVFN;
- * only explicit validation builds accept the unpublished Ssystem mode. */
+/* Native PROCESS-owned launch and observation transport. */
 #ifndef PROCESS_EXEC_H
 #define PROCESS_EXEC_H
 #include "process_completion.h"
-/* Agreed Ssystem selector -9 remains test-gated, never advertised. */
+#define PROCESS_EXEC_SSYSTEM (-9)
 #define PROCESS_EXEC_PREPARE 0UL
 #define PROCESS_EXEC_COMMIT 1UL
 #define PROCESS_EXEC_SNAPSHOT 2UL
 #define PROCESS_EXEC_CLOSE 3UL
 #define PROCESS_EXEC_CANCEL_DEFERRED 4UL
+#define PROCESS_EXEC_DEFER 5UL
+#define PROCESS_EXEC_START 6UL
 #define PROCESS_EXEC_ASYNC 0UL
 #define PROCESS_EXEC_DEFER_REPLACEMENT 1UL
 /* Size is a separate Ssystem argument. All current user ABIs have 32-bit
  * addresses; kernel decoding zero-extends these fields, never kernel pointers.
- * PREPARE supplies path/tail/env/CWD and policy; other operations supply only
+ * PREPARE supplies path/tail/env/CWD and policy. DEFER and START supply
+ * the same launch inputs with zero policy and handle. Other operations supply only
  * operation/handle and zero other inputs. Reserved fields must be zero.
  * PREPARE returns a positive owned handle as its scalar syscall result, COMMIT
  * returns PID and keeps the handle as observer. Neither operation copies out.
  * CANCEL_DEFERRED has no handle/arguments: cancel the calling PROCESS's
  * unpublished successor, if any. Idempotent; never cancel a running PROCESS.
+ * DEFER prepares and commits an unobserved successor in one call, returning
+ * zero on success. The operation closes its temporary right on every path.
+ * START similarly launches an unobserved asynchronous child and returns its PID.
  * A failed replacement PREPARE/COMMIT must preserve the previous successor.
  * CLOSE consumes a valid owned handle once, including when it returns a
  * filesystem cleanup error. The right cannot be retried: residual references

@@ -4,8 +4,12 @@
 #include "../../bdos/process_exec_internal.h"
 #define RECEIPT_RUNTIME_FIXTURE 1
 static BOOL receipt_fixture_active;
+static LONG receipt_fixture_prepare(KPROC *,char *,char *,char *,char *,ULONG);
+static LONG receipt_fixture_commit(KPROC *,ULONG);
+static LONG receipt_fixture_close(KPROC *,ULONG);
 static LONG receipt_fixture_import(KPROC *,ULONG,BOOL,PROCESS_OBSERVER **);
 static BOOL receipt_fixture_ready(void *);
+static BOOL receipt_fixture_snapshot(const PROCESS_OBSERVER *,PROCESS_COMPLETION *);
 static void receipt_fixture_release(PROCESS_OBSERVER **);
 #define main legacy_session_checks
 #include "session.c"
@@ -19,7 +23,7 @@ static BOOL receipt_close_error;
 static ULONG receipt_next,receipt_import_count,receipt_release_count;
 static CUIS_RECEIPT_TEST_RECORD *receipt_settling;
 static ULONG receipt_release_fences;
-LONG proc_exec_handle_prepare(KPROC *owner,char *path,char *tail,char *environment,char *directory,ULONG policy)
+static LONG receipt_fixture_prepare(KPROC *owner,char *path,char *tail,char *environment,char *directory,ULONG policy)
 {
     ULONG i=receipt_next++;
     (void)path;(void)tail;(void)environment;(void)directory;
@@ -30,21 +34,23 @@ LONG proc_exec_handle_prepare(KPROC *owner,char *path,char *tail,char *environme
     receipt_children[i].completion.pid=(LONG)i+1000;
     return (LONG)i+100;
 }
-LONG proc_exec_handle_commit(KPROC *owner,ULONG handle)
+static LONG receipt_fixture_commit(KPROC *owner,ULONG handle)
 {
-    ULONG i=handle-100,j,t;
+    ULONG i=handle-100,j;
+    CUIS_CLIENT *client;
     BOOL bound=FALSE;
     if (owner!=(KPROC *)run || input_irqs || !cleanup_depth || i>=receipt_next ||
         !receipt_children[i].open || receipt_children[i].committed) __builtin_abort();
-    for (t=0;t<RECEIPT_TABLES;t++) for (j=0;j<RECEIPT_SLOTS;j++) {
-        CUIS_RECEIPT_SLOT *slot=&receipt_tables[t].slots[j];
-        if (slot->state==CUIS_RECEIPT_BOUND && slot->tag==handle) bound=TRUE;
-    }
+    for (client=clients;client;client=client->next) if (client->receipt_table)
+        for (j=0;j<RECEIPT_SLOTS;j++) {
+            CUIS_RECEIPT_SLOT *slot=&client->receipt_table->slots[j];
+            if (slot->state==CUIS_RECEIPT_BOUND && slot->tag==handle) bound=TRUE;
+        }
     if (!bound) __builtin_abort();
     receipt_children[i].committed=TRUE;receipt_children[i].completion.state=PROCESS_RUNNING;
     return receipt_children[i].completion.pid;
 }
-LONG proc_exec_handle_close(KPROC *owner,ULONG handle)
+static LONG receipt_fixture_close(KPROC *owner,ULONG handle)
 {
     ULONG i=handle-100;
     if (owner!=(KPROC *)run || !input_irqs || i>=receipt_next) __builtin_abort();
@@ -74,7 +80,7 @@ static void receipt_fixture_release(PROCESS_OBSERVER **observer)
     }
     child->leases--;receipt_release_count++;*observer=NULL;
 }
-BOOL process_observer_snapshot(const PROCESS_OBSERVER *observer,PROCESS_COMPLETION *out)
+static BOOL receipt_fixture_snapshot(const PROCESS_OBSERVER *observer,PROCESS_COMPLETION *out)
 {
     *out=((const typeof(receipt_children[0]) *)observer)->completion;return TRUE;
 }
@@ -94,7 +100,7 @@ static void receipt_wait_close(void)
     BOOL blocked_irqs=input_irqs;
     input_irqs=TRUE;
     if (!receipt_settling || !find_handle(receipt_settling->source)->receipt_observations ||
-        proc_exec_handle_close((KPROC *)run,receipt_settling->tag)!=E_OK ||
+        receipt_fixture_close((KPROC *)run,receipt_settling->tag)!=E_OK ||
         cuis_receipt_test_reclaim(receipt_settling)!=EAGAIN) __builtin_abort();
     complete_receipt_child(receipt_settling,12);
     input_irqs=blocked_irqs;
@@ -170,7 +176,7 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_reclaim(&a)==EACCDN);
     CHECK(cuis_receipt_test_ack(&a)==E_OK && cuis_receipt_test_ack(&a)==E_OK);
     CHECK(cuis_receipt_test_reclaim(&a)==EACCDN); /* ACK never consumes the right. */
-    CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==E_OK);
+    CHECK(receipt_fixture_close((KPROC *)run,a.tag)==E_OK);
     CHECK(cuis_receipt_test_commit(&a)==16 && !find_handle(destination)->stream_bytes);
     CHECK(cuis_receipt_test_reclaim(&a)==E_OK && cuis_receipt_test_reclaim(&a)==E_OK);
     query=query_identity(a);query.packet=0;
@@ -179,7 +185,7 @@ static int receipt_runtime_checks(void)
     old=a;
     CHECK(cuis_receipt_test_launch(source,destination,0,"child",tail,environment,&a)>0 && a.attempt_low>old.attempt_low);
     CHECK(cuis_receipt_test_commit(&old)==EIHNDL && cuis_receipt_test_ack(&old)==EIHNDL);
-    CHECK(cuis_receipt_test_ack(&b)==E_OK && proc_exec_handle_close((KPROC *)run,b.tag)==E_OK &&
+    CHECK(cuis_receipt_test_ack(&b)==E_OK && receipt_fixture_close((KPROC *)run,b.tag)==E_OK &&
           cuis_receipt_test_reclaim(&b)==E_OK);
     /* Actual SESSION_WAIT import envelope: CLOSE cannot revoke the lease;
      * RECLAIM fails both while blocked and during final reference release. */
@@ -200,7 +206,7 @@ static int receipt_runtime_checks(void)
     run=&second;CHECK(cuis_service(CUIS_SESSION_END,destination)==E_OK);
     replacement=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(replacement>destination);run=&first;
     CHECK(cuis_receipt_test_commit(&a)==EACCDN && !find_handle(replacement)->stream_bytes);
-    CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==E_OK && cuis_receipt_test_reclaim(&a)==E_OK);
+    CHECK(receipt_fixture_close((KPROC *)run,a.tag)==E_OK && cuis_receipt_test_reclaim(&a)==E_OK);
     /* Fixed slot admission, immutable staged bytes, copy failure and pending
      * cancellation cannot fabricate COMMITTED or silently evict an attempt. */
     CHECK(cuis_receipt_test_launch(source,replacement,0,"child",tail,environment,&a)>0);
@@ -219,14 +225,13 @@ static int receipt_runtime_checks(void)
     CHECK(cuis_receipt_test_query(&query)==EIMBA);fail_copy=FALSE;
     query=query_identity(a);query.packet=0;CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_COMMITTED);
     CHECK(cuis_receipt_test_ack(&a)==E_OK);receipt_close_error=TRUE;
-    CHECK(proc_exec_handle_close((KPROC *)run,a.tag)==EACCDN);receipt_close_error=FALSE;
+    CHECK(receipt_fixture_close((KPROC *)run,a.tag)==EACCDN);receipt_close_error=FALSE;
     before=find_handle(replacement)->stream_bytes;
     CHECK(cuis_receipt_test_commit(&a)==16 && find_handle(replacement)->stream_bytes==before &&
-          proc_exec_handle_close((KPROC *)run,a.tag)==EIHNDL && cuis_receipt_test_reclaim(&a)==E_OK);
+          receipt_fixture_close((KPROC *)run,a.tag)==EIHNDL && cuis_receipt_test_reclaim(&a)==E_OK);
     CHECK(!receipt_active && receipt_import_count==receipt_release_count);
-    /* Retire each transport state with an independently retained endpoint.
-     * Retirement drops transport entitlement, never generic PROCESS rights or
-     * bytes already committed to the unrelated receiver. */
+    /* Retirement closes each endpoint's generic right and preserves bytes
+     * already committed to the unrelated receiver. */
     run=&second;CHECK(cuis_stream_service(CUIS_STREAM_READ,replacement,0x20000,16,0,0)==16);run=&first;
     for (j=0;j<5;j++) {
         CUIS_CLIENT *held;
@@ -239,19 +244,18 @@ static int receipt_runtime_checks(void)
         }
         if(j>=2) { complete_receipt_child(&c,20+j);CHECK(cuis_receipt_test_commit(&c)==16); }
         if(j>=3) CHECK(cuis_receipt_test_ack(&c)==E_OK);
-        if(j==4) CHECK(proc_exec_handle_close((KPROC *)run,c.tag)==E_OK && cuis_receipt_test_reclaim(&c)==E_OK);
+        if(j==4) CHECK(receipt_fixture_close((KPROC *)run,c.tag)==E_OK && cuis_receipt_test_reclaim(&c)==E_OK);
         held=owned_client(extra);CHECK(client_get(held));
         CHECK(cuis_service(CUIS_SESSION_END,extra)==E_OK && held->retired && !held->receipt_table);
         query=query_identity(c);CHECK(cuis_receipt_test_query(&query)==EACCDN);
-        CHECK(proc_exec_handle_close((KPROC *)run,c.tag)==(j==4 ? EIHNDL:E_OK));
+        CHECK(receipt_fixture_close((KPROC *)run,c.tag)==EIHNDL);
         if(j>=2) {
             run=&second;CHECK(cuis_stream_service(CUIS_STREAM_READ,replacement,0x20000,16,0,0)==16 && stream_output[0]==0x70+j);run=&first;
         }
         ksched_cleanup_begin(&scope);client_put(held);ksched_cleanup_end(&scope);
         CHECK(!receipt_active && !find_handle(replacement)->stream_bytes);
     }
-    /* Exhaust actual fixed tables and all 256 active slots. Empty generation
-     * fences remain charged; no allocator pressure may evict them. */
+    /* Exhaust the per-endpoint slots without limiting other endpoints. */
     quota_sources[0]=source;
     for(i=0;i<16;i++) {
         if(i) { quota_sources[i]=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(quota_sources[i]>=0); }
@@ -259,11 +263,13 @@ static int receipt_runtime_checks(void)
     }
     CHECK(receipt_active==256);
     extra=cuis_service(CUIS_SESSION_START,CUIS_SESSION_NEW);CHECK(extra>=0);
-    CHECK(cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN && receipt_active==256);
-    for(i=0;i<256;i++) CHECK(proc_exec_handle_close((KPROC *)run,quota[i].tag)==E_OK && cuis_receipt_test_reclaim(&quota[i])==E_OK);
+    CHECK(cuis_receipt_test_launch(source,replacement,0,"child",tail,environment,&query)==EAGAIN && receipt_active==256);
+    CHECK(cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&c)>0 && receipt_active==257);
+    CHECK(receipt_fixture_close((KPROC *)run,c.tag)==E_OK && cuis_receipt_test_reclaim(&c)==E_OK);
+    for(i=0;i<256;i++) CHECK(receipt_fixture_close((KPROC *)run,quota[i].tag)==E_OK && cuis_receipt_test_reclaim(&quota[i])==E_OK);
     query=query_identity(quota[0]);query.packet=0;
     CHECK(cuis_receipt_test_query(&query)==E_OK && query.state==CUIS_RECEIPT_RECLAIMED);
-    CHECK(!receipt_active && cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)==EAGAIN);
+    CHECK(!receipt_active && cuis_receipt_test_launch(extra,replacement,0,"child",tail,environment,&query)>0);
     CHECK(cuis_service(CUIS_SESSION_END,extra)==E_OK);
     for(i=1;i<16;i++)CHECK(cuis_service(CUIS_SESSION_END,quota_sources[i])==E_OK);
 

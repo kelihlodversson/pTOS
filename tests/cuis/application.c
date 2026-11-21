@@ -1,3 +1,5 @@
+#include "cuis_receipt.h"
+#include "process_exec.h"
 /* Exercise the public GEM bindings against a failing/private transport. */
 #include "gem.h"
 #include "process_identity.h"
@@ -47,6 +49,8 @@ static LONG active_peer = EFILNF;
 static ULONG peer_state_flags;
 static BOOL live;
 static LONG child_status, child_on_wait, child_publish_error;
+static ULONG child_receipt_state;
+static WORD child_packet[8];
 static ULONG starts, closes, yields, delays;
 static ULONG graphics_resets;
 void aes_graphics_reset(AESGLOBAL *global) { (void)global; graphics_resets++; }
@@ -144,6 +148,18 @@ void aes_shell_reset(AESGLOBAL *global) { (void)global; }
 void aes_shell_init(AES_APP_CONTEXT *context) { (void)context; }
 UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
 {
+    if (fn==0x154 && (QUAD)a==PROCESS_EXEC_SSYSTEM) {
+        PROCESS_EXEC_REQUEST *request=(PROCESS_EXEC_REQUEST *)(uintptr_t)b;
+        if (c!=sizeof(*request) || request->handle!=17) return (QUAD)EINVAL;
+        if (request->operation==PROCESS_EXEC_CLOSE) return E_OK;
+        if (request->operation!=PROCESS_EXEC_SNAPSHOT || !child_status) return (QUAD)EIHNDL;
+        request->completion.pid=(ULONG)child_status>>16;
+        request->completion.state=PROCESS_COMPLETED;
+        request->completion.kind=PROCESS_COMPLETION_NORMAL;
+        request->completion.status=(UWORD)child_status;
+        request->completion.order_low=1;
+        return E_OK;
+    }
     if (fn == 0x154 && a == 0xfff8) {
         PROCESS_IDENTITY *identity = (PROCESS_IDENTITY *)(uintptr_t)b;
         if (c != sizeof(*identity)) return EINVAL;
@@ -199,18 +215,23 @@ static ULONG lifecycle_unread;
 static short lifecycle_packet[16] = { AC_CLOSE,0,0,0,0,0,0,0, AC_CLOSE,0,0,1,0,0,0,0 };
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
-    if (fn == CUIS_COHORT_QUERY) {
+    ULONG batch=~(ULONG)0;
+    if (fn==CUIS_STREAM_BATCH) {
+        batch=(ULONG)(b>>32);
+        b=(ULONG)b;
+    }
+    if (batch == CUIS_BATCH_QUERY) {
         if (!lifecycle_test) return EFILNF;
-        if (b == CUIS_COHORT_ID) return 900;
-        if (b == CUIS_COHORT_WORK) return lifecycle_work;
-        if (b == CUIS_COHORT_READ_OFFSET) return lifecycle_offset;
-        if (b == CUIS_COHORT_READ_BYTES) return lifecycle_read_bytes;
+        if (b == CUIS_BATCH_ID) return 900;
+        if (b == CUIS_BATCH_WORK) return lifecycle_work;
+        if (b == CUIS_BATCH_READ_OFFSET) return lifecycle_offset;
+        if (b == CUIS_BATCH_READ_BYTES) return lifecycle_read_bytes;
         return EFILNF;
     }
-    if (lifecycle_test && fn == CUIS_COHORT_READ) {
+    if (lifecycle_test && batch == CUIS_BATCH_READ) {
         __builtin_memcpy((void *)(uintptr_t)c,lifecycle_packet,32); return 32;
     }
-    if (lifecycle_test && fn == CUIS_COHORT_PUBLISH) {
+    if (lifecycle_test && batch == CUIS_BATCH_PUBLISH) {
         __builtin_memcpy(pipe_data+pipe_count,lifecycle_packet,32);
         pipe_count += 32; lifecycle_unread = pipe_count; lifecycle_work = 0; return E_OK;
     }
@@ -255,13 +276,32 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         __builtin_memcpy(registered_text,(void *)(uintptr_t)d,e);
         return (LONG)b;
     }
-    if (fn == CUIS_CHILD_RESULT) return child_status;
-    if (fn == CUIS_CHILD_PUBLISH) {
-        if (child_publish_error) return child_publish_error;
-        if (!child_status || b != (ULONG)child_status || d != 16) return EACCDN;
-        if (pipe_count+d > sizeof(pipe_data)) return EAGAIN;
-        __builtin_memcpy(pipe_data+pipe_count,(void *)(uintptr_t)c,d);
-        pipe_count += d; child_status = 0; return E_OK;
+    if (fn==CUIS_STREAM_RECEIPT) {
+        CUIS_RECEIPT_RECORD *receipt=(CUIS_RECEIPT_RECORD *)(uintptr_t)c;
+        if (d!=sizeof(*receipt)) return EINVAL;
+        if (b==CUIS_RECEIPT_QUERY) {
+            if (!receipt->slot && (child_status || child_receipt_state)) {
+                receipt->state=child_receipt_state ? child_receipt_state : CUIS_RECEIPT_BOUND;
+                receipt->tag=17;
+            }
+            return E_OK;
+        }
+        if (b==CUIS_RECEIPT_PREPARE) {
+            uintptr_t high=(uintptr_t)receipt & ~(uintptr_t)0xffffffffUL;
+            __builtin_memcpy(child_packet,(void *)(high | receipt->packet),16);
+            child_receipt_state=CUIS_RECEIPT_PREPARED;
+        } else if (b==CUIS_RECEIPT_COMMIT) {
+            if (child_publish_error) return child_publish_error;
+            if (pipe_count+16>sizeof(pipe_data)) return EAGAIN;
+            __builtin_memcpy(pipe_data+pipe_count,child_packet,16);
+            pipe_count+=16;
+            child_status=0;
+            child_receipt_state=CUIS_RECEIPT_COMMITTED;
+            return 16;
+        } else if (b==CUIS_RECEIPT_ACK) child_receipt_state=CUIS_RECEIPT_ACKNOWLEDGED;
+        else if (b==CUIS_RECEIPT_RECLAIM) child_receipt_state=0;
+        else return EINVFN;
+        return E_OK;
     }
     if (fn == CUIS_SETTING) {
         if (a >= 38) return EINVAL;
@@ -601,7 +641,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_COHORT)));
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_BATCH)));
     /* Absolute deadlines are expressed in the native five-millisecond ticks. */
     CHECK(!pipe_count && waited_interval == 10 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
@@ -1332,7 +1372,7 @@ static int lifecycle_poll_checks(void)
     CHECK(appl_init() == 7 && menu_register(7,"One") == 0 && menu_register(7,"Two") == 1);
     window = wind_create(0,10,10,100,100);
     CHECK(window > 0 && wind_open(window,10,10,100,100));
-    lifecycle_test = TRUE; lifecycle_work = CUIS_COHORT_REQUEST;
+    lifecycle_test = TRUE; lifecycle_work = CUIS_BATCH_REQUEST;
     CHECK(aes_lifecycle_messages(&aes_global) == E_OK && pipe_count == 32);
     display_error = EAGAIN;
     CHECK(appl_read(APR_NOWAIT,16,message) == 0 && pipe_count == 32 && !display_nesting);

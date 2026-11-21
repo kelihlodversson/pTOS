@@ -4,6 +4,11 @@
 LONG cuis_call(ULONG function, LONG handle);
 LONG cuis_call5(ULONG function, LONG a, LONG b, LONG c, LONG d, LONG e);
 LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f);
+static inline LONG aes_batch_call(ULONG operation, UQUAD session, UQUAD scope,
+                                  UQUAD a, UQUAD b, UQUAD c, UQUAD d)
+{
+    return cuis_call6(CUIS_STREAM_BATCH,session,CUIS_BATCH_COMMAND(operation,scope),a,b,c,d);
+}
 LONG aes_graphics_call(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d);
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c);
 UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d);

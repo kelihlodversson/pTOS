@@ -1,5 +1,5 @@
 /* Standard GEM shutdown coordination. No GUI wire format crosses into the
- * native cohort implementation as anything other than bounded opaque bytes.
+ * native stream batch implementation as anything other than bounded opaque bytes.
  * Copyright (C) 2026 The pTOS development team. GPL version 2 or later. */
 #include "libaes.h"
 #include "gemerror.h"
@@ -33,31 +33,34 @@ BOOL aes_lifecycle_listening(AESGLOBAL *global)
 static LONG reject(LONG session, LONG token)
 {
     WORD failure[8] = { AP_TFAIL,1,0,0,0,0,0,0 };
-    return cuis_call6(CUIS_COHORT_REJECT,session,token,(uintptr_t)failure,sizeof(failure),0,0);
+    return aes_batch_call(CUIS_BATCH_SETTLE,session,token,(uintptr_t)failure,sizeof(failure),0,0);
 }
 LONG aes_lifecycle_messages(AESGLOBAL *global)
 {
     AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
-    WORD data[CUIS_COHORT_BYTES/2];
-    LONG session, token, work, bytes, result, phase;
+    WORD data[CUIS_BATCH_BYTES/2];
+    LONG session, token, work, bytes, result;
     ULONG i, entries = 0;
     BOOL term = FALSE;
     if (!aes_lifecycle_listening(global)) return E_OK;
     session = aes_application_session(global);
     if (session < 0) return session;
-    token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
+    token = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_ID,0,0,0,0);
     if (token == EFILNF) { state->coordinator = state->reset_wait_display = FALSE; return E_OK; }
     if (token < 0) return token;
     if (state->reset_wait_display && token != state->request_token) state->reset_wait_display = FALSE;
-    work = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_WORK,0,0,0,0);
+    work = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_WORK,0,0,0,0);
     if (work < 0) return work == EACCDN ? E_OK : work;
     if (!work) return E_OK;
-    if (work == CUIS_COHORT_ACCEPT)
-        result = cuis_call6(CUIS_COHORT_ACK,session,token,0,0,0,0);
-    else {
-        bytes = cuis_call6(CUIS_COHORT_READ,session,token,(uintptr_t)data,sizeof(data),0,0);
+    if (work == CUIS_BATCH_ACCEPT)
+        result = aes_batch_call(CUIS_BATCH_SETTLE,session,token,0,0,0,0);
+    else if (work == CUIS_BATCH_DRAINED) {
+        WORD completed[8]={SHUT_COMPLETED,0,0,0,0,0,0,0};
+        result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,(uintptr_t)completed,sizeof(completed),0,0);
+    } else {
+        bytes = aes_batch_call(CUIS_BATCH_READ,session,token,(uintptr_t)data,sizeof(data),0,0);
         if (bytes < 0) return bytes == EACCDN || bytes == EAGAIN ? E_OK : bytes;
-        if (work == CUIS_COHORT_REQUEST) {
+        if (work == CUIS_BATCH_REQUEST) {
             if (!bytes || bytes % 16) { (void)reject(session,token); return E_OK; }
             for (i = 0; i < (ULONG)bytes/2; i += 8) {
                 /* Validate the whole request before publishing any of it.
@@ -77,21 +80,21 @@ LONG aes_lifecycle_messages(AESGLOBAL *global)
                 } else { (void)reject(session,token); return E_OK; }
             }
         }
-        if (work == CUIS_COHORT_REQUEST) {
+        if (work == CUIS_BATCH_REQUEST) {
             result = aes_window_messages_poll(session,global);
             if (result < 0) return result;
             if (aes_frames_wait_display(global) || aes_windows_pending(global)) return E_OK;
         }
-        if (work == CUIS_COHORT_RESULT) {
-            phase = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_STATE,0,0,0,0);
-            if (phase == 3 && (bytes != 16 || data[0] != AP_TFAIL || data[2])) {
-                /* Adapt the complete opaque result before publication: bad
-                 * lengths must not strand a read or misalign the GEM stream. */
-                memset(data,0,sizeof(data)); data[0] = AP_TFAIL; data[1] = 1;
-                result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,(uintptr_t)data,16,0,0);
-            } else result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
-        } else result = cuis_call6(CUIS_COHORT_PUBLISH,session,token,0,0,0,0);
-        if (result == E_OK && work == CUIS_COHORT_REQUEST) state->request_token = token;
+        if (work == CUIS_BATCH_REPLY) {
+            if (bytes!=16 || data[0]!=AP_TFAIL || data[2]) {
+                memset(data,0,16);
+                data[0]=AP_TFAIL;
+                data[1]=1;
+            }
+            /* The reply policy releases registration atomically with publication. */
+            result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,(uintptr_t)data,16,1,0);
+        } else result=aes_batch_call(CUIS_BATCH_PUBLISH,session,token,0,0,0,0);
+        if (result == E_OK && work == CUIS_BATCH_REQUEST) state->request_token = token;
     }
     return result == EAGAIN || result == EACCDN ? E_OK : result;
 }
@@ -110,12 +113,12 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pol
     session = aes_application_session(global);
     if (session < 0) return session;
     if (message[0] == AP_TFAIL || message[0] == SHUT_COMPLETED) {
-        token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_ID,0,0,0,0);
-        offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_OFFSET,0,0,0,0);
-        length = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_RESULT_BYTES,0,0,0,0);
+        token = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_RESULT_ID,0,0,0,0);
+        offset = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_RESULT_OFFSET,0,0,0,0);
+        length = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_RESULT_BYTES,0,0,0,0);
         if (token <= 0 || token != state->owner_token || offset != 0 || length != 16) return EAGAIN;
-        if (message[0] == SHUT_COMPLETED && cuis_call6(CUIS_COHORT_QUERY,session,
-            CUIS_COHORT_STATE,0,0,0,0) != CUIS_COHORT_FINISHED) {
+        if (message[0] == SHUT_COMPLETED && aes_batch_call(CUIS_BATCH_QUERY,session,
+            CUIS_BATCH_STATE,0,0,0,0) != CUIS_BATCH_FINISHED) {
             /* A native rejection is opaque; its bytes cannot assert success. */
             memset(message,0,sizeof(message)); message[0] = AP_TFAIL; message[1] = 1;
             memcpy(buffer,message,sizeof(message));
@@ -123,10 +126,10 @@ LONG aes_lifecycle_deliver(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pol
         if (message[0] == AP_TFAIL) { state->coordinator = FALSE; state->owner_token = 0; }
         return E_OK;
     }
-    token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
+    token = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_ID,0,0,0,0);
     if (token <= 0 || token != state->request_token) return EAGAIN;
-    offset = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_OFFSET,0,0,0,0);
-    length = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_READ_BYTES,0,0,0,0);
+    offset = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_READ_OFFSET,0,0,0,0);
+    length = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_READ_BYTES,0,0,0,0);
     if (offset < 0 || offset % 16 || length != 16) return EAGAIN;
     if (message[0] == AC_CLOSE && state->reset_token != token) {
         /* Earlier queued AC_OPEN and window messages have now been delivered.
@@ -180,7 +183,7 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
 {
     AES_LIFECYCLE_STATE *state;
     LONG session = aes_application_session(global), token, peer, after, tag, result;
-    WORD data[CUIS_COHORT_BYTES/2], completion[8] = { SHUT_COMPLETED,0,0,0,0,0,0,0 };
+    WORD data[CUIS_BATCH_BYTES/2];
     ULONG slot, used;
     BOOL acc;
     if (session < 0) return 0;
@@ -198,16 +201,16 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
         if (!command) return 0;
         memcpy(data,command,16);
         if (data[0] != AP_TFAIL) return 0;
-        token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
-        return token > 0 && cuis_call6(CUIS_COHORT_REJECT,session,token,(uintptr_t)data,16,16,0) == E_OK;
+        token = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_ID,0,0,0,0);
+        return token > 0 && aes_batch_call(CUIS_BATCH_SETTLE,session,token,(uintptr_t)data,16,16,0) == E_OK;
     }
     if (mode != SWM_SHUTDOWN || action < SD_ABORT || action > SD_COMPLETE) return 0;
     if (action == SD_ABORT) {
-        token = cuis_call6(CUIS_COHORT_QUERY,session,CUIS_COHORT_ID,0,0,0,0);
-        if (token <= 0 || cuis_call6(CUIS_COHORT_CANCEL,session,token,0,0,0,0) != E_OK) return 0;
+        token = aes_batch_call(CUIS_BATCH_QUERY,session,CUIS_BATCH_ID,0,0,0,0);
+        if (token <= 0 || cuis_call6(CUIS_ENDPOINT_BARRIER,session,CUIS_BARRIER_RELEASE,token,0,0,0) != E_OK) return 0;
         state->coordinator = FALSE; state->owner_token = 0; return 1;
     }
-    token = cuis_call6(CUIS_COHORT_BEGIN,session,0,0,0,0,0);
+    token = cuis_call6(CUIS_ENDPOINT_BARRIER,session,CUIS_BARRIER_ACQUIRE,0,0,0,0);
     if (token <= 0) return 0;
     state->coordinator = TRUE; state->owner_token = token; after = -1;
     for (;;) {
@@ -233,12 +236,12 @@ WORD aes_lifecycle_write(WORD mode, WORD flags, WORD action, const void *command
         if (!acc || action == SD_COMPLETE) {
             data[used] = AP_TERM; data[used+1] = -1; data[used+5] = AP_TERM; used += 8;
         }
-        result = cuis_call6(CUIS_COHORT_STAGE,session,token,peer,(uintptr_t)data,used*2,!acc || action == SD_COMPLETE);
+        result = aes_batch_call(CUIS_BATCH_STAGE,session,token,peer,(uintptr_t)data,used*2,!acc || action == SD_COMPLETE);
         if (result != E_OK && result != EFILNF) goto failed;
     }
-    if (cuis_call6(CUIS_COHORT_COMMIT,session,token,(uintptr_t)completion,sizeof(completion),0,0) != E_OK) goto failed;
+    if (aes_batch_call(CUIS_BATCH_SEAL,session,token,16,0,0,0) != E_OK) goto failed;
     return 1;
 failed:
-    (void)cuis_call6(CUIS_COHORT_CANCEL,session,token,0,0,0,0);
+    (void)cuis_call6(CUIS_ENDPOINT_BARRIER,session,CUIS_BARRIER_RELEASE,token,0,0,0);
     state->coordinator = FALSE; state->owner_token = 0; return 0;
 }

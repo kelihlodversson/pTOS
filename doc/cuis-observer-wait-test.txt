@@ -1,10 +1,6 @@
-Bounded CUIS SESSION_WAIT observer prototype (#907 / #940)
+Bounded CUIS SESSION_WAIT PROCESS observation (#907 / #940)
 
-CONF_WITH_CUIS_OBSERVER_TEST defaults off and requires CUIS, native scheduling
-and user address spaces. No shipped preset enables it. It does not activate
-S_PROCEXEC, modify public discovery, or remove a CUIS selector.
-
-SESSION_WAIT retains arguments a-d. In the prototype only, e is a fixed32
+CUIS SESSION_WAIT retains arguments a-d. Argument e is a fixed32
 user address and f is an element count (maximum 16). e=f=0 preserves the
 existing call. A nonempty array requires CUIS_READY_CHILD. Entries are ULONG
 PROCESS-owned opaque launch rights, not PID, AES client ID or kernel pointers.
@@ -25,9 +21,12 @@ The checked-copy backing restriction remains the built-in single-CPU,
 non-preemptive no-yield/no-mapping-reentry provider. This is not arbitrary
 callback/fatal-unwind, preemption or SMP safety.
 
+CONF_WITH_CUIS_OBSERVER_TEST enables only native diagnostic counts and
+rendezvous probes. Ordinary CUIS builds use the same lease implementation.
+
 Validation layers
 - tools/test-cuis-observers.py executes the production CUIS session source with
-  modeled PROCESS/scheduler services in both gate modes; it checks aliases,
+  modeled PROCESS/scheduler services with diagnostics on and off; it checks aliases,
   failed imports/copies, endpoint retirement, cancellation and combined readiness.
 - The gated x32 MEMTEST fixture uses real prepared PROCESS handles, independent
   canonical observer references, mapped user arrays and scheduler handoffs.
@@ -36,5 +35,5 @@ Validation layers
   A separate pending-child case has no immediate timer/admission injection: the
   parent blocks on the observer-aware scheduler predicate while another real
   PROCESS executes and completes, then reaps independently through Pwait.
-Neither layer is the receipt-runtime publisher-fault/sibling-recovery proof.
-No receipt runtime or production CHILD migration is included in this increment.
+The current CHILD consumers still use the existing notice path. The lease
+array is ready for their migration and for composition with #930 readiness.

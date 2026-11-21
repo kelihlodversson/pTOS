@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Validate actual hidden-gate selection, object inclusion and discovery cases.
-
-The temporary Kconfig selector exists only in this fixture. No production
-preset or source gate is enabled by these prospective-configuration tests.
-"""
+"""Validate PROCESS transport object inclusion and discovery cases."""
 import os
 from pathlib import Path
 import re
@@ -24,18 +20,14 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
                     '    bool "Fixture-only production selector"\n'
                     '    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM\n'
                     '    select CONF_WITH_PROCESS_EXEC\n')
-    cases = [('ordinary', False, False), ('test', False, True),
+    cases = [('scheduler disabled', False, False), ('test', False, True),
              ('production', True, False), ('both', True, True)]
     for name, production, test in cases:
         config = kconfiglib.Kconfig(str(root), warn_to_stderr=False)
         config.load_config('configs/pc-x86_64_defconfig')
         config.syms['CONF_WITH_ELF_SHARED'].set_value(0)
-        config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
-        # Assigning a hidden symbol is not activation. A real selector is
-        # required in the future reviewed activation increment.
-        config.syms['CONF_WITH_PROCESS_EXEC'].set_value(2)
-        assert config.syms['CONF_WITH_PROCESS_EXEC'].str_value == 'n'
-        config.syms['PROCESS_EXEC_VALIDATION_SELECT'].set_value(2 if production else 0)
+        config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2 if production or test else 0)
+        config.syms['PROCESS_EXEC_VALIDATION_SELECT'].set_value(2 if production and test else 0)
         config.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2 if test else 0)
         expected = ('y' if production else 'n', 'y' if production or test else 'n', 'y' if test else 'n')
         actual = tuple(config.syms[x].str_value for x in (
@@ -78,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
             ['tests/process_transport/process_transport.c'], cwd=ROOT).decode()
         assert ('production PROCESS transport must be advertised' in user) == production, name
         assert ('unpublished PROCESS transport must not be advertised' in user) == (not production), name
-        assert ('normal/unsupported kernel exposed test-only PROCESS dispatch' in user) == (not (production or test)), name
+        assert ('unsupported kernel exposed PROCESS dispatch' in user) == (not (production or test)), name
         assert ('prepare ordinary PROCESS without GUI registration' in user) == (production or test), name
         # Inspect the actual preprocessed Ssystem functions, not a parallel
         # table of capabilities. Host preprocessing does not execute a trap.
@@ -91,8 +83,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
         dispatch = source.split('LONG xssystem(', 1)[1]
         assert ('return proc_exec_dispatch(arg1,arg2);' in dispatch) == (production or test), name
         if production:
-            # Link and execute the actual adapter/decoder for future production
-            # and both-gate validation configurations, still only on the host.
+            # Link and execute the actual adapter/decoder on the host.
             subprocess.run(shlex.split(os.environ.get('HOSTCC', 'cc')) + [
                 '-fno-builtin', '-std=gnu90', '-O2', '-Wall', '-Wextra', '-Werror',
                 '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections',

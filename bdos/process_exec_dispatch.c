@@ -1,4 +1,4 @@
-/* Shared Ssystem adapter. The production gate remains hidden and disabled. */
+/* Shared Ssystem adapter for PROCESS-owned launch and observation. */
 #include "emutos.h"
 #include "gemerror.h"
 #include "ksched.h"

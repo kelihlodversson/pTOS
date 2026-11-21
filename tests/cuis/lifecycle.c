@@ -8,7 +8,7 @@
 #include "transport.h"
 #include "string.h"
 #define VERIFY(c) do { if (!(c)) { fprintf(stderr,"lifecycle:%d\n",__LINE__); return 1; } } while (0)
-static WORD packet[CUIS_COHORT_BYTES/2], stream[256];
+static WORD packet[CUIS_BATCH_BYTES/2], stream[256];
 static LONG token, work, tag, read_offset, read_bytes;
 static LONG result_id = EFILNF, result_offset, result_bytes;
 static ULONG bytes, queued, consumed, request_start, published, rejected, resets, windows;
@@ -38,11 +38,16 @@ LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token)
 }
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
+    ULONG batch=~(ULONG)0;
+    if (fn==CUIS_STREAM_BATCH) {
+        batch=(ULONG)(b>>32);
+        b=(ULONG)b;
+    }
     (void)a; (void)e; (void)f;
-    if (fn == CUIS_COHORT_BEGIN) { work = 0; return ++token; }
+    if (fn == CUIS_ENDPOINT_BARRIER && b==CUIS_BARRIER_ACQUIRE) { work = 0; return ++token; }
     if (fn == CUIS_PEER_NEXT) return EFILNF;
-    if (fn == CUIS_COHORT_COMMIT) return E_OK;
-    if (fn == CUIS_COHORT_CANCEL) { token = 0; return E_OK; }
+    if (batch == CUIS_BATCH_SEAL) return E_OK;
+    if (fn == CUIS_ENDPOINT_BARRIER && b==CUIS_BARRIER_RELEASE) { token = 0; return E_OK; }
     if (fn == CUIS_STREAM_PENDING) return queued-consumed;
     if (fn == CUIS_STREAM_PEEK || fn == CUIS_STREAM_READ) {
         if (queued-consumed < c) return EAGAIN;
@@ -60,27 +65,27 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_PEER_QUERY) return tag;
     if (fn == CUIS_SESSION_TAG) { tag = (LONG)b; return E_OK; }
     if (fn == CUIS_ENTRY_OWNER) return b < 2 ? 42 : EFILNF;
-    if (fn == CUIS_COHORT_QUERY) {
-        if (b == CUIS_COHORT_RESULT_ID) return result_id;
-        if (b == CUIS_COHORT_RESULT_OFFSET) return result_offset;
-        if (b == CUIS_COHORT_RESULT_BYTES) return result_bytes;
+    if (batch == CUIS_BATCH_QUERY) {
+        if (b == CUIS_BATCH_RESULT_ID) return result_id;
+        if (b == CUIS_BATCH_RESULT_OFFSET) return result_offset;
+        if (b == CUIS_BATCH_RESULT_BYTES) return result_bytes;
         if (!token) return EFILNF;
-        if (b == CUIS_COHORT_ID) return token;
-        if (b == CUIS_COHORT_WORK) return work;
-        if (b == CUIS_COHORT_STATE) return phase;
-        if (b == CUIS_COHORT_READ_OFFSET) return read_offset;
-        if (b == CUIS_COHORT_READ_BYTES) return read_bytes;
+        if (b == CUIS_BATCH_ID) return token;
+        if (b == CUIS_BATCH_WORK) return work;
+        if (b == CUIS_BATCH_STATE) return phase;
+        if (b == CUIS_BATCH_READ_OFFSET) return read_offset;
+        if (b == CUIS_BATCH_READ_BYTES) return read_bytes;
     }
     if ((LONG)b != token) return EACCDN;
-    if (fn == CUIS_COHORT_READ) { memcpy((void *)(uintptr_t)c,packet,bytes); return bytes; }
-    if (fn == CUIS_COHORT_REJECT) { rejected++; work = 0; return E_OK; }
-    if (fn == CUIS_COHORT_PUBLISH) {
+    if (batch == CUIS_BATCH_READ) { memcpy((void *)(uintptr_t)c,packet,bytes); return bytes; }
+    if (batch == CUIS_BATCH_SETTLE) { rejected++; work = 0; return E_OK; }
+    if (batch == CUIS_BATCH_PUBLISH) {
         if (c || d) { bytes = d; memcpy(packet,(void *)(uintptr_t)c,bytes); }
-        published_result = work == CUIS_COHORT_RESULT;
+        published_result = work==CUIS_BATCH_REPLY || work==CUIS_BATCH_DRAINED;
         published_result_token = token;
         request_start = queued; memcpy((UBYTE *)stream+queued,packet,bytes);
         queued += bytes; published++; work = 0;
-        if (published_result && phase == 3) token = 0;
+        if (published_result && e) token=0;
         return E_OK;
     }
     (void)d; return EINVFN;
@@ -88,7 +93,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 static void begin(BOOL acc, WORD consent, const WORD *request, ULONG size)
 {
     aes_lifecycle_reset(acc,&aes_global);
-    token++; work = CUIS_COHORT_REQUEST; tag = acc ? APP_ACCESSORY : APP_APPLICATION;
+    token++; work = CUIS_BATCH_REQUEST; tag = acc ? APP_ACCESSORY : APP_APPLICATION;
     bytes = size; memcpy(packet,request,size);
     queued = consumed = published = rejected = resets = 0;
     read_offset = EFILNF; read_bytes = 0; reset_fails = reset_busy = pending_notice = notice_blocked = published_result = FALSE; phase = 2; windows = 2;
@@ -202,13 +207,13 @@ int main(void)
     message[0] = SHUT_COMPLETED;
     VERIFY(aes_lifecycle_deliver(message,16,&aes_global,FALSE) == E_OK && message[0] == AP_TFAIL);
     VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,&aes_global) == 1);
-    result_id = token; phase = CUIS_COHORT_FINISHED; message[0] = SHUT_COMPLETED;
+    result_id = token; phase = CUIS_BATCH_FINISHED; message[0] = SHUT_COMPLETED;
     VERIFY(aes_lifecycle_deliver(message,16,&aes_global,FALSE) == E_OK && message[0] == SHUT_COMPLETED);
     for (i = 0; i < sizeof(malformed_lengths)/sizeof(malformed_lengths[0]); i++) {
         begin(FALSE,0,request,16);
         VERIFY(aes_lifecycle_write(SWM_SHUTDOWN,0,SD_COMPLETE,NULL,&aes_global) == 1);
         memset(packet,0,sizeof(packet)); packet[0] = 1234;
-        bytes = malformed_lengths[i]; phase = 3; work = CUIS_COHORT_RESULT;
+        bytes = malformed_lengths[i]; phase = 3; work = CUIS_BATCH_REPLY;
         VERIFY(aes_lifecycle_messages(&aes_global) == E_OK && published == 1 && queued == 16 && !token);
         VERIFY(next(message) == E_OK && message[0] == AP_TFAIL && message[1] == 1);
         /* Normalization preserves the next message boundary for all lengths. */

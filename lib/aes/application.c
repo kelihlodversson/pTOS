@@ -354,7 +354,7 @@ short mt_appl_read(short id, short length, void *buffer, AESGLOBAL *global)
                            (aes_lifecycle_wait_display(global) ? CUIS_READY_DISPLAY : CUIS_READY_STREAM | CUIS_READY_CHILD) | (aes_frames_suspended(global) ? 0 : aes_frames_wait_display(global) ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
                            (aes_menu_listening(global) ? CUIS_READY_SURFACE : 0) | (aes_controls_listening(global) ? CUIS_READY_CONTROL : 0) |
                            (repeat ? CUIS_READY_SERVICE : 0) |
-                           (aes_lifecycle_listening(global) && !aes_lifecycle_wait_display(global) && !aes_frames_wait_display(global) ? CUIS_READY_COHORT : 0), 0, 0, 0) <= 0) return 0;
+                           (aes_lifecycle_listening(global) && !aes_lifecycle_wait_display(global) && !aes_frames_wait_display(global) ? CUIS_READY_BATCH : 0), 0, 0, 0) <= 0) return 0;
         }
     }
 }
