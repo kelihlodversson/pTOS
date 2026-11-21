@@ -1,0 +1,94 @@
+Phase 4 THREAD termination, joining and group exit (#893)
+========================================================
+
+Audit baseline: epic 53f31dffe5dcf83081240f50a09a44fb746628dd.
+This document maps the supported contract; it is not a final CI verdict.
+Exact candidate/merge SHA and executable results belong in the #893 ledger.
+
+Production ownership and evidence
+---------------------------------
+
+THREAD-only Pterm/Pterm0 and entry return:
+  proc.c:xterm/x0term, native_sched.c:ksched_finish_exit and kthread.c:
+  kthread_reap. Only the current execution exits. The launcher leaves its
+  syscall stack before freeing it; root reclaims the scheduler stack. Completion
+  is join-ready only after execution and user-stack ownership are released.
+  tests/pclone/pclone.c covers normal entry return, explicit Pterm/Pterm0,
+  faults, leader-first exit and worker creation after leader join on native
+  x32/A32/m68k. Existing resources/private execution accounting remains enabled.
+
+Join ABI 0x191:
+  mintproc.c decodes native slots and packed m68k LONG/pointer arguments;
+  threadcalls.h fixes the public opcodes. native_sched.c:ksched_join validates
+  optional aligned 32-bit output, claims a same-PROCESS published completion,
+  waits cancellation-safely, rechecks output and consumes exactly once.
+  kthread.c owns registry, dependency edges, claimant and metadata retention.
+  Native test_joins covers self/cycle EDEADLK, competing EACCDN, foreign/dead/
+  reaped ESRCH, invalid/unaligned/read-only/revoked outputs, retry without status
+  consumption, late joins and full zero-extended UWORD status. Host production
+  KTHREAD tests additionally cover unpublished/aborted identities, claimant
+  retirement, completion retirement before execution reap and allocation rollback.
+
+PROCESS completion and shared resources:
+  KPROC membership/completion owns final-THREAD publication; THREAD completion
+  never substitutes for public PROCESS reaping. Leader-first DRAINING anchors
+  retain independent workers. Native pclone tests, managed12 and group tests
+  cover shared PID versus separate PID/ASPACE identities, parent/orphans, nested
+  launch, source retirement and once-only public waits. #909 owns the consumer;
+  CUIS CH_EXIT observes canonical PROCESS completion independently of Pwait.
+
+Group exit ABI 0x192:
+  kproc_request_group_exit latches first status and denies new membership/commit.
+  native_sched.c:ksched_termgrp/cancel_point authenticates current execution;
+  supported waits restore IRQs and settle operation ownership before checkpoint.
+  Exit-delivery protection prevents recursive termination from hooks. Native
+  test_group_exit covers leader/worker requests, competing status, blocked joins/
+  PROCESS waits, three nested Pexec levels, group latch after leader exit,
+  independent shared-ASPACE PROCESS survival, one completion and final baselines.
+  Production host models cover pending/readiness ordering, denied association,
+  prepared rollback, ticketed cleanup-scope LIFO/identity and real protected yield.
+
+Ptermres:
+  proc.c:xtermres rejects an execution with live same-PROCESS siblings (EACCDN)
+  before mutation. Native leader_entry tests that rejection. Sole-THREAD TSR
+  retains only requested resident allocations after execution teardown; existing
+  isolation/isoprobe and x32 MEMTEST cover resident status, children and exact
+  nonresident cleanup. Non-MMU legacy TSR keeps its original path. Residency is
+  intentional retained memory, not an unowned allocation or joinable live THREAD.
+
+libc exit:
+  Pinned libcmini ba71b392badaf8b9a7e8ca4f2f02b7c393e81eb5 implements LIFO
+  pop-before-call atexit, frees callback storage, invokes Ptermgrp then falls back
+  only on EINVFN/EINVAL; unexpected returns yield forever, never return to caller.
+  Native group mode4 checks callback once, actual trap termination/status and
+  survival of an independent shared-ASPACE PROCESS. libcmini/tests/exit/test.py
+  models successful nonreturning calls, both fallbacks, unexpected errors,
+  callback recursion/registration and order. Compile-only ABI tests are not
+  native execution; no change to the submodule is required by this audit.
+
+Supported progress and explicitly separate policies
+---------------------------------------------------
+
+Cooperative, single CPU only. CPU-bound users must enter a safe scheduling
+boundary. Nested synchronous PROCESSes finish normally before parent cancellation.
+Raw stream/device/filesystem waits need ordinary readiness and local cleanup;
+no arbitrary syscall/callback/nonlocal-driver-frame unwind is supported. Existing
+CUIS input/lock/delay adapters are tested on x32; external ARM/m68k GUI is #898.
+No public detach or asynchronous signal/EINTR API is promised by Pthjoin.
+Cancellation abandons claims; it does not consume a target's status.
+Cleanup scopes defer delivery without clearing the group latch and permit real
+cooperative scheduling. Direct successful Ptermgrp never becomes a returning call;
+protected/reentrant requests fail before admission. IRQ masking is not an SMP lock.
+Preemption (#713), TLS (#908), public fork and shared-Pexec policy remain gated.
+No second scheduler, PROCESS reaper, observer registry or termination syscall.
+
+Validation separation
+---------------------
+
+Native trap tests must pass on x32 ILP32, Cortex-A7 MMU and m68k040 MMU, including
+FAT/PFS compatibility and five shutdown checks per configured target. Pinned
+Hatari030/040 and Amiberry060 cache-off/on retain strict FPU/FPIAR assertions.
+Host CPU/MMU providers are models, even when running production C. Mutation and
+allocation-failure tests establish negative controls, not native fault timing.
+Final exact-head Build/Hatari/Amiberry/pBench and owner review are required before
+recording 100% acceptance; issue closure and merge require separate authorization.

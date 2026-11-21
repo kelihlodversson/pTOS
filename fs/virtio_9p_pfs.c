@@ -1030,7 +1030,7 @@ static LONG v9p_pfs_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
 
 /* ------------------------------------------------------------------ */
 
-static void v9p_pfs_release(PFSCOOKIE *fc)
+static LONG v9p_pfs_release_file(PFSCOOKIE *fc)
 {
     if (fc->aux > 0)
     {
@@ -1041,7 +1041,39 @@ static void v9p_pfs_release(PFSCOOKIE *fc)
         fc->aux = 0;
     }
     v9p_dircache_invalidate((ULONG)fc->index);
-    v9p_clunk((ULONG)fc->index);
+    return v9p_clunk((ULONG)fc->index);
+}
+static void v9p_pfs_release(PFSCOOKIE *fc)
+{
+    v9p_pfs_release_file(fc); /* Historical directory-cookie interface. */
+}
+
+static BOOL v9p_iterator_valid(const PFSCOOKIE *directory,LONG position)
+{
+    return directory && position>0 && position<=CONF_PFS_MAX_SEARCHES &&
+        directory->aux==position && v9p_readdir_pool[position-1].used;
+}
+static LONG v9p_iterator_clone(const PFSCOOKIE *source,LONG position,PFSCOOKIE *out,LONG *cursor)
+{
+    PFSCOOKIE directory={0};
+    UQUAD offset;
+    LONG error;
+    WORD slot;
+    if(!v9p_iterator_valid(source,position)) return E_CHNG;
+    for(slot=0;slot<CONF_PFS_MAX_SEARCHES;slot++) if(!v9p_readdir_pool[slot].used) break;
+    if(slot==CONF_PFS_MAX_SEARCHES) return ENHNDL;
+    offset=v9p_readdir_pool[position-1].offset;
+    /* Reserve before a yielding provider call can allocate another iterator. */
+    v9p_readdir_pool[slot].used=TRUE;
+    error=v9p_pfs_lookup((PFSCOOKIE *)source,"",&directory);
+    if(error) { v9p_readdir_pool[slot].used=FALSE;return error; }
+    v9p_readdir_pool[slot].offset=offset;
+    directory.aux=slot+1;*out=directory;*cursor=slot+1;
+    return E_OK;
+}
+static LONG v9p_iterator_close(PFSCOOKIE *directory,LONG position)
+{
+    (void)position;return v9p_pfs_release_file(directory);
 }
 
 static struct pfs_ops v9p_pfs_ops = {
@@ -1064,7 +1096,9 @@ static struct pfs_ops v9p_pfs_ops = {
     v9p_pfs_release,
     FALSE,              /* native_handles: this driver has no handle
                          * management of its own - see fs/pfs.h. */
-    v9p_pfs_fstat
+    v9p_pfs_fstat,
+    v9p_pfs_release_file,
+    v9p_iterator_clone, v9p_iterator_valid, v9p_iterator_close
 };
 
 void v9p_pfs_init(void);   /* called from bios/bios.c after virtio_9p_init() */

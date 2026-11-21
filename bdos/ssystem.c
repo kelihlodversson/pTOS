@@ -37,6 +37,10 @@
 #include "fs.h"            /* OPNFILES */
 #include "biosext.h"       /* phys_pages_total() */
 #include "kproc.h"
+#if CONF_WITH_PROCESS_EXEC_DISPATCH
+#include "process_exec_internal.h"
+#endif
+#include "bdosstub.h"
 #if CONF_WITH_MMU_PROBE
 #include "mmuprobe.h"
 #endif
@@ -670,12 +674,63 @@ static LONG ssystem_deskset(LONG item, LONG value)
 }
 
 
+#if CONF_WITH_KPROC
+static LONG ssystem_procident(long address, long size)
+{
+    PROCESS_IDENTITY info;
+    LONG result;
+    if (size != (long)sizeof(info)) return EINVAL;
+    if (!address || (uintptr_t)address > ~(uintptr_t)0 - sizeof(info)) return EIMBA;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_copy_from_user(&info, (UQUAD)(uintptr_t)address, sizeof(info))) return EIMBA;
+#else
+    if (!address) return EIMBA;
+    memcpy(&info, (const void *)address, sizeof(info));
+#endif
+    result = kproc_identity_info(run, &info);
+    if (result != E_OK) return result;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_copy_to_user((UQUAD)(uintptr_t)address, &info, sizeof(info))) return EIMBA;
+#else
+    memcpy((void *)address, &info, sizeof(info));
+#endif
+    return E_OK;
+}
+
+/* Never expose borrowed record storage across a user copy. */
+static LONG ssystem_procname(long address, long capacity)
+{
+    KPROC *process = kproc_retain(run);
+    char name[33];
+    LONG length;
+    if (!process) return EFILNF;
+    length = kproc_ref_name(process, name, sizeof(name));
+    kproc_release(process);
+    if (length < 0) return length;
+    if (capacity <= length) return ERANGE;
+    if (!address || (uintptr_t)address > ~(uintptr_t)0 - ((ULONG)length + 1)) return EIMBA;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_copy_to_user((UQUAD)(uintptr_t)address, name, (ULONG)length + 1)) return EIMBA;
+#else
+    memcpy((void *)address, name, (ULONG)length + 1);
+#endif
+    return length;
+}
+#endif
+
 /* the modes xssystem() implements, for S_INQUIRE; keep in step with it */
 static BOOL ssystem_has_mode(WORD mode)
 {
     switch (mode)
     {
     case S_INQUIRE:
+#if CONF_WITH_PROCESS_EXEC
+    case S_PROCEXEC:
+#endif
+#if CONF_WITH_KPROC
+    case S_PROCNAME:
+    case S_PROCIDENT:
+#endif
     case S_OSNAME:
     case S_OSXNAME:
     case S_OSVERSION:
@@ -787,6 +842,16 @@ LONG xssystem(WORD mode, long arg1, long arg2)
          * itself would give to a mode it does not know. */
         return ssystem_has_mode((WORD)arg1) ? E_OK : EINVFN;
 
+#if CONF_WITH_KPROC
+    case S_PROCNAME:
+        return ssystem_procname(arg1, arg2);
+    case S_PROCIDENT:
+        return ssystem_procident(arg1, arg2);
+#endif
+#if CONF_WITH_PROCESS_EXEC_DISPATCH
+    case S_PROCEXEC:
+        return proc_exec_dispatch(arg1,arg2);
+#endif
     case S_OSNAME:
         return ssystem_osname();
     case S_OSXNAME:

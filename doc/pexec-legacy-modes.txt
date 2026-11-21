@@ -1,0 +1,148 @@
+Historical Pexec modes (#1018)
+==============================
+
+The staged-execution Pexec modes are 68k TOS/FreeMiNT compatibility, not a
+native launch API. pTOS has not released 1.0 and makes a clean break:
+
+  mode               m68k                       non-MMU ARM      MMU ARM / x32
+  ----------------   ------------------------   --------------   -------------
+  0 / 100 / 200      PRG and ELF launch and     retained         retained (#1008
+                     replacement                                 moves them to
+                                                                 Pexecve later)
+  3  (PE_LOAD)       loads a PRG only; an ELF   unchecked,       EINVFN
+                     target, or a binfmt        unchanged
+                     outcome that would stage
+                     one, is EPLFMT before any
+                     allocation
+  5 / 7 (basepage)   platform gate only         unchecked        EINVFN
+  4 / 6 / 104 / 106  platform gate only; the    unchecked        EINVFN
+                     classic PRG entry. With    (4/6; no
+                     the native scheduler       104/106)
+                     (virt-m68k-aspace): 4/104
+                     start a distinct PROCESS
+                     sharing the caller's
+                     address space
+                     (CONF_WITH_SHARED_VM_PEXEC,
+                     production), 106 is the
+                     async GO. ROM/non-MMU:
+                     4/6 in place as on TOS,
+                     104/106 EINVFN as upstream.
+                     MMU without the scheduler
+                     (amiga-aspace): ring-3 4
+                     and 104/106 are EINVFN
+  50 (PE_RELOCATE)   kernel only (NatFeats bootstrap)
+
+Targetless modes (5/7/4/6/104/106) carry no executable pathname, so neither
+the caller's format nor the content of the basepage decides whether they are
+allowed: an ELF program on m68k may use them like a PRG. A GO enters the
+basepage the way TOS does, at p_tbase with the basepage address; there is no
+ELF entry, no format dispatch and no retained PRG/ELF provenance check. What
+remains is ordinary runtime safety: the basepage must be one the caller made
+or loaded and still owns, not launched, stale or foreign, and every
+allocation is rolled back on failure.
+
+On MMU ARM and x32 the staged modes are refused with EINVFN before the
+arguments are read (bdos/uaccess.c) and again at the GEMDOS entry
+(xexec()), so no image is allocated and no ownership moves.
+
+FreeMiNT (sys/k_exec.c, sys_pexec() and exec_region()) is the reference
+for how 4/6/104/106 start a basepage. Every start enters at p_tbase with
+A0 = 0, sp = p_hitpa - 0x28 inside the TPA and the basepage at 4(sp); the
+program sets its own stack and Mshrink()s the rest, as on TOS. Modes 4 and
+104 start a PROCESS sharing the caller's address space (4 waits for it, 104
+returns its PID); 6 and 106 start one with an address space of its own,
+which takes the basepage over.
+
+The basepage may come from mode 3 (a PRG) or from mode 5/7. On the m68k MMU
+kernels mode 5/7 gives a program basepage the classic TPA (the free memory,
+up to 1 MiB, its end aligned), so a loader can put code in it, point
+p_tbase there and start it. For such a basepage the shared-VM preparation
+holds the TPA up to the end of the text, data and bss the caller states (at
+least the basepage) and makes it executable; for a staged PRG it holds the
+loaded image. Nothing holds the TPA above that, where the startup stack is,
+so the child's Mshrink() can release it. A p_tbase that cannot run is not
+refused: as on FreeMiNT, the child faults on it and the fault is its exit
+status. One difference: an odd p_tbase is refused with EINVAL before
+anything starts, because entering user mode at an odd PC hangs the 68060
+(Amiberry) instead of raising an address error in the child. MiNTLib's
+tfork() points p_tbase at a function of the caller.
+
+Unlike FreeMiNT, a basepage starts once: the staged basepage becomes the
+child, so a second 4/104 of it is refused (EIMBA), as is the caller's own
+basepage or a running one. Each start forking a new PROCESS from a
+caller-owned basepage, as FreeMiNT does, is #1032.
+
+Non-MMU ARM is to be deprecated and is left unchecked: it has no user/kernel
+boundary, so it keeps the staged modes exactly as before and does not tell
+the kernel's requests from a program's. CONF_WITH_STAGED_PEXEC says where
+the public staged modes exist (m68k, and kernels without user address
+spaces).
+
+Kernel-internal requests
+------------------------
+The kernel itself still creates basepages for, and starts, code it carries:
+the ROM shell (exec_os), the built-in and early EmuCON, ROM programs the AES
+runs (aes_run_rom_program()) and the NatFeats bootstrap; and the AES loads
+desk accessories with a load-only request (pgmld()). On m68k and ARM these
+requests must enter through the GEMDOS trap, whose return delivers a
+reentrant launch's exit code to the right call site. They therefore use the
+same dispatcher with PE_KERNEL set in the mode (include/bdosdefs.h). A
+process with a user address space can never make such a request (refused in
+uaccess.c and xexec()); a kernel without address spaces has no user/kernel
+boundary to enforce, so there the bit is never put in the mode word
+(PE_KERNEL_TAG, include/config.h): FreeMiNT, Hatari's GEMDOS hook and other
+trap #1 filters see the TOS modes they know, and a program setting the bit
+gets EINVFN as before. The one consequence is that the AES accessory load is
+then an ordinary mode 3, PRG-only on m68k. PE_KERNEL requests never stage into a caller's heap and
+never move ownership to a user caller: the caller has no address space. On an
+address-space kernel a PE_KERNEL load (the x86-64 self-test harness) stages
+the image into the new process's own address space.
+
+Inventory at dde5e08b (classification)
+---------------------------------------
+A  canonical, kept and simplified
+   - exec_common() file load: header, environment, TPA, kpgmld, binfmt,
+     PE_LOADGO / PE_ASYNC_LOADGO launch, managed Pexec(0) anchor (#1015),
+     ksched_spawn/observe/prepare, init_pd_files, fs_set_process_directory.
+   - The PE_LOAD loader path as used by Pexec(200) staging
+     (proc_exec_replacement_stage(): exec_common(PE_LOAD, ..., replacement)),
+     kproc_load_begin/enter/leave, kproc_set_loaded_image, the image bundle
+     and committed-exec transaction (#970/#999/#1007).
+   - proc_clone(CLONE_VM), private clone/fork, generic ASPACE/KASPACE.
+
+B  68k compatibility, kept and isolated to m68k
+   - Public 3/5/7/4/6/104/106 dispatch, PRG-only mode 3.
+   - User-address-space staging: hand_over()/kproc_hand_over(),
+     kproc_set_creator(), check_launch()/kproc_check_launch(), the
+     basepage-creator record, mode 6 and 106 (image-consuming GO, sync and
+     async).
+   - Classic in-place 4/6 on non-MMU m68k and ROM.
+   - Shared-VM 4/104 (bdos/shared_vm_exec.c, kproc_shared_exec_*): m68k MMU
+     production (CONF_WITH_SHARED_VM_PEXEC, derived; was the experimental
+     _TEST option), PRG staged images only.
+
+C  obsolete, deleted
+   - MMU ARM / x32 public 3/5/7/4/6/104/106 (non-MMU ARM unchanged).
+   - ELF PE_LOAD into the caller's heap: elf_set_load_into_caller(), the
+     caller-heap placement in elfld.c, kproc_load_alloc(),
+     kproc_load_release(), kproc_set_moved_image(), the UH_LOADED / UH_IMAGE
+     heap kinds and the KPROC load_parent link.
+   - PE_GO image give-back: give_back_image(), kproc_set_give_back(), the
+     KPROC give_back flag and the UH_SHARED_IMAGE loan. Production refused
+     ring-3 PE_GO on every address-space kernel, and a kernel PE_GO has no
+     caller heap to give back to, so it had no reachable consumer.
+   - ELF shared-VM GO: proc_clone_prepare_startup_elf(),
+     thread_startup ELF initial-SP entry, kproc_shared_exec_initial_sp(),
+     interpreted staging (kproc_shared_interp.h) and its RELRO tightening
+     (aspace_protect_relro(), kaspace_relro_change()).
+   - ld.so runtime ownership for shared-VM ELF peers: PTOS_RUNTIME_OWNERSHIP,
+     MAP_PTOS_RUNTIME, the KASPACE runtime scopes and their per-PROCESS
+     runtime_scope; every mapping is now in the PROCESS allocation scope.
+   - CUIS_CHILD_BIND and kproc_child_image_pid(): binding an unlaunched
+     staged image to a CUIS child; its only producers were x32 modes 3/5.
+   - Positive tests and fixtures for the above (see the PR).
+
+D  internal, kept behind PE_KERNEL
+   - Kernel basepage creation (5/7), kernel GO/GOTHENFREE of ROM code and of
+     the built-in x32 EmuCON image, PE_RELOCATE (m68k NatFeats), and the
+     AES accessory load (3).

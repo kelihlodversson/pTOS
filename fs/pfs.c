@@ -18,9 +18,70 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#include "kproc.h"
+#if CONF_WITH_PROCESS_FILES
+#include "../bdos/process_files.h"
+#include "biosext.h"
+#endif
 #include "tosvars.h"    /* for drvbits, same convention as
                                  * bdos/proc.c and bdos/umem.c */
 #include "../bdos/bdosstub.h"   /* for run, same convention as fs/fatfs_pfs.c */
+
+/* Disk-error guards are synchronous and retain no caller pointers. Helpers
+ * catch in their own frame, returning explicit failure metadata so caller
+ * locals never cross a setjmp boundary. The owner then releases temporary
+ * cookies before rethrowing into the original GEMDOS/DISK_CALL continuation.
+ * Directory release must consume on normal return and must not unwind. */
+typedef struct { BOOL raised; long code, rw; int drive; } PFS_DISK_FAILURE;
+#define PFS_TRY(call, failure) \
+__extension__ ({ \
+    LONG _pfs_result; \
+    FS_ERROR_SCOPE _pfs_outer; \
+    fs_error_scope_save(_pfs_outer); \
+    (failure)->raised = FALSE; \
+    if (setjmp(errbuf)) { \
+        (failure)->raised = TRUE; \
+        (failure)->code = errcode; (failure)->rw = rwerr; \
+        (failure)->drive = errdrv; _pfs_result = errcode; \
+    } else { \
+        _pfs_result = (call); \
+    } \
+    fs_error_scope_restore(_pfs_outer); \
+    _pfs_result; \
+})
+#define PFS_GUARD(call, cleanup) \
+__extension__ ({ \
+    PFS_DISK_FAILURE _pfs_failure; \
+    LONG _pfs_result = (call); \
+    if (_pfs_failure.raised) { \
+        cleanup; \
+        errcode = _pfs_failure.code; rwerr = _pfs_failure.rw; \
+        errdrv = _pfs_failure.drive; longjmp(errbuf, 1); \
+    } \
+    _pfs_result; \
+})
+
+static LONG pfs_try_lookup(struct pfs_ops *fs, PFSCOOKIE *dir, const char *path,
+                           PFSCOOKIE *out, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->lookup(dir, path, out), failure); }
+static LONG pfs_try_directory(LONG (*op)(PFSCOOKIE *, const char *),
+                              PFSCOOKIE *dir, const char *name, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(op(dir, name), failure); }
+static LONG pfs_try_open(struct pfs_ops *fs, PFSCOOKIE *dir, const char *name,
+                         WORD mode, PFSCOOKIE *out, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->open(dir, name, mode, out), failure); }
+static LONG pfs_try_create(struct pfs_ops *fs, PFSCOOKIE *dir, const char *name,
+                           UWORD attr, PFSCOOKIE *out, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->create(dir, name, attr, out), failure); }
+static LONG pfs_try_chattr(struct pfs_ops *fs, PFSCOOKIE *dir, const char *name,
+                           BOOL set, UWORD *attr, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->chattr(dir, name, set, attr), failure); }
+static LONG pfs_try_rename(struct pfs_ops *fs, PFSCOOKIE *dir1, const char *name1,
+                           PFSCOOKIE *dir2, const char *name2, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->rename(dir1, name1, dir2, name2), failure); }
+static LONG pfs_try_readdir(struct pfs_ops *fs, PFSCOOKIE *dir, LONG *cursor,
+                            char *name, int size, PFSATTR *attr, PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(fs->readdir(dir, cursor, name, size, attr), failure); }
 
 /* ------------------------------------------------------------------ */
 /* drive table                                                        */
@@ -85,9 +146,9 @@ static struct pfs_ops *pfs_drive_fs(WORD drive)
 /* GEMDOS drive letter (0=A:) an absolute or relative path names, and a
  * pointer just past any "X:" prefix.  Defaults to the current drive.
  */
-static WORD pfs_path_drive(const char *path, const char **rest)
+static WORD pfs_path_drive_at(PD *process, const char *path, const char **rest)
 {
-    WORD drive = run->p_curdrv;
+    WORD drive = process->p_curdrv;
 
     if (path[0] && (path[1] == ':'))
     {
@@ -100,6 +161,11 @@ static WORD pfs_path_drive(const char *path, const char **rest)
 
     *rest = path;
     return drive;
+}
+
+static WORD pfs_path_drive(const char *path, const char **rest)
+{
+    return pfs_path_drive_at(run, path, rest);
 }
 
 /* Split 'path' (already past any drive prefix) into the directory
@@ -207,16 +273,10 @@ static BOOL pfs_match(const char *name, const char *pattern)
 /* current-directory tracking                                         */
 /* ------------------------------------------------------------------ */
 
-/*
- * Reuses PD.p_curdir[] (already part of the real Atari basepage layout,
- * sized BLKDEVNUM) as an index into this table instead of the legacy
- * dirtbl[] - safe because fat_pfs_ops never relies on ambient
- * CWD/dirtbl[] state (it always reconstructs absolute paths, see
- * fs/fatfs_pfs.c), so dirtbl[] is simply unused for the lifetime of a
- * pluggable-fs build.  Index 0 is reserved to mean "not cached yet, use
- * this drive's root" - which is exactly what a freshly Pexec()'d
- * process's zero-initialised p_curdir[] already reads as.
- */
+/* PD_CURDIR indexes only this table in a PFS build. FAT DND cache holds
+ * belong to driver cookies, not to PROCESS-visible legacy dirtbl indices.
+ * Zero means the drive root. Referenced invalidated slots are tombstones,
+ * so media change cannot redirect an old owner to a reused slot. */
 #define PFS_MAX_CWD CONF_PFS_MAX_CWD
 
 typedef struct {
@@ -230,16 +290,29 @@ typedef struct {
 
 static PFS_DIRTBL_ENTRY pfs_dirtbl[PFS_MAX_CWD];
 
-/* One more process now shares pfs_dirtbl[n] - e.g. bdos/proc.c's
- * init_pd_files() inheriting p_curdir[] into a freshly created process,
- * mirroring the bump it already does to the legacy dirtbl[n].use for a
- * non-pluggable drive. n==0 (root sentinel) is a no-op, matching how it
- * is never a real slot.
- */
-void pfs_cwd_addref(WORD n)
+LONG pfs_cwd_inherit(PD *child, PD *parent)
 {
-    if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use)
-        pfs_dirtbl[n].use++;
+    UBYTE slots[NUMCURDIR];
+    WORD drive, n;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(child)) return EACCDN;
+#endif
+    /* Validate before any reference increment or child publication. */
+    for (drive = 0; drive < NUMCURDIR; drive++)
+    {
+        n = PD_CURDIR(parent)[drive];
+        if (PD_CURDIR(child)[drive]) return EACCDN;
+        if (!n) { slots[drive] = 0; continue; }
+        if (n >= PFS_MAX_CWD || !pfs_dirtbl[n].use ||
+            pfs_dirtbl[n].drive != drive) return EIMBA;
+        if (pfs_dirtbl[n].use == 0x7fff) return ENSMEM;
+        slots[drive] = pfs_dirtbl[n].fs ? n : 0;
+    }
+    for (drive = 0; drive < NUMCURDIR; drive++)
+        if (slots[drive]) pfs_dirtbl[slots[drive]].use++;
+    memcpy(PD_CURDIR(child), slots, sizeof(slots));
+    child->p_curdrv = parent->p_curdrv;
+    return E_OK;
 }
 
 /* Drop this process's reference to pfs_dirtbl[n] (n==0, the root
@@ -254,9 +327,12 @@ static void pfs_dirtbl_release(WORD n)
     {
         if (!--pfs_dirtbl[n].use)
         {
-            if (pfs_dirtbl[n].fs->release)
-                pfs_dirtbl[n].fs->release(&pfs_dirtbl[n].cwd);
+            PFSCOOKIE cookie = pfs_dirtbl[n].cwd;
+            struct pfs_ops *fs = pfs_dirtbl[n].fs;
+            /* Detach before invoking a consuming/reentrant destructor. */
             pfs_dirtbl[n].fs = NULL;
+            memset(&pfs_dirtbl[n].cwd, 0, sizeof(cookie));
+            if (fs && fs->release) fs->release(&cookie);
         }
     }
 }
@@ -272,9 +348,9 @@ static void pfs_dirtbl_release(WORD n)
  * hazard for a driver whose release() actually frees something (e.g. a
  * future 9p driver's fid).
  */
-static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
+static LONG pfs_cwd_get_at(PD *process, struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
 {
-    WORD n = PD_CURDIR(run)[drive];
+    WORD n = PD_CURDIR(process)[drive];
 
     if ((n > 0) && (n < PFS_MAX_CWD) && pfs_dirtbl[n].use &&
         (pfs_dirtbl[n].fs == fs) && (pfs_dirtbl[n].drive == drive))
@@ -293,66 +369,239 @@ static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const ch
     return fs->root(fs, drive, out);
 }
 
-/* Record a newly-resolved current directory for 'drive', replacing
- * whatever slot the process previously had for it.
- */
-static LONG pfs_cwd_set(WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const char *path)
+static LONG pfs_cwd_get(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out, const char **path, BOOL *owned)
 {
-    WORD old = PD_CURDIR(run)[drive];
-    WORD i;
+    return pfs_cwd_get_at(run, fs, drive, out, path, owned);
+}
 
-    pfs_dirtbl_release(old);
+DND *pfs_fat_current_directory(PD *process, WORD drive)
+{
+    WORD n;
+    if (drive < 0 || drive >= BLKDEVNUM ||
+        pfs_drive_fs(drive) != &fat_pfs_ops) return (DND *)(intptr_t)EDRIVE;
+    n = PD_CURDIR(process)[drive];
+    if (n > 0 && n < PFS_MAX_CWD && pfs_dirtbl[n].use &&
+        pfs_dirtbl[n].fs == &fat_pfs_ops && pfs_dirtbl[n].drive == drive)
+        return (DND *)(intptr_t)pfs_dirtbl[n].cwd.index;
+    return drvtbl[drive]->m_dtl; /* ckdrv already established the root. */
+}
+
+/* Transfer an owned cookie only after acquiring replacement storage. Failure
+ * leaves both the caller's cookie and the PROCESS's previous CWD untouched. */
+static LONG pfs_cwd_set(PD *process, WORD drive, struct pfs_ops *fs, PFSCOOKIE *cwd, const char *path)
+{
+    WORD old = PD_CURDIR(process)[drive];
+    WORD i;
+    PFSCOOKIE replaced = {0};
+    struct pfs_ops *replaced_fs = NULL;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(process)) return EACCDN;
+#endif
+    /* A stale/empty index owns nothing; never release a newly allocated slot
+     * merely because it happens to reuse the same small number. */
+    if (old <= 0 || old >= PFS_MAX_CWD || !pfs_dirtbl[old].use) old = 0;
+    else if (pfs_dirtbl[old].drive != drive) return EIMBA;
 
     if (!path[0])
     {
-        /* root: no slot needed, the sentinel (0) already means this */
-        PD_CURDIR(run)[drive] = 0;
+        PD_CURDIR(process)[drive] = 0;
+        pfs_dirtbl_release(old);
+        if (fs->release)
+            fs->release(cwd);
         return E_OK;
     }
 
     for (i = 1; i < PFS_MAX_CWD; i++)
         if (!pfs_dirtbl[i].use)
             break;
+    /* A uniquely owned old slot can be replaced even when the table is full.
+     * The new cookie is independent, so releasing the old one cannot free it. */
     if (i == PFS_MAX_CWD)
-        return ENSMEM;
+    {
+        if (old <= 0 || old >= PFS_MAX_CWD || pfs_dirtbl[old].use != 1)
+            return ENSMEM;
+        i = old;
+        replaced = pfs_dirtbl[old].cwd;
+        replaced_fs = pfs_dirtbl[old].fs;
+        old = 0;
+    }
 
     pfs_dirtbl[i].fs = fs;
     pfs_dirtbl[i].drive = drive;
     pfs_dirtbl[i].use = 1;
     pfs_dirtbl[i].cwd = *cwd;
     strlcpy(pfs_dirtbl[i].path, path, sizeof(pfs_dirtbl[i].path));
-
-    PD_CURDIR(run)[drive] = i;
-
+    PD_CURDIR(process)[drive] = i;
+    pfs_dirtbl_release(old);
+    if (replaced_fs && replaced_fs->release) replaced_fs->release(&replaced);
     return E_OK;
 }
-
 
 /* ------------------------------------------------------------------ */
 /* Fsfirst/Fsnext search state                                        */
 /* ------------------------------------------------------------------ */
 
+BOOL pfs_iterator_valid(const PFS_ITERATOR *iterator)
+{
+    struct pfs_ops *fs;
+    return iterator && iterator->owned && (fs=iterator->directory.fs) &&
+        fs->iterator_valid && fs->iterator_valid(&iterator->directory,iterator->position);
+}
+LONG pfs_iterator_clone(const PFS_ITERATOR *source,PFS_ITERATOR *empty)
+{
+    struct pfs_ops *fs;
+    LONG error;
+    if (!empty || empty->owned || empty->directory.fs) return EINVAL;
+    if (!source || !source->owned || !(fs=source->directory.fs) ||
+        !fs->clone_iterator || !fs->iterator_valid || !fs->close_iterator) return EINVFN;
+    if (!pfs_iterator_valid(source)) return E_CHNG;
+    error=fs->clone_iterator(&source->directory,source->position,&empty->directory,&empty->position);
+    if (error) return error;
+    empty->owned=TRUE;
+    return E_OK;
+}
+LONG pfs_iterator_close(PFS_ITERATOR *iterator)
+{
+    PFS_ITERATOR owned;
+    if (!iterator || !iterator->owned) return E_OK;
+    owned=*iterator;memset(iterator,0,sizeof(*iterator));
+    if (owned.directory.fs->close_iterator)
+        return owned.directory.fs->close_iterator(&owned.directory,owned.position);
+    if (owned.directory.fs->release) owned.directory.fs->release(&owned.directory);
+    return E_OK;
+}
+
 typedef struct {
-    DTA *owner;         /* NULL = free slot */
+    DTA *owner;
     PD *proc;
-    PFSCOOKIE dir;
-    BOOL dir_owned;      /* does this slot own 'dir' (must release it),
-                          * or is it a borrowed alias of a pfs_dirtbl[]
-                          * entry (must not) - see pfs_cwd_get(). */
-    LONG cursor;
+    PFS_ITERATOR iterator;
     UWORD attr;
     char pattern[LEN_ZFNAME];
+#if CONF_WITH_PROCESS_FILES
+    KPROC *process; /* canonical borrowed identity, owned by PROCESS/operation */
+    UQUAD stage; /* existing PROCESS snapshot ticket, zero when published */
+    UWORD busy;
+    BOOL retiring;
+#endif
 } PFS_SEARCH;
 
 static PFS_SEARCH pfs_searches[CONF_PFS_MAX_SEARCHES];
 
 static void pfs_search_free(PFS_SEARCH *s)
 {
-    if (s->dir_owned && s->dir.fs && s->dir.fs->release)
-        s->dir.fs->release(&s->dir);
-    s->owner = NULL;
-    s->proc = NULL;
+    PFS_ITERATOR owned;
+#if CONF_WITH_PROCESS_FILES
+    if(s->busy) { s->owner=NULL;s->retiring=TRUE;return; }
+#endif
+    owned=s->iterator;
+    memset(s,0,sizeof(*s));
+    (void)pfs_iterator_close(&owned);
 }
+
+#if CONF_WITH_PROCESS_FILES
+static BOOL search_slot_free(const PFS_SEARCH *search)
+{ return !search->owner && !search->busy && !search->iterator.owned && !search->stage; }
+static BOOL search_process_live(PROCESS_FILES *table,PD *pd)
+{
+    /* Shutdown closes cleanup admission before retiring individual tables. */
+    return !table || (!table->retiring && kproc_live_pd(table->owner)==pd &&
+                      kproc_file_references_allowed(pd));
+}
+static LONG pfs_try_clone(const PFS_ITERATOR *source,PFS_ITERATOR *out,PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(pfs_iterator_clone(source,out),failure); }
+void pfs_search_close(KPROC *process,DTAINFO *address)
+{
+    WORD i;
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++)
+        if(pfs_searches[i].process==process && !pfs_searches[i].stage &&
+            pfs_searches[i].owner==(DTA *)address) pfs_search_free(&pfs_searches[i]);
+}
+LONG pfs_search_snapshot_prepare(KPROC *source,KPROC *target,UQUAD ticket,
+                                DTAINFO *const *addresses,WORD count,WORD *prepared)
+{
+    WORD i,j,slot,matched=0;
+    PD *source_pd=kproc_live_pd(source),*target_pd=kproc_live_pd(target);
+    if(!prepared || *prepared || !source_pd || !target_pd || !ticket) return EACCDN;
+    /* Raw PD routing cannot authenticate a cookie from an older incarnation,
+     * an untracked boot owner, or another unpublished preparation. */
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) {
+        PFS_SEARCH *search=&pfs_searches[i];
+        if(search->proc==target_pd && !search_slot_free(search)) return EACCDN;
+        if(search->proc==source_pd && (search->process!=source || search->stage ||
+            search->busy || search->retiring || !search->owner)) return EACCDN;
+    }
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) {
+        PFS_SEARCH *original=&pfs_searches[i],*copy;
+        PFS_DISK_FAILURE failure;
+        LONG error;
+        if(original->process!=source || original->stage || !original->owner) continue;
+        if(original->busy || original->retiring) return EACCDN;
+        for(j=0;j<count;j++) if(original->owner==(DTA *)addresses[j]) break;
+        if(j==count) return EACCDN; /* untracked kernel/private association */
+        for(slot=0;slot<CONF_PFS_MAX_SEARCHES;slot++) if(search_slot_free(&pfs_searches[slot])) break;
+        if(slot==CONF_PFS_MAX_SEARCHES) return ENHNDL;
+        copy=&pfs_searches[slot];memset(copy,0,sizeof(*copy));
+        copy->owner=original->owner;copy->proc=target_pd;copy->process=target;copy->stage=ticket;
+        copy->attr=original->attr;memcpy(copy->pattern,original->pattern,sizeof(copy->pattern));
+        original->busy++;copy->busy++;
+        error=pfs_try_clone(&original->iterator,&copy->iterator,&failure);
+        original->busy--;copy->busy--;
+        if(original->retiring || original->process!=source || !kproc_live_pd(source) || !kproc_live_pd(target)) {
+            if(original->retiring) pfs_search_free(original);
+            error=EACCDN;
+        }
+        if(failure.raised) {
+            pfs_search_free(copy);
+            errcode=failure.code;rwerr=failure.rw;errdrv=failure.drive;longjmp(errbuf,1);
+        }
+        if(error) {pfs_search_free(copy);return error;}
+        (*prepared)++;matched++;
+    }
+    return matched==count?E_OK:EACCDN;
+}
+BOOL pfs_search_snapshot_valid(KPROC *target,UQUAD ticket,WORD count)
+{
+    WORD i,found=0;
+    if(!kproc_live_pd(target)) return FALSE;
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++) if(pfs_searches[i].process==target && pfs_searches[i].stage==ticket) {
+        PFS_SEARCH *search=&pfs_searches[i];
+        if(!search->owner || search->busy || search->retiring || !pfs_iterator_valid(&search->iterator)) return FALSE;
+        found++;
+    }
+    return found==count;
+}
+void pfs_search_snapshot_commit(KPROC *target,UQUAD ticket,WORD count)
+{
+    WORD i;
+    if(!pfs_search_snapshot_valid(target,ticket,count)) panic("unprepared search publication");
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++)
+        if(pfs_searches[i].process==target && pfs_searches[i].stage==ticket) pfs_searches[i].stage=0;
+}
+void pfs_search_snapshot_abort(KPROC *target,UQUAD ticket)
+{
+    WORD i;
+    for(i=0;i<CONF_PFS_MAX_SEARCHES;i++)
+        if(pfs_searches[i].process==target && pfs_searches[i].stage==ticket) pfs_search_free(&pfs_searches[i]);
+}
+static LONG search_readdir(PFS_SEARCH *search,char *name,int size,PFSATTR *attributes)
+{
+    PFS_DISK_FAILURE failure;
+    LONG error;
+    search->busy++;
+    error=pfs_try_readdir(search->iterator.directory.fs,&search->iterator.directory,
+                         &search->iterator.position,name,size,attributes,&failure);
+    search->busy--;
+    if(search->retiring || (search->process &&
+        !search_process_live(kproc_ref_files(search->process),search->proc))) {
+        error=EACCDN; /* the outer search consumes this exact slot once */
+    }
+    if(failure.raised) {
+        pfs_search_free(search);
+        errcode=failure.code;rwerr=failure.rw;errdrv=failure.drive;longjmp(errbuf,1);
+    }
+    return error;
+}
+#endif
 
 /* Is a directory entry with attribute byte 'entry_attr' visible to an
  * Fsfirst/Fsnext search whose caller-supplied filter is 'searchattr'?
@@ -461,13 +710,19 @@ static LONG pfs_resolve_dir(struct pfs_ops *fs, WORD drive, const char *path,
         return EPTHNF;
     }
 
-    rc = fs->lookup(&start, base, dircookie);
+    rc = PFS_GUARD(pfs_try_lookup(fs, &start, base, dircookie, &_pfs_failure),
+                  if (start_owned && fs->release) fs->release(&start));
     if (start_owned && fs->release)
         fs->release(&start);
 
     return rc;
 }
 
+
+static LONG pfs_try_resolve(struct pfs_ops *fs, WORD drive, const char *path,
+                            PFSCOOKIE *dir, const char **name, BOOL *owned,
+                            PFS_DISK_FAILURE *failure)
+{ return PFS_TRY(pfs_resolve_dir(fs, drive, path, dir, name, owned), failure); }
 
 /* ------------------------------------------------------------------ */
 /* per-call handlers                                                  */
@@ -504,7 +759,8 @@ LONG pfs_do_mkdir(const char *path)
     if (rc < 0)
         return rc;
 
-    rc = fs->mkdir ? fs->mkdir(&dir, name) : EACCDN;
+    rc = fs->mkdir ? PFS_GUARD(pfs_try_directory(fs->mkdir, &dir, name, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
 
@@ -519,7 +775,21 @@ LONG pfs_do_rmdir(const char *path)
     const char *name;
     BOOL owned;
     LONG rc;
+    char trimmed[LEN_ZPATH];
+    size_t length = strlen(path);
 
+    /* rmdir consumes a parent/name pair, not a reference to its target.
+     * Strip only trailing separators, retaining the root sentinel. This
+     * avoids acquiring a temporary target hold that would either reject an
+     * unused directory or become dangling when removal frees its DND. */
+    if (length > 1 && path[length-1] == SLASH)
+    {
+        while (length > 1 && path[length-1] == SLASH) length--;
+        if (length >= sizeof(trimmed)) return ERANGE;
+        memcpy(trimmed, path, length);
+        trimmed[length] = 0;
+        path = trimmed;
+    }
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
@@ -528,7 +798,8 @@ LONG pfs_do_rmdir(const char *path)
     if (rc < 0)
         return rc;
 
-    rc = fs->rmdir ? fs->rmdir(&dir, name) : EACCDN;
+    rc = fs->rmdir ? PFS_GUARD(pfs_try_directory(fs->rmdir, &dir, name, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
 
@@ -601,7 +872,7 @@ static LONG pfs_path_append(char *newpath, size_t cap, const char *tail)
     }
 }
 
-LONG pfs_do_chdir(const char *path)
+static LONG pfs_chdir_at(PD *process, const char *path, BOOL select_drive)
 {
     struct pfs_ops *fs;
     WORD drive;
@@ -613,6 +884,9 @@ LONG pfs_do_chdir(const char *path)
     LONG rc;
     const char *t;
 
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(process)) return EACCDN;
+#endif
     /* matches legacy xchdir()'s contains_wildcard_characters() check
      * (bdos/fsdir.c) - Dsetpath() is not a search, and a driver's
      * lookup() has no obligation to treat '*'/'?' as anything but
@@ -623,7 +897,7 @@ LONG pfs_do_chdir(const char *path)
         if ((*t == '*') || (*t == '?'))
             return EPTHNF;
 
-    drive = pfs_path_drive(path, &path);
+    drive = pfs_path_drive_at(process, path, &path);
 
     fs = pfs_drive_fs(drive);
     if (!fs)
@@ -649,7 +923,7 @@ LONG pfs_do_chdir(const char *path)
     else
     {
         const char *cwdpath;
-        rc = pfs_cwd_get(fs, drive, &dir, &cwdpath, &dir_owned);
+        rc = pfs_cwd_get_at(process, fs, drive, &dir, &cwdpath, &dir_owned);
         name = path;
         strlcpy(newpath, cwdpath, sizeof(newpath));
     }
@@ -658,14 +932,17 @@ LONG pfs_do_chdir(const char *path)
 
     if (!name[0])
     {
-        /* Dsetpath(".") or Dsetpath("\\") - 'dir' *is* the new current
-         * directory.  pfs_cwd_set() copies it into pfs_dirtbl[] on
-         * success, taking over whatever reference it held (owned or
-         * not) - release it ourselves only if that hand-off didn't
-         * happen (cwd_set failed) and it was ours to begin with. */
-        rc = pfs_cwd_set(drive, fs, &dir, newpath);
-        if ((rc < 0) && dir_owned && fs->release)
+        if (!dir_owned)
+        {
+            /* Already this PROCESS's directory: do not release/re-adopt a
+             * borrowed cookie or require a spare directory slot. */
+            if (select_drive) process->p_curdrv = drive;
+            return E_OK;
+        }
+        rc = pfs_cwd_set(process, drive, fs, &dir, newpath);
+        if ((rc < 0) && fs->release)
             fs->release(&dir);
+        if (rc == E_OK && select_drive) process->p_curdrv = drive;
         return rc;
     }
 
@@ -678,7 +955,8 @@ LONG pfs_do_chdir(const char *path)
 
     /* fs->lookup() always produces a fresh, caller-owned 'target',
      * regardless of whether 'dir' was borrowed. */
-    rc = fs->lookup(&dir, name, &target);
+    rc = PFS_GUARD(pfs_try_lookup(fs, &dir, name, &target, &_pfs_failure),
+                  if (dir_owned && fs->release) fs->release(&dir));
     if (dir_owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
@@ -690,14 +968,26 @@ LONG pfs_do_chdir(const char *path)
      * canonical, not just whatever fs->lookup() was able to resolve. */
     rc = pfs_path_append(newpath, sizeof(newpath), name);
     if (rc >= 0)
-        rc = pfs_cwd_set(drive, fs, &target, newpath);
+        rc = pfs_cwd_set(process, drive, fs, &target, newpath);
 
     /* same hand-off logic as above: 'target' is always owned here, but
      * only ours to release if pfs_cwd_set() didn't take it over. */
     if ((rc < 0) && fs->release)
         fs->release(&target);
 
+    if (rc == E_OK && select_drive) process->p_curdrv = drive;
     return rc;
+}
+
+LONG pfs_do_chdir(const char *path)
+{
+    return pfs_chdir_at(run, path, FALSE);
+}
+
+LONG pfs_set_process_directory(const char *path, PD *process)
+{
+    if (!path || !process) return EINVAL;
+    return pfs_chdir_at(process, path, TRUE);
 }
 
 LONG pfs_do_getdir(char *buf, WORD drv)
@@ -730,6 +1020,9 @@ LONG pfs_do_getdir(char *buf, WORD drv)
 static LONG pfs_alloc_handle(PFSCOOKIE *fc)
 {
     WORD i;
+#if CONF_WITH_PROCESS_FILES
+    LONG descriptor;
+#endif
 
     for (i = 0; i < OPNFILES; i++)
         if (!sft[i].f_own)
@@ -737,11 +1030,26 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     if (i == OPNFILES)
         return ENHNDL;
 
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_claim(i)) return ENHNDL;
+#endif
     sft[i].f_own = run;
     sft[i].f_use = 1;
     sft[i].f_ofd = NULL;
     sft[i].f_pfs = *fc;
-
+#if CONF_WITH_PROCESS_FILES
+    if (process_files_managed(run)) {
+        descriptor=process_files_open_begin(run,(WORD)(i+NUMSTD));
+        if (descriptor<0) {
+            /* The caller still owns the driver's cookie on failure. */
+            sft[i].f_pfs.fs=NULL;sft[i].f_own=NULL;sft[i].f_use=0;
+            return descriptor;
+        }
+        if (process_files_open_end(run,(WORD)descriptor,(WORD)(i+NUMSTD))!=E_OK)
+            panic("PFS descriptor publication revoked");
+        return descriptor;
+    }
+#endif
     return i + NUMSTD;
 }
 
@@ -754,6 +1062,9 @@ LONG pfs_do_open(const char *path, WORD mode)
     BOOL owned;
     LONG rc;
 
+#if CONF_WITH_PROCESS_FILES
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
@@ -762,7 +1073,8 @@ LONG pfs_do_open(const char *path, WORD mode)
     if (rc < 0)
         return rc;
 
-    rc = fs->open ? fs->open(&dir, name, mode, &fc) : EACCDN;
+    rc = fs->open ? PFS_GUARD(pfs_try_open(fs, &dir, name, mode, &fc, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
@@ -791,6 +1103,9 @@ LONG pfs_do_create(const char *path, UWORD attr)
     BOOL owned;
     LONG rc;
 
+#if CONF_WITH_PROCESS_FILES
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
@@ -799,7 +1114,8 @@ LONG pfs_do_create(const char *path, UWORD attr)
     if (rc < 0)
         return rc;
 
-    rc = fs->create ? fs->create(&dir, name, attr, &fc) : EACCDN;
+    rc = fs->create ? PFS_GUARD(pfs_try_create(fs, &dir, name, attr, &fc, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
     if (rc < 0)
@@ -836,7 +1152,8 @@ LONG pfs_do_unlink(const char *path)
     if (rc < 0)
         return rc;
 
-    rc = fs->remove ? fs->remove(&dir, name) : EACCDN;
+    rc = fs->remove ? PFS_GUARD(pfs_try_directory(fs->remove, &dir, name, &_pfs_failure),
+                  if (owned && fs->release) fs->release(&dir)) : EACCDN;
     if (owned && fs->release)
         fs->release(&dir);
 
@@ -863,7 +1180,8 @@ LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod)
 
     attr = (UWORD)mod;
     if (fs->chattr)
-        rc = fs->chattr(&dir, name, wrt ? TRUE : FALSE, &attr);
+        rc = PFS_GUARD(pfs_try_chattr(fs, &dir, name, wrt ? TRUE : FALSE, &attr, &_pfs_failure),
+                      if (owned && fs->release) fs->release(&dir));
     else
         rc = wrt ? EACCDN : EINVFN;    /* unimplemented write op -> EACCDN,
                                          * matching mkdir/remove/rename's
@@ -900,14 +1218,19 @@ LONG pfs_do_rename(const char *p1, const char *p2)
     if (rc < 0)
         return rc;
 
-    rc = pfs_resolve_dir(fs, drive1, p2, &dir2, &name2, &owned2);
+    rc = PFS_GUARD(pfs_try_resolve(fs, drive1, p2, &dir2, &name2, &owned2, &_pfs_failure),
+                  if (owned1 && fs->release) fs->release(&dir1));
     if (rc < 0)
     {
         if (owned1 && fs->release) fs->release(&dir1);
         return rc;
     }
 
-    rc = fs->rename ? fs->rename(&dir1, name1, &dir2, name2) : EACCDN;
+    rc = fs->rename ? PFS_GUARD(pfs_try_rename(fs, &dir1, name1, &dir2, name2, &_pfs_failure),
+        if (fs->release) {
+            if (owned1) fs->release(&dir1);
+            if (owned2) fs->release(&dir2);
+        }) : EACCDN;
     if (fs->release)
     {
         if (owned1) fs->release(&dir1);
@@ -917,17 +1240,24 @@ LONG pfs_do_rename(const char *p1, const char *p2)
     return rc;
 }
 
-LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
+LONG pfs_do_sfirst_to(char *path, WORD att, DTAINFO *address, DTAINFO *dta)
 {
     struct pfs_ops *fs;
     WORD drive = pfs_path_drive(path, (const char **)&path);
     PFSCOOKIE dir;
-    DTA *owner = (DTA *)dta;
+    DTA *owner = (DTA *)address;
     const char *name;
     BOOL owned;
     WORD i;
     LONG rc;
-
+#if CONF_WITH_PROCESS_FILES
+    PD *process=run;
+    PROCESS_FILES *table=kproc_files(process);
+    if(table && (!table->operations || process_files_change_admission(process))) return EACCDN;
+#endif
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(run)) return EACCDN;
+#endif
     fs = pfs_drive_fs(drive);
     if (!fs)
         return EDRIVE;
@@ -959,21 +1289,37 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
         owned = TRUE;
     }
 
+#if CONF_WITH_PROCESS_FILES
+    if(!search_process_live(table,process)) {
+        if(owned && fs->release) fs->release(&dir);
+        return EACCDN;
+    }
+#endif
     /* a new Fsfirst() on a DTA that already has a search running (common
      * - callers rarely exhaust a search before starting another) must
      * replace it, not leak a second slot and leave pfs_do_snext_at()
      * matching whichever of the two comes first in the table. */
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run)
+#if CONF_WITH_PROCESS_FILES
+            && !pfs_searches[i].stage
+#endif
+            )
             break;
     if (i < CONF_PFS_MAX_SEARCHES)
     {
+#if CONF_WITH_PROCESS_FILES
+        if(pfs_searches[i].busy) { if(owned && fs->release) fs->release(&dir);return EACCDN; }
+#endif
         pfs_search_free(&pfs_searches[i]);
     }
-    else
     {
         for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
+#if CONF_WITH_PROCESS_FILES
+            if (search_slot_free(&pfs_searches[i]))
+#else
             if (!pfs_searches[i].owner)
+#endif
                 break;
         if (i == CONF_PFS_MAX_SEARCHES)
         {
@@ -982,11 +1328,18 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
         }
     }
 
+#if CONF_WITH_PROCESS_FILES
+    if(!search_process_live(table,process)) {
+        if(owned && fs->release) fs->release(&dir);
+        return EACCDN;
+    }
+    pfs_searches[i].process=table?table->owner:NULL;
+#endif
     pfs_searches[i].owner = owner;
     pfs_searches[i].proc = run;
-    pfs_searches[i].dir = dir;
-    pfs_searches[i].dir_owned = owned;
-    pfs_searches[i].cursor = 0;
+    pfs_searches[i].iterator.directory = dir;
+    pfs_searches[i].iterator.owned = owned;
+    pfs_searches[i].iterator.position = 0;
     pfs_searches[i].attr = att;
     strlcpy(pfs_searches[i].pattern, name, sizeof(pfs_searches[i].pattern));
 
@@ -1001,8 +1354,13 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
         char name8_3[LEN_ZFNAME];
         PFSATTR attr;
 
-        rc = fs->readdir(&pfs_searches[i].dir, &pfs_searches[i].cursor,
-                          name8_3, sizeof(name8_3), &attr);
+#if CONF_WITH_PROCESS_FILES
+        rc=search_readdir(&pfs_searches[i],name8_3,sizeof(name8_3),&attr);
+#else
+        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].iterator.directory, &pfs_searches[i].iterator.position,
+                          name8_3, sizeof(name8_3), &attr, &_pfs_failure),
+                          pfs_search_free(&pfs_searches[i]));
+#endif
         if (rc < 0)
         {
             pfs_search_free(&pfs_searches[i]);
@@ -1022,22 +1380,34 @@ LONG pfs_do_sfirst_at(char *path, WORD att, DTAINFO *dta)
     }
 }
 
-LONG pfs_do_snext_at(DTAINFO *dta)
+LONG pfs_do_snext_to(DTAINFO *address,DTAINFO *dta)
 {
-    DTA *owner = (DTA *)dta;
+    DTA *owner = (DTA *)address;
     WORD i;
+#if CONF_WITH_PROCESS_FILES
+    PROCESS_FILES *table=kproc_files(run);
+    if(table && (!table->operations || process_files_change_admission(run))) return EACCDN;
+#endif
 
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run))
+        if ((pfs_searches[i].owner == owner) && (pfs_searches[i].proc == run)
+#if CONF_WITH_PROCESS_FILES
+            && !pfs_searches[i].stage
+#endif
+            )
             break;
     if (i == CONF_PFS_MAX_SEARCHES)
         return ENMFIL;
+#if CONF_WITH_PROCESS_FILES
+    if(pfs_searches[i].busy || pfs_searches[i].retiring ||
+        (table && pfs_searches[i].process!=table->owner)) return EACCDN;
+#endif
 
     for (;;)
     {
         char name8_3[LEN_ZFNAME];
         PFSATTR attr;
-        struct pfs_ops *fs = pfs_searches[i].dir.fs;
+        struct pfs_ops *fs = pfs_searches[i].iterator.directory.fs;
         LONG rc;
 
         if (!fs || !fs->readdir)
@@ -1046,8 +1416,13 @@ LONG pfs_do_snext_at(DTAINFO *dta)
             return ENMFIL;
         }
 
-        rc = fs->readdir(&pfs_searches[i].dir, &pfs_searches[i].cursor,
-                          name8_3, sizeof(name8_3), &attr);
+#if CONF_WITH_PROCESS_FILES
+        rc=search_readdir(&pfs_searches[i],name8_3,sizeof(name8_3),&attr);
+#else
+        rc = PFS_GUARD(pfs_try_readdir(fs, &pfs_searches[i].iterator.directory, &pfs_searches[i].iterator.position,
+                          name8_3, sizeof(name8_3), &attr, &_pfs_failure),
+                          pfs_search_free(&pfs_searches[i]));
+#endif
         if (rc < 0)
         {
             pfs_search_free(&pfs_searches[i]);
@@ -1063,24 +1438,57 @@ LONG pfs_do_snext_at(DTAINFO *dta)
     }
 }
 
+LONG pfs_do_sfirst_at(char *path,WORD att,DTAINFO *dta)
+{ return pfs_do_sfirst_to(path,att,dta,dta); }
+LONG pfs_do_snext_at(DTAINFO *dta)
+{ return pfs_do_snext_to(dta,dta); }
+
 void pfs_proc_exit(PD *r)
 {
     WORD i;
-
+    UBYTE slots[NUMCURDIR];
+    /* Unpublish the entire namespace before the first release callback. */
+    memcpy(slots, PD_CURDIR(r), sizeof(slots));
+    memset(PD_CURDIR(r), 0, sizeof(slots));
     for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
-        if (pfs_searches[i].proc == r)
-            pfs_search_free(&pfs_searches[i]);
+        if (pfs_searches[i].proc == r
+#if CONF_WITH_PROCESS_FILES
+            && !pfs_searches[i].stage
+#endif
+            ) pfs_search_free(&pfs_searches[i]);
+    for (i = 0; i < NUMCURDIR; i++) pfs_dirtbl_release(slots[i]);
+}
 
-    /*
-     * decrement pfs_dirtbl[] usage for every drive this process cached a
-     * current directory for - p_curdir[] indexes pfs_dirtbl[] here, not
-     * the legacy dirtbl[] (see the comment above PFS_MAX_CWD), so this
-     * needs its own loop rather than reusing bdos/proc.c's
-     * decr_curdir_usage() calls, which stay harmlessly pointed at the
-     * (otherwise unused, while this option is on) legacy table.
-     */
-    for (i = 0; i < BLKDEVNUM; i++)
-        pfs_dirtbl_release(PD_CURDIR(r)[i]);
+void pfs_invalidate_fat_drive(WORD drive)
+{
+    WORD i;
+    for (i = 0; i < CONF_PFS_MAX_SEARCHES; i++)
+        if (pfs_searches[i].proc && pfs_searches[i].iterator.directory.fs == &fat_pfs_ops &&
+            ((DND *)(intptr_t)pfs_searches[i].iterator.directory.index)->d_drv->m_drvnum == drive)
+        {
+#if CONF_WITH_PROCESS_FILES
+            /* FAT disk errors unwind search/clone guards before osif retires
+             * the DND tree. A direct provider must not retire a live stack's
+             * directory; reject that contract violation before any tree free. */
+            if(pfs_searches[i].busy) panic("FAT media retirement inside iterator operation");
+            if(pfs_searches[i].process) {
+                process_files_invalidate_epoch(kproc_ref_files(pfs_searches[i].process));
+                if(!pfs_searches[i].stage)
+                    kproc_dta_invalidate(pfs_searches[i].process,(DTAINFO *)pfs_searches[i].owner);
+            }
+#endif
+            pfs_search_free(&pfs_searches[i]);
+        }
+    for (i = 1; i < PFS_MAX_CWD; i++)
+        if (pfs_dirtbl[i].use && pfs_dirtbl[i].fs == &fat_pfs_ops &&
+            pfs_dirtbl[i].drive == drive)
+        {
+            PFSCOOKIE cookie = pfs_dirtbl[i].cwd;
+            pfs_dirtbl[i].fs = NULL;
+            pfs_dirtbl[i].path[0] = 0;
+            memset(&pfs_dirtbl[i].cwd, 0, sizeof(cookie));
+            fat_pfs_ops.release(&cookie);
+        }
 }
 
 

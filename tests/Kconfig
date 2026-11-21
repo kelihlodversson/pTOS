@@ -39,4 +39,25 @@ config CONF_WITH_X32_DESKTOP_TEST
       Console return and missing-desktop fallback support both external
       and embedded EmuCON.
 
+config CONF_WITH_CUIS_WAIT_TEST
+    bool "Observe native CUIS wait admission in regression tests"
+    depends on CONF_WITH_REGRESSION_TESTS && CONF_WITH_CUIS && CONF_WITH_PCLONE && CONF_WITH_PTERMGRP && CONF_WITH_PTHJOIN
+    default y if CONF_WITH_PRIVATE_CLONE_TEST
+    help
+      Let regression peers observe their own PROCESS's blocked wait before
+      the host injects real input. This uses a private Pclone test selector.
+
+config CONF_WITH_IRQ_RESTART_TEST
+    bool "Test retained hardware user interruption across another THREAD"
+    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE && CONF_WITH_PCLONE && CONF_WITH_PRIVATE_CLONE_TEST
+    depends on CONF_WITH_MMAP && CONF_WITH_PTHJOIN
+    depends on !ARCH_ARM || MACHINE_VIRT_ARM
+    depends on !CONF_WITH_NATIVE_PREEMPT
+    default n
+    help
+      Private test-only preparation arms one retained user-return operation.
+      A genuine eligible device IRQ can park it at the verified outer return,
+      run another THREAD, then restore the owned architectural frame. No timer
+      quantum, public opcode or production preemption policy is enabled.
+
 endmenu

@@ -13,6 +13,15 @@
 #include "procmem.h"
 #include "process.h"
 
+#if CONF_WITH_NATIVE_SCHED
+PD *run; /* modeled CPU slot: this fixture does not link the dispatcher */
+#endif
+#if CONF_WITH_NATIVE_SCHED
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"deferred rollback:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 
 /* Static, non-PIE blocks fit in the GEMDOS basepage's 32-bit pointers. */
@@ -21,18 +30,35 @@ static UBYTE image_area[sizeof(PD)+16] __attribute__((aligned(16)));
 #define image (*(PD *)image_area)
 static char environment[128];
 static const void *owners[2];
+static char cleanup_owner;
+#if CONF_WITH_NATIVE_SCHED
+static ULONG model_cleanup_depth;
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(!scope->active);scope->active=TRUE;scope->depth=++model_cleanup_depth; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(scope->active && scope->depth==model_cleanup_depth);model_cleanup_depth--;scope->active=FALSE; }
+#endif
+
+void panic(const char *format, ...) { fprintf(stderr,"panic: %s\n",format); abort(); }
 static SBYTE parent_files[NUMSTD], child_files[NUMSTD];
 static UBYTE parent_dirs[NUMCURDIR], child_dirs[NUMCURDIR];
 static unsigned allocations, records, disposals, attempts, interrupted;
 static unsigned references[2], invalidations, directory_releases;
 static unsigned inject_errors;
 static BOOL return_close_error;
+static BOOL fake_completion, deny_mutation;
+static unsigned completion_stage;
 static PD *pending_request;
 static LONG rejection;
 
-jmp_buf errbuf;
-long errcode, rwerr;
-int errdrv;
+
+
+
+static BOOL observer_mode, fail_observer_retain, deny_start;
+static LONG header_error, load_error, directory_error, spawn_result;
+static unsigned observer_refs, publications;
+static KPROC **observer_output;
+
 FTAB sft[OPNFILES];
 DIRTBL_ENTRY dirtbl[NCURDIR];
 MPB pmd, pmdalt;
@@ -50,17 +76,30 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
 }
 BOOL procmem_contains(const void *p) { return p == &image || p == environment; }
 BOOL procmem_free(void *p) { CHECK(procmem_contains(p) && allocations); allocations--; return TRUE; }
+ULONG procmem_size(const void *p)
+{ return p==&image ? sizeof(image_area) : p==environment ? sizeof(environment) : 0; }
+UQUAD procmem_gen(const void *p) { return procmem_contains(p) ? 1 : 0; }
+BOOL procmem_mutation_allowed(const void *p, UQUAD generation, VADDR offset, VADDR bytes)
+{
+    CHECK(procmem_contains(p) && generation==1 && !offset);
+    CHECK(bytes==procmem_size(p));
+    return !deny_mutation; /* modeled hold; real allocator tickets tested separately */
+}
 const void *procmem_owner(const void *p) { return owners[p == &image ? 1 : 0]; }
 ULONG procmem_pins(const void *p) { return 0; }
+BOOL kproc_allocation_disposal_allowed(const void *base)
+{ CHECK(procmem_contains(base)); return TRUE; }
 void set_owner(void *p, PD *owner) { CHECK(procmem_contains(p)); owners[p == &image ? 1 : 0] = owner; }
 void procmem_free_owned(const void *owner, void (*before)(void *))
 {
-    CHECK(owner == &image && !records && allocations == 2);
-    CHECK(owners[0] == owner && owners[1] == owner);
-    before(environment); before(&image);
-    allocations = 0;
-    disposals++;
+    CHECK((owner==&image || owner==&cleanup_owner) && !records && allocations==2);
+    if (owners[0]!=owner && owners[1]!=owner) return;
+    CHECK(owners[0]==owner && owners[1]==owner);
+    if (before) { before(environment); before(&image); }
+    allocations=0;disposals++;
 }
+void procmem_keep(const void *p, ULONG bytes, void (*before)(void *))
+{ (void)p; (void)bytes; (void)before; abort(); }
 SBYTE *kproc_uft(PD *p) { CHECK(p == &parent || (p == &image && records)); return p == &parent ? parent_files : child_files; }
 void kproc_standard_file_refs(ULONG *refs)
 {
@@ -78,10 +117,59 @@ void kproc_destroy(PD *p)
     CHECK(p == &image && records == 1);
     /* A close error must not jump past the remaining references. */
     CHECK(references[0] == 2 && references[1] == 1);
-    CHECK(directory_releases == 2 && dirtbl[3].use == 1 && dirtbl[4].use == 1);
+    CHECK(directory_releases == (observer_mode && load_error ? 0U : 2U) &&
+          dirtbl[3].use == 1 && dirtbl[4].use == 1);
     records--;
 }
 BOOL kproc_unlaunched(PD *p) { return p == &image && records; }
+KPROC *kproc_retain(PD *p)
+{
+    if (observer_mode) {
+        CHECK(p==&image);
+        if (fail_observer_retain) { fail_observer_retain=FALSE; return NULL; }
+        observer_refs++;
+    }
+    return (KPROC *)p;
+}
+void kproc_release(KPROC *p)
+{
+    if (observer_mode && p) { CHECK(observer_refs); observer_refs--; }
+}
+BOOL kproc_begin_disposal(KPROC *p, PD **pd) { *pd = (PD *)p; return TRUE; }
+BOOL kproc_prepare_discard(KPROC *process)
+{
+    CHECK(process==(KPROC *)&image && records && allocations==2);
+    owners[0]=owners[1]=&cleanup_owner; /* canonical cleanup ownership model */
+    return TRUE;
+}
+void kproc_finish_discard_allocations(KPROC *process)
+{
+    CHECK(process==(KPROC *)&image && !records);
+    if (allocations && owners[0]==&cleanup_owner) procmem_free_owned(&cleanup_owner,kproc_unborrow);
+}
+
+BOOL kproc_pending_completion(const KPROC *p, UWORD *status)
+{
+    CHECK(p == (KPROC *)&image);
+    if (!fake_completion) return FALSE;
+    *status = 37;
+    return TRUE;
+}
+void kproc_publish_observers(KPROC *p) { (void)p; }
+void kproc_complete(PD *p, UWORD status)
+{
+    CHECK(fake_completion && p == &image && status == 37 && !completion_stage++);
+}
+void ksched_exiting(PD *p, UWORD status)
+{
+    CHECK(fake_completion && p == &image && status == 37 && completion_stage++ == 1 && records);
+}
+void ksched_exited_identity(KPROC *process, PD *p)
+{
+    CHECK(fake_completion && p == &image && completion_stage++ == 2 && !records && !allocations);
+}
+void kproc_require_no_threads(PD *p) { (void)p; }
+void x86_64_memtest_disposal_committed(PD *p) { (void)p; }
 BOOL kproc_discard(PD *p) { CHECK(!records); return FALSE; }
 BOOL kproc_borrow(PD *p, void *block) { CHECK(p == &parent && procmem_contains(block)); return TRUE; }
 void kproc_unborrow(void *block) { CHECK(procmem_contains(block)); }
@@ -122,14 +210,14 @@ LONG kpgmhdrld(char *path, PGMHDR01 *header, FH *handle)
 {
     memset(header,0,sizeof(*header));
     *handle = NUMSTD+2;
-    return E_OK;
+    return header_error;
 }
 LONG kpgmld(PD *p, FH handle, PGMHDR01 *header, const char *path)
 {
     CHECK(p == &image && records == 1 && handle == NUMSTD+2);
-    return E_OK;
+    return load_error;
 }
-BOOL ksched_spawn_allowed(void) { return TRUE; }
+BOOL ksched_spawn_allowed(void) { return !deny_start; }
 LONG ksched_defer(PD *p, ULONG session)
 {
     CHECK(p == &image && session == 23 && pending_request == &pending);
@@ -139,27 +227,45 @@ LONG ksched_defer(PD *p, ULONG session)
 }
 LONG fs_set_process_directory(char *directory, PD *process)
 {
-    CHECK(process == &image && !strcmp(directory,"C:\\MISSING"));
+    CHECK(process == &image && !strcmp(directory,observer_mode ? "C:\\TARGET" : "C:\\MISSING"));
     CHECK(run == &parent && pending_request == &pending);
-    return EPTHNF;
+    return observer_mode ? directory_error : EPTHNF;
 }
-void elf_set_load_into_caller(BOOL wanted) { CHECK(!wanted); }
 void proc_align_stack(PD *p) { CHECK(p == &image); }
 void invalidate_instruction_cache(const UBYTE *address, ULONG length) { }
 
 /* Other Pexec modes must not run during this regression. */
 BOOL ksched_active(void) { abort(); }
 LONG ksched_spawn(PD *p) { abort(); }
-LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token) { abort(); }
+LONG ksched_spawn_observed(PD *p, ULONG session, ULONG token)
+{
+    CHECK(observer_mode && p==&image && !session && !token && records==1);
+    CHECK(observer_refs==1 && observer_output && !*observer_output);
+    CHECK(references[0]==4 && references[1]==2 && dirtbl[3].use==2 && dirtbl[4].use==2);
+    publications++;
+    return spawn_result;
+}
+LONG ksched_process_prepare(PD *p, BOOL deferred, void **slot)
+{
+    CHECK(observer_mode && p==&image && slot && !*slot && records==1);
+    CHECK(observer_refs==1 && observer_output && !*observer_output);
+    CHECK(!publications);
+    if (spawn_result < 0) return spawn_result;
+    *slot=p;
+    return E_OK;
+}
 LONG ksched_exec(PD *p, BOOL take, LONG *result) { abort(); }
 BOOL kproc_check_launch(PD *p, PD *caller) { abort(); }
-ASPACE *kproc_user_aspace(PD *p) { abort(); }
+ASPACE *kproc_user_aspace(PD *p) { CHECK(deny_mutation && p==&parent); return NULL; }
 UQUAD kproc_user_root(PD *p) { abort(); }
 BOOL kproc_prepare_user(PD *p, PD *caller) { abort(); }
+LONG ksched_nested_prepare(PD *p) { abort(); }
+void ksched_nested_enter(PD *p) { abort(); }
+void ksched_nested_cancel(PD *p) { CHECK(p == &image); }
 void kproc_set_creator(PD *p, PD *caller) { abort(); }
 void kproc_hand_over(PD *caller, PD *p) { abort(); }
-void kproc_set_give_back(PD *p, BOOL give_back) { abort(); }
 void kproc_set_parent(PD *p, PD *caller) { abort(); }
+void *kproc_clone_startup(PD *p) { abort(); }
 UQUAD kproc_ancestors_va(PD *p) { abort(); }
 void kproc_mark_started(PD *p) { abort(); }
 void proc_launch_prepare(PD *p, void *stack) { abort(); }
@@ -202,6 +308,77 @@ int main(void)
     CHECK(xexec_directory("NEXT.PRG",tail,env,23,0,TRUE,"C:\\MISSING") == EPTHNF);
     CHECK(pending_request == &pending && run == &parent);
     CHECK(!allocations && !records && disposals == 13);
+    /* Exercise notification ordering for an already committed completion;
+     * the real KPROC tests cover the started/stopped eligibility checks. */
+    fake_completion = TRUE;
+    references[0] = 2; references[1] = 1;
+    dirtbl[3].use = dirtbl[4].use = 1;
+    directory_releases = attempts = interrupted = invalidations = 0;
+    CHECK(xexec_deferred("NEXT.PRG",tail,env,23) == rejection);
+    CHECK(completion_stage == 3 && !allocations && !records);
+    observer_mode=TRUE; fake_completion=FALSE; inject_errors=0;
+    {
+        KPROC *out=NULL, *sentinel=(KPROC *)123;
+        unsigned stage;
+        CHECK(proc_exec_observe("NEXT.PRG",tail,env,NULL,NULL)==EINVAL);
+        CHECK(proc_exec_observe("NEXT.PRG",tail,env,NULL,&sentinel)==EINVAL && sentinel==(KPROC *)123);
+        for (stage=0;stage<7;stage++) {
+            LONG expected;
+            CHECK(!allocations && !records && !observer_refs && !out);
+            references[0]=2; references[1]=1; dirtbl[3].use=dirtbl[4].use=1;
+            directory_releases=attempts=interrupted=invalidations=publications=0;
+            deny_start=stage==0; header_error=stage==1?EFILNF:0;
+            load_error=stage==2?EPLFMT:0; directory_error=stage==3?EPTHNF:0;
+            fail_observer_retain=stage==4; spawn_result=stage==5?EAGAIN:123;
+            observer_output=&out;
+            expected=stage==0?EINVFN:stage==1?EFILNF:stage==2?EPLFMT:
+                     stage==3?EPTHNF:stage==4?ENSMEM:stage==5?EAGAIN:123;
+            CHECK(proc_exec_observe("NEXT.PRG",tail,env,"C:\\TARGET",&out)==expected);
+            if (stage<6) CHECK(!out && !observer_refs && !allocations && !records);
+            else {
+                CHECK(out==(KPROC *)&image && observer_refs==1 && publications==1);
+                proc_discard_scheduled(&image); /* abandon unstarted image, not an invented exit */
+                CHECK(!allocations && !records && observer_refs==1);
+                kproc_release(out); out=NULL;
+            }
+            CHECK(references[0]==2 && references[1]==1 && dirtbl[3].use==1 && dirtbl[4].use==1);
+        }
+        for (stage=0;stage<7;stage++) {
+            LONG expected;
+            void *prepared=NULL;
+            CHECK(!allocations && !records && !observer_refs && !out);
+            references[0]=2; references[1]=1; dirtbl[3].use=dirtbl[4].use=1;
+            directory_releases=attempts=interrupted=invalidations=publications=0;
+            deny_start=stage==0; header_error=stage==1?EFILNF:0;
+            load_error=stage==2?EPLFMT:0; directory_error=stage==3?EPTHNF:0;
+            fail_observer_retain=stage==4; spawn_result=stage==5?EAGAIN:123;
+            observer_output=&out;
+            expected=stage==0?EINVFN:stage==1?EFILNF:stage==2?EPLFMT:
+                     stage==3?EPTHNF:stage==4?ENSMEM:stage==5?EAGAIN:E_OK;
+            CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\TARGET",0,&out,&prepared)==expected);
+            if (stage<6) CHECK(!prepared && !out && !observer_refs && !allocations && !records);
+            else {
+                CHECK(out==(KPROC *)&image && observer_refs==1 && !publications && prepared==&image);
+                deny_mutation=TRUE;
+                CHECK(procmem_mfree(&image)==EACCDN && allocations==2 && records==1 && observer_refs==1);
+                deny_mutation=FALSE;
+                proc_discard_scheduled(&image); /* abandon unstarted image, not an invented exit */
+                CHECK(!allocations && !records && observer_refs==1);
+                kproc_release(out); out=NULL;
+            }
+            CHECK(references[0]==2 && references[1]==1 && dirtbl[3].use==1 && dirtbl[4].use==1);
+        }
+    }
+#if CONF_WITH_NATIVE_SCHED
+    CHECK(!model_cleanup_depth);
+#endif
+    puts("Ordinary Pexec observer: prepared before publication, unchanged outputs, load/CWD/admission rollback: PASS");
     puts("Deferred rejection releases all references after interrupted close: PASS");
     return 0;
 }
+
+PD *ksched_launch_controller(PD *p) { (void)p; return NULL; }
+
+BOOL ksched_dispatching(void) { return ksched_active(); }
+BOOL ksched_async_allowed(void) { return ksched_spawn_allowed(); }
+void kproc_discard_after_free(PD *pd) { (void)kproc_discard(pd); }

@@ -20,8 +20,13 @@
 #include "kproc.h"
 #include "bdosstub.h"
 #include "mintproc.h"
+#if CONF_WITH_PCLONE
+#include "pclone.h"
+#include "clone.h"
+#endif
 #if CONF_WITH_NATIVE_SCHED
 #include "ksched.h"
+#include "threadcalls.h"
 #endif
 
 /* what Dgetpath() may write (bdos/uaccess.c UA_PATHBUF) */
@@ -147,7 +152,36 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     *handled = TRUE;
     switch (fn)
     {
+    case GEMDOS_PFORK:
+    case GEMDOS_PVFORK:
+        /* With CONF_WITH_PFORK the architecture trap captures the caller's
+         * return image and forks before this dispatcher (proc_clone_fork);
+         * a call that reaches here is unsupported or its CPU state was not
+         * admitted. Fail before constructing identities or suspending. */
+        return EINVFN;
+#if CONF_WITH_PCLONE
+    case GEMDOS_PCLONE:
+#if CONF_WITH_NATIVE_ABI
+        return xclone((UQUAD)(unsigned long)((const long *)pw)[1],
+                      (UQUAD)(unsigned long)((const long *)pw)[2]);
+#else
+        return xclone(ARG_P(1), ARG_P(3));
+#endif
+#endif
 #if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_PTHJOIN
+    case GEMDOS_PTHJOIN:
+        return ksched_join((ULONG)ARG_P(1), ARG_P(
+#if CONF_WITH_NATIVE_ABI
+            2
+#else
+            3
+#endif
+        ));
+#endif
+#if CONF_WITH_PTERMGRP
+    case GEMDOS_PTERMGRP: return ksched_termgrp((UWORD)ARG_W(1));
+#endif
     case GEMDOS_SYIELD: return ksched_yield();
     case GEMDOS_PWAIT: return ksched_wait(-1, 2, 0);
     case GEMDOS_PWAIT3: return ksched_wait(-1, ARG_W(1), ARG_P(2));

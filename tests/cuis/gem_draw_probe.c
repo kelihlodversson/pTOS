@@ -26,21 +26,16 @@ int gem_probe_pixel(WORD handle, WORD x, WORD y)
     return service(VDI_SERVICE_PIXEL,handle,x,y,(uintptr_t)output) == 0 ? output[1] : -1;
 }
 
-/* Transitional native per-window update API, isolated from GEM headers. */
-LONG gem_probe_update_begin(void)
+/* Raw display ownership probe, independent of the public GEM adapter. */
+LONG gem_probe_display_begin(void)
 {
-    LONG window = probe_window_create(8,8,40,40), rc;
-    if (window < 0) return window;
-    rc = probe_window_show(window);
-    if (rc == 0) rc = probe_update_begin(window);
-    return rc < 0 ? rc : window;
+    LONG session=probe_session_open();
+    LONG result=probe_display_lock(session,1,0);
+    return result < 0 ? result : session;
 }
-LONG gem_probe_update_end(LONG window)
+LONG gem_probe_display_end(LONG session)
 {
-    LONG rc = probe_update_end(window);
-    if (rc == 0) rc = probe_window_hide(window);
-    if (rc == 0) rc = probe_window_destroy(window);
-    return rc;
+    return probe_display_lock(session,0,0);
 }
 
 LONG gem_probe_cell(WORD handle, WORD *width, WORD *height)

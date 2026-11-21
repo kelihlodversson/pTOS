@@ -1,95 +1,68 @@
-/* The host idle mock delivers an IRQ at the check/sleep boundary. */
-#define I(fn, h, arg) cuis_input_service(fn, h, arg)
-#define FOCUS(fn, h) cuis_window_service(fn, h, ~0ULL, ~0ULL, ~0ULL, ~0ULL)
+/* Trusted keyboard delivery through active session waits and result snapshots. */
+#define KEY_POLL(s) cuis_session_wait(s,0,CUIS_READY_KEY|CUIS_READY_TIMER,0,0,0)
+#define KEY_RESULT(s) cuis_input_config(CUIS_INPUT_RESULT,s,0x1000,0x1004,0x1008,0x100c,0x1010)
 static int input_checks(void)
 {
-    LONG a, b;
+    LONG a, b, session;
     ULONG i;
     run = &first;
     CHECK(!cuis_keyboard_event(123));
-    CHECK(I(CUIS_KEY_READ, 0, 0) == EACCDN);
-    CHECK(I(99, 0, 0) == EINVFN);
-    CHECK(cuis_service(CUIS_SESSION_START, 0) >= 0);
-    a = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 10, 10, 0);
-    CHECK(a >= 0 && FOCUS(CUIS_WINDOW_SHOW, a) == E_OK);
-    CHECK(I(CUIS_KEY_WAIT, a, 0) == EACCDN);
-    CHECK(FOCUS(CUIS_FOCUS_REQUEST, a) == E_OK);
-    CHECK(I(CUIS_KEY_READ, a, ~0ULL) == 0); /* Empty read ignores output. */
-    CHECK(I(CUIS_KEY_WAIT, a, 0) == 0 && !input_sleeps);
-    CHECK(I(CUIS_KEY_WAIT, a, -2LL) == EINVAL);
-    CHECK(I(CUIS_KEY_WAIT, a, 0xffffffffULL) == EINVAL);
-    CHECK(I(CUIS_KEY_WAIT, 0x100000000ULL | (ULONG)a, 0) == EINVAL);
+    session = cuis_service(CUIS_SESSION_START,0);
+    a = cuis_window_service(CUIS_WINDOW_CREATE,0,0,10,10,0);
+    CHECK(a >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,a,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,a,0,0,0,0) == E_OK);
+    CHECK(cuis_event_service(a,CUIS_EVENT_KEY,0) == 0);
+    CHECK(cuis_event_service(a,CUIS_EVENT_KEY,(UQUAD)-2) == EINVAL);
+    CHECK(cuis_event_service(0x100000000ULL | (ULONG)a,CUIS_EVENT_KEY,0) == EINVAL);
     CHECK(cuis_keyboard_event(0));
-    CHECK(I(CUIS_KEY_WAIT, a, 0) == 1);
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 1 && copied[0] == 0);
+    CHECK(KEY_POLL(session) == (CUIS_READY_KEY|CUIS_READY_TIMER));
+    CHECK(KEY_RESULT(session) == E_OK && copied[0] == 0);
     input_irqs = FALSE;
     CHECK(cuis_keyboard_event(0xffffffffUL) && !input_irqs);
+    CHECK(KEY_POLL(session) == (CUIS_READY_KEY|CUIS_READY_TIMER) && !input_irqs);
     input_irqs = TRUE;
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 1 && (ULONG)copied[0] == 0xffffffffUL);
-    for (i = 0; i < CUIS_KEY_CAPACITY + 3; i++) CHECK(cuis_keyboard_event(i + 1));
-    CHECK(I(CUIS_KEY_READ, a, 0) == EIMBA);
-    CHECK(I(CUIS_KEY_READ, a, 0x100001000ULL) == EIMBA);
-    fail_copy = TRUE;
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == EIMBA);
-    fail_copy = FALSE;
-    for (i = 0; i < CUIS_KEY_CAPACITY; i++)
-        CHECK(I(CUIS_KEY_READ, a, 0x1000) == 1 && (ULONG)copied[0] == i + 1);
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 0);
-    CHECK(cuis_keyboard_event(42));
-    input_drop_on_validate = TRUE;
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == EACCDN);
-    CHECK(FOCUS(CUIS_FOCUS_REQUEST, a) == E_OK);
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 0);
-    input_sleeps = 0;
-    CHECK(I(CUIS_KEY_WAIT, a, 6) == 0 && input_sleeps == 3);
-    input_ticks = 0xfffffffeUL; input_sleeps = 0;
-    CHECK(I(CUIS_KEY_WAIT, a, 10) == 0 && input_ticks == 1);
-    input_sleeps = 0; input_inject_after = 1;
-    CHECK(I(CUIS_KEY_WAIT, a, 100) == 1 && input_sleeps == 1);
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 1 && (ULONG)copied[0] == 0xff123456UL);
-    input_sleeps = 0; input_inject_after = 3;
-    CHECK(I(CUIS_KEY_WAIT, a, ~0ULL) == 1 && input_sleeps == 3);
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 1);
-    input_inject_after = 0;
-    CHECK(FOCUS(CUIS_UPDATE_BEGIN, a) == E_OK);
-    CHECK(I(CUIS_KEY_WAIT, a, 0) == 0);
-    CHECK(I(CUIS_KEY_WAIT, a, 10) == EACCDN);
-    CHECK(cuis_keyboard_event(77));
-    CHECK(I(CUIS_KEY_WAIT, a, 10) == 1); /* Pending input does not block. */
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 1 && copied[0] == 77);
-    CHECK(FOCUS(CUIS_UPDATE_END, a) == E_OK);
-    input_drop_focus = TRUE;
-    CHECK(I(CUIS_KEY_WAIT, a, 10) == EACCDN);
+    CHECK(KEY_RESULT(session) == E_OK && (ULONG)copied[0] == 0xffffffffUL);
+    for (i = 0; i < CUIS_KEY_CAPACITY+3; i++) CHECK(cuis_keyboard_event(i+1));
+    for (i = 0; i < CUIS_KEY_CAPACITY; i++) {
+        CHECK(KEY_POLL(session) == (CUIS_READY_KEY|CUIS_READY_TIMER));
+        if (!i) {
+            CHECK(cuis_input_config(CUIS_INPUT_RESULT,session,0,0x1004,0x1008,0x100c,0x1010) == EIMBA);
+            fail_copy = TRUE; CHECK(KEY_RESULT(session) == EIMBA); fail_copy = FALSE;
+            /* Rejected delivery does not overwrite the committed snapshot. */
+        }
+        CHECK(KEY_RESULT(session) == E_OK && (ULONG)copied[0] == i+1);
+        CHECK(KEY_RESULT(session) == E_OK && (ULONG)copied[0] == i+1);
+    }
+    CHECK(KEY_POLL(session) == CUIS_READY_TIMER);
+    input_sleeps=0;
+    CHECK(cuis_event_service(a,CUIS_EVENT_KEY,6) == 0 && input_sleeps == 3);
+    input_ticks=0xfffffffeUL; input_sleeps=0;
+    CHECK(cuis_event_service(a,CUIS_EVENT_KEY,10) == 0 && input_ticks == 1);
+    input_sleeps=0; input_inject_after=1;
+    CHECK(cuis_event_service(a,CUIS_EVENT_KEY,100) == 1 && input_sleeps == 1);
+    CHECK(KEY_POLL(session) == (CUIS_READY_KEY|CUIS_READY_TIMER));
+    CHECK(KEY_RESULT(session) == E_OK && (ULONG)copied[0] == 0xff123456UL);
+    input_inject_after=0; input_drop_focus=TRUE;
+    CHECK(cuis_event_service(a,CUIS_EVENT_KEY,10) == EACCDN);
     CHECK(!cuis_keyboard_event(88));
-    CHECK(FOCUS(CUIS_FOCUS_REQUEST, a) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,a,0,0,0,0) == E_OK);
     CHECK(cuis_keyboard_event(123));
-    run = &second;
-    CHECK(cuis_service(CUIS_SESSION_START, 0) >= 0);
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == EACCDN);
-    CHECK(I(CUIS_KEY_WAIT, a, 0) == EACCDN);
-    b = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 10, 10, 0);
-    CHECK(b > a && FOCUS(CUIS_WINDOW_SHOW, b) == E_OK);
-    CHECK(FOCUS(CUIS_FOCUS_REQUEST, b) == E_OK);
-    CHECK(I(CUIS_KEY_READ, b, 0x1000) == 0);
-    run = &first;
-    CHECK(cuis_keyboard_event(456)); /* Route by focus, not interrupted process. */
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == EACCDN);
-    run = &second;
-    CHECK(I(CUIS_KEY_READ, b, 0x1000) == 1 && copied[0] == 456);
-    CHECK(cuis_keyboard_event(654));
-    cuis_process_exit(&second);
-    run = &first;
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 0); /* Focus loss flushed old input. */
-    CHECK(cuis_keyboard_event(789));
-    CHECK(FOCUS(CUIS_FOCUS_REQUEST, a) == E_OK); /* Repeated focus keeps input. */
-    CHECK(I(CUIS_KEY_READ, a, 0x1000) == 1 && copied[0] == 789);
+    run=&second;
+    b=cuis_service(CUIS_SESSION_START,0);
+    CHECK(KEY_RESULT(session) == EACCDN);
+    CHECK(cuis_event_service(a,CUIS_EVENT_KEY,0) == EACCDN);
+    a=cuis_window_service(CUIS_WINDOW_CREATE,0,0,10,10,0);
+    CHECK(a >= 0 && cuis_window_service(CUIS_WINDOW_POLICY,a,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_SHOW,a,0,0,0,0) == E_OK);
+    run=&first; CHECK(cuis_keyboard_event(456)); /* Route by focus, not interrupted PROCESS. */
+    run=&second;
+    CHECK(KEY_POLL(b) == (CUIS_READY_KEY|CUIS_READY_TIMER));
+    CHECK(KEY_RESULT(b) == E_OK && copied[0] == 456);
+    cuis_process_exit(&second); run=&first;
+    CHECK(KEY_POLL(session) == CUIS_READY_TIMER); /* Focus loss discarded old keys. */
     cuis_process_exit(&first);
-    CHECK(!cuis_keyboard_event(123) && !cuis_focus_active());
-    CHECK(input_irqs && !input_bad_idle && allocations == frees);
-    input_irqs = FALSE;
-    CHECK(!cuis_keyboard_event(1) && !input_irqs);
-    input_irqs = TRUE;
+    CHECK(allocations == frees && !input_bad_idle);
     return 0;
 }
-#undef I
-#undef FOCUS
+#undef KEY_RESULT
+#undef KEY_POLL

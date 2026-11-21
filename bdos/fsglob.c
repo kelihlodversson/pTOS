@@ -34,15 +34,8 @@ DMD *drvtbl[BLKDEVNUM];
 FTAB sft[OPNFILES];
 
 
-/*
- * rwerr -  hard error number currently in progress
- */
-long rwerr;
-long errcode;
-
-
-/*
- * errdrv -  drive on which error occurred
- */
-int errdrv;
-jmp_buf errbuf;
+/* Native execution uses the selected CPU's loaded continuation. Classic
+ * kernels retain one legacy instance; neither path exposes an owning PD. */
+#if !CONF_WITH_NATIVE_SCHED
+FS_ERROR_STATE fs_legacy_error;
+#endif

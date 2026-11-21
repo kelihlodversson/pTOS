@@ -84,11 +84,36 @@ def main():
     ap.add_argument('--amiberry', default=os.environ.get('AMIBERRY') or
                     os.path.expanduser('~/.local/src/amiberry/build/amiberry'))
     ap.add_argument('--timeout', type=float, default=1200, help='seconds for the whole suite')
+    ap.add_argument('--fpu', choices=['0','68881','68882','68040','68060'],
+                    help='explicit FPU model; omitted preserves the emulator default')
+    ap.add_argument('--softfloat', action='store_true', help='accurate software FPU emulation')
+    ap.add_argument('--require-nonzero-fpiar', action='store_true')
+    ap.add_argument('--irq-capture-state', type=lambda value: int(value, 0),
+                    help='physical debugger address of the test-only seen/error/nonzero-FPIAR ULONG array')
+    ap.add_argument('--require-owned-irq-copy', action='store_true',
+                    help='040 only: require the fourth kernel counter to prove fresh owned IRQ copy-back')
+    ap.add_argument('--require-native-preemption', action='store_true',
+                    help='require CPU-bound timer handoff, FPU, wake and retirement verdicts')
+    ap.add_argument('--require-irq-restart', choices=('deferred', 'refused'),
+                    help='require gated B2 delayed restart or observable ordinary-return refusal')
     ap.add_argument('--caches', action='store_true', help='CPU caches on')
+    ap.add_argument('--require-managed-threads', action='store_true',
+                    help='require native clone/join/group/libc exit worker verdicts')
     ap.add_argument('--halt', help='the address of halt() in the kernel (emutos.map): an image whose shell '
                     'is the harness halts the machine when it is done, and the emulator does not write the '
                     'log to the disk image until it is stopped, so the end is seen by the CPU')
     a = ap.parse_args()
+
+    if a.require_owned_irq_copy and (a.cpu != '68040' or a.irq_capture_state is None or
+                                     not a.require_managed_threads):
+        ap.error('--require-owned-irq-copy needs 68040, --irq-capture-state and --require-managed-threads')
+
+    if a.require_native_preemption and not a.require_owned_irq_copy:
+        ap.error('--require-native-preemption needs --require-owned-irq-copy')
+    if a.require_irq_restart and (a.require_native_preemption or not a.require_managed_threads or
+                                  a.irq_capture_state is None or not a.require_nonzero_fpiar or
+                                  (a.require_irq_restart == 'deferred' and not a.require_owned_irq_copy)):
+        ap.error('B2 needs managed threads, debugger capture and nonzero FPIAR; deferred also needs owned copy-back')
 
     if not os.path.exists(a.amiberry):
         sys.exit('run-amiberry-tests: no emulator at %s (doc/debugging.txt)' % a.amiberry)
@@ -108,8 +133,9 @@ def main():
     proc = None
     path = None
     text = ''
+    irq_evidence = None
     try:
-        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches)
+        proc, path, emu = ra.start(a.amiberry, a.rom, a.cpu, image, a.caches, fpu=a.fpu, softfloat=a.softfloat)
         deadline = time.time() + a.timeout
         while time.time() < deadline:
             time.sleep(5)
@@ -122,6 +148,12 @@ def main():
                 break
             if a.halt and halted(ra, path, int(a.halt, 16)):
                 break
+        if a.irq_capture_state is not None:
+            # Read the captured kernel evidence before stopping the emulator.
+            # This is debugger inspection of real native capture, not a model.
+            irq_evidence = [int(ra.ipc(path, 'READ_MEM\t0x%x\t4' %
+                            (a.irq_capture_state + 4 * index)).splitlines()[-1], 0)
+                            for index in range(4 if a.require_owned_irq_copy else 3)]
     finally:
         if proc:
             ra.stop(proc, path)
@@ -137,6 +169,50 @@ def main():
     if int(m.group(2)) or 'All tests passed.' not in text:
         print('run-amiberry-tests: %s tests failed' % m.group(2), file=sys.stderr)
         return 1
+    if a.irq_capture_state is not None:
+        if not irq_evidence or not irq_evidence[0] or irq_evidence[1] or (
+                a.require_nonzero_fpiar and not irq_evidence[2]):
+            print('run-amiberry-tests: missing or invalid native IRQ capture: %r' %
+                  (irq_evidence,), file=sys.stderr)
+            return 1
+        print('native IRQ captured frames=%d, mismatches=%d, nonzero FPIAR=%d' % tuple(irq_evidence[:3]))
+        if a.require_owned_irq_copy:
+            if not irq_evidence[3]:
+                print('run-amiberry-tests: no native owned IRQ copy-back', file=sys.stderr)
+                return 1
+            print('native owned IRQ copy-backs=%d' % irq_evidence[3])
+    if a.require_managed_threads:
+        markers = ('pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS',
+                   'native Pclone ABI prefix/flags/pointers/atomic outputs: PASS',
+                   'native shared image execute policy nested/orphan: PASS',
+                   'native Pthjoin: PASS', 'native Ptermgrp: PASS', 'native libc exit: PASS')
+        for marker in markers:
+            if marker not in text:
+                print('run-amiberry-tests: missing managed runtime verdict: ' + marker, file=sys.stderr)
+                return 1
+    if a.require_native_preemption:
+        markers = (
+            'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS',
+            'native timer file-backed executable progress without Syield: PASS',
+            'native timer busy USER and blocked sleeper wake: PASS',
+            'native timer busy USER and mapping-owner progress/conservation: PASS',
+            'native timer independent-image/root GPR/FPU patterns: PASS',
+            'native timer original/alternate GPR/FPU delayed restoration: PASS',
+            'native timer suspended-group cancellation and exact retirement: PASS',
+        )
+        for marker in markers:
+            if marker not in text:
+                print('run-amiberry-tests: missing timer policy verdict: ' + marker, file=sys.stderr)
+                return 1
+    if a.require_nonzero_fpiar and 'native m68k nonzero FPIAR: PASS' not in text:
+        print('run-amiberry-tests: nonzero FPIAR was not runtime-verified', file=sys.stderr)
+        return 1
+    if a.require_irq_restart:
+        from irq_restart_evidence import missing_irq_evidence
+        errors = missing_irq_evidence(text, a.require_irq_restart)
+        if errors:
+            print('run-amiberry-tests: B2 evidence: ' + '; '.join(errors), file=sys.stderr)
+            return 1
     return 0
 
 

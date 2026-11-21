@@ -1,0 +1,156 @@
+Managed MMU SAME_PROCESS execution (#892 / internal #893 foundation)
+=================================================================
+
+Supported operation and ownership
+--------------------------------
+
+Configured, managed x32, ARM MMU and m68k MMU user-ASPACE tasks can publish CLONE_VM |
+CLONE_SAME_PROCESS through the existing public Pclone snapshot, trusted clone
+transaction and cooperative native task table. The new TID shares PROCESS/PID,
+KASPACE, descriptors, directories, loader identity and process-wide limits.
+Resource-copy bits are invalid for SAME_PROCESS. The size-tagged 28/32-byte ABI,
+positive signed TID return, optional PID/TID stores and reserved TLS slot do not
+change. Non-NULL TLS remains EINVAL. Private VM and PREPARED_PROCESS execution remain unavailable. The existing VM-only operation
+still creates an independently identified PROCESS, not another thread.
+
+There is one retained PROCESS completion anchor per PROCESS in the existing
+task table. A worker holds a borrowed pointer to its anchor; it does not own a
+second PID zombie, PROCESS completion event or GUI notification. Each task owns
+one KTHREAD and its backend execution context. KTHREAD owns PROCESS identity,
+KASPACE, user-stack hold and backend reclamation; PROCESS membership is borrowed.
+
+  PROCESS anchor --> retained KPROC identity + PID/wait/usage/parent state
+  live KTHREADs  --> KPROC + KASPACE (owning); membership <-- KPROC (borrowed)
+  task backend   --> private scheduler stack + prepared syscall-stack owner
+  startup draft  --> CPU/FPU image, bridge, startup/output leases, observer
+  launcher       --> transferred syscall stack, until irreversible user exit
+  stopped THREAD --> resources until safe root reap; no live PD use thereafter
+
+A stopped initial THREAD leaves its anchor DRAINING. Root reaps that THREAD's
+stack/holds, while the anchor retains only the process relationship needed by
+surviving workers. The anchor cannot be reused or dispatched. It becomes DONE
+or ZOMBIE only on final PROCESS completion. Workers are never PROCESS-waitable;
+the existing Pwait implementation ignores their slots. Both original and cloned
+leaders can exit before their workers. A surviving worker can create another
+worker using the same retained anchor after the leader's continuation is gone.
+
+Construction and rollback
+--------------------------
+
+SAME_PROCESS reuses the source's live resource container. It never prepares or
+revokes PROCESS compatibility/controller mappings, never changes the parent,
+never imports another active_space reference into KPROC, and never resets the
+PROCESS start time. Non-runnable identity association is not permission to
+install a backend: only the validated trusted publication promotes the identity.
+Ordinary backend installation stays guarded after trusted clone publication.
+
+Each transaction explicitly tracks compatibility mappings it acquired. Abort
+must not call kproc_clone_drop_compat() on a SAME_PROCESS source: those mappings
+belong to an already executing PROCESS. Failure/cancellation releases only the
+new identity, leases, observer and untransferred stacks. The source, output
+words and return frame remain intact. Source identity/space, current controller,
+THREAD membership and leases are revalidated before publication.
+
+All allocations/backing, observers, controller checks, aliases and slot storage
+precede the narrow IRQ guard. Sealing and the final ownership/frame/output/
+COMMITTED/RUNNABLE/TASK_NEW transition have no allocation, callback, yield or
+recoverable failure. Restore entry IRQ state before rollback/destruction.
+
+Stack transfer and thread-only exit
+-----------------------------------
+
+Sibling startup uses its task's prepared image and explicit syscall-stack owner,
+not KPROC's first-thread fields. The backend transfers that owner once to the
+existing gouser launcher. KPROC's borrowed first-thread draft is cleared when
+its syscall stack transfers, so leader reaping leaves no usable stale draft.
+The scheduler stack remains separately owned by the backend/KTHREAD reclaimer.
+
+Pterm/Pterm0 and the kernel-selected public zero-status return stub stop only
+the current THREAD. No creator-dependent exit flag or second termination path
+is introduced. Ordinary faults are attributed to the current task/TID, even
+when other tasks have the same PD; they follow the same thread-only handoff.
+A non-final exit keeps PROCESS live and does not run the process-wide legacy
+termination hook, close resources, orphan children or emit CH_EXIT/Pwait status.
+
+The launcher record retains KPROC before publication. Handoff fields changed
+across setjmp/longjmp are volatile-qualified members of an ordinary record.
+Only the final live association reserves PROCESS_EXIT_HANDOFF, blocking further
+attachment. termuser abandons the child syscall continuation; the launcher
+restores its kernel context/root and frees the syscall stack off that stack.
+It stops/detaches KTHREAD. Non-final handoff releases its retained identity only;
+final handoff invokes the existing common finalizer, completion producer and
+resource teardown once. It then returns status through the existing launcher.
+
+The stopped task can never dispatch again. Root reclaims its separate scheduler
+stack, startup observer/bridge and durable user-stack hold, then releases THREAD
+references. DRAINING anchor storage survives independently of the initial task's
+execution resources. No THREAD frees its current syscall or scheduler stack.
+The legacy x86_64_process_cancel() API has no production caller and explicitly
+refuses managed contexts; it is not a validated group-cancellation mechanism.
+
+Waits, observers, accounting and TSR
+-----------------------------------
+
+The last THREAD supplies PROCESS exit/fault status. A leader's earlier exit does
+not satisfy Pwait or orphan children. Parent retirement clears the PROCESS
+anchor's parent relationship; sibling slots cannot redirect observation to a
+reused PD. The existing stable root controller remains responsible for launch
+continuations; logical parent identity and observation stay separate.
+
+NEW_PROCESS observers retain only KPROC identity and may outlive leader reap;
+result becomes available when the existing PROCESS record completes. SAME_PROCESS
+observers snapshot the stopped TID's raw status before KTHREAD destruction and
+clear their borrowed THREAD pointer. Neither consumes PID status or implements
+a second waiter. Cancellation never fabricates a completion. Public Pthjoin is
+still #893. Process usage is credited once by existing wait/retirement policy;
+worker stop does not destroy KPROC or credit another child interval.
+
+Ptermres with live siblings returns EACCDN before shrink, reserve or residency
+changes. The final/sole THREAD keeps the legacy PROCESS TSR behavior. This is
+not a resident-THREAD facility. Its internal handler returns a scalar long so
+negative GEMDOS errors are not truncated through the dispatcher. Bounded close
+retry and fail-stop cleanup limitations remain unchanged; filesystem cleanup is
+not transactional. Ptermgrp/group cancellation and its ABI remain #893 work.
+
+Cooperative synchronization and #713 readiness
+----------------------------------------------
+
+No locks, preemption or SMP capability are added. The current single-CPU model
+serializes construction, attachment, stop/final-exit selection and publication;
+IRQ producers do not dispatch another execution context. In particular, an
+unpublished construction member must not race final exit. Per-THREAD contexts
+save/restore the existing launcher, syscall/IRQ stack, CPU/FPU and private task
+token. PID, TID and that token remain distinct.
+
+Before timer preemption/SMP, #713 must establish and prove an ordering for:
+- PROCESS membership/publication versus final-exit reservation, resource/PD
+  destruction and accounting. Plain reference counters are not atomic.
+- KASPACE mapping/permission changes, lease sealing and protected output aliases.
+- Scheduler reservation/run queues, current-context tokens and anchor storage.
+  Root iteration currently prevents anchor-slot reuse before worker reclamation.
+- Per-CPU launcher/current-task state, filesystem/driver reentrancy, waits and
+  callbacks. No filesystem callback may run inside publication exclusion.
+- Existing typed callbacks: active callback frames/watchdogs are global and
+  callbacks currently forbid scheduling, Pclone and process-control syscalls.
+  Timer-driven dispatch must defer there or provide per-context callback state.
+
+The root ready predicates, IRQ-masked waits and teardown callbacks require the
+same audit. The present callback blacklist/cooperative guarantee is not proof
+of safe asynchronous kernel preemption. The ARM/m68k cooperative backends now
+execute native clone frames; further scheduling/preemption remains #713.
+Legacy non-MMU scheduling remains #911. TLS remains independent #908.
+
+Executable evidence
+--------------------
+
+Native ring-3 tests invoke Pclone itself, not merely identity constructors:
+multiple TIDs/one PID and shared memory; GP/x87/SSE patterns across real yields;
+private user/syscall/scheduler stacks and durable holds; repeated create/exit;
+shared CWD and explicit descriptors; leader Pterm/fault/return before survivors;
+worker creation after leader exit; final normal/fault/TSR status; parent/orphan
+and early/late wait; exactly-once usage credit; slot exhaustion; five acquisition
+failures and final cancellation with unchanged outputs/frame. Root callbacks
+also verify stopped-thread reclamation while live PROCESS resources remain.
+Host tests separately cover retained PROCESS-versus-TID observer snapshots,
+rollback/refcounts, header widths and legacy lifecycle. Compilation and host
+models are reported separately from native architecture execution.

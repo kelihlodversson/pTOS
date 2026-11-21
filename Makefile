@@ -268,8 +268,13 @@ ifdef ARCH_X86_64
 # on x86-64, where its default sub/add-based outgoing-argument-area
 # handling around calls is not guaranteed to interact correctly with a
 # function using a calling convention other than the compiler's default.
+# -fno-asynchronous-unwind-tables/-fno-unwind-tables: nothing in the kernel
+# unwinds, and the .eh_frame they would add (over 120 KiB with every test
+# option enabled) counts against the 4 MiB boot window that startup.c maps
+# (IMAGE_SPAN_BYTES), like every other loaded section.
 MULTILIBFLAGS = $(CPUFLAGS) -fno-pic -mcmodel=large -mno-red-zone \
-                -fshort-wchar -fno-ident -maccumulate-outgoing-args
+                -fshort-wchar -fno-ident -maccumulate-outgoing-args \
+                -fno-asynchronous-unwind-tables -fno-unwind-tables
 # --param=min-pagesize=0: the TOS vectors and system variables really live
 # at low constant addresses (bios/vectors.h, tosvars.h), which GCC 12 and
 # later otherwise treat as the unmapped null page (-Warray-bounds).
@@ -399,6 +404,7 @@ endif
 endif
 
 CFLAGS = $(MULTILIBFLAGS) $(TOOLCHAIN_CFLAGS) $(CSTANDARD) $(OPTFLAGS) $(LTOFLAGS) \
+         $(if $(BUILD_LTO),-DPTOS_LTO_RUN_ALIAS) \
          $(DEBUGFLAGS) $(OTHERFLAGS) $(WARNFLAGS) $(INC)
 CPPFLAGS = $(CFLAGS)
 
@@ -1028,12 +1034,12 @@ endif
 # The ring-3 probe program of the boot self-test (tests/x32_probe/), built and
 # embedded the same way.
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
-obj/x32/x32probe.elf: tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
+obj/x32/x32probe.elf: tests/pclone/irq_registers.S tests/x32_probe/receipt_fault.c tests/x32_probe/clone_threads.c tests/x32_probe/clone_registers.S tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
                     tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
                     include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
-                    obj/x32/libptos-vdi.a include/mman.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
+                    obj/x32/libptos-vdi.a include/mman.h include/pclone.h include/threadcalls.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -include $(AUTOCONF_H) -o $@ \
 	  $(filter %.c %.S %.a,$^)
 
@@ -1817,6 +1823,15 @@ ifndef CONF_WITH_ELF_LOADER
 TEST_SUITES := $(filter-out pie_load load_fail broad_va,$(TEST_SUITES))
 endif
 
+# shared_vm tests shared-VM Pexec 4/104, which only m68k MMU kernels with the
+# native scheduler have (CONF_WITH_SHARED_VM_PEXEC). It stages its probe as a
+# PRG, which the legacy m68k-elf toolchain cannot link.
+ifneq ($(CONF_WITH_SHARED_VM_PEXEC),y)
+TEST_SUITES := $(filter-out shared_vm,$(TEST_SUITES))
+else ifdef BUILD_TOOLCHAIN_ELF
+TEST_SUITES := $(filter-out shared_vm,$(TEST_SUITES))
+endif
+
 # ptos_reloc_load launches two separate executables (reloc_probe.c, built
 # below, linked twice with different flags -- see TEST_PTOS_RELOC_LDFLAGS/
 # TEST_PTOS_RELOC_LDFLAGS2 below) packed into the compact PT_PTOS_RELOC
@@ -1849,6 +1864,13 @@ TEST_SUITES := $(filter-out broad_va,$(TEST_SUITES))
 endif
 ifdef ARCH_X86_64
 TEST_SUITES := $(filter-out isolation,$(TEST_SUITES))
+endif
+
+# nested_exec launches chains of NESTCH.TOS (built below) by synchronous
+# Pexec from a managed THREAD (#713): without the native scheduler there is no
+# such THREAD, and nothing to associate a nested execution with.
+ifndef CONF_WITH_NATIVE_SCHED
+TEST_SUITES := $(filter-out nested_exec,$(TEST_SUITES))
 endif
 
 # Shutdown() is an option (the small ROMs have no room for it)
@@ -1918,6 +1940,9 @@ TEST_CC = $(CC)
 TEST_LIBS = $(LIBS)
 TEST_CPUFLAGS = $(CPUFLAGS)
 endif
+# ROM-window MMU backends deliberately reject private cloning in aspace_clone.
+# Phase C keeps kernel ownership counters/adapters, but its ROM user proof uses
+# independently loader-created roots rather than advertising private-fork tests.
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
               $(if $(ARCH_ARM),-mword-relocations) \
@@ -1925,13 +1950,41 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(CONF_WITH_MFASTCALL),-DTEST_WITH_KERNEL_MFASTCALL) \
+              $(if $(CONF_WITH_ELF_LOADER),-DTEST_WITH_ELF_LOADER) \
+              $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
+              $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
+              $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC)),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_WITH_SHARED_VM_PEXEC)) \
+              $(if $(filter y,$(CONF_WITH_LEGACY_PEXEC)),-DTEST_WITH_LEGACY_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_STAGED_PEXEC)),-DTEST_WITH_STAGED_PEXEC) \
+              $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
+              $(if $(filter y,$(CONF_WITH_EXEC_REPLACEMENT_TEST)),-DTEST_WITH_EXEC_REPLACEMENT_TEST) \
+              $(if $(filter y,$(CONF_WITH_EXEC_HANDOFF_TEST)),-DTEST_WITH_EXEC_HANDOFF_TEST) \
+              $(if $(filter y,$(CONF_WITH_PEXEC200)),-DTEST_WITH_PEXEC200) \
+              $(if $(filter y,$(CONF_WITH_PFORK)),-DTEST_WITH_PFORK) \
+              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),$(if $(and $(filter y,$(CONF_WITH_NATIVE_PREEMPT) $(CONF_WITH_IRQ_RESTART_TEST)),$(CONF_M68K_ROM_WINDOW)),,-DTEST_WITH_PRIVATE_CLONE_TEST)) \
+              $(if $(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_NATIVE_PREEMPT_PROBES) \
+              $(if $(filter y,$(CONF_WITH_IRQ_RESTART_TEST)),-DTEST_WITH_IRQ_RESTART) \
+              $(if $(filter y,$(CONF_WITH_NATIVE_PREEMPT)),-DTEST_WITH_NATIVE_PREEMPT) \
+              $(if $(filter y,$(CONF_WITH_IMAGE_POLICY_TEST)),-DTEST_WITH_IMAGE_POLICY_TEST) \
+              $(if $(filter y,$(CONF_WITH_PRIVATE_SNAPSHOT_TEST)),-DTEST_WITH_PRIVATE_SNAPSHOT) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_FILES_TEST)),-DTEST_WITH_PROCESS_FILES) \
+              $(if $(filter y,$(CONF_WITH_NATIVE_SCHED)),-DTEST_WITH_NATIVE_SCHED) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC)),-DTEST_WITH_PROCESS_EXEC) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_TEST)),-DTEST_WITH_PROCESS_EXEC_TEST) \
+              $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_DISPATCH)),-DTEST_WITH_PROCESS_EXEC_DISPATCH) \
+              $(if $(filter y,$(CONF_WITH_PTHJOIN)),-DTEST_WITH_PTHJOIN) \
+              $(if $(filter y,$(CONF_WITH_PTERMGRP)),-DTEST_WITH_PTERMGRP) \
+              $(if $(filter y,$(CONF_WITH_CUIS)),-DTEST_WITH_CUIS) \
+              $(if $(filter y,$(CONF_WITH_CUIS_WAIT_TEST)),-DTEST_WITH_CUIS_WAIT_TEST) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
               $(if $(CONF_M68K_ROM_WINDOW),-DTEST_NO_RMW_FAULTS -DTEST_NO_CROSSING) \
+              $(if $(CONF_M68K_ROM_WINDOW),-DTEST_M68K_ROM_WINDOW) \
               $(if $(CONF_WITH_MMU_PROBE),-DTEST_WITH_MMU_PROBE) \
-              $(if $(MACHINE_AMIGA),-DTEST_LOG_FILE) \
+              $(if $(or $(MACHINE_AMIGA),$(and $(filter y,$(CONF_WITH_NATIVE_PREEMPT) $(CONF_WITH_IRQ_RESTART_TEST)),$(CONF_ATARI_HIGHER_HALF))),-DTEST_LOG_FILE) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
               $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
-              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K)),-DTEST_WITH_ELF_SHARED)) \
+              $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(ARCH_X86_64)),-DTEST_WITH_ELF_SHARED)) \
               $(if $(ARCH_M68K),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_IS_PRG)) \
               $(if $(CONF_VDI_FONT_RESCAN),-DTEST_WITH_FONT_RESCAN)
 
@@ -1962,7 +2015,7 @@ obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
 
 TEST_STARTUP = $(LIBCMINI_CRT0)
 
-# Each test suite object depends on its source and the generated run_tests.c
+# Each test suite object depends on its source and the generated run_tests.c.
 define test-suite-rule
 obj/$(1).o: tests/$(1)/$(1).c tests/run_tests.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -Itools/pBench $(DEPFLAGS) -c $$< -o $$@
@@ -1970,6 +2023,32 @@ endef
 $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
+ifneq ($(filter pclone,$(TEST_SUITES)),)
+TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
+ifeq ($(CONF_WITH_NATIVE_PREEMPT),y)
+TEST_SUITE_OBJ += obj/preempt_file_loop.o obj/preempt_registers.o obj/preempt_registers_alt.o
+obj/preempt_file_loop.o: tests/pclone/preempt_loop.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
+obj/preempt_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DPREEMPT_PATTERN -c -o $@ $<
+obj/preempt_registers_alt.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DPREEMPT_PATTERN -DIRQ_ALTERNATE -c -o $@ $<
+endif
+obj/clone_irq_registers.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
+ifeq ($(CONF_WITH_IRQ_RESTART_TEST),y)
+TEST_SUITE_OBJ += obj/clone_irq_registers_alt.o
+obj/clone_irq_registers_alt.o: tests/pclone/irq_registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DIRQ_ALTERNATE -c -o $@ $<
+endif
+ifeq ($(CONF_WITH_FORK_RETURN_TEST),y)
+TEST_SUITE_OBJ += obj/fork_return_probe.o
+obj/fork_return_probe.o: tests/pclone/fork_return.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+endif
+obj/clone_registers.o: tests/pclone/registers.S $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+endif
 
 
 # Like TEST_CFLAGS, this must not reuse the kernel's $(LD) (= $(CC)
@@ -1988,7 +2067,7 @@ TEST_LD = $(TEST_CC) $(TEST_CPUFLAGS) -nostartfiles -nostdlib
 # linker script variant this toolchain doesn't ship). Named .tos by
 # convention regardless of format.
 ifdef ARCH_ARM
-TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start -Wl,-z,noexecstack
 else ifdef ARCH_X86_64
 TEST_LDFLAGS = $(X32_LDFLAGS) -Wl,-e_start
 else
@@ -1997,6 +2076,91 @@ endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+ifeq ($(CONF_WITH_FORK_CORE),y)
+TEST_FORK_PARENT_FILES = FORKPAR.TOS
+obj/fork_parent_native.o: tests/pclone/fork_parent_native.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+FORKPAR.TOS: $(TEST_STARTUP) obj/fork_parent_native.o obj/testlib.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/fork_parent_native.o obj/testlib.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TOCLEAN += FORKPAR.TOS
+
+ifeq ($(CONF_WITH_NATIVE_PREEMPT),y)
+TEST_PREEMPT_FILES = PREEMPT.TOS
+obj/preempt_image.o: tests/pclone/preempt_image.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+PREEMPT.TOS: $(TEST_STARTUP) obj/preempt_image.o obj/preempt_registers.o obj/preempt_registers_alt.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/preempt_image.o obj/preempt_registers.o obj/preempt_registers_alt.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TOCLEAN += PREEMPT.TOS
+
+ifeq ($(CONF_WITH_IMAGE_POLICY_TEST),y)
+TEST_IMAGE_POLICY_FILES = IMAGEPOL.TOS
+obj/image_policy_native.o: tests/pclone/image_policy_native.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+IMAGEPOL.TOS: $(TEST_STARTUP) obj/image_policy_native.o obj/testlib.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/image_policy_native.o obj/testlib.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TOCLEAN += IMAGEPOL.TOS
+
+ifeq ($(CONF_WITH_EXEC_HANDOFF_TEST),y)
+TEST_EXEC_HANDOFF_FILES = EXECHAND.TOS
+obj/exec_handoff_native.o: tests/pclone/exec_handoff_native.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+EXECHAND.TOS: $(TEST_STARTUP) obj/exec_handoff_native.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec_handoff_native.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+TOCLEAN += EXECHAND.TOS
+
+# EXEC200.TOS replaces itself with EXEC200B.TOS through public Pexec(200)
+# (tests/pclone/exec200_*.c). The subject links like every other test
+# program (a classic PRG on m68k); the replacement image is always ELF.
+ifeq ($(CONF_WITH_EXEC_REPLACEMENT_TEST),y)
+ifeq ($(CONF_WITH_PCLONE),y)
+TEST_EXEC200_FILES = EXEC200.TOS EXEC200B.TOS
+TEST_EXEC200_IRQ = $(if $(CONF_WITH_IRQ_RESTART_TEST),obj/clone_irq_registers.o)
+obj/exec200_native.o: tests/pclone/exec200_native.c tests/pclone/exec200_probe.h tests/pclone/exec200_check.h $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+obj/exec200_image.o: tests/pclone/exec200_image.c tests/pclone/exec200_probe.h tests/pclone/exec200_check.h $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+EXEC200.TOS: $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+ifdef ARCH_M68K
+TEST_EXEC200_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
+EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
+	  $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  -L$(TEST_EXEC200_LIBGCC_DIR) -lgcc -o $@
+else
+EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+endif
+endif
+endif
+TOCLEAN += EXEC200.TOS EXEC200B.TOS
+
+# Test both loader formats: m68k normally links a classic TOS PRG. Link the
+# same native objects as ELF too, with independent segment pages and holes.
+# The PRG loader snapshots its text extent; neither test relies on CPU NX.
+ifdef ARCH_M68K
+ifdef CONF_WITH_USER_ASPACE
+ifdef CONF_WITH_PCLONE
+ifdef CONF_WITH_ELF_LOADER
+TEST_CLONE_ABI_FILES = CLNABI.TOS
+TEST_CLONE_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
+CLNABI.TOS: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
+	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
+	  $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  -L$(TEST_CLONE_LIBGCC_DIR) -lgcc -o $@
+endif
+endif
+endif
+endif
 
 # poweroff.tos, reboot.tos, coldboot.tos and halt.tos: Shutdown() with each
 # mode, programs of their own because the machine does not come back (see
@@ -2113,6 +2277,21 @@ TEST_PIE_FILES =
 TEST_LOAD_FAIL_FILES =
 endif
 
+# SHVMPRB.TOS: the shared_vm suite's probe (tests/shared_vm/shared_vm_probe.c),
+# an ordinary PRG that the suite stages with Pexec(3) and starts with 4/104.
+ifneq ($(filter shared_vm,$(TEST_SUITES)),)
+obj/shared_vm_probe.o: tests/shared_vm/shared_vm_probe.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+SHVMPRB.TOS: $(TEST_STARTUP) obj/shared_vm_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/shared_vm_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+TEST_SHARED_VM_FILES = SHVMPRB.TOS
+TOCLEAN += SHVMPRB.TOS
+else
+TEST_SHARED_VM_FILES =
+endif
+
 ifdef TEST_WITH_PTOS_RELOC
 # PTRELOC.TOS / PTRELOC2.TOS: the ptos_reloc_load suite's two payloads
 # (see tests/ptos_reloc_load/reloc_probe.c), repacked into the compact
@@ -2208,7 +2387,94 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-TEST_HD_FILES = $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
+ifdef CONF_WITH_PTERMGRP
+obj/group_child.o: tests/pclone/group_child.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+GROUPCH.TOS: $(TEST_STARTUP) obj/group_child.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/group_child.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_GROUP_FILES = GROUPCH.TOS
+endif
+
+# NESTCH.TOS: one level of the nested_exec suite's Pexec chains
+# (tests/nested_exec/nested_child.c)
+ifneq ($(filter nested_exec,$(TEST_SUITES)),)
+obj/nested_child.o: tests/nested_exec/nested_child.c tests/nested_exec/nested_query.h $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+NESTCH.TOS: $(TEST_STARTUP) obj/nested_child.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/nested_child.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_NESTED_FILES = NESTCH.TOS
+endif
+
+ifdef CONF_WITH_NATIVE_SCHED
+define global-prog
+obj/global_$(1).o: tests/global_scheduler/boot.c $$(AUTOCONF_H) | obj
+	$$(TEST_CC) $$(TEST_CFLAGS) -DGLOBAL_ROLE=$(2) $$(DEPFLAGS) -c $$< -o $$@
+$(3): $$(TEST_STARTUP) obj/global_$(1).o $$(LIBCMINI_LIB)
+	@mkdir -p $$(dir $$@)
+	$$(TEST_LD) $$(TEST_LDFLAGS) $$(TEST_STARTUP) obj/global_$(1).o -L$$(dir $$(LIBCMINI_LIB)) -lcmini $$(TEST_LIBS) -o $$@
+endef
+$(eval $(call global-prog,child,0,GLOBALCH.TOS))
+$(eval $(call global-prog,source,1,GLBSRC.TOS))
+$(eval $(call global-prog,check,2,GLBCHK.TOS))
+$(eval $(call global-prog,async,3,obj/global_async.tos))
+obj/global-stage/.stamp: GLBSRC.TOS GLBCHK.TOS obj/global_async.tos
+	@rm -rf obj/global-stage
+	@mkdir -p obj/global-stage/AUTO
+	@cp obj/global_async.tos obj/global-stage/AUTO/GLBTEST.PRG
+	@touch $@
+TEST_GLOBAL_FILES = GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS
+TEST_GLOBAL_BUILD = GLOBALCH.TOS obj/global-stage/.stamp
+ifneq ($(filter y,$(and $(CONF_WITH_PCLONE),$(CONF_WITH_PTHJOIN)) $(CONF_WITH_EXIT_HANDOFF_TEST)),)
+obj/first_anchor.o: tests/first_anchor/first.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+FIRST.TOS: $(TEST_STARTUP) obj/first_anchor.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/first_anchor.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_GLOBAL_FILES += FIRST.TOS
+TEST_GLOBAL_BUILD += FIRST.TOS
+endif
+endif
+
+ifdef CONF_WITH_PROCESS_EXEC_DISPATCH
+obj/process_transport_child.o: tests/process_transport/child.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+PROCXIT.TOS: $(TEST_STARTUP) obj/process_transport_child.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/process_transport_child.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+TEST_PROCESS_EXEC_FILES = PROCXIT.TOS
+endif
+
+# The x32 ldso_dynamic failure fixtures (a missing or bad library, a missing
+# interpreter) and the nested ordinary isolated launch they exercise.
+ifdef CONF_WITH_ELF_SHARED
+ifdef ARCH_X86_64
+LDSO_TEST_APP += obj/ldso/runtime/LDSOAPP.ELF obj/ldso/runtime/NEEDMISS.ELF \
+                 obj/ldso/runtime/NEEDBAD.ELF obj/ldso/runtime/NOINTRP.ELF
+obj/ldso/runtime/NEEDMISS.ELF: obj/ldso/test/needmiss.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/NEEDBAD.ELF: obj/ldso/test/needbad.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/NOINTRP.ELF: obj/ldso/test/nointrp.elf
+	@mkdir -p $(@D)
+	cp $< $@
+obj/ldso/runtime/LDSOAPP.ELF: obj/ldso/test/soapp.elf
+	@mkdir -p $(@D)
+	cp $< $@
+LDSO_RUNTIME_FILES += $(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO \
+                      $(LDSO_RUNTIME_DIR)/LIB/X32/LIBBAD.SO
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBBAD.SO: obj/ldso/test/libbad.so
+	@mkdir -p $(@D)
+	head -c 100 $< > $@
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBRT.SO: obj/ldso/test/librt.so
+	@mkdir -p $(@D)
+	cp $< $@
+$(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO: obj/ldso/test/libdyn.so
+	@mkdir -p $(@D)
+	cp $< $@
+endif
+endif
+
+TEST_HD_FILES = $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2224,9 +2490,9 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
-	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd
 test-hd: test-hd.img
@@ -2243,7 +2509,7 @@ test-hd-shell.img: test-hd.img runtests.tos
 	@rm -rf $(TEST_SHELL_STAGE)
 	@mkdir -p $(TEST_SHELL_STAGE)
 	@cp runtests.tos $(TEST_SHELL_STAGE)/SHELL.TOS
-	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_SHELL_STAGE)/SHELL.TOS $(filter-out $(EMUCON_TOS),$(TEST_HD_FILES)) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
+	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_SHELL_STAGE)/SHELL.TOS $(filter-out $(EMUCON_TOS),$(TEST_HD_FILES)) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
 .PHONY: test-hd-shell
 test-hd-shell: test-hd-shell.img
@@ -2255,11 +2521,11 @@ test-hd-shell: test-hd-shell.img
 TEST_DIR = test-dir
 
 .PHONY: test-dir
-test-dir: $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-dir: $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(TEST_HD_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKDIR  $(TEST_DIR)'
 	@rm -rf $(TEST_DIR)
 	@mkdir -p $(TEST_DIR)
-	@cp -R $(TEST_HD_FILES) $(TEST_DIR)/
+	@cp -R $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DIR)/
 	@cp -R $(TEST_DESTDIR) $(TEST_FONT_STAGE) $(TEST_DIR)/
 
 ifdef ARCH_ARM
@@ -2290,10 +2556,10 @@ endif
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
-           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS \
+           halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \
-           test-hd.img ACCPROBE.ACC pbench.prg pbench-hd.img
+           test-hd.img FIRST.TOS ACCPROBE.ACC pbench.prg pbench-hd.img
 TOCLEAN_POST += libcmini-clean
 
 .PHONY: libcmini-clean

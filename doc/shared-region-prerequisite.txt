@@ -1,0 +1,345 @@
+Shared-ASPACE allocation retention: prerequisite handoff
+======================================================
+
+Status
+------
+R1-R4 ownership corrections #952/#958 are accepted in actual epic
+be81959ea54a13c1ab6f4946086590083710d929, preserving the single-CPU cooperative
+contract. The remaining shared-root ordinary mapping consumer attachment and
+retirement policy is separate from primitive acceptance; see the current
+pexec-clone-migration.txt and phase5-acceptance.txt.
+
+Historical implementation provenance follows.
+Implementation and corrective validation on feature/894-shared-region-ownership, based on
+merged epic 52b74f64f62ae92059ededa6f03ca277d79703b1. The original #942 was
+DESIGN/HOST FIXTURES ONLY; its acceptance does not establish R1-R4.
+
+Initial allocation implementation: both existing procmem backends now share
+allocation-record hold tickets, checked generation/extent/rights/owner metadata,
+count/ticket exhaustion, no-wrap allocation IDs, explicit free/shrink/owner
+barriers and deferred release after both mapping pins and allocation holds.
+The upper KPROC helper retains canonical identity without retaining a retired
+PD/execution context. Tokens are consumed/unpublished before memory notification
+and final identity release, in serialized process context outside leaf locks.
+Pure KASPACE mutation preflight permits checking every TPA root before changing
+any mapping or borrowed-size metadata.
+
+Reservation implementation now covers the existing ordinary heap/mmap ledgers,
+including lazy anonymous and FAT file-backed ranges. Each reservation has a
+non-recycled birth ID; split fragments preserve that identity and distinct
+births are not merged. Logical materialization/COW does not bypass sealed
+physical aliases. Move-only reservation tickets retain the root and canonical
+metadata independently of PD lifetime, without eagerly backing pages.
+
+Captured reservations now authenticate live image/staged-loader/basepage/env/
+initial-stack metadata through KPROC before installing immutable descriptions
+in the existing owning lease list. A description or numeric ID alone grants
+no authority. These leases protect page-rounded mutation extents but retain
+exact requested bytes and rights, the root, and canonical metadata; neither a
+retired PD nor its heap/layout arrays is needed later. Captured lazy stack
+witnesses authorize reservation-preserving backing after owner retirement;
+nonlazy images never authorize zero-filled replacement data. Known image
+metadata cannot turn a borrowed device/ROM-window leaf into owned RAM.
+Exact captured byte bounds authenticate subsequent acquisitions; page-rounded
+lookup is used ONLY for lazy page backing and mutation exclusion. Fresh live
+subrange permissions take precedence over a broad conservative witness, so
+RX/RW acquisition does not depend on broad/narrow hold order.
+
+Post-merge retained-backing correction
+-------------------------------------
+The original #952 integration at dd3ec30d307c42e528d3b82858920260ab85e5a5
+passed its broad native/CI matrix but missed an exact-extent regression:
+a narrow captured lazy hold acquired backing authority over its broader
+retirement cleanup fence. Cleanup/mutation bounds and backing bounds are
+now explicitly separate. Backing uses only a live unconsumed captured
+hold's immutable exact bytes, rounded to hardware pages. A consumed
+cleanup record is not a reservation identity or a source of access rights.
+A different live lazy owner may still materialize its own page within that
+fence with its own rights. Destructive mutations remain blocked over the
+whole retirement extent until the last conflicting owner releases.
+
+The durable host test runs production KASPACE with modeled backend cleanup;
+it fails against the original merged source. The managed native self-test
+also invokes the actual MMU fault-in path: an outside page fails before
+RAM/table allocation, the exact page is backed, an independently held
+read-only page survives consumption of the cleanup carrier, and final
+release removes both translations. This is a prerequisite kernel probe,
+not public shared-VM Pexec execution or preemption/SMP acceptance.
+
+Stopped clone compatibility borrows and discarded loader staging transfer
+pending cleanup into an existing overlapping reservation lease, without an
+allocation or second registry. The cleanup owner protects the complete retired
+extent, but never widens authenticated bytes/rights. Its consumed ticket cannot
+be replayed. Other valid holders may duplicate independently; the final
+conflicting release authorizes an exact backend retirement job. Consumed
+cleanup fences do not block one another, but remain published through backend
+commit and reentry so ordinary allocation/mutation cannot steal the extent.
+The backend checks the in-flight range/kind and all LIVE holders; it never
+uses a global bypass flag. Other remaining borrow pins preserve a shared leaf.
+The cleanup owner is unlinked only after that bounded commit/callback returns.
+Original exact borrow-pin dimensions survive page rounding in the existing
+backend pin records. Multiple overlapping retirements mark those records and
+coalesce a cleanup fence, so one surviving view can protect any number of
+existing pins without allocating a job per pin or exhausting holder records.
+The backend authenticates each consumed fence once; replay is rejected. An exiting loader
+transfers unstarted staging before wiping its heap metadata, so parent-first
+exit leaves no stale PD in a deferred block. Running UH_IMAGE ownership retains
+the existing shared-root contract and is not mistaken for unused staging.
+Cleanup traversal keeps its own root references until all reentry has settled;
+final identity releases/destructors remain outside leaf/GUI exclusion.
+
+R3 preflights all affected mmap regions and TPA roots before the first leaf,
+metadata or borrowed-size change. Explicit allocation disposal and isolated
+launch preflight include staged images before KPROC destruction/image transfer.
+Held stack-limit shrink is refused before changing reservation metadata.
+Allocation generation MAX is reserved for the existing teardown cursor; the
+last allocatable generation is MAX-1, then allocation fails without wrapping.
+
+NOT COMPLETE: final mutation/callback audit, full native/compatibility matrix
+and independent memory-owner acceptance. The integrated #942 tests remain
+historical mapping-lease evidence. No public Pexec4/104 implementation or
+activation, retained allocation-set consumer, preemption or SMP is claimed.
+The existing built-in file-backing path remains cooperatively serialized;
+arbitrary yielding/nonlocal driver callbacks require a separate mapping/
+materialization ownership contract, not an IRQ-masking claim.
+Actual x32 kernel tests now cover allocator/KPROC retirement, lazy reservation
+OOM/orphan/materialization/COW and held real FAT backing. They are kernel
+self-tests, NOT public Pexec4 execution. No new public API is exposed.
+
+New MMU shared-VM modes4/104, public mode200/Pfork/Pvfork/PRIVATE_VM, TLS,
+preemption and SMP remain disabled. Existing kernel/ROM/non-MMU mode4 behavior
+is unchanged. No new Pexec consumer is started before prerequisite acceptance.
+
+Original #942 observations (before this implementation)
+-----------------------------------------------------
+include/procmem.h exposes a non-recycled allocation generation and size, but
+procmem_pin is void, increments every overlapping allocation, and does not
+authenticate an expected generation, exact extent, overflow or rights.
+bios/procmem.c procmem_shrink does not consult pins before truncating pages;
+its documented precondition is that callers already unmapped the tail.
+Thus a new Pexec pin cannot itself protect against destructive shrink.
+
+bdos/kaspace.c leases retain KASPACE and resident translations. Durable holds
+reject mapping changes; ordinary stack holds also require heap/anonymous
+reservations. A missing/lazy translation cannot be acquired. Heap blocks and
+mmap regions have no non-recycled reservation generation. These are mapping
+holds, not independently authenticated allocation ownership. #934's COW
+logical permission work does not supply these missing allocation identities.
+
+Historical #942 kernel-owner request (not current implementation status)
+------------------------------------------------------------------------
+Original owner request: #936, comment 6747061203. At that design-only checkpoint,
+R1-R4 were absent. The conceptual operations below motivated the implementation
+now described above; they are not a statement that the current primitives are
+missing or that their internal interfaces constitute an approved public ABI.
+
+R1 Acquire allocation hold: expected allocation identity/generation, exact
+   range, rights and retained canonical PROCESS association; one move-only
+   owner token. Validate extent arithmetic, lifetime and count saturation
+   before mutation. A PD pointer is never the retained owner.
+R2 Acquire reservation hold: cover live lazy/file-backed/image/env/stack
+   reservations using existing KASPACE/heap/mmap owners and non-recycled
+   identity. Do not fault lazy mappings merely to obtain an owner, substitute
+   a physical alias, or transfer COW pages through move_private.
+R3 Preflight mutation: reject free/shrink/unmap/protect/ownership transfer
+   which would violate any retained range BEFORE metadata, leaves or source
+   ownership change. Multi-region mutation must preflight its entire set.
+R4 Drop hold: invalidate the token once; finish allocation/physical reclamation
+   only after all allocation/mapping/stopped-continuation owners finish.
+   No final callback or destruction under scheduler/GUI/leaf exclusion.
+
+The generic owners supply these primitives. The Pexec consumer will not add an
+allocation registry, raw pin-count manipulation, page-table code or a second
+reaper. An existing operation is preferable if its owner confirms R1-R4.
+
+Pexec consumer transaction after owner agreement
+------------------------------------------------
+1. Authenticate source/target KPROC, staged image, sole execution policy and
+   root. Allocate bounded region-set storage before acquiring references.
+2. Describe image, basepage, environment and user-stack extents with rights.
+   Coalesce only when authoritative allocation identity and rights agree;
+   overlapping roles alone do not imply identical allocation ownership.
+3. Acquire one owner token per distinct required allocation/reservation plus
+   required mapping/continuation holds. Record the exact completed prefix.
+4. Prepare child identity, fresh startup state and completion through the
+   existing proc_clone transaction; revalidate all identities before commit.
+5. Publication is no-fail. Attach each region-set to its distinct KPROC.
+   xexec alone chooses synchronous wait (4) or PID return (104).
+6. On failure unwind only the completed prefix, outside leaf exclusion, retain
+   the original constructor error and leave staged/source ownership intact.
+7. On completion release only that PROCESS's set after stopped execution;
+   source PD destruction/reuse cannot invalidate an orphan's tokens.
+
+Historical #942 mapping-fixture evidence
+----------------------------------------
+At the design-only checkpoint, tests/kaspace_lease.c ran production generic KASPACE code with host mapping
+fixtures under x32, ARM and m68k configurations. Added cases distinguish two
+independently released mapping holds, failed child-hold acquisition preserving
+the first hold, and explicit rejection of absent/lazy pages without leakage.
+Those were hosted mapping-policy checks, NOT native allocation retention.
+
+At #942 the allocation/reservation identities and corresponding native lifetime,
+mutation, orphan and rollback evidence were still missing. The current #952
+implementation and probes described here supersede that design-only status.
+#942 compatibility/CI remains historical evidence, never acceptance of #952.
+The rejected af9be091c candidate did NOT satisfy complete R3/R4 rollback despite
+its passing matrix; the explicit correction and fresh acceptance gate follow.
+
+Separate descriptor ownership boundary
+--------------------------------------
+#943 integrated the checked-reference stage A; #939 is closed/superseded.
+doc/checked-file-references.txt is the authoritative current owner contract.
+fs_reference_acquire authenticates the current PROCESS binding and expected
+SFT incarnation, acquiring one live staged reference. Its move-only owner is
+distinct from FS_CLEANUP_TOKEN, which represents a residual service reference.
+No allocation hold may be manufactured from either file-owner token.
+
+Stage B still requires a reversible descriptor mutation/snapshot admission and
+one coherent ALL-managed-PROCESS namespace. Resolve user-local numbers once;
+keep backend slots distinct. Do not reuse the retirement latch, exec_committing
+or a global mutex as descriptor admission/incarnation authentication. Replace
+legacy source-binding resolution through the filesystem owner's agreed hook;
+retain its checked acquire/close accounting. Never translate an internal
+FAT/PFS cookie twice or add a fork-only descriptor table. The published
+inheritance inventory/regression specification remains the migration input;
+no filesystem implementation or reference counters change in this increment.
+
+Current executable proof boundaries
+---------------------------------
+The x32 MEMTEST uses actual allocator, KPROC and MMU code for allocation and
+lazy/file/image/stack retention, partial acquisition, orphaned materialization,
+COW, failed FAT backing and late-range rejection with final resource snapshots.
+Under the existing EXIT_HANDOFF_TEST or x32 MEMTEST gate, a managed user Syield invokes
+a bounded architecture-neutral kernel ownership probe on all MMU backends.
+It creates an unstarted PROCESS through the trusted factory, stages but NEVER
+executes zero loader pages, rejects held image transfer, and checks canonical
+retirement, independent duplicates and final allocation/KPROC baselines. The
+regression driver requires its marker. This is native kernel ownership proof
+entered from real user execution; it is not public shared-Pexec execution.
+Hosted allocation, reservation, COW and scheduler fixture providers model
+physical/CPU operations and are reported separately from native execution.
+
+Upper KPROC release helpers protect token consumption, root/file/mapping cleanup
+and final canonical-reference release with the existing execution cleanup scope.
+They end without checkpointing: an enclosing batch must retain its own scope
+until every resource/output/IRQ state is settled. Low-level KASPACE/procmem
+callers likewise own their complete cleanup envelope; no arbitrary exception
+or disk-error longjmp guarantee is inferred from cancellation deferral.
+
+Review corrections (PR952)
+--------------------------
+4550288613: exact captured bounds authenticate new reservations; rounded
+lookup is separate and only permits backing/exclusion.
+4550288679: fresh per-page rights precede conservative broad witnesses;
+production KPROC host and native probes cover both acquisition orders.
+4550288724: held staging cleanup is transferred to the existing lease list;
+child-first and loader-first retirement reclaim after the final overlap.
+4550382837: even lazy heap publication preflights the chosen range before
+allocating its birth ID or publishing metadata; revocable aliases are invalidated
+at publication. A rejected lazy reservation cannot overlap a foreign held image.
+Native probes require rejection while a retired staging extent is held, then
+successful same-address allocation/release after its final hold is settled.
+
+4550529918: overlapping pending borrow cleanups are inactive disposal owners,
+not live resource claims. Exact 2-byte/page-sized pin dimensions survive;
+production host and native tests require both retirements and final root/frame
+reclamation. Reentrant normal mutation remains excluded until each owner settles.
+Summary-only e09850c35 review (umem.c set_owner): scheduled discard no longer
+forces held PD/environment allocations through ordinary owner transfer. It
+preflights both recorded generations, then consumes their ownership into the
+already retained canonical PROCESS finalizer using a no-allocation pair commit.
+THREAD membership retains that identity if actual disposal must wait. After
+resource teardown, the same allocator's free_owned(finalizer) retires the bytes
+behind existing holds/pins and forgets the identity pointer. No new allocator,
+resource queue, owner PD retention or USER capability is created. The one-way
+cleanup-owned tag rejects ordinary reassignment/shrink/free or stale replay.
+The native probe includes held loader-owned PD/env, modified user p_env,
+failed pair preflight with unchanged ownership, and exactly-once final release.
+
+PE_LOAD caller views use the existing borrowed-view records, now carrying the
+allocation generation captured when the pin was registered and a separate
+non-recycled reservation birth. Fresh capture checks the canonical current
+owner, exact view bounds, original generation and actual logical USER/PTE
+rights; a supervisor-only construction borrow is not a USER reservation grant.
+This covers caller-owned staged PD/environment mappings without creating a
+parallel allocation registry. Native and hosted tests reject supervisor-only,
+foreign-owner and stale-generation views and retain PD/env mappings separately
+from their allocation holds through actual scheduled discard.
+
+Heap gap selection subtracts durable/sealed views and pending cleanup fences
+from the existing KASPACE lease list. Malloc(-1) and ordinary allocation see the
+same remaining gaps; the final publication check remains mandatory. Native
+staging-discard tests allocate and write an independent nonoverlapping range
+while the old image is held, release that image, verify the independent bytes
+survived, then reclaim/reuse the old address. False exhaustion is not used as a
+substitute for correct reservation-aware allocation.
+
+Eager self-test compatibility
+-----------------------------
+The native held-staging gap test distinguishes an actually materialized lazy
+page (demand result 1) from an eagerly allocated USER/WRITE leaf (demand result
+0 with explicit resident permission validation). Both paths require the same
+actual write, retained contents, disjoint allocation and exact reclamation.
+It does not manufacture a fault to prove ownership on an eager backend.
+
+Stack growth versus pending retirement
+--------------------------------------
+Psetlimit stack growth preflights the complete newly claimed stack/guard
+interval against the same live and pending KASPACE fences BEFORE metadata
+publication, including the former guard becoming stack. A lazy reservation is
+a mutation even when no physical page is allocated yet. Native tests discard
+a two-page staged child, then reject both stack-body and guard-only collisions
+with unchanged limits; release/reclamation permits the same lazy growth and
+restoration without backing a replacement page. Hosted production KPROC tests
+check exact admission bounds and unchanged metadata on refusal.
+The same growth preflight checks live mmap intervals in their authoritative
+existing ledger, so unheld mappings also cannot be claimed as stack/guard
+space. Native and hosted tests require ENSMEM with unchanged stack limits for
+that collision. No separate reservation registry or allocation is involved.
+
+Independent rejection and live-root borrow correction (#952)
+------------------------------------------------------------
+Independent assessment 6834414473 rejected af9be091c for missing failed-borrow
+rollback. Both cores could retain a pin/table prefix after map_procmem failed;
+the wrapper's blind unborrow could instead remove a pre-existing matching pin
+when preparation failed before acquisition. alloc_env/alloc_tpa ignored a
+refused cleanup free. The owner found no additional R1/R2 primitive defect,
+but R3/R4 acceptance failed; earlier green CI did not cover this error path.
+
+The shared transactional borrow implementation now prepares a transient copy of
+all existing owned table descriptors and their table-vector ownership before
+pinning. It journals full descriptor bytes, including software permissions and
+m68k subpage-carve state. Fallible mapping uses a staged vector. Failure restores
+the exact old tables/vector, cleans cache/TLB state BEFORE reclaiming new table
+pages, and drops only this attempt's checked pin. Pre-pin failure drops no pin.
+Pin-record publication and unheld-lease revocation occur only after successful
+whole-range mapping. Ordinary successful mapping permissions and exact pin
+extents are unchanged; the original vector is kept whenever capacity suffices.
+No duplicate registry, global rollback bypass or long-lived loan is introduced.
+The journal costs O(existing owned table bytes), is bounded/fallible before
+publication, and is freed on every path. These are serialized, non-yielding
+mapping providers, not preemption/SMP or arbitrary reentrant-provider support.
+
+procmem_try_pin checks existing range/count saturation before acquiring the
+legacy mapping reference. It does not change pin/unpin or free rejection
+semantics. The loader now treats a refused free of its private ownerless block
+after a failed borrow as an invariant violation, rather than losing the pointer.
+
+The durable tests/procmem_borrow.c links the actual allocator/address-space
+cores with actual KASPACE and modeled physical/MMU providers. It fails at the
+rejected candidate on all three configurations with pins=1/free=FALSE. Current
+cases cover pre-pin allocation/ref exhaustion, first/prefix map and table OOM,
+existing exact/overlapping pins, differing aliases/permissions, repeated retries,
+unchanged unheld leases, root destruction, successful normal unborrow, ownerless
+reclamation before root destruction and independent allocation-hold retention.
+Each failed attempt compares live allocations, raw ownership/incarnation, pin
+records, original table/vector bytes and physical/metadata resource counts.
+The runner is exercised normally, fortified and ASan/UBSan in Build.
+
+Existing native test gates add one-shot PER-ROOT failure injection, current-root
+readonly aliases, fresh-root raw descriptor hashes and exact pin/table/kheap/RAM
+baselines, plus real xexec environment and TPA failure paths. This is native
+kernel execution from the managed-user probe, not public shared-Pexec runtime.
+Fresh exact-head evidence and renewed independent R3/R4 acceptance are required;
+this correction does not claim that the rejected head was accepted. R1/R2 hold
+identity/authority and reservation acquisition semantics remain unchanged.

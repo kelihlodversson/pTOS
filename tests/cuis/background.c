@@ -14,7 +14,7 @@ static int background_checks(void)
     CHECK(cuis_background(1ULL<<32,1) == EINVAL && cuis_background(a,5) == EINVAL);
     CHECK(cuis_background(a,1) == EACCDN && cuis_background(a,2) == 0);
     CHECK(cuis_display_lock(a,1,0) == E_OK && cuis_background(a,1) == E_OK);
-    CHECK(background_front == ca && cuis_background(a,2) == 3 && cuis_display_info(3) == 1);
+    CHECK(background_front == ca && cuis_background(a,2) == 3 && cuis_display_info(3) == ca->aes_id);
     CHECK(cuis_background(a,3) == E_OK && cuis_background(a,2) == 1);
     CHECK(BGREG(a,0) == 1 && copied[0] == 0 && copied[1] == 0);
     CHECK(copied[2] == display_width && copied[3] == display_height && BGREG(a,1) == 0);
@@ -89,8 +89,7 @@ static int background_checks(void)
     CHECK(cuis_display_lock(b,1,0) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_BEGIN,b,22) == E_OK);
     CHECK(cuis_surface_service(CUIS_SURFACE_END,b,0) == E_OK && cuis_display_lock(b,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_UPDATE_BEGIN,window,0,0,0,0) == E_OK);
-    CHECK(cuis_windows_reset(b) == E_OK && !update_owner && !cb->windows && !cb->window_count);
+    CHECK(cuis_windows_reset(b) == E_OK && !cb->windows && !cb->window_count);
     CHECK(cuis_display_lock(b,1,0) == E_OK);
     region_exit_on_output = TRUE;
     CHECK(BGREG(b,0) == EIMBA && !*find_owner(run));
@@ -105,7 +104,7 @@ static int background_checks(void)
 
 static int background_key_poll(LONG handle, ULONG key)
 {
-    CHECK(cuis_session_wait(handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0) ==
+    CHECK(cuis_session_wait(handle,0,CUIS_READY_KEY|CUIS_READY_TIMER,0,0,0) ==
           (LONG)(CUIS_READY_TIMER|(key ? CUIS_READY_KEY : 0)));
     CHECK(cuis_input_config(CUIS_INPUT_RESULT,handle,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK);
     CHECK((ULONG)copied[0] == key);
@@ -190,12 +189,13 @@ static int background_release_checks(void)
     pointer_buttons = 0;
     CHECK(point_at(50,50,1) && background_capture == desktop);
     CHECK(point_at(210,210,1) && background_capture == desktop && !pointer_capture);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,window,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,window,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,window,0,0,0,0) == E_OK);
     CHECK(focus_window == peer->windows && !content_contains(focus_window));
     run = &first;
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,a,1,0,1,0,0) == E_OK);
     input_sleeps = 0; input_packet_mode = 8;
-    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,10) == CUIS_READY_BUTTON);
+    CHECK(cuis_session_wait(a,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,10,0,0) == CUIS_READY_BUTTON);
     CHECK(input_sleeps == 1 && !input_packet_mode && !background_capture && !pointer_buttons);
     CHECK(cuis_input_config(CUIS_INPUT_RESULT,a,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK);
     CHECK(copied[1] == 1 && copied[2] == 210 && copied[3] == 210 && !(copied[4] & 3));
@@ -203,7 +203,7 @@ static int background_release_checks(void)
     /* Ordinary uncaptured border hover still suppresses live button waits. */
     run = &second;
     CHECK(cuis_input_config(CUIS_INPUT_BUTTON,b,1,0,1,0,0) == E_OK);
-    CHECK(cuis_session_wait(b,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0) == CUIS_READY_TIMER);
+    CHECK(cuis_session_wait(b,0,CUIS_READY_BUTTON|CUIS_READY_TIMER,0,0,0) == CUIS_READY_TIMER);
     cuis_process_exit(&first); cuis_process_exit(&second);
     CHECK(allocations == frees && input_irqs && !input_bad_idle);
     return 0;

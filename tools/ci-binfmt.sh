@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 arch=${1:?usage: tools/ci-binfmt.sh arm|x32|m68k}
 layout=${2:-private}
 suffix=
+staged=
 case $arch in
     arm)
         config=virt-arm-aspace; prefix=arm-unknown-ptos-elf-; libc_config=ptos_arm_defconfig
@@ -23,6 +24,7 @@ esac
 if [ "$layout" = shared ] && [ "$arch" = arm ]; then
     config=virt-arm-cli
     suffix=-shared
+    staged=-DSTAGED_UNCHECKED   # no MMU: staged Pexec modes unchecked (#1018)
 elif [ "$layout" != private ]; then
     echo 'only ARM supports the optional shared layout' >&2
     exit 2
@@ -55,7 +57,7 @@ for fixture in driver interpreter; do
         if [ "$fixture" = interpreter ]; then address=0x41000000; fi
         link="$link -Wl,-Ttext-segment=$address,-z,max-page-size=0x1000,-z,noseparate-code,-z,noexecstack"
     fi
-    ${prefix}gcc $flags $common -std=gnu90 -Os -Wall -Wextra -Werror \
+    ${prefix}gcc $flags $common $staged -std=gnu90 -Os -Wall -Wextra -Werror \
         -Wdeclaration-after-statement -ffreestanding -fno-builtin -nostdinc \
         -isystem lib/libcmini/include -isystem "$includes" \
         -nostdlib -static -no-pie $link "$libc/objs/crt0.o" \

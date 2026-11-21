@@ -29,9 +29,10 @@ typedef struct pfs_cookie {
     struct pfs_ops *fs;
     LONG index;
     LONG aux;
-    LONG pos;   /* core-managed sequential Fread/Fwrite position for an
-                 * open file; drivers never touch this directly - see
-                 * pfs_handle_read()/pfs_handle_write() in fs/pfs.c */
+    LONG pos;   /* Core-managed sequential position for open files; drivers
+                 * leave that position to pfs_handle_read()/write(). Directory
+                 * cookies are not file positions: FAT uses -1 to identify an
+                 * owned DND hold, independently of aux's search cursor. */
 } PFSCOOKIE;
 
 /* GEMDOS-native file/directory attributes, as used by Fsfirst/Fsnext,
@@ -98,6 +99,10 @@ struct pfs_ops {
      */
     LONG (*open)(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out);
     LONG (*create)(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out);
+    /* close reports flush/operation errors but does not consume the cookie.
+     * The SFT consumes one alias after a normal return, even on error. A
+     * nonlocal disk-error unwind must leave that alias/cookie owned. Final
+     * release below consumes the cookie and must not unwind after consumption. */
     LONG (*close)(PFSCOOKIE *fc);
     LONG (*read)(PFSCOOKIE *fc, LONG pos, LONG len, UBYTE *buf);
     LONG (*write)(PFSCOOKIE *fc, LONG pos, LONG len, const UBYTE *buf);
@@ -140,7 +145,10 @@ struct pfs_ops {
     /* Release any driver resources tied to a cookie the core is done
      * with (a directory cookie returned by lookup()/root(), or a file
      * cookie after close()).  May be NULL if the driver needs no
-     * per-cookie cleanup.
+     * per-cookie cleanup. Directory release consumes that cookie on normal
+     * return and must not escape through a disk-error/nonlocal continuation.
+     * Path dispatch guards disk faults before releasing temporary cookies;
+     * they do not make a failing consuming destructor retryable.
      */
     void (*release)(PFSCOOKIE *fc);
 
@@ -166,7 +174,46 @@ struct pfs_ops {
      * by a native_handles driver, whose handles have a real OFD.
      */
     LONG (*fstat)(PFSCOOKIE *fc, PFSATTR *out);
+
+    /* Optional consuming final-file release, replacing release() for SFT
+     * cookies only. A normal return consumes the cookie even on error;
+     * return the disposal error rather than hiding it in a void destructor.
+     * Must not nonlocally escape after consumption. Directory release()
+     * semantics are unchanged. NULL uses the historical void release(). */
+    LONG (*release_file)(PFSCOOKIE *fc);
+
+    /* Optional directory-iterator ownership contract (not a GEMDOS ABI).
+     * clone receives an owned live iterator; it must preserve source state,
+     * acquire a fresh directory reference and fresh private cursor storage,
+     * and leave outputs empty on failure. Cookies/opaque positions are never
+     * copied by callers. valid performs no I/O or callbacks. close consumes
+     * one owner even on error and must not escape through a nonlocal unwind.
+     * These operations can also serve future canonical directory handles. */
+    LONG (*clone_iterator)(const PFSCOOKIE *,LONG,PFSCOOKIE *,LONG *);
+    BOOL (*iterator_valid)(const PFSCOOKIE *,LONG);
+    LONG (*close_iterator)(PFSCOOKIE *,LONG);
+
 };
+
+typedef struct {
+    PFSCOOKIE directory;
+    LONG position;
+    BOOL owned;
+} PFS_ITERATOR;
+#define PFS_ITERATOR_INIT { { NULL, 0, 0, 0 }, 0, FALSE }
+LONG pfs_iterator_clone(const PFS_ITERATOR *,PFS_ITERATOR *);
+BOOL pfs_iterator_valid(const PFS_ITERATOR *);
+LONG pfs_iterator_close(PFS_ITERATOR *);
+
+#if CONF_WITH_PROCESS_FILES
+struct kproc;
+LONG pfs_search_snapshot_prepare(struct kproc *,struct kproc *,UQUAD,
+                                 struct dta_info *const *,WORD,WORD *);
+BOOL pfs_search_snapshot_valid(struct kproc *,UQUAD,WORD);
+void pfs_search_snapshot_commit(struct kproc *,UQUAD,WORD);
+void pfs_search_snapshot_abort(struct kproc *,UQUAD);
+void pfs_search_close(struct kproc *,struct dta_info *);
+#endif
 
 /* Claim 'drive' (0 = A:, 1 = B:, ...) for 'fs', up front (e.g. from a
  * driver's own boot-time init, like virtio_blk_init() claims a block
@@ -227,14 +274,16 @@ LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt);
  */
 void pfs_proc_exit(PD *r);
 
-/* Called from bdos/proc.c's init_pd_files() for each non-zero p_curdir[]
- * entry ('n', an index into fs/pfs.c's own directory table) it copies
- * into a newly created process - mirrors the bump init_pd_files()
- * already does to the legacy dirtbl[n].use for a non-pluggable drive,
- * so a pluggable current-directory slot shared by a parent and child
- * process is not invalidated by one of them exiting first.
- */
-void pfs_cwd_addref(WORD n);
+/* Transactional inheritance: acquire all slots before publishing child CWD.
+ * No driver callbacks or allocations. Failure leaves the child unchanged. */
+LONG pfs_cwd_inherit(PD *child, PD *parent);
+/* FAT-only native path consumers borrow the DND held by the current CWD.
+ * The PROCESS table is never interpreted as a legacy FAT dirtbl index. */
+struct _dnd;
+struct _dnd *pfs_fat_current_directory(PD *process, WORD drive);
+/* Media change: invalidate durable FAT cookies before freeing their DND tree.
+ * Referenced table slots remain reserved tombstones until their owners drop. */
+void pfs_invalidate_fat_drive(WORD drive);
 
 /* The 12 GEMDOS-shaped helpers the bdos/ x* shims call when
  * CONF_WITH_PLUGGABLE_FS is on.  Signatures mirror the GEMDOS opcodes:
@@ -245,12 +294,17 @@ LONG pfs_do_dfree(WORD drv, ULONG *buf);
 LONG pfs_do_mkdir(const char *path);
 LONG pfs_do_rmdir(const char *path);
 LONG pfs_do_chdir(const char *path);
+/* Trusted loader operation: resolve against the target PROCESS, select its
+ * drive only on success, and never switch the calling PROCESS/global run. */
+LONG pfs_set_process_directory(const char *path, PD *process);
 LONG pfs_do_getdir(char *buf, WORD drv);
 LONG pfs_do_open(const char *path, WORD mode);
 LONG pfs_do_create(const char *path, UWORD attr);
 LONG pfs_do_unlink(const char *path);
 LONG pfs_do_chmod(const char *path, WORD wrt, WORD mod);
 LONG pfs_do_rename(const char *p1, const char *p2);
+LONG pfs_do_sfirst_to(char *,WORD,struct dta_info *address,struct dta_info *output);
+LONG pfs_do_snext_to(struct dta_info *address,struct dta_info *output);
 LONG pfs_do_sfirst_at(char *path, WORD att, struct dta_info *dta);
 LONG pfs_do_snext_at(struct dta_info *dta);
 

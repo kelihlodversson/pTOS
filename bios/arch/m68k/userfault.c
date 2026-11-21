@@ -2,8 +2,7 @@
  * userfault.c - an exception in a process in its own address space (68030, 68040, 68060)
  *
  * vectors.S's any_vec calls m68k_user_fault() on the kernel stack of a
- * process that took an exception in user mode, with the exception frame at
- * user_fault_frame: a bus error, an address error, an illegal instruction, a
+ * process that took an exception in user mode, with an invocation-owned exception-frame argument: a bus error, an address error, an illegal instruction, a
  * trap with no handler.  The process is ended; nothing else is touched.
  *
  * Copyright (C) 2026 The pTOS development team.
@@ -27,10 +26,24 @@
 #endif
 
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
+#include "../../../bdos/kproc.h"
+#if CONF_WITH_NATIVE_SCHED
+#include "ksched.h"
+#endif
+extern PD *run;
+/* Preserve architecture fault kind before proc_fault's generic fallback.
+ * Native scheduling owns per-THREAD intent until final PROCESS completion. */
+static void note_process_fault(WORD signal)
+{
+#if CONF_WITH_NATIVE_SCHED
+    ksched_fault(run, signal);
+#else
+    kproc_note_fault(run, signal);
+#endif
+}
 
-ULONG user_fault_frame;                 /* the exception frame (any_vec) */
 
-void m68k_user_fault(void) NORETURN;
+void m68k_user_fault(const UBYTE *f) NORETURN;
 
 /* the 68030 bus error frames (format A, 32 bytes, and format B, 92 bytes) */
 #define F30_SSW     10
@@ -63,13 +76,17 @@ static const char *cause_of(LONG vector)
     }
 }
 
-void m68k_user_fault(void)
+void m68k_user_fault(const UBYTE *f)
 {
-    const UBYTE *f = (const UBYTE *)user_fault_frame;
+    ULONG usp;
     ULONG pc = *(const ULONG *)(f + 2);
     UWORD fv = *(const UWORD *)(f + 6);
     ULONG address = pc;
+    ULONG vector = (fv & 0xfff) >> 2;
 
+    __asm__ volatile ("move.l %%usp,%0" : "=a"(usp));
+    /* The frame and USP belong to this invocation. Panic-report globals
+     * are diagnostic copies, never a resumable PROCESS fault context. */
     /* the 68040 access error (format 7) has the fault address at offset 20
      * (offset 8 is the effective address, which can be another page); the
      * address of a format 2 frame is at offset 8 */
@@ -79,7 +96,8 @@ void m68k_user_fault(void)
         address = *(const ULONG *)(f + 8);
     else if (((fv >> 12) == 0xa || (fv >> 12) == 0xb) && (*(const UWORD *)(f + F30_SSW) & SSW30_DF))
         address = *(const ULONG *)(f + F30_FADDR);    /* (68030 bus error: the data cycle that failed) */
-    proc_fault(cause_of(proc_enum), (UQUAD)proc_enum, address, pc, (UQUAD)(ULONG)proc_usp);
+    if (vector == 4) note_process_fault(4);
+    proc_fault(cause_of(vector), (UQUAD)vector, address, pc, (UQUAD)usp);
 }
 
 #if CONF_WITH_DEMAND_PAGING
@@ -169,17 +187,16 @@ static BOOL write_back(UWORD status, ULONG address, ULONG data, BOOL lane_aligne
 
 /*
  * A bus error in a process in user mode (vectors.S's buserr_user), with the
- * exception frame at user_fault_frame: if the page is one of its lazy memory (or a file page it
+ * invocation-owned exception frame: if the page is one of its lazy memory (or a file page it
  * writes to), back it and return 1 -- the 68040 runs a faulting read again,
  * and the writes it still owed are done here -- else 0, and the fault is the
  * process's own (m68k_user_fault()).  The frames of the 68040, 68060 and 68030 are
  * understood.
  */
-int m68k_user_busfault(void);
+int m68k_user_busfault(const UBYTE *f);
 
-int m68k_user_busfault(void)
+int m68k_user_busfault(const UBYTE *f)
 {
-    const UBYTE *f = (const UBYTE *)user_fault_frame;
     UWORD fv = *(const UWORD *)(f + 6);
     ULONG address, size;
     ASPACE_ROOT root = kproc_user_root(run);
@@ -269,12 +286,16 @@ int m68k_user_busfault(void)
                 answer = more;
         }
     }
-    if (answer == 2)
+    if (answer == 2) {
+        note_process_fault(9);
         proc_fault("no physical page left", (UQUAD)ssw, address, *(const ULONG *)(f + 2),
                    (UQUAD)(ULONG)proc_usp);
-    if (answer == 3)
+    }
+    if (answer == 3) {
+        note_process_fault(10);
         proc_fault("file mapping I/O error", (UQUAD)ssw, address, *(const ULONG *)(f + 2),
                    (UQUAD)(ULONG)proc_usp);
+    }
     if (answer != 1)
         return 0;
     if (writebacks &&

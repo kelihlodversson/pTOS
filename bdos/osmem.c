@@ -38,15 +38,12 @@
 #if defined(__x86_64__)
 #define BLOCK_PAD_BYTES 8
 #define OSM_ALIGN UQUAD
-#define OSM_PAYLOAD_BYTES 128
 #elif defined(__arm__)
 #define BLOCK_PAD_BYTES 4
 #define OSM_ALIGN ULONG
-#define OSM_PAYLOAD_BYTES 128
 #else
 #define BLOCK_PAD_BYTES 2
 #define OSM_ALIGN ULONG
-#define OSM_PAYLOAD_BYTES 128
 #endif
 #define OSM_PAYLOAD (OSM_PAYLOAD_BYTES/sizeof(WORD))
 #define BLOCK_PAD (BLOCK_PAD_BYTES/sizeof(WORD))

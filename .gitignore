@@ -38,6 +38,7 @@
 /po/messages.pot
 /tests/run_tests.c
 /runtests.tos
+/EXECHAND.TOS
 /pieprobe.tos
 /poweroff.tos
 /reboot.tos

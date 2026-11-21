@@ -69,6 +69,7 @@
 #define D_USED          0x08UL
 #define D_MOD           0x10UL
 #define D_SUPER         0x100UL
+#define A_EXEC          0x2UL           /* ignored address bits: logical execute, NOT hardware NX */
 #define A_OWNED         0x1UL           /* (the page address has 12 bits the MMU ignores) a private page */
 
 /* a descriptor is two longs; table(phys) is indexed by longs */
@@ -232,13 +233,14 @@ static void make_desc(volatile ULONG *d, PADDR phys, UWORD prot, UWORD flags)
         w0 |= D_SUPER;
     if (!(prot & ASPACE_PROT_WRITE))
         w0 |= D_WP;
-    d[1] = (ULONG)phys | ((flags & ASPACE_LEAF_OWNED) ? A_OWNED : 0);
+    d[1] = (ULONG)phys | ((flags & ASPACE_LEAF_OWNED) ? A_OWNED : 0) |
+           ((prot & ASPACE_PROT_EXEC) ? A_EXEC : 0);
     d[0] = w0;
 }
 
-static UWORD desc_prot(ULONG w0)
+static UWORD desc_prot(ULONG w0, ULONG address)
 {
-    UWORD prot = ASPACE_PROT_EXEC;      /* every readable page can be executed */
+    UWORD prot = (address & A_EXEC) ? ASPACE_PROT_EXEC : 0;
 
     if (!(w0 & D_SUPER))
         prot |= ASPACE_PROT_USER;
@@ -295,7 +297,7 @@ BOOL aspace_hw_lookup(PADDR root, VADDR va, PADDR *phys, UWORD *prot, UWORD *fla
     if ((w0 & DT_MASK) != DT_PAGE)
         return FALSE;
     *phys = d[1] & ~(PAGE - 1);
-    *prot = desc_prot(w0);
+    *prot = desc_prot(w0, d[1]);
     *flags = (d[1] & A_OWNED) ? ASPACE_LEAF_OWNED : 0;
     return TRUE;
 }

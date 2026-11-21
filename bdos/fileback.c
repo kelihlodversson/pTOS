@@ -17,6 +17,29 @@ struct file_backing {
     BOOL current;
 };
 static FILE_BACKING *backings;
+#if CONF_WITH_PRIVATE_CLONE_TEST
+ULONG fileback_test_count(BOOL references)
+{
+    const FILE_BACKING *backing;
+    ULONG count=0;
+    for (backing=backings;backing;backing=backing->next) count+=references?backing->references:1;
+    return count;
+}
+ULONG fileback_test_orphan_ofd_refs(void)
+{
+    const FILE_BACKING *backing,*earlier;
+    ULONG count=0;
+    int i;
+    for (backing=backings;backing;backing=backing->next) {
+        for (earlier=backings;earlier!=backing;earlier=earlier->next)
+            if (earlier->file==backing->file) break;
+        if (earlier!=backing) continue;
+        for (i=0;i<OPNFILES;i++) if (sft[i].f_use && sft[i].f_ofd==backing->file) break;
+        if (i==OPNFILES) count+=backing->file->o_refs;
+    }
+    return count;
+}
+#endif
 
 /* A failed final close retains its OFD pin for retry. Allocation must finish
  * this work before scanning a FAT which may already contain a cleared entry.
@@ -67,6 +90,12 @@ LONG fileback_get(LONG handle, FILE_BACKING **out)
     return E_OK;
 }
 void fileback_hold(FILE_BACKING *b) { if (b) b->references++; }
+BOOL fileback_try_hold(FILE_BACKING *b)
+{
+    if (!b || b->references == ~(ULONG)0) return FALSE;
+    b->references++;
+    return TRUE;
+}
 void fileback_put(FILE_BACKING *b)
 {
     if (!b) return;
@@ -102,3 +131,15 @@ LONG fileback_read(FILE_BACKING *b, ULONG offset, void *buffer, ULONG size)
     fd->o_bytnum = position; fd->o_curcl = cluster; fd->o_currec = record; fd->o_curbyt = byte;
     return rc == count ? E_OK : EREADF;
 }
+
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
+#include "shared_pexec_test.h"
+void fileback_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
+{
+    const FILE_BACKING *b;
+    for(b=backings;b;b=b->next) {
+        out->count[SP_FILE_BACKINGS]++;out->count[SP_BACKING_REFS]+=b->references;
+        if(!b->references) out->count[SP_BACKING_PENDING]++;
+    }
+}
+#endif

@@ -1,0 +1,227 @@
+PROCESS launch request transport (#907 / #931)
+==============================================
+
+Implementation checkpoint
+-------------------------
+The ordinary loader, private prepare/cancel/publish admission, canonical
+PROCESS observers, PROCESS-owned launch rights, generic deferred replacement
+and a faultable request decoder are implemented. Public Ssystem dispatch is
+NOT enabled for ordinary applications. Filesystem rollback signoff remains
+required before activation of the agreed dispatch selector. The eight CUIS CHILD
+selectors remain active; no private ABI compatibility aliases are introduced.
+
+Test-only dispatch preparation (#935)
+------------------------------------
+CONF_WITH_PROCESS_EXEC_TEST is an explicit validation-only option, default n,
+depending on USER_ASPACE, NATIVE_SCHED and SSYSTEM. Normal configurations return
+EINVFN for S_PROCEXEC=((WORD)0xfff7), signed -9. S_INQUIRE does not advertise
+this mode even in opt-in test kernels. No ordinary public activation is
+approved by this option, and no CUIS selector is removed.
+
+arg1 is native long at xssystem and becomes (UQUAD)(uintptr_t)arg1: native32
+pointers are zero-extended, while genuine LP64 high bits are preserved for
+rejection. arg2 is validated at full native width and must equal exactly72;
+negative or high-width lengths are never truncated to their low32 bits.
+The adapter enters the execution-owned scope before retaining the caller's
+canonical PROCESS, invokes the existing request engine, releases its temporary
+PROCESS reference while protected, then ends the scope without delivery.
+The existing post-operation checkpoint in osif is the single return boundary;
+no extra checkpoint is added inside xssystem or the request decoder.
+
+Materialization retains the accepted K5 limit: current single-CPU,
+non-preemptive built-in no-yield/no-mapping-reentry provider only. Replaceable
+BIOS/critical-error callbacks reentering mapping teardown require a separate
+authoritative mapping lease/generation contract. No general fatal unwind,
+preemption or SMP safety is implied. Final corrected/reviewed #933, focused
+C3a and native/trap/full validation acceptance remain activation prerequisites.
+
+Fixed native-endian layout
+--------------------------
+PROCESS_EXEC_REQUEST is exactly 72 bytes, aligned to 4:
+
+ offset  bytes  field
+      0      4  operation
+      4      4  owned handle
+      8      4  policy (ASYNC=0, DEFER_REPLACEMENT=1)
+     12      4  reserved, zero
+     16      4  path user address
+     20      4  tail user address
+     24      4  environment user address, zero means inherit
+     28      4  directory user address, zero means inherit
+     32     32  PROCESS_COMPLETION (SNAPSHOT output only)
+     64      8  two reserved words, zero
+
+Every field offset, size and alignment is asserted in process_exec.h and
+process_completion.h. Addresses are ULONG, not native kernel pointers. x32,
+ARM A32 and native m68k users have 32-bit addresses; LP64 kernel decoding
+zero-extends them. The request address must be 4-aligned and fit wholly in
+32 bits; the separately supplied native-width size must equal 72 without
+truncation. This is one fixed private ABI, not version negotiation.
+
+Completion has no pointers: 64-bit nonrecycled PROCESS number split low/high,
+PID, state, kind, full UWORD normal status, explicit WORD signal, and immutable
+64-bit delivery ordinal split low/high. Its size is 32, alignment 4. Normal
+0xffff is never guessed to be a fault. A committed COMPLETED snapshot with
+ordinal zero is not delivery-ready. ABANDONED is exposed only after final
+cleanup and has no fabricated result or ordinal. #909 public Pwait encoding
+and consumption remain independent.
+
+Operations and copies
+---------------------
+PREPARE supplies zero handle, policy and input addresses. All reserved fields
+are zero. It returns a positive nonrecycled owned handle as the scalar result,
+never writing the request. The decoder copies bounded path/directory strings
+(1024 bytes including NUL), command tail (PDCLSIZE including NUL), and an
+explicit or inherited environment (32766 bytes including double NUL) into
+private kernel buffers before invoking the ordinary loader. It does not read
+user strings after loading starts. Failed copies or allocations reclaim their
+buffers without publishing a PROCESS. Handle identities are reserved before
+loader callbacks; failed preparations can burn a number but never reuse one.
+
+COMMIT supplies operation and handle only and returns PID as a scalar. The
+prepared admission is consumed exactly once. No fallible output follows child
+publication. A readable, non-writable request is sufficient for PREPARE/COMMIT.
+
+SNAPSHOT supplies operation and handle only. It copies exactly the 32-byte
+completion region, leaving request controls unchanged. All completion inputs
+are ignored, so retry after partial copyout is valid. Failed copyout may alter
+a prefix of user output, but cannot consume completion, observation, or Pwait.
+
+CLOSE supplies operation and handle only. It unlinks owned rights before
+cleanup, aborts an uncommitted image or releases committed observation, and
+never reaps or cancels a committed child. Filesystem cleanup may return an
+error AFTER consumption: this is a diagnostic outcome, not a retryable launch
+right. The exact residual reference belongs to the SFT service, without retaining
+a PD/ASPACE/stack. Read canonical cleanup diagnostics before dropping the last
+observer; never reconstruct a handle after destruction. Other retained observer
+leases remain usable. Public dispatch remains disabled.
+
+CANCEL_DEFERRED is designed as an idempotent current-PROCESS operation with zero
+handle and arguments. It cancels only the current owner's held, unexecuted
+successor. It cannot kill a runnable PROCESS. Failed replacement must preserve
+the old successor. The request engine implements this unpublished policy using the existing
+scheduler admission, without GUI registration. Canonical predecessor identity
+is retained before preparation; PD reuse cannot activate a successor. CLOSE
+of a committed deferred handle drops observation without cancelling execution.
+
+Errors and lifetime
+-------------------
+EINVAL: wrong size/alignment, reserved/non-operation input, invalid policy.
+EIMBA: unreadable user range or failed/partial SNAPSHOT copyout.
+ERANGE: unterminated/oversized string or environment.
+EIHNDL: zero, stale, closed or unowned handle within current PROCESS scope.
+EACCDN: foreign/retired PROCESS authority, second COMMIT or reentrant selection.
+ENSMEM/EAGAIN and ordinary loader/filesystem errors retain their usual meaning.
+No output is copied on an error except a possibly partial SNAPSHOT region.
+
+Each canonical KPROC owns its rights list. A right stores a private admission
+and/or one canonical observer, never a copied completion record. Numeric PID,
+PD address, TID, AES client ID and endpoint are not authorities. THREAD-only
+termination does not close PROCESS rights. Final PROCESS retirement detaches
+its live registry link while retaining the lookup reference, closes rights
+without an exposed registry cursor, then clears live resources. Committed
+children remain independent; prepared children are abandoned safely. The
+current cooperative boot-CPU owner protocol serializes this work; enabling
+preemption/SMP requires #713 owner synchronization, not a second scheduler.
+
+Deferred replacement holds a nonblocking PROCESS selection transaction across
+old-successor destruction. Private cancellation first marks the task RETIRING
+and detaches PROCESS/THREAD/predecessor and public parent ownership under the
+existing metadata exclusion. The cancelling continuation owns those references
+outside exclusion, including through callbacks/yields. Root cannot reap a
+RETIRING record and child waits cannot see it. Backend storage is reusable only
+after both destruction and final local reference releases finish through the
+canonical task-clear path. Linked scheduler reconciliation preserves links,
+anchors and admission accounting in that existing helper.
+Reentrant replacement/cancellation fails before
+mutation. The in-flight owned handle rejects CLOSE, repeated COMMIT and late
+prepared-lease attachment; snapshots remain safe. Unrelated PREPARE/CLOSE may
+reenter cleanup. Native tests inject these operations at the old child
+disposal boundary, proving the replacement remains selected exactly once.
+
+Cleanup cancellation and user memory
+------------------------------------
+Every resource-owning transport entry nests an execution cleanup scope before
+acquisition. Its THREAD, canonical PROCESS, TID, execution generation, depth
+and nonrecycled per-execution scope ticket must match on LIFO release. An
+unmanaged/nested distinct-PROCESS caller has an explicitly inert scope and
+cannot inherit its carrier's protection. Release never checkpoints or kills.
+The outer public entry must checkpoint only after all scopes, local references,
+request buffers, reservations and IRQ state have been settled.
+
+Group requests and pending queries remain visible. Protected Syield uses an
+ordinary scheduler block so an already-pending request cannot suppress peer
+progress; it advertises no unsafe cancellation boundary. A guarded Ptermgrp
+is rejected before admitting a nonreturning request. Direct xterm of a guarded
+execution is an unsupported internal nonreturning callback and fail-stops;
+this scope does not make arbitrary exceptions or raw longjmp unwind safe.
+Distinct nested Pexec children terminate through their own lifecycle normally.
+
+PREPARE/COMMIT reject cancellation before publication. Once old successor
+destruction begins, COMMIT's irreversible boundary has been crossed: it must
+finish publication and ownership cleanup before the next safe checkpoint.
+CLOSE still consumes its valid right when cancellation was already pending.
+
+The decoder uses checked KPROC copies sharing ordinary range validation,
+lazy backing and the existing resident-copy implementation. Valid lazy pages
+are materialized. Invalid access returns EIMBA, backing allocation failure
+ENSMEM and backing I/O failure EREADF; none terminates the calling THREAD while
+argument buffers are locally owned. Ordinary uaccess retains its original
+fatal-fault behavior. Failed SNAPSHOT copyout never consumes retained result.
+
+The separately owned #933 filesystem-close contract remains an activation gate.
+Exhausted close retries retain an SFT reference rather than double-close it.
+Full public rollback signoff must resolve/document that ownership path; this
+checkpoint does not promise arbitrary driver longjmp recovery or hide a leak
+by retrying a test. No GUI callback or AES policy belongs in this transport.
+Console display/input attachment remains a separate authenticated GUI lease
+before COMMIT, and CH_EXIT construction remains libaes policy.
+
+Evidence distinction
+--------------------
+Production backend/decoder host tests model loader identity and faultable user
+memory. They cover input bounds, ABI rejection, allocation rollback, scalar
+returns, partial copyout retry, one COMMIT, CLOSE, owner exit and stale rights.
+Separate production KPROC/allocator tests validate canonical lifetime/order and
+final-pin reclamation. Real x32 user continuations exercise prepared rights
+across yields, commit/cancel, public Pwait independence, CLOSE before execution
+and final owner teardown. These are not claims of a publicly enabled transport
+or ARM/m68k userspace GUI ports.
+
+Disabled activation preparation (#938)
+-------------------------------------
+CONF_WITH_PROCESS_EXEC is hidden and defaults to n. No shipped preset exposes
+it. CONF_WITH_PROCESS_EXEC_DISPATCH builds the single existing adapter when
+either that future production gate or the explicit test-only option is set.
+Only the production gate permits S_INQUIRE discovery; test-only builds still
+return EINVFN for discovery. The selector and 72/32 layouts are unchanged.
+
+This is configuration preparation, not public activation approval. Before any
+production enablement, reconcile against the actually integrated and accepted
+#933/#935 epic baseline, preserve C3a consumed-CLOSE errors, rerun exact-head
+native/desktop/lifecycle and full CI acceptance, and request explicit owner
+activation review. Do not enable the hidden gate through a normal preset or
+claim public transport support while those prerequisites remain pending.
+The existing K5 checked-copy restriction continues to apply.
+
+Gate-combination proof (#938)
+----------------------------
+The production option is hidden: assigning CONF_WITH_PROCESS_EXEC=y in .config
+DOES NOT enable it. There is no production selector today. Future activation
+must add a reviewed supported selector/default or prompt; a bare select bypasses
+the selected symbol's dependencies and must not be used without matching guards.
+The gate fixture adds a dependency-checked selector only in a temporary Kconfig
+root and checks ordinary/test/production/both combinations against real build.mk
+and preprocessed Ssystem capability/dispatch cases. Both selected gates include
+exactly one adapter object. This is prospective configuration/preprocessor proof,
+not native production activation acceptance. No shipped source selects the gate.
+
+Native fixture gate alignment (#938 review)
+------------------------------------------
+The real test build exports production, test and shared-dispatch gates.
+Native discovery expectations depend only on production; operation tests and
+PROCXIT.TOS packaging depend on shared dispatch. LP64 MEMTEST checks use the
+same distinction. The host gate fixture reads the actual top-level Makefile
+exports/payload and preprocesses native fixture branches for every prospective
+combination; this CPP evidence does not execute native traps or enable a real
+production configuration. The hidden production gate still has no selector.

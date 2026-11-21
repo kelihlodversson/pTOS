@@ -49,12 +49,19 @@ typedef char stack_below_limit[
      USER_STACK_SIZE <= USER_STACK_TOP &&   /* before subtracting: no wrap */
      USER_IMAGE_BASE + USER_IMAGE_SIZE <= USER_STACK_TOP - USER_STACK_SIZE) ? 1 : -1];
 
+struct allocation_hold;
 struct alloc {
     struct alloc *next;
     UQUAD va;
     ULONG pages;
     const void *owner;          /* identity of the owning process, or NULL */
+    struct allocation_hold *holds;
+    ULONG hold_count;
+    BOOL cleanup_owned; /* one-way canonical disposal owner, never a user grant */
     ULONG pins;                 /* live address-space mappings of this block */
+    void (*notify)(void *);
+    void *notify_token;
+    BOOL reclaim;               /* allocation itself owns deferred reclamation */
     UQUAD gen;                  /* unique per allocation, never reused */
 };
 
@@ -147,7 +154,7 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     ULONG pages, first;
     UQUAD va;
 
-    if (!bytes || !window_phys ||
+    if (next_gen == ~(UQUAD)0 || !bytes || !window_phys ||
         bytes > X86_64_LOW_TPA_BYTES)       /* also rules out overflow below */
         return NULL;
     pages = (bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE;
@@ -163,6 +170,12 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     a->pages = pages;
     a->owner = NULL;
     a->pins = 0;
+    a->holds = NULL;
+    a->hold_count = 0;
+    a->cleanup_owned = FALSE;
+    a->reclaim = FALSE;
+    a->notify = NULL;
+    a->notify_token = NULL;
     a->gen = next_gen++;
     a->next = allocs;
     allocs = a;
@@ -192,6 +205,8 @@ static struct alloc **find_link(const void *p)
 static void release(struct alloc **link)
 {
     struct alloc *a = *link;
+    void (*notify)(void *) = a->notify;
+    void *token = a->notify_token;
 
     *link = a->next;
     set_pages((ULONG)((a->va - X86_64_LOW_TPA_VIRT_BASE) / X86_64_PAGE_SIZE),
@@ -199,6 +214,35 @@ static void release(struct alloc **link)
     free_pages += a->pages;
     live_allocs--;
     kfree(a);
+    if (notify) notify(token);
+}
+
+#define HOLD_PAGE X86_64_PAGE_SIZE
+#define HOLD_WINDOW X86_64_LOW_TPA_VIRT_BASE
+#define HOLD_PIN_PAGE X86_64_PAGE_SIZE
+#include "../../procmem_hold.h"
+
+/* A deferred decision belongs to this allocation record, not its former
+ * owner's reusable basepage address. */
+static void reclaim_unpinned(void)
+{
+    struct alloc **link = &allocs;
+
+    while (*link) {
+        if ((*link)->reclaim && !(*link)->pins && !(*link)->hold_count)
+            release(link);
+        else
+            link = &(*link)->next;
+    }
+}
+
+BOOL procmem_on_free(void *base, void (*notify)(void *), void *token)
+{
+    struct alloc **link = find_link(base);
+    if (!link || !notify || (*link)->notify) return FALSE;
+    (*link)->notify = notify;
+    (*link)->notify_token = token;
+    return TRUE;
 }
 
 BOOL procmem_free(void *p)
@@ -209,7 +253,7 @@ BOOL procmem_free(void *p)
         bad_frees++;
         return FALSE;
     }
-    if ((*link)->pins)          /* still mapped into a live address space */
+    if ((*link)->cleanup_owned || (*link)->pins || (*link)->hold_count) /* mapped or explicitly retained */
         return FALSE;
     release(link);
     return TRUE;
@@ -226,7 +270,7 @@ ULONG procmem_free_ownerless_since(UQUAD gen)
     struct alloc **link = &allocs;
 
     while (*link) {
-        if ((*link)->gen >= gen && !(*link)->owner && !(*link)->pins) {
+        if ((*link)->gen >= gen && !(*link)->owner && !(*link)->pins && !(*link)->hold_count && !(*link)->reclaim) {
             release(link);              /* unlinks, so *link is the next one */
             freed++;
         } else {
@@ -261,6 +305,7 @@ void procmem_pin(UQUAD va, UQUAD bytes, int delta)
             else if (a->pins)
                 a->pins--;
         }
+    if (delta < 0) reclaim_unpinned();
 }
 
 UQUAD procmem_gen(const void *p)
@@ -300,18 +345,34 @@ const void *procmem_owner(const void *p)
     return link ? (*link)->owner : NULL;
 }
 
-void procmem_set_owner(const void *p, const void *owner)
+BOOL procmem_set_owner(const void *p, const void *owner)
 {
     struct alloc **link = find_link(p);
 
-    if (link)
-        (*link)->owner = owner;
+    if (!link || (*link)->cleanup_owned || ((*link)->hold_count && ((*link)->owner != owner || (*link)->reclaim))) return FALSE;
+    (*link)->owner = owner;
+    (*link)->reclaim = FALSE; /* transfer or make permanent */
+    return TRUE;
+}
+
+/* Callbacks can unpin or free allocation records, or leave through a disk
+ * error longjmp. Resume by generation, never by a pointer held across one.
+ * Generations are unique; allocations made by a callback are not visited. */
+static struct alloc *owned_before(const void *owner, UQUAD before)
+{
+    struct alloc *a, *best = NULL;
+    for (a = allocs; a; a = a->next)
+        if (a->owner == owner && a->gen < before &&
+            (!best || a->gen > best->gen))
+            best = a;
+    return best;
 }
 
 void procmem_free_owned(const void *owner, void (*pre_free)(void *base))
 {
     struct alloc **link;
     struct alloc *a;
+    UQUAD before = ~(UQUAD)0;
 
     if (!owner)                 /* NULL means "permanent", never "any" */
         return;
@@ -320,48 +381,65 @@ void procmem_free_owned(const void *owner, void (*pre_free)(void *base))
      * KPROC record, and with it that process's address space and the pins
      * it holds), so the second pass sees which blocks are really free to go. */
     if (pre_free)
-        for (a = allocs; a; a = a->next)
-            if (a->owner == owner)
-                pre_free((void *)(uintptr_t)a->va);
+        while ((a = owned_before(owner, before)) != NULL) {
+            before = a->gen;
+            pre_free((void *)(uintptr_t)a->va);
+        }
 
-    /* A block still mapped into some other live address space stays
-     * allocated (and owned): reusing it would hand that process's view of
-     * it to a new owner. */
+    /* Mapped blocks remain allocated until the final pin is dropped. */
     link = &allocs;
     while (*link) {
-        if ((*link)->owner == owner && !(*link)->pins)
-            release(link);      /* unlinks: *link is now the next one */
-        else
-            link = &(*link)->next;
+        if ((*link)->owner == owner) {
+            if (!(*link)->pins && !(*link)->hold_count) {
+                release(link);
+                continue;
+            }
+            /* Forget the reusable process address. The allocation record
+             * itself carries this decision until unpin or ownership transfer. */
+            (*link)->owner = NULL;
+            (*link)->reclaim = TRUE;
+        }
+        link = &(*link)->next;
     }
+    reclaim_unpinned();
 }
 
 void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *base))
 {
     struct alloc *a;
+    struct alloc **link;
+    UQUAD before = ~(UQUAD)0, generation;
+    void *base;
 
     if (!owner)
         return;
-    for (a = allocs; a; a = a->next) {
-        if (a->owner != owner)
-            continue;
+    while ((a = owned_before(owner, before)) != NULL) {
+        before = generation = a->gen;
+        base = (void *)(uintptr_t)a->va;
         if (a->va == (UQUAD)(uintptr_t)owner) {
             /* the owner's own block: keep only the requested prefix, in
              * whole pages, and give the tail back -- unless a live address
              * space can still reach it */
             ULONG keep = (ULONG)((keep_bytes + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE);
 
-            if (keep_bytes && keep && keep < a->pages && !a->pins) {
+            if (keep_bytes && keep && keep < a->pages && !a->pins && !a->hold_count) {
                 set_pages((ULONG)((a->va - X86_64_LOW_TPA_VIRT_BASE) / X86_64_PAGE_SIZE) + keep,
                           a->pages - keep, FALSE);
                 free_pages += a->pages - keep;
                 a->pages = keep;
             }
         } else if (pre_keep) {
-            pre_keep((void *)(uintptr_t)a->va);
+            pre_keep(base);
+            /* It may have freed, reused, or transferred this allocation. */
+            link = find_link(base);
+            if (!link || (*link)->gen != generation || (*link)->owner != owner)
+                continue;
+            a = *link;
         }
         a->owner = NULL;
+        a->reclaim = FALSE;       /* Ptermres keeps these blocks permanent */
     }
+    reclaim_unpinned();
 }
 
 void procmem_stats(PROCMEM_STATS *stats)
@@ -371,3 +449,19 @@ void procmem_stats(PROCMEM_STATS *stats)
     stats->free_pages = free_pages;
     stats->bad_frees = bad_frees;
 }
+
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
+#include "shared_pexec_test.h"
+void procmem_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
+{
+    const struct alloc *a;
+    out->count[SP_RAW_ALLOCS]=live_allocs;
+    out->count[SP_RAW_FREE_PAGES]=free_pages;
+    out->count[SP_RAW_BAD_FREES]=bad_frees;
+    for(a=allocs;a;a=a->next) {
+        out->count[SP_RAW_HOLDS]+=a->hold_count;
+        out->count[SP_RAW_PINS]+=a->pins;
+        if(a->reclaim) out->count[SP_RAW_RETIRED]++;
+    }
+}
+#endif

@@ -24,6 +24,7 @@
 /* Values of 'mode' for Pexec() */
 #define PE_ASYNC_LOADGO 100
 #define PE_ASYNC_GO_FREE 106
+#define PE_EXEC_REPLACE 200 /* replace the caller in its own PROCESS (pTOS) */
 #define PE_LOADGO     0
 #define PE_LOAD       3
 #define PE_GO         4
@@ -33,6 +34,10 @@
 #if DETECT_NATIVE_FEATURES
 #define PE_RELOCATE   50    /* required for NatFeats support only, not in Atari TOS */
 #endif
+/* Set in the mode by the kernel's own requests (basepages for, and starts of,
+ * code it carries; the AES accessory loader): never accepted from a process
+ * with a user address space (doc/pexec-legacy-modes.txt). */
+#define PE_KERNEL     0x4000
 
 /* File Attributes bits used by FAT and Fsfirst() / Fattrib() */
 #define FA_RO           0x01

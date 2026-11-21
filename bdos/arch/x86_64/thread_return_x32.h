@@ -1,0 +1,12 @@
+#ifndef THREAD_RETURN_X32_H
+#define THREAD_RETURN_X32_H
+#include "../../thread_return.h"
+typedef THREAD_RETURN_BRIDGE X32_RETURN_BRIDGE;
+#define x32_return_bridge_acquire thread_return_bridge_acquire
+#define x32_return_bridge_zero_address thread_return_bridge_zero_address
+#define x32_return_bridge_address thread_return_bridge_address
+#define x32_return_bridge_valid thread_return_bridge_valid
+#define x32_return_bridge_matches thread_return_bridge_matches
+#define x32_return_bridge_process_eligible thread_return_bridge_process_eligible
+#define x32_return_bridge_release thread_return_bridge_release
+#endif

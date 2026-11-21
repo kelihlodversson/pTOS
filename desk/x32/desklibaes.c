@@ -9,6 +9,14 @@
 #include "syscall.h"
 #include "shutdown.h"
 
+LONG desk_reap_child(WORD pid);
+LONG desk_reap_child(WORD pid)
+{
+    /* EmuDesk is the launching parent. AES notification does not reap for it.
+     * A stale message must never turn into wait-any or a blocking wait. */
+    return pid > 0 ? desk_syscall(1,0x13a,pid,1,0,0) : -33;
+}
+
 void desk_poweroff(void);
 void desk_poweroff(void)
 {

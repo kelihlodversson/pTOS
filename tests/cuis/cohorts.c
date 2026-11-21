@@ -44,7 +44,7 @@ static int cohort_checks(void)
     CHECK(CJ(CUIS_COHORT_READ,b,token,0x20000,15,0,0) == ERANGE);
     CHECK(CJ(CUIS_COHORT_READ,b,token,0x20000,16,0,0) == 16 && stream_output[0] == 0x35);
     CHECK(CJ(CUIS_COHORT_PUBLISH,b,token,0,0,0,0) == E_OK);
-    CHECK(cuis_session_wait(b,16,CUIS_READY_COHORT|CUIS_READY_STREAM,0) == CUIS_READY_STREAM);
+    CHECK(cuis_session_wait(b,16,CUIS_READY_COHORT|CUIS_READY_STREAM,0,0,0) == CUIS_READY_STREAM);
     CHECK(cuis_stream_service(CUIS_STREAM_PENDING,b,0,0,0,0) == 16);
     CHECK(cuis_stream_service(CUIS_STREAM_PEEK,b,0x20000,16,0,0) == 16);
     CHECK(cuis_stream_service(CUIS_STREAM_PENDING,b,0,0,0,0) == 16);
@@ -122,7 +122,7 @@ static int cohort_click_checks(void)
         CHECK(cuis_input_config(CUIS_INPUT_BUTTON,member,1,1,2,0,0) == E_OK);
         input_sleeps = 0; input_packet_mode = pass ? 2 : 1; cohort_idle_at = 2;
         ready = cuis_session_wait(member,16,CUIS_READY_BUTTON|CUIS_READY_COHORT|
-            (pass ? CUIS_READY_TIMER : 0),pass ? 10 : 0);
+            (pass ? CUIS_READY_TIMER : 0),pass ? 10 : 0,0,0);
         CHECK((ULONG)ready == (CUIS_READY_COHORT | (pass ? CUIS_READY_TIMER : CUIS_READY_BUTTON)));
         CHECK(input_sleeps >= (pass ? 3 : 4));
         CHECK(cuis_input_config(CUIS_INPUT_RESULT,member,0x1000,0x1004,0x1008,0x100c,0x1010) == E_OK);

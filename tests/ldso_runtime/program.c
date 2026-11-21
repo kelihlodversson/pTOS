@@ -64,7 +64,8 @@ int app_main(uint32_t argc, const char *const *argv, const char *const *envp, ui
 #ifdef LDSO_TEST_SHARING
     if (argc == 3 && argv[1] && argv[1][0] == 'c' && argv[2]) return child(argv);
 #endif
-    if (argc != 1 || !argv[0] || argv[1] || !envp[0]) return 90;
+    if (
+        (argc != 1 || !argv[0] || argv[1] || !envp[0])) return 90;
     if (startup_log != 9123 || dynvalue != 9 || dynbss != 3 || answer() != 23) return 91;
     /* Main and interpreter RELRO are sealed too, not just Mmap-backed DSOs
      * (where the linker can make a RELRO: not the bare-metal ARM one). */
@@ -92,5 +93,6 @@ int app_main(uint32_t argc, const char *const *argv, const char *const *envp, ui
 }
 int app_after_fini(void)
 {
-    return startup_log == 9123456 && dynvalue == -7 ? 0 : 92;
+    int result=startup_log == 9123456 && dynvalue == -7 ? 0 : 92;
+    return result;
 }
