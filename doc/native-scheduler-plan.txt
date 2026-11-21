@@ -65,7 +65,8 @@ native and hosted evidence. The closeout PR records its own run SHAs.
 Native process profile
 ----------------------
 
-User-address-space configurations default to CONF_WITH_NATIVE_SCHED.
+The x32, ARMv7 and m68k user-address-space presets default to
+CONF_WITH_NATIVE_SCHED.
 Pclone and PROCESS descriptors follow native scheduling, with descriptors
 requiring extended file lifetimes. Pthjoin and Ptermgrp follow Pclone and
 native scheduling. Pexec(200) still requires an ELF-capable replacement

@@ -162,9 +162,9 @@ config CONF_PCLONE_ENTRY_ALIGNMENT
     default 2
 
 config CONF_WITH_NATIVE_SCHED
-    bool "Cooperative native scheduling"
+    bool "Native process and thread support"
     depends on CONF_WITH_USER_ASPACE
-    default y
+    default y if !ARCH_ARM || CPU_ARMV7
     help
       Kernel-owned cooperative native process scheduling and standard MiNT
       asynchronous launch, yield and child waits. Selected by CUIS and on by
