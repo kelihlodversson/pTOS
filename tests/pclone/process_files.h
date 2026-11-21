@@ -11,13 +11,24 @@ static char files_parent_cwd[128];
 static char files_pattern[]="C:\\FD969?.TMP";
 static long files_query(unsigned index)
 { return pclone_trap(0,FILES_CLONE_TAG+0x100+index); }
+static void files_dta_descendant(void *argument)
+{
+    _DTA own_dta;
+
+    if ((_DTA *)Fgetdta()!=argument) Pterm(1);
+    (void)Fsetdta(&own_dta);
+    Pterm((_DTA *)Fgetdta()==&own_dta ? 0 : 2);
+}
 static void files_entry(void *argument)
 {
+    struct ptos_clone_args descendant={0};
     char a=0,b=0,c=0;
     char cwd[128];
     _DTA own_dta;
-    long duplicate;
-    (void)argument;files_probe.entered=1;files_probe.pid=Pgetpid();
+    int32_t descendant_pid=0;
+    long duplicate,status;
+
+    files_probe.entered=1;files_probe.pid=Pgetpid();
     while (!files_probe.gate) (void)Syield();
     if (Fgetdta() || Fsnext()!=-40L || Fsfirst(files_pattern,0)!=-40L) files_probe.error|=8;
     (void)Fsetdta(&files_dta);
@@ -25,6 +36,16 @@ static void files_entry(void *argument)
     (void)Fsetdta(&own_dta);
     if ((_DTA *)Fgetdta()!=&own_dta || Fsfirst(files_pattern,0) || Fsnext() || Fsnext()!=-49L)
         files_probe.error|=64;
+    descendant.flags=CLONE_VM|(files_probe.inherit_cwd ? 0 : CLONE_COPY_STANDARD_HANDLES);
+    descendant.entry=files_dta_descendant;
+    descendant.argument=&own_dta;
+    descendant.stack_base=argument;
+    descendant.stack_size=RUNNABLE_STACK_SIZE;
+    descendant.child_pid=&descendant_pid;
+    status=pclone_trap(&descendant,sizeof(descendant));
+    if (status>0) status=Pwaitpid(descendant_pid,0,0);
+    if (descendant_pid<=0 || (status>>16)!=descendant_pid || (status&65535) ||
+        (_DTA *)Fgetdta()!=&own_dta) files_probe.error|=128;
     if (Dgetpath(cwd,3) || ((!strcmp(cwd,files_parent_cwd)) != files_probe.inherit_cwd))
         files_probe.error|=16;
     if (Fread(files_probe.later,1,&c)!=-37L) files_probe.error|=32;
@@ -110,7 +131,7 @@ static void test_process_files(void)
 {
     struct ptos_clone_args args={0};
     int32_t pid=0,tid=0;
-    long baseline[8],prepared[8],stack,result,status;
+    long baseline[8],prepared[8],stack,descendant_stack,result,status;
     int mode,stage;
     char c=0;
     char saved_cwd[130]="C:";
@@ -122,11 +143,15 @@ static void test_process_files(void)
     stack=Malloc(RUNNABLE_STACK_SIZE);
     ptest_assert_msg(stack>0,"descriptor native child stack");
     if(stack<=0){ptest_pass();return;}
+    descendant_stack=Malloc(RUNNABLE_STACK_SIZE);
+    ptest_assert_msg(descendant_stack>0,"descriptor descendant stack");
+    if(descendant_stack<=0){(void)Mfree((void *)stack);ptest_pass();return;}
     ptest_assert_msg(!Dgetpath(saved_cwd+2,3) && !Dsetpath("C:\\TESTS") &&
                      !Dgetpath(files_parent_cwd,3) && files_parent_cwd[0],"prepare a non-root parent CWD");
     if (!saved_cwd[2]) strcpy(saved_cwd+2,"\\");
     files_counts(baseline);
     args.entry=files_entry;
+    args.argument=(void *)descendant_stack;
     args.stack_base=(void *)stack;args.stack_size=RUNNABLE_STACK_SIZE;
     args.child_pid=&pid;args.child_tid=&tid;
     for(mode=0;mode<((Drvmap()&(1L<<16))?4:2);mode++) {
@@ -216,13 +241,14 @@ static void test_process_files(void)
         }
         ptest_assert_msg((_DTA *)Fgetdta()==&files_dta && _base->p_dta==parent_dta_mirror &&
                          !Fsnext() && Fsnext()==-49L,
-                         "parent retains its own DTA and active search");
+                         "parent retains its DTA mirror and search after the child and descendant set their DTAs");
         (void)Fsetdta(saved_dta);
         ptest_assert_msg(Fdelete(first)==0 && Fdelete(second)==0,"descriptor fixtures have no leaked file lifetime");
         files_compare(baseline,"both exit orders restore exact SFT/binding/admission/operation baselines");
     }
     ptest_assert_msg(!Dsetpath(saved_cwd),"restore the parent CWD");
     files_test_orphan((unsigned char *)stack);
+    ptest_assert_msg(Mfree((void *)descendant_stack)==0,"descriptor descendant stack released");
     ptest_assert_msg(Mfree((void *)stack)==0,"descriptor native stack released");
     ptest_pass();
     if(!ptest_failures())conws("native PROCESS descriptor inheritance/ownership: PASS\r\n");

@@ -24,6 +24,9 @@ publication. The child has no selected DTA or active searches. Fgetdta returns
 NULL. Fsfirst and Fsnext require selecting a writable buffer with Fsetdta
 first, or return EIMBA. Use Fgetdta to read the child's selection:
 the logical basepage is shared and its original DTA field is unchanged.
+Shared-VM descendants keep that mirror isolation even when they request
+plain CLONE_VM or only standard handles. A private clone or replacement
+image can update its own basepage mirror.
 Each PROCESS keeps its own descriptor table and close rights. Inherited open
 files share their underlying file position and description. Later open, close,
 duplication and rebinding operations update the caller's table. CWD still

@@ -879,6 +879,10 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     /* Numerical user address only. Search caches/iterators remain empty;
      * a factory PD's supervisor-only default is not the inherited user DTA. */
     target->dta=source->dta;
+#if CONF_WITH_PROCESS_FILES
+    /* Descendants sharing the logical basepage also share its mirror. */
+    target->independent_dta=source->independent_dta;
+#endif
     target->logical_context=TRUE;
     target->logical_basepage=source->logical_context?source->logical_basepage:(VADDR)(uintptr_t)source->user_start;
     target->logical_environment=source->logical_context?source->logical_environment:(VADDR)(uintptr_t)source->env_start;
@@ -1035,6 +1039,10 @@ static void private_image_commit(KPROC *target)
     target->stack_top=snapshot->stack_top;target->entry=snapshot->entry;
     target->clone_top_stack=snapshot->top_stack;
     target->dta=(DTAINFO *)(uintptr_t)snapshot->dta;
+#if CONF_WITH_PROCESS_FILES
+    /* DTA updates now resolve through the child-owned private mapping. */
+    target->independent_dta=FALSE;
+#endif
 #if KPROC_LEGACY_PRG
     target->legacy_text_bytes=snapshot->text_bytes;target->legacy_text_recorded=snapshot->text_recorded;
 #if CONF_WITH_IMAGE_POLICY
