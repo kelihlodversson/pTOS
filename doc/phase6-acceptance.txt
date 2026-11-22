@@ -44,7 +44,7 @@ New parent-dependency increment (native acceptance in progress):
 - KPROC exec-generation query: its producer is #970's authenticated
   replacement commit (public Pexec(200), #999), now merged. Host modeled epoch
   events are NOT native exec; the native exec-release test is. Public
-  Pfork/Pvfork are implemented behind CONF_WITH_PFORK (see the end of this
+  Pfork/Pvfork are implemented behind CONF_WITH_FORK (see the end of this
   file).
 - #969 and #971 are developed as isolated epic-based prerequisite Drafts.
   #970 is same-PROCESS replacement only; no COW-vfork parent VM detach is needed.
@@ -199,7 +199,7 @@ Initial policy
 Reject non-sole THREAD and other live same-root PROCESS callers before resources.
 Do not copy C stacks, jmp_buf, scheduler continuations, borrowed parent PD or
 return-frame pointers. Copy only user state into child-owned startup. Public
-Pfork/Pvfork are CONF_WITH_PFORK (on by default in the native process profile)
+Pfork/Pvfork are CONF_WITH_FORK (on by default in the native process profile)
 and return EINVFN without it.
 The test-only private continuation has no descriptor inheritance claim. Neither an exit-only
 Pvfork approximation nor a passing prerequisite completes public fork.
@@ -332,7 +332,7 @@ requests none. UID/GID are fixed0; groups remain the existing
 single-process model; signal masks/dispositions are unsupported, not silently
 claimed. Fault/completion identity stays the child's exact PROCESS/THREAD.
 
-Public Pfork/Pvfork (CONF_WITH_PFORK, on by default with the native process
+Public Pfork/Pvfork (CONF_WITH_FORK, on by default with the native process
 profile on MMU kernels with demand paging): implemented over the same
 saved-return private constructor with PROC_CLONE_COPY_STANDARD_HANDLES|COPY_CWD|
 COPY_FILES (descriptors, directories, DTA/search state through the PROCESS
@@ -371,10 +371,10 @@ Accepted base includes merged #973/#974/#975/#977; no #972 import.
 
 The default-off same-image scheduler transport is independently native-testable.
 Its private diagnostic handoff count is NOT a KPROC committed-exec generation.
-Public Pexec(200) is implemented and on by default (CONF_WITH_PEXEC200): a different-root ELF or classic PRG commit on a new
+Public Pexec(200) is implemented and on by default (CONF_WITH_EXEC_REPLACE): a different-root ELF or classic PRG commit on a new
 basepage (FreeMiNT overlay semantics) for anchors at the
 scheduler root and for nested children through their launcher frame, with one
-KPROC committed-exec generation per commit. Pfork and Pvfork are CONF_WITH_PFORK.
+KPROC committed-exec generation per commit. Pfork and Pvfork are CONF_WITH_FORK.
 
 Both eventual fork calls construct independent PRIVATE_VM/COW children; Pvfork
 additionally suspends the exact parent THREAD. No shared-parent VM/user-stack

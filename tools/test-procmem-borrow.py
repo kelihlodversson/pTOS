@@ -26,17 +26,17 @@ with tempfile.TemporaryDirectory(prefix="ptos-borrow-") as directory:
         k = kconfiglib.Kconfig(warn_to_stderr=False)
         k.load_config(f"configs/{preset}_defconfig")
         if args.permissions or args.irq:
-            k.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
+            k.syms["CONF_WITH_MULTITHREADING"].set_value(2)
         k.syms["CONF_WITH_ELF_SHARED"].set_value(0)
         k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(0)
         k.syms["CONF_WITH_MMAP"].set_value(0)
-        k.syms["CONF_WITH_PRIVATE_CLONE"].set_value(0)
+        k.syms["CONF_WITH_FORK"].set_value(0)
         assert k.syms["CONF_WITH_MMAP"].str_value == "n"
         assert k.syms["CONF_WITH_PRIVATE_CLONE"].str_value == "n"
         if args.irq:
-            for feature in ('PCLONE','PTHJOIN','FORK_RETURN_TEST','NATIVE_PREEMPT'):
+            for feature in ('MULTITHREADING', 'FORK_RETURN_TEST', 'PREEMPTION'):
                 k.syms['CONF_WITH_'+feature].set_value(2)
-            assert k.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'y'
+            assert k.syms['CONF_WITH_PREEMPTION'].str_value == 'y'
         k.write_config(str(work / "config"))
         subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig", "--config", str(work / "config"), "--header", str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")], env={**os.environ, "CONFIG_": ""}, check=True)
         flags = ([] if arch == "x86_64" else ["-DBORROW_GENERIC"]) + (["-DTEST_SHARED_PERMISSIONS"] if args.permissions else [])

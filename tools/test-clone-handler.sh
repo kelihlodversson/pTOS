@@ -14,10 +14,11 @@ k = kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/pc-x86_64_defconfig')
 k.load_config('tools/hosted-legacy-profile.config', replace=False)
 k.syms['CONF_WITH_ELF_SHARED'].set_value(2)
-k.syms['CONF_WITH_PCLONE'].set_value(2)
+k.syms['CONF_WITH_MULTITHREADING'].set_value(2)
 assert k.syms['CONF_WITH_ELF_SHARED'].str_value == 'y'
-assert k.syms['CONF_WITH_PCLONE'].str_value == 'y'
-assert k.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'n'
+assert k.syms['CONF_WITH_MULTITHREADING'].str_value == 'y'
+for name in ('CONF_WITH_EXEC_REPLACE', 'CONF_WITH_FORK', 'CONF_WITH_PREEMPTION'):
+    k.syms[name].set_value(0)
 assert k.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'n'
 k.write_config(sys.argv[1])
 PY

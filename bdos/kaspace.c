@@ -7,7 +7,7 @@
 #include "string.h"
 #include "kaspace.h"
 #include "kowner.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
@@ -37,7 +37,7 @@ struct kaspace {
     UQUAD retiring_birth;
     VADDR retiring_address, retiring_bytes;
     BOOL retiring_committed;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     BOOL retiring_pin; /* current job consumes existing backend pin records */
 #endif
     BOOL reaping;
@@ -62,7 +62,7 @@ struct kaspace_lease {
     UWORD access;
     BOOL revoked, sealed, held, stack;
     BOOL copying; /* temporary user-copy fence, never backing or clone authority */
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     BOOL irq_reserved, irq_linked;
 #endif
     UQUAD copy_actor;
@@ -154,7 +154,7 @@ static BOOL scope_live(const KASPACE_SCOPE *scope)
 
 static UQUAD mapping_actor(void)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     return ksched_context_id(); /* current continuation, no retain or checkpoint */
 #else
     return 0;
@@ -476,7 +476,7 @@ BOOL kaspace_copy_valid(const KASPACE_LEASE *lease)
     return valid;
 }
 
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 LONG kaspace_irq_reserve(KASPACE_LEASE **out)
 {
     KASPACE_LEASE *lease;
@@ -657,7 +657,7 @@ void kaspace_lease_release(KASPACE_LEASE **handle)
     KASPACE *space;
     if (!handle || !*handle) return;
     lease = *handle; *handle = NULL; space = lease->space;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if (lease->irq_reserved) {
         kaspace_irq_park(lease);
         kowner_assert_unlocked();
@@ -709,7 +709,7 @@ static BOOL kaspace_mapping_can_change_owned(const ASPACE *backend, VADDR addres
     last = (address + bytes - 1) & ~(VADDR)(USER_PAGE_SIZE - 1);
     for (space = spaces; space && space->backend != backend; space = space->next) { }
     if (!space) return TRUE; /* backend not yet adopted */
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if(aspace_retired_pin_overlap(backend,address,bytes))return FALSE;
 #endif
     if (pending_overlap(space,first,last-first+USER_PAGE_SIZE)) return FALSE;
@@ -786,7 +786,7 @@ static BOOL independent_backing_owner(KASPACE *space, VADDR address,
          * acquisition and keeps its logical mapping stable across COW. It
          * grants no reservation or absent-page materialization authority. */
         else if (resident && lease->held && !lease->sealed && !lease->revoked &&
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
                  !lease->irq_reserved && /* a return fence is not a backing owner */
 #endif
                  !lease->reservation_ticket && !lease->reservation_id &&
@@ -1502,7 +1502,7 @@ BOOL kaspace_retire_borrow(KASPACE *space, VADDR address, VADDR bytes)
             return TRUE;
         }
     }
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     /* A resident automatic IRQ view may be the only conflicting holder.
      * Consume this exact pin's existing backend record without allocating an
      * R2 cleanup record or borrowing another PROCESS's disposal authority. */
@@ -1529,7 +1529,7 @@ BOOL kaspace_retirement_change(ASPACE *backend,VADDR address,VADDR bytes,BOOL pr
     if (!bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address) return FALSE;
     for (space=spaces;space && space->backend!=backend;space=space->next) { }
     if (!space) return FALSE;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if(space->retiring_pin && !private && !space->retiring_committed &&
        address==space->retiring_address && bytes==space->retiring_bytes &&
        retirement_unblocked(space,address,bytes)) {
@@ -1622,7 +1622,7 @@ static void reap_retired(KASPACE *space)
                     }
             }
 #endif
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
             if(!birth) {
                 VADDR from=0;
                 BOOL found=FALSE;
@@ -2250,7 +2250,7 @@ LONG kaspace_clone(const KASPACE *source,KASPACE **result)
 #endif
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "kaspace_permission.h"
 #endif
 

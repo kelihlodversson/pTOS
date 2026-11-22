@@ -8,7 +8,7 @@ only owners. This adds policy to the existing dispatcher and B2 return path.
 
 Capability and accounting
 --------------------------
-CONF_WITH_NATIVE_PREEMPT is an independent default-off capability. The initial
+CONF_WITH_PREEMPTION defaults on for eligible profiles and can be turned off. The initial
 profiles are x32, ARMv7-A A32/D32, and 68040 MMU format-0/stack ABI. It is not a
 claim for unsupported physical CPU/FPU/control states, SMP or arbitrary kernel
 preemption. #897 owns final release-default consolidation after acceptance.

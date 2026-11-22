@@ -305,15 +305,15 @@ static long pexec_ok(const long *pw)
         return kproc_user_aspace(run) ? EINVFN : E_OK;
 #endif
 #if CONF_WITH_STAGED_PEXEC
-#if CONF_WITH_USER_ASPACE && !(CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC)
+#if CONF_WITH_USER_ASPACE && !(CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC)
     /* Production gate: no staged-image access before capability acceptance. */
     if (mode == PE_GO && kproc_user_aspace(run)) return EINVFN;
 #endif
     if (mode == PE_GO || mode == PE_GOTHENFREE
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
         || mode == 104
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         || mode == PE_ASYNC_GO_FREE
 #endif
     ) {
@@ -330,10 +330,10 @@ static long pexec_ok(const long *pw)
 #if CONF_WITH_STAGED_PEXEC
         || mode == PE_LOAD
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         || mode == PE_ASYNC_LOADGO
 #endif
-#if CONF_WITH_PEXEC200
+#if CONF_WITH_EXEC_REPLACE
         || mode == PE_EXEC_REPLACE      /* path, tail and environment as mode 0 */
 #endif
     ) {

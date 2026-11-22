@@ -32,7 +32,7 @@ extern BASEPAGE *_base;
     cc = shlex.split(os.environ.get("HOSTCC", "cc"))
     common = ["-std=gnu90", "-Wall", "-Wextra", "-Werror", "-Itests"]
     subprocess.run(cc + common + ["-I" + str(work), "-DTEST_LOG_FILE",
-        "-DTEST_WITH_NATIVE_SCHED", "-DTEST_WITH_PCLONE", "-D__arm__",
+        "-DTEST_WITH_MULTITHREADING", "-D__arm__",
         "-Dmain=ptest_harness_main", "-c", "tests/runtests.c",
         "-o", str(work / "harness.o")], cwd=ROOT, check=True)
     subprocess.run(cc + common + ["-I" + str(work), "-DTEST_LOG_FILE",

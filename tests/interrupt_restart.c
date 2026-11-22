@@ -20,7 +20,7 @@ static KTHREAD_CONTEXT execution;
 static BOOL target=TRUE,cleanup,cancelled,peer=TRUE,critical;
 static BOOL resident_code=TRUE,resident_stack=TRUE;
 static VADDR stack_first=STACK,stack_end=STACK+8192;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 static BOOL owned_code=TRUE,owned_stack=TRUE;
 #endif
 static unsigned allocations,frees,destroys,fail_alloc,cancel_calls;
@@ -58,7 +58,7 @@ BOOL aspace_logical_protection(const ASPACE *as,VADDR va,UWORD *rights)
 { return aspace_translate(as,va,NULL,rights); }
 BOOL aspace_private_range_ok(const ASPACE *as,VADDR va,VADDR bytes)
 { (void)as;return bytes && (va==CODE || (va>=STACK && va<STACK+8192)); }
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
 { return (va==CODE?owned_code:owned_stack) && aspace_private_range_ok(as,va,bytes); }
 BOOL aspace_retired_pin_overlap(const ASPACE *as,VADDR va,VADDR bytes)
@@ -113,7 +113,7 @@ BOOL ksched_block(BOOL (*ready)(void *),void *argument)
     execution.interrupted_user.valid=FALSE;
     execution.on_cpu=FALSE;
     critical=FALSE;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     interrupt_restart_reap(&execution);
 #endif
 #if CONF_WITH_IRQ_RESTART_TEST
@@ -166,7 +166,7 @@ void xterm(UWORD status)
 static LONG operation(UQUAD selector)
 { return interrupt_restart_test((selector==IRQ_RESTART_BEGIN || selector==IRQ_RESTART_NO_CREDIT)?0x20000000UL:0,selector); }
 #endif
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 #include "ksched_quantum.h"
 static KSCHED_QUANTUM quantum;
 static UWORD patterns;

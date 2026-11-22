@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-timer-review-') as directory:
 #include <sys/mman.h>
 #include <unistd.h>
 #include <stdio.h>
-#define TEST_WITH_NATIVE_PREEMPT 1
+#define TEST_WITH_PREEMPTION 1
 static struct {volatile long ready;} *shared;
 #define group (*shared)
 ''' + ready + '''
@@ -97,7 +97,7 @@ int main(void)
     prefix = (preempt[:preempt.index('static volatile unsigned long preempt_turn')] +
               '\n#endif\n')
     for private, mmap in ((0, 0), (0, 1), (1, 0), (1, 1)):
-        flags = '#define TEST_WITH_NATIVE_PREEMPT 1\n#define TEST_WITH_NATIVE_PREEMPT_PROBES 1\n'
+        flags = '#define TEST_WITH_PREEMPTION 1\n#define TEST_WITH_NATIVE_PREEMPT_PROBES 1\n'
         if private:
             flags += '#define TEST_WITH_PRIVATE_CLONE_TEST 1\n'
         if mmap:
@@ -216,7 +216,7 @@ int main(void)
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#define CONF_WITH_NATIVE_PREEMPT 1
+#define CONF_WITH_PREEMPTION 1
 #define CLONE_VM 1
 #define CLONE_SAME_PROCESS 2
 #define GEMDOS_PTHJOIN 0x191

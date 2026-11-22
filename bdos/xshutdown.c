@@ -23,7 +23,7 @@
 #include "biosext.h"
 #include "kprint.h"
 #include "shutdown.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
 #if CONF_WITH_MMAP
@@ -105,7 +105,7 @@ long xshutdown(LONG mode)
     if (shutting_down)
         return EACCDN;       /* already on its way */
     shutting_down = TRUE;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_shutdown_begin();
 #endif
 

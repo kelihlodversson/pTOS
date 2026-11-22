@@ -56,7 +56,7 @@ typedef struct callback_frame {
     UBYTE fpu[512] __attribute__((aligned(16)));
 } CALLBACK_FRAME;
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static USER_CALLBACK_CPU *callback_cpu(void) { return ksched_callback_cpu(); }
 #else
 static USER_CALLBACK_CPU legacy_callback;

@@ -9,7 +9,7 @@ typedef struct {
     ULONG token;
     UWORD depth;
 } USER_CALLBACK_CPU;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 USER_CALLBACK_CPU *ksched_callback_cpu(void);
 #endif
 #endif

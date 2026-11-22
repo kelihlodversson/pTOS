@@ -2,7 +2,7 @@
  * Timer policy and test-only preparation are separate admission gates. */
 #include "emutos.h"
 
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 #include "kthread_context.h"
 #include "ksched.h"
 #include "kaspace.h"
@@ -15,7 +15,7 @@ extern PD *run;
 #if CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_X86_64_MEMTEST
 static ULONG irq_pattern_seen, irq_roundtrip_seen;
 static BOOL irq_pattern_bad, irq_pattern_reported;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 #define IRQ_PATTERN_COUNT 20000000
 #else
 #define IRQ_PATTERN_COUNT 2000000
@@ -60,7 +60,7 @@ void x86_64_capture_user_irq(const X86_USER_IRQ_FRAME *frame)
     if (frame->cs!=X86_64_USER_CODE_SEL) return; /* no kernel-frame interpretation */
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     /* Invalidate freshness even when skipping a diagnostic copy. The device
      * tick runs later; prepare on its last quantum tick, never afterward. */
     execution->interrupted_user.valid=FALSE;
@@ -121,7 +121,7 @@ void x86_64_restart_user_irq(X86_USER_IRQ_FRAME *frame)
     if (frame->cs!=X86_64_USER_CODE_SEL) return;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if (!ksched_preempt_due()) return;
 #endif
     c=&execution->interrupted_user;

@@ -12,7 +12,7 @@ typedef struct kaspace_lease KASPACE_LEASE;
  * materialize through the ordinary owner and validate resident rights. */
 LONG kaspace_copy_begin(KASPACE *,VADDR,VADDR,BOOL,KASPACE_LEASE **);
 BOOL kaspace_copy_valid(const KASPACE_LEASE *);
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 /* Reserve ordinary lease storage before publication. Activation/parking only
  * link/unlink this same ledger record, with no allocation, destruction or user
  * access. The executing KTHREAD already retains the root until its off-stack
@@ -101,7 +101,7 @@ BOOL kaspace_mapping_can_change(const struct aspace *backend, VADDR address, VAD
 BOOL kaspace_next_held(const KASPACE *space,VADDR from,VADDR to,VADDR *first,VADDR *end);
 
 BOOL kaspace_mapping_change(struct aspace *backend, VADDR address, VADDR bytes);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Loader-only, synchronous no-yield permission preparation. Abort only after
  * releasing all new startup/region holds. Existing lease pointers cannot be
  * released/reentered during the transaction. Never an IRQ/SMP primitive. */

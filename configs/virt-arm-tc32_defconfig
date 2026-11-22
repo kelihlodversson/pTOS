@@ -1,9 +1,6 @@
 # ELF kernel image for QEMU's ARM 'virt' machine (qemu-system-arm -M virt)
 MACHINE_VIRT_ARM=y
 
-# Issue #91 test-only 32bpp XRGB8888 VDI backend build.
-CONF_WITH_VDI_TRUECOLOR32_TEST=y
-
 # The multi-language image supports every country at run time.
 # BUILD_UNIQUE_COUNTRY is not set
 

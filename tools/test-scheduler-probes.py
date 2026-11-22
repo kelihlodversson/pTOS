@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-deferred-guards-') as directory:
     for enabled, cancellation in product((False, True), repeat=2):
         (top / 'obj/autoconf.h').write_text(
             ('#define CONF_WITH_IRQ_RESTART_TEST 1\n' if enabled else '') +
-            ('#define CONF_WITH_PTERMGRP 1\n' if cancellation else ''))
+            ('#define CONF_WITH_MULTITHREADING 1\n' if cancellation else ''))
         for present in product((False, True), repeat=len(verdicts)):
             log.write_text('native ARM fresh owned IRQ image round trip: PASS\n' +
                            ''.join(marker + '\n' for (_, marker), seen in zip(verdicts, present) if seen))
@@ -86,24 +86,23 @@ with tempfile.TemporaryDirectory(prefix='ptos-scheduler-probes-') as directory:
         start = script.rfind('\nif ', 0, end) + 1
         block = script[start:end]
         for sched in (False, True):
-            for clone in (False, True):
-                for handoff in (False, True):
-                    for memtest in (False, True):
-                        for present in (False, True):
-                            enabled = {'CONF_WITH_NATIVE_SCHED': sched, 'CONF_WITH_PCLONE': clone,
-                                       'CONF_WITH_EXIT_HANDOFF_TEST': handoff, 'CONF_WITH_X86_64_MEMTEST': memtest}
-                            (top / 'obj/autoconf.h').write_text(''.join('#define ' + k + ' 1\n' for k,v in enabled.items() if v))
-                            log.write_text(marker + '\n' if present else '')
-                            shell = 'top=$1; suite_log=$2; machine=pc-x86_64\nrecord() { printf "%s" "$1"; }\n' + block
-                            result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)], check=True, text=True, capture_output=True)
-                            required = sched and ((clone and (handoff or memtest)) if label == 'native user IRQ capture' else handoff)
-                            assert result.stdout == (label if required and not present else ''), (label, enabled, present, result.stdout)
-print('Production regression guards: 96 feature/marker cases, required missing evidence still fails: PASS (host shell)')
+            for handoff in (False, True):
+                for memtest in (False, True):
+                    for present in (False, True):
+                        enabled = {'CONF_WITH_MULTITHREADING': sched,
+                                   'CONF_WITH_EXIT_HANDOFF_TEST': handoff, 'CONF_WITH_X86_64_MEMTEST': memtest}
+                        (top / 'obj/autoconf.h').write_text(''.join('#define ' + k + ' 1\n' for k,v in enabled.items() if v))
+                        log.write_text(marker + '\n' if present else '')
+                        shell = 'top=$1; suite_log=$2; machine=pc-x86_64\nrecord() { printf "%s" "$1"; }\n' + block
+                        result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)], check=True, text=True, capture_output=True)
+                        required = sched and ((handoff or memtest) if label == 'native user IRQ capture' else handoff)
+                        assert result.stdout == (label if required and not present else ''), (label, enabled, present, result.stdout)
+print('Production regression guards: 48 feature/marker cases, required missing evidence still fails: PASS (host shell)')
 
 # The disabled/eager MEMTEST baseline can enable the scheduler without any
 # executable asynchronous fixture. Run the actual six-marker shell block.
 mmap_script = (root / 'tools/test-mmap-boot.sh').read_text()
-start = mmap_script.index("if grep -q '^CONF_WITH_NATIVE_SCHED *= *y'")
+start = mmap_script.index("if grep -q '^CONF_WITH_MULTITHREADING *= *y'")
 end = mmap_script.index('\nfi', start) + 3
 block = mmap_script[start:end]
 required_markers = re.findall(r"grep -q '([^']+: PASS)'", block)
@@ -112,16 +111,16 @@ with tempfile.TemporaryDirectory(prefix='ptos-memtest-probes-') as directory:
     top = Path(directory)
     (top / 'obj').mkdir()
     log = top / 'boot.log'
-    for mask in range(16):
+    for mask in range(8):
         enabled = {name: bool(mask & (1 << i)) for i, name in enumerate(
-            ['NATIVE_SCHED', 'MMAP', 'PCLONE', 'LIBAES'])}
+            ['MULTITHREADING', 'MMAP', 'LIBAES'])}
         (top / 'obj/auto.conf').write_text(''.join('CONF_WITH_' + k + '=y\n' for k,v in enabled.items() if v))
-        required = enabled['NATIVE_SCHED'] and any(enabled[k] for k in ['MMAP', 'PCLONE', 'LIBAES'])
+        required = enabled['MULTITHREADING']
         for missing in [None] + required_markers:
             log.write_text('\n'.join(m for m in required_markers if m != missing) + '\n')
             result = subprocess.run(['sh', '-ec', 'log=$1\n' + block, 'probe', str(log)], cwd=top)
             assert (result.returncode != 0) == bool(required and missing), (enabled, missing, result.returncode)
-print('Production MEMTEST guards: 112 fixture/marker cases, enabled missing evidence still fails: PASS (host shell)')
+print('Production MEMTEST guards: 56 fixture/marker cases, enabled missing evidence still fails: PASS (host shell)')
 
 # Compile the real AUTO user program with bounded hosted endpoints. The
 # previous OS-version selector never advances and trips the yield limit.
@@ -153,14 +152,13 @@ with tempfile.TemporaryDirectory(prefix='ptos-initial-probe-') as directory:
     log = top / 'suite.log'
     for machine in ('virt-arm', 'virt-m68k-aspace', 'virt-m68k-mmu', 'raspi2b-aspace', 'pc-x86_64'):
         for sched in (0, 1):
-            for clone in (0, 1):
-                for present in (False, True):
-                    (top / 'obj/autoconf.h').write_text('#define CONF_WITH_NATIVE_SCHED %d\n#define CONF_WITH_PCLONE %d\n' % (sched, clone))
-                    log.write_text('native clone first-instruction state: PASS\n' if present else '')
-                    shell = 'machine=$1; top=$2; suite_log=$3\nrecord() { printf "%s" "$1"; }\n' + block
-                    r = subprocess.run(['sh', '-c', shell, 'probe', machine, str(top), str(log)], text=True, capture_output=True, check=True)
-                    required = machine != 'pc-x86_64' and sched and clone and not present
-                    assert r.stdout == ('native clone initial register state' if required else ''), (machine, sched, clone, present, r.stdout)
+            for present in (False, True):
+                (top / 'obj/autoconf.h').write_text('#define CONF_WITH_MULTITHREADING %d\n' % sched)
+                log.write_text('native clone first-instruction state: PASS\n' if present else '')
+                shell = 'machine=$1; top=$2; suite_log=$3\nrecord() { printf "%s" "$1"; }\n' + block
+                r = subprocess.run(['sh', '-c', shell, 'probe', machine, str(top), str(log)], text=True, capture_output=True, check=True)
+                required = machine != 'pc-x86_64' and sched and not present
+                assert r.stdout == ('native clone initial register state' if required else ''), (machine, sched, present, r.stdout)
 print('Native initial-entry production guards: all machine alternatives and disabled gates: PASS (host shell)')
 
 # Nested ownership always requires its three native verdicts. Reclamation
@@ -178,8 +176,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-nested-probes-') as directory:
     top = Path(directory)
     (top / 'obj').mkdir()
     log = top / 'suite.log'
-    for mask in range(8):
-        names = ['CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_NATIVE_SCHED', 'CONF_WITH_PTERMGRP']
+    for mask in range(4):
+        names = ['CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_MULTITHREADING']
         (top / 'obj/autoconf.h').write_text(''.join(
             '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
         for missing in [None] + nested_markers:
@@ -188,12 +186,10 @@ with tempfile.TemporaryDirectory(prefix='ptos-nested-probes-') as directory:
             result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
                                     check=True, text=True, capture_output=True)
             required = (mask & 3) == 3 and missing is not None
-            if missing == nested_markers[-1]:
-                required = required and bool(mask & 4)
             expected = ('native nested continuation cancellation' if missing == nested_markers[-1]
                         else 'native nested continuation ownership') if required else ''
             assert result.stdout == expected, (mask, missing, result.stdout)
-print('Native nested ownership guards: 40 feature/marker cases, optional cancellation and missing evidence: PASS (host shell)')
+print('Native nested ownership guards: 20 feature/marker cases, cancellation and missing evidence: PASS (host shell)')
 
 start = script.index('# Configured shared-root lifetime probes')
 end = script.index('# The experimental VM test', start)
@@ -209,8 +205,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-mapping-probes-') as directory:
     top = Path(directory)
     (top / 'obj').mkdir()
     log = top / 'suite.log'
-    for mask in range(16):
-        names = ['CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_NATIVE_SCHED', 'CONF_WITH_MMAP', 'CONF_WITH_PTERMGRP']
+    for mask in range(8):
+        names = ['CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_MULTITHREADING', 'CONF_WITH_MMAP']
         (top / 'obj/autoconf.h').write_text(''.join(
             '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
         for missing in [None] + mapping_markers:
@@ -219,11 +215,10 @@ with tempfile.TemporaryDirectory(prefix='ptos-mapping-probes-') as directory:
             result = subprocess.run(['sh', '-c', shell, 'probe', str(top), str(log)],
                                     check=True, text=True, capture_output=True)
             required = (mask & 7) == 7 and missing is not None
-            if missing == mapping_markers[-1]: required = required and bool(mask & 8)
             expected = ('native shared-root waiter cancellation' if missing == mapping_markers[-1]
                         else 'native shared-root mapping ownership') if required else ''
             assert result.stdout == expected, (mask, missing, result.stdout)
-print('Native shared-root mapping guards: 96 feature/marker cases, missing execution evidence fails: PASS (host shell)')
+print('Native shared-root mapping guards: 48 feature/marker cases, missing execution evidence fails: PASS (host shell)')
 
 # Execute the final production guard against every collected console/QEMU
 # log. A resumed guest panic must still fail after later successful runs.
@@ -264,7 +259,7 @@ print('Native blocked-copyout guard: 16 feature/marker cases, missing execution 
 
 # Run the complete production Phase C shell guard. Every required marker must
 # fail independently when absent; disabled feature combinations stay optional.
-start = script.index("if grep -q '^#define CONF_WITH_NATIVE_PREEMPT 1'")
+start = script.index("if grep -q '^#define CONF_WITH_PREEMPTION 1'")
 end = script.index('\nfi', start) + 3
 block = script[start:end]
 timer_markers = [
@@ -281,8 +276,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-timer-guards-') as directory:
     top = Path(directory)
     (top / 'obj').mkdir()
     log = top / 'suite.log'
-    names = ['CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_MMAP',
-             'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PFORK', 'CONF_WITH_PTERMGRP']
+    names = ['CONF_WITH_PREEMPTION', 'CONF_WITH_MMAP',
+             'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_FORK', 'CONF_WITH_MULTITHREADING']
     for mask in range(32):
         (top / 'obj/autoconf.h').write_text(''.join(
             '#define ' + name + ' 1\n' for i, name in enumerate(names) if mask & (1 << i)))
@@ -308,7 +303,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-arm-exclusive-guards-') as directo
     (top / 'obj').mkdir()
     log = top / 'suite.log'
     for mmap in (False, True):
-        (top / 'obj/autoconf.h').write_text('#define CONF_WITH_NATIVE_PREEMPT 1\n' +
+        (top / 'obj/autoconf.h').write_text('#define CONF_WITH_PREEMPTION 1\n' +
                                          ('#define CONF_WITH_MMAP 1\n' if mmap else ''))
         for machine in ('virt-arm', 'raspi2b-aspace', 'pc-x86_64', 'virt-m68k-aspace'):
             for exclusive in (False, True):

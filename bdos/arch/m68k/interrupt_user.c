@@ -1,6 +1,6 @@
 /* Hardware format-0 user IRQ capture only. No saved-frame restore/dispatch. */
 #include "emutos.h"
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 #include "kthread_context.h"
 #include "ksched.h"
 #include "kaspace.h"
@@ -111,7 +111,7 @@ void m68k_capture_user_irq(const M68K_USER_IRQ_FRAME *frame)
     if ((frame->sr&0x2000) || (frame->format_vector&0xf000)) return;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution) return;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     /* Invalidate freshness even when skipping a diagnostic copy. The device
      * tick runs later; prepare on its last quantum tick, never afterward. */
     execution->interrupted_user.valid=FALSE;
@@ -201,7 +201,7 @@ ULONG m68k_restart_user_irq(M68K_USER_IRQ_FRAME *frame)
     if ((frame->sr&0x3000) || (frame->format_vector&0xf000)) return 0;
     execution=ksched_interrupt_target(run,&space,&tid);
     if (!execution || execution->irq_restart.state!=IRQ_RESTART_ARMED) return 0;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if (!ksched_preempt_due()) return 0;
 #endif
     c=&execution->interrupted_user;

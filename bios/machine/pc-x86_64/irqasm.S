@@ -122,7 +122,7 @@ x86_64_irq_common:
                  * any C call boundary, and an IRQ can interrupt code
                  * that had set it */
 
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
         /* Capture BEFORE dispatch/callback code changes live scratch state.
          * The original frame remains authoritative. Test kernels may
          * round-trip a fresh owned image here, before callbacks/dispatch. */

@@ -33,7 +33,7 @@
 
 void test_nested_exec(void);
 
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_USER_ASPACE)
+#if defined(TEST_WITH_MULTITHREADING) && defined(TEST_WITH_USER_ASPACE)
 
 #define CHAIN_LEVELS 3          /* child, grandchild, great-grandchild */
 static const char environment[2] = { 0, 0 };

@@ -13,7 +13,7 @@
 #include "gemerror.h"
 #include "biosext.h"
 #include "string.h"
-#if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_PREEMPTION && CONF_WITH_PRIVATE_CLONE_TEST
 #include "tosvars.h"
 typedef struct { ULONG start,ticks; } PREEMPT_TEST_DELAY;
 static BOOL preempt_test_ready(void *argument)
@@ -86,7 +86,7 @@ void interrupt_restart_dispose(KTHREAD_CONTEXT *c)
     interrupt_restart_detach(c,&retired);
     interrupt_restart_retire(&retired);
 }
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 LONG interrupt_restart_reserve(IRQ_RESTART *r)
 {
     LONG error;
@@ -253,11 +253,11 @@ void interrupt_restart_user_entry(void)
     ULONG tid=0;
     uintptr_t flags=native_sched_irq_save();
     KTHREAD_CONTEXT *c=ksched_interrupt_target(run,&space,&tid);
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     BOOL reap=FALSE;
 #endif
     if(c) ksched_irq_restart_observe_user(c->identity);
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if(c && c->irq_restart.automatic && c->irq_restart.state==IRQ_RESTART_ARMED &&
        c->irq_restart.execution && !ksched_cleanup_active() && owner_valid(c)) {
         reap=kaspace_irq_park(c->irq_restart.stack);
@@ -266,7 +266,7 @@ void interrupt_restart_user_entry(void)
     }
 #endif
     native_sched_irq_restore(flags);
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if(reap) {
         /* This is an authenticated ordinary USER trap with its registers
          * saved, not an IRQ. Its live launcher/THREAD retains the root and
@@ -283,7 +283,7 @@ BOOL interrupt_restart_admit(KTHREAD_CONTEXT *c,UQUAD sequence,VADDR pc,VADDR sp
 #if CONF_WITH_IRQ_RESTART_TEST
     if (r->suppress_credit && r->transported) return FALSE; /* one real uncredited transport per operation */
 #endif
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if (r->automatic) {
         if (!automatic_hold(c,pc,sp)) return FALSE;
     } else
@@ -312,7 +312,7 @@ BOOL interrupt_restart_suspend(KTHREAD_CONTEXT *c)
     if (!ksched_block(ready,NULL)) panic("IRQ restart: refused prepared departure");
     if (r->state!=IRQ_RESTART_SUSPENDED || !owner_valid(c) || ksched_cleanup_active())
         panic("IRQ restart: restored owner identity changed");
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (ksched_cancellation_pending()) {
         /* The existing cancellation protocol owns status and stopping. We are
          * back on A's verified launcher stack after root acknowledged departure;
@@ -343,7 +343,7 @@ void interrupt_restart_ack(KTHREAD_CONTEXT *c)
 {
     if(c->irq_restart.state!=IRQ_RESTART_RETURNING || !owner_valid(c) || ksched_cleanup_active())
         panic("IRQ restart: invalid architectural return acknowledgment");
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if (c->irq_restart.automatic) {
 #if CONF_WITH_PRIVATE_CLONE_TEST
         if (c->irq_restart.peer_ran) {

@@ -90,7 +90,7 @@ and #713. The pure policy cannot implement that handoff.
 Validation and gates
 --------------------
 
-CONF_WITH_IMAGE_POLICY and CONF_WITH_IMAGE_POLICY_TEST default off. Normal
+CONF_WITH_IMAGE_POLICY_TEST defaults off. Normal
 presets select neither. The latter uses private Pclone size selectors
 (include/image_policy_test.h, disjoint from the #974 PRIVATE_SNAPSHOT_QUERY
 value, which shares a regression configuration with it) and the

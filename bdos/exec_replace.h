@@ -80,7 +80,7 @@ struct kaspace *kproc_exec_replacement_selected(const KPROC_EXEC_REPLACEMENT *);
  * bundle and draft on success, which never returns; every error precedes the
  * no-fail boundary and leaves the three handles with the caller. */
 LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **, KPROC_EXEC_IMAGE **);
-#if CONF_WITH_PEXEC200
+#if CONF_WITH_EXEC_REPLACE
 /* Pexec(200). Returns only on failure, with the caller unchanged. env NULL
  * keeps the caller's own environment, as for every other Pexec mode. */
 LONG proc_exec_replace(char *path, char *tail, char *env);

@@ -8,10 +8,10 @@
 #include "mem.h"
 #include "procmem.h"
 #include "../../bdos/proc.c"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 PD *run; /* modeled CPU slot: this fixture does not link the dispatcher */
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static FS_ERROR_STATE fixture_error;
 FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #else

@@ -5,6 +5,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "../bdos/kproc.c"
+
 #include "process_observer.h"
 #undef assert
 #include <assert.h>
@@ -74,7 +75,7 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR address, VADDR bytes)
 { (void)as; (void)address; (void)bytes; abort(); }
 BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR address, VADDR bytes, UWORD prot)
 { (void)from; (void)to; (void)address; (void)bytes; (void)prot; abort(); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 FTAB sft[OPNFILES];
 static OFD callback_file;
 static unsigned child_finalizers;
@@ -82,8 +83,15 @@ BOOL ksched_pid_reserved(WORD pid) { (void)pid; return FALSE; }
 ASPACE *kaspace_backend(const KASPACE *space) { assert(!space); return NULL; }
 void procmem_pin(VADDR va,VADDR bytes,int delta) { (void)va;(void)bytes;(void)delta; abort(); }
 void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes; abort(); }
-BOOL fs_sft_busy(int index) { assert(index>=0 && index<OPNFILES); return FALSE; }
-OFD *getofd(int handle) { assert(handle==NUMSTD); return &callback_file; }
+BOOL __attribute__((weak)) fs_sft_busy(int index) { assert(index>=0 && index<OPNFILES); return FALSE; }
+OFD *__attribute__((weak)) getofd(int handle) { assert(handle==NUMSTD); return &callback_file; }
+#ifndef OBSERVER_WITH_CLOSE_FIXTURE
+static FS_ERROR_STATE observer_error;
+FS_ERROR_STATE *fs_error_current(void) { return &observer_error; }
+long fs_close_backend(WORD handle, volatile BOOL *consumed)
+{ (void)handle; (void)consumed; abort(); }
+void mark_bcbs_invalid(int drive) { (void)drive; abort(); }
+#endif
 void proc_exec_owner_exit(KPROC *owner)
 {
     if (owner!=during_retirement) return;
@@ -137,7 +145,7 @@ int main(void)
     assert(kproc_begin_exit(&child)); kproc_destroy(&child); during_retirement=NULL;
     assert(!kproc_ref_has_basepage(p) && p->retired && p->references==3);
     assert(post_unlink_checks>=3 && !p->destroying_pd);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     assert(child_finalizers==1);
     puts("Post-unlink prepared-child finalizer rejects real ixforce into retiring parent: PASS (host CPU model)");
 #endif

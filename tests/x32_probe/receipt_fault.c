@@ -4,7 +4,7 @@
 #include "config.h"
 #include "pclone.h"
 #include "threadcalls.h"
-#if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_MULTITHREADING
 extern long long x32_probe_call(unsigned long long,long long,long long,long long);
 #define RF_CALL(n,a,b,c) x32_probe_call(n,(long long)(unsigned long)(a),(long long)(unsigned long)(b),(long long)(unsigned long)(c))
 static void receipt_publisher(void *argument)

@@ -33,7 +33,7 @@
 #include "biosext.h"
 #include "procmem.h"
 #include "aspace32.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "native_sched_backend.h"
 #include "arch/m68k/irqframe.h"
@@ -62,7 +62,7 @@ void termuser(void) NORETURN;
 
 /* the FPU state of a process (uspaceasm.S): the FSAVE frame (the longest, of
  * the 68881/2, is 216 bytes), fpcr/fpsr/fpiar, fp0-fp7 */
-#if !CONF_WITH_NATIVE_SCHED
+#if !CONF_WITH_MULTITHREADING
 struct fpuctx {
     UBYTE frame[216];
     ULONG ctl[3];
@@ -133,7 +133,7 @@ void m68k_gemdos_dispatch(struct uframe *f)
 #if CONF_WITH_FORK_RETURN_TEST
         (pw[0] == 0x190 && !pw[1] && !pw[2] && (UWORD)pw[3] == 0x895f) ||
 #endif
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
         pw[0] == GEMDOS_PFORK || pw[0] == GEMDOS_PVFORK ||
 #endif
         FALSE) {
@@ -165,7 +165,7 @@ void m68k_gemdos_dispatch(struct uframe *f)
             saved.mappings.stack_base = end - 16;
             saved.mappings.stack_size = 16;
         }
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
         if (pw[0] != 0x190) {
             f->d[0] = proc_clone_fork(&saved, pw[0] == GEMDOS_PVFORK);
             return;
@@ -206,7 +206,7 @@ struct uspace_launch {
     volatile BOOL relaunch; /* Pexec(200): enter the committed image again */
 #endif
 };
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static struct uspace_launch *get_uspace_launch(void) { return ksched_loaded_launcher(); }
 static void set_uspace_launch(struct uspace_launch *launch) { ksched_set_loaded_launcher(launch); }
 #else
@@ -214,7 +214,7 @@ static struct uspace_launch *legacy_launch;
 static struct uspace_launch *get_uspace_launch(void) { return legacy_launch; }
 static void set_uspace_launch(struct uspace_launch *launch) { legacy_launch=launch; }
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 BOOL m68k_process_irq_stack(PD *pd, uintptr_t *base, uintptr_t *top)
 {
     struct uspace_launch *launch=get_uspace_launch();
@@ -309,7 +309,7 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         return FALSE;
 #if CONF_WITH_EXIT_HANDOFF_TEST
     if (!injected_exit_failure
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         && !ksched_exit_thread(pd)
 #endif
     ) {
@@ -319,7 +319,7 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         return FALSE;
     }
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     thread = ksched_exit_thread(pd);
 #endif
     if (!kproc_prepare_thread_exit_handoff(process, thread, &final)) {
@@ -345,7 +345,7 @@ void gouser(void)
     ULONG launcher_status;
     uintptr_t kstack_top;
     PADDR kstack_phys;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
     const THREAD_STARTUP32 *prepared = startup ? thread_startup_image(startup) : NULL;
 #if CONF_WITH_EXEC_REPLACE
@@ -362,7 +362,7 @@ void gouser(void)
     /* Pexec(200): fresh stacks from the draft, ordinary entry from the record */
     if (program) prepared = NULL;
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* A prepared THREAD starts at its validated entry, even 0: shared-VM
      * 4/104 (#1018) may start a null p_tbase, which faults in the child.
      * Never re-read p_tbase for it here: the basepage is in memory the
@@ -413,7 +413,7 @@ relaunch:
          * Written through the kernel's copy, which backs the page of a lazy stack
          * (a store from here would be a fault of the kernel) */
         if (
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
             !prepared &&
 #endif
             !kproc_standard_entry(p)) {
@@ -427,11 +427,11 @@ relaunch:
         initial_entry.user_sp = user_sp;
         initial_entry.kstack_top = (ULONG)kstack_top;
         initial_entry.argument = 0;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (prepared && !(prepared->flags & THREAD_STARTUP_PRG_ENTRY))
             initial_entry.argument = prepared->argument;
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (prepared) thread_startup_entering(startup);
 #if CONF_WITH_SAVED_RETURN
         if (prepared && prepared->saved_return) m68k_enter_saved_user(prepared->saved_return, (ULONG)kstack_top);
@@ -499,7 +499,7 @@ relaunch:
     }
     if (launch.exit_process) {
         KPROC *process = launch.exit_process;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_finish_exit(process, launch.pd, launch.exit_status, launch.exit_final);
 #endif
         if (launch.exit_final)

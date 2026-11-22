@@ -1,5 +1,5 @@
 #!/bin/sh
-# Separate opt-in 040 Phase C lane. Keep the ordinary ROM/030/fastcall matrix.
+# Qualified 040 Phase C lane. Keep the ordinary ROM/030/fastcall matrix.
 set -eu
 mkdir -p logs
 make falcon-aspace040_defconfig
@@ -11,14 +11,12 @@ k.load_config()
 # existing size profile; retain stack ABI, MMU/FPU and every required probe.
 k.syms['OPTIMIZE_SIZE'].set_value(2)
 assert k.syms['OPTIMIZE_SIZE'].str_value == 'y'
-for name in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN',
-             'CONF_WITH_PTERMGRP', 'CONF_WITH_EXIT_HANDOFF_TEST',
-             'CONF_WITH_PRIVATE_CLONE',
-             'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PROCESS_FILES_TEST',
-             'CONF_WITH_NATIVE_PREEMPT'):
+for name in ('CONF_WITH_MULTITHREADING', 'CONF_WITH_EXIT_HANDOFF_TEST',
+             'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PROCESS_FILES_TEST'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name
-k.syms['CONF_WITH_PFORK'].set_value(0)
+assert k.syms['CONF_WITH_PREEMPTION'].str_value == 'y'
+assert k.syms['CONF_WITH_FORK'].str_value == 'n'
 k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(0)
 assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
 assert k.syms['CONF_WITH_MFASTCALL'].str_value == 'n'

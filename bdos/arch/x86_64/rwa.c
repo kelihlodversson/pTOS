@@ -74,7 +74,7 @@
 #if CONF_WITH_X86_64_MEMTEST
 #include "../../../bios/machine/pc-x86_64/pc_x86_64_memtest.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "thread_startup.h"
 #include "thread_startup_x32.h"
@@ -162,7 +162,7 @@ struct x86_64_process_launch {
 #endif
 };
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static X86_64_PROCESS_LAUNCH *get_current_launch(void) { return ksched_loaded_launcher(); }
 static void set_current_launch(X86_64_PROCESS_LAUNCH *launch) { ksched_set_loaded_launcher(launch); }
 #else
@@ -208,7 +208,7 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         return FALSE;
     }
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     thread = ksched_exit_thread(pd);
 #endif
     if (!kproc_prepare_thread_exit_handoff(process, thread, &final)) {
@@ -255,7 +255,7 @@ void proc_exec_stack_take(void *owner, PADDR physical)
 void x86_64_process_save(X86_64_PROCESS_CONTEXT *context)
 {
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(context->flags) :: "memory");
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_verify_switch_boundary();
 #endif
     __asm__ volatile ("fxsave %0" : "=m"(context->fpu));
@@ -265,7 +265,7 @@ void x86_64_process_save(X86_64_PROCESS_CONTEXT *context)
     context->user_rsp = x86_64_get_saved_user_rsp();
     context->irq_rsp = x86_64_get_irq_stack();
     context->launch = get_current_launch();
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     context->native_task = ksched_context_id();
 #endif
     context->disk_error = *fs_error_current();
@@ -279,7 +279,7 @@ void x86_64_process_restore(const X86_64_PROCESS_CONTEXT *context)
     x86_64_syscall_abandoned();
     run = context->pd;
     set_current_launch(context->launch);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_context_restore(context->native_task);
 #endif
     *fs_error_current() = context->disk_error;
@@ -310,7 +310,7 @@ BOOL x86_64_process_is_accessory(void)
 void x86_64_process_cancel(X86_64_PROCESS_CONTEXT *context, PD *root)
 {
     X86_64_PROCESS_LAUNCH *launch = context->launch;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* No caller currently cancels managed continuations through this legacy
      * API. Group cancellation needs #893's explicit stop/root-reap protocol. */
     if (context->native_task)
@@ -465,7 +465,7 @@ void gouser_entry(WORD entry_type)
          * ring-3 process has, which this branch switches to and back, is a
          * kernel stack of its own (see this file's own top comment).
          */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
         const X32_THREAD_STARTUP_DRAFT *prepared = startup ? thread_startup_image(startup) : NULL;
 #if CONF_WITH_EXEC_REPLACE
@@ -492,14 +492,14 @@ void gouser_entry(WORD entry_type)
         UQUAD launcher_flags;
         int launcher_in_syscall;
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (ksched_take_syscall_stack(p, &syscall_owner)) {
             kstack_phys = syscall_owner.physical;
             kstack_top = syscall_owner.top;
         } else
 #endif
             kstack_phys = kproc_take_kernel_stack(p, &kstack_top);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         __asm__ volatile ("movw %%ds,%0; movw %%es,%1; movw %%fs,%2; movw %%gs,%3"
                           : "=r"(launcher_ds), "=r"(launcher_es), "=r"(launcher_fs), "=r"(launcher_gs));
         launcher_fsbase = clone_read_base(0xc0000100UL);
@@ -556,14 +556,14 @@ void gouser_entry(WORD entry_type)
         x86_64_set_kernel_stack(kstack_top);
         x86_64_set_irq_stack(kstack_top + 8);
         launcher_in_syscall = x86_64_gs_to_user();
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         launcher_gsbase = clone_read_base(0xc0000101UL);
 #endif
 #if CONF_WITH_EXEC_REPLACE
 relaunch:
 #endif
         if (setjmp(launch.resume) == 0) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
             if (prepared) {
                 thread_startup_entering(startup);
                 x86_64_enter_prepared_user(&prepared->user);
@@ -623,7 +623,7 @@ relaunch:
          * kernel GS base swapped in: normalise that first, then restore the
          * launcher's own state.  Only now is the child's stack unused. */
         x86_64_syscall_abandoned();
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (prepared) {
             __asm__ volatile ("movw %0,%%ds; movw %1,%%es; movw %2,%%fs; movw %3,%%gs"
                               :: "r"(launcher_ds), "r"(launcher_es), "r"(launcher_fs), "r"(launcher_gs) : "memory");
@@ -659,7 +659,7 @@ relaunch:
             x86_64_memtest_exit_handoff(process, launch.pd, kstack_phys,
                                         launch.exit_status, 2);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
             ksched_finish_exit(process, launch.pd, launch.exit_status, launch.exit_final);
 #endif
             if (launch.exit_final)

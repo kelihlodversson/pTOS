@@ -543,7 +543,7 @@ static void shared_vm_orphan(char role)
     conws("native shared-VM running orphan and nested unstarted cleanup: tested\r\n");
     conws("native shared-VM orphan grandchild execution after source retirement: tested\r\n");
 }
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
 static void shared_vm_controller(void *argument)
 {
     struct shared_vm_probe *probe=argument;unsigned spin;long result;
@@ -643,7 +643,7 @@ static void shared_vm_last_thread(void)
     }
     conws("native shared-VM final-THREAD completion and competing waiter: tested\r\n");
 }
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MULTITHREADING)
 static SHARED_PEXEC_PROTECTED shared_protected;
 static struct shared_vm_probe shared_origin;
 static void shared_vm_cancel_peer(void *argument)
@@ -733,7 +733,7 @@ void shared_vm_run_managed_tests(void)
 {
     ptest_begin("shared-VM managed THREAD lifetime");
     shared_vm_last_thread();
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MULTITHREADING)
     shared_vm_source_origins();
 #endif
     ptest_pass();
@@ -990,7 +990,7 @@ void test_shared_vm(void)
     shared_vm_status();
     shared_vm_staged_retirement();
     shared_vm_orphan('o');
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN) && defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     shared_vm_orphan('g');
 #endif
     shared_vm_limits();
@@ -1001,7 +1001,7 @@ void test_shared_vm(void)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     shared_vm_constructor_rollback();
 #endif
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
     shared_vm_managed_worker();
 #endif
     shared_vm_prg();

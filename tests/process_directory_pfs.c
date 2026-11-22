@@ -6,7 +6,7 @@
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"pfs:%d: %s\n",__LINE__,#c); __builtin_abort(); } } while (0)
 static PD parent, child, grandchild;
 PD *run = &parent;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static FS_ERROR_STATE test_disk_error;
 FS_ERROR_STATE *fs_error_current(void) { return &test_disk_error; }
 #else

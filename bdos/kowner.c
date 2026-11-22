@@ -3,7 +3,7 @@
  * bounded metadata only. Local IRQ exclusion is the single-CPU backend,
  * while explicit ownership/rank/LIFO checks enforce the owner contract. */
 #include "emutos.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "kowner.h"
 #include "biosext.h"
 

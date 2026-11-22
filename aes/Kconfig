@@ -12,11 +12,11 @@ menu "AES"
 config CONF_WITH_CUIS
     bool
     depends on ARCH_X86_64 && CONF_WITH_USER_ASPACE
-    select CONF_WITH_NATIVE_SCHED
+    select CONF_WITH_MULTITHREADING
 
 config CONF_WITH_CUIS_OBSERVER_TEST
     bool "TEST ONLY: CUIS PROCESS observer diagnostics"
-    depends on CONF_WITH_CUIS && CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+    depends on CONF_WITH_CUIS && CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
     default n
     help
       Count operation-local observer references and enable the native

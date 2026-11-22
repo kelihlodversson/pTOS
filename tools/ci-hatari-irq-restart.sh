@@ -13,13 +13,13 @@ CONFIG_= python3 - <<'PYCONFIG'
 import kconfiglib
 k = kconfiglib.Kconfig()
 k.load_config()
-for name in ('OPTIMIZE_SIZE', 'CONF_WITH_NATIVE_SCHED', 'CONF_WITH_PCLONE',
-             'CONF_WITH_PTHJOIN', 'CONF_WITH_PTERMGRP', 'CONF_WITH_EXIT_HANDOFF_TEST',
-             'CONF_WITH_PRIVATE_CLONE', 'CONF_WITH_PRIVATE_CLONE_TEST',
+k.syms['CONF_WITH_PREEMPTION'].set_value(0)
+for name in ('OPTIMIZE_SIZE', 'CONF_WITH_MULTITHREADING', 'CONF_WITH_EXIT_HANDOFF_TEST',
+             'CONF_WITH_PRIVATE_CLONE_TEST',
              'CONF_WITH_IRQ_RESTART_TEST'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name
-for name in ('CONF_WITH_MFASTCALL', 'CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_PFORK',
+for name in ('CONF_WITH_MFASTCALL', 'CONF_WITH_PREEMPTION', 'CONF_WITH_FORK',
              'CONF_WITH_FORK_RETURN_TEST'):
     k.syms[name].set_value(0)
     assert k.syms[name].str_value == 'n', name

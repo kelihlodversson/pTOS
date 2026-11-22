@@ -117,10 +117,10 @@ k.load_config('configs/pc-x86_64_defconfig')
 k.load_config('tools/hosted-legacy-profile.config', replace=False)
 k.syms['CONF_WITH_ELF_SHARED'].set_value(2)
 k.syms['CONF_WITH_LIBAES'].set_value(2)
-for name in ('CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN', 'CONF_WITH_FORK_RETURN_TEST', 'CONF_WITH_PRIVATE_CLONE'):
+for name in ('CONF_WITH_MULTITHREADING', 'CONF_WITH_FORK_RETURN_TEST'):
     k.syms[name].set_value(2)
 assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
-assert k.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'y'
+assert k.syms['CONF_WITH_MULTITHREADING'].str_value == 'y'
 k.write_config(sys.argv[1])
 PY
 CONFIG_= python3 tools/genconfig.py --kconfig Kconfig --config "$work/config" \

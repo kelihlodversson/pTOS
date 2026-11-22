@@ -10,7 +10,7 @@
 #define DBG_CHECK_READ_BYTE 0   // to trace check_read_byte() calls
 
 #include "asmdefs.h"
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 #include "arch/m68k/irqframe.h"
 #endif
 
@@ -578,10 +578,10 @@ vbl_end:
 #define REAL_TIMER_C_HANDLER (CONF_WITH_MFP && !CONF_COLDFIRE_TIMER_C)
 
 C_SYM(int_timerc):
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
         M68K_IRQ_CAPTURE
 #endif
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
         movem.l d0-d1/a0-a1,-(sp)
         jsr     C_SYM(ksched_preempt_tick)
         movem.l (sp)+,d0-d1/a0-a1

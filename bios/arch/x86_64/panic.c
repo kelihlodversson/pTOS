@@ -153,7 +153,7 @@ extern int x86_64_demand_page(UQUAD address, UQUAD error_code);
 
 #include "bdosdefs.h"
 #include "../../../bdos/kproc.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
 extern PD *run;
@@ -170,7 +170,7 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
 
         if (answer == 1)
             return;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (answer == 2 || answer == 3) ksched_fault(run, answer == 3 ? 10 : 9);
 #else
         if (answer == 2 || answer == 3) kproc_note_fault(run, answer == 3 ? 10 : 9);
@@ -193,7 +193,7 @@ void x86_64_exception_dispatch(x86_64_exception_frame_t *frame)
      */
     if ((frame->cs & 3) == 3 && frame->vector != 2 /* NMI */ &&
         frame->vector != 8 /* #DF */ && frame->vector != 18 /* #MC */) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_fault(run,
 #else
         kproc_note_fault(run,

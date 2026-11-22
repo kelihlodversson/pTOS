@@ -13,7 +13,7 @@
 #include "exec_handoff.h"
 #include "exec_handoff_test.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "proc_clone.h"
 #if CONF_WITH_PROCESS_FILES_TEST
 #include "process_files.h"
@@ -56,7 +56,7 @@ static int clone_access(void *context, uintptr_t address, uint32_t size, int kin
 }
 #endif
 
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_PRIVATE_CLONE_TEST
 static LONG mapping_snapshot(VADDR output)
 {
     MAPPING_LIFETIME_SNAPSHOT snapshot={ {0} };
@@ -78,7 +78,9 @@ static LONG mapping_snapshot(VADDR output)
     v[MLT_KHEAP_BLOCKS]=heap.live_blocks;v[MLT_KHEAP_PAGES]=heap.pages;v[MLT_KHEAP_BAD_FREES]=heap.bad_frees;
     v[MLT_PRIVATE_PAGES]=aspace_private_pages(as);v[MLT_TABLES]=aspace_table_pages(as);
     v[MLT_PINS]=aspace_test_pin_count(as,FALSE);v[MLT_RETIRED_PINS]=aspace_test_pin_count(as,TRUE);
+#if CONF_WITH_PRIVATE_CLONE
     v[MLT_COW_FRAMES]=aspace_cow_frames();v[MLT_COW_REFS]=aspace_cow_references();
+#endif
 #if CONF_WITH_MMAP
     v[MLT_FILE_PAGES]=aspace_file_pages();v[MLT_FILE_REFS]=aspace_file_references();
     v[MLT_BACKINGS]=fileback_test_count(FALSE);v[MLT_BACKING_REFS]=fileback_test_count(TRUE);
@@ -135,7 +137,7 @@ static long clone_request(uint64_t address, uint64_t size)
     LONG copy_error = E_OK;
     enum clone_copy_result copied;
     enum clone_validate_result valid;
-#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_MULTITHREADING
     BOOL files_test=FALSE;
 #endif
     static const CLONE_ABI abi = { CONF_PCLONE_STACK_ALIGNMENT,
@@ -227,7 +229,7 @@ static long clone_request(uint64_t address, uint64_t size)
     if (size==KSCHED_TEST_WAIT_ADMISSION)
         return address<=0xffffffffULL?ksched_test_wait_admission((ULONG)address):EINVAL;
 #endif
-#if CONF_WITH_NATIVE_PREEMPT && CONF_WITH_PRIVATE_CLONE_TEST
+#if CONF_WITH_PREEMPTION && CONF_WITH_PRIVATE_CLONE_TEST
     if (!address && (size==IRQ_PREEMPT_TEST_RESET || size==IRQ_PREEMPT_TEST_PATTERNS))
         return ksched_preempt_test_patterns(size==IRQ_PREEMPT_TEST_RESET);
     if (size==IRQ_PREEMPT_TEST_DELAY) return interrupt_preempt_test_delay((ULONG)address);
@@ -288,18 +290,22 @@ static long clone_request(uint64_t address, uint64_t size)
             LONG value = EINVFN;
             if (source) {
                 if (size == 0xc8920100ULL) value = (LONG)kproc_user_root(run);
+#if CONF_WITH_PRIVATE_CLONE
                 if (size == 0xc8920101ULL) value = aspace_cow_frames();
                 if (size == 0xc8920102ULL) value = aspace_cow_references();
+#endif
                 if (size == 0xc8920103ULL) {
                     KTHREAD *thread = ksched_exit_thread(run);
                     if (thread) value = kthread_tid(thread);
                 }
+#if CONF_WITH_PRIVATE_CLONE
                 if (size >= 0xc8920200ULL && size <= 0xc89202ffULL) {
                     aspace_clone_test_fail_after((ULONG)size & 255); value = E_OK;
                 }
                 if (size == 0xc8920300ULL || size == 0xc8920301ULL) {
                     aspace_cow_test_fail_allocation(size == 0xc8920301ULL); value = E_OK;
                 }
+#endif
                 if (size >= 0xc8920400ULL && size <= 0xc8920405ULL) {
                     proc_clone_test_fail_after((UWORD)(size & 255)); value = E_OK;
                 }
@@ -337,7 +343,7 @@ static long clone_request(uint64_t address, uint64_t size)
         private_test = TRUE; size &= 0xffff;
     }
 #endif
-#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_MULTITHREADING
 #if CONF_WITH_PRIVATE_CLONE_TEST
     /* Real private search inheritance transport; public fork remains gated. */
     if ((size&0xffffffffffff0000ULL)==0xc9840000ULL) {
@@ -378,14 +384,14 @@ static long clone_request(uint64_t address, uint64_t size)
 #if CONF_WITH_IMAGE_POLICY_TEST
     if (image_policy_test && ((args.flags&CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) return EINVAL;
 #endif
-#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_PROCESS_FILES_TEST && CONF_WITH_MULTITHREADING
     if (files_test && (args.flags&CLONE_SAME_PROCESS)) return EINVAL;
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
     if ((private_test && ((args.flags & CLONE_SAME_PROCESS) || args.child_pid || args.child_tid)) ||
         (scoped_test && (args.flags&CLONE_SAME_PROCESS))) return EINVAL;
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         PROC_CLONE_ARGS policy;
         THREAD_STARTUP_ARGS startup;
@@ -464,7 +470,7 @@ long xclone(uint64_t address, uint64_t size)
         return ksched_exec_handoff_test(&startup, (UWORD)(size - EXEC_HANDOFF_RUN));
     }
 #endif
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope = { 0 };
     LONG result;
     /* Factory rollback may release files and yield. Keep local transactions

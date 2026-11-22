@@ -24,11 +24,11 @@ with tempfile.TemporaryDirectory(prefix='ptos-irq-restart-') as directory:
     k.load_config('configs/pc-x86_64_defconfig')
     k.load_config('tools/hosted-legacy-profile.config', replace=False)
     assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
-    for name in ('NATIVE_SCHED', 'PCLONE', 'PTHJOIN', 'PTERMGRP', 'MMAP', 'PRIVATE_CLONE',
+    for name in ('MULTITHREADING', 'MMAP',
                  'PRIVATE_CLONE_TEST', 'IRQ_RESTART_TEST'):
         k.syms['CONF_WITH_' + name].set_value(2)
     assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
-    for dependency in ('CONF_WITH_MMAP', 'CONF_WITH_PTHJOIN'):
+    for dependency in ('CONF_WITH_MMAP', 'CONF_WITH_MULTITHREADING'):
         k.syms[dependency].set_value(0)
         assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
         k.syms[dependency].set_value(2)
@@ -36,9 +36,9 @@ with tempfile.TemporaryDirectory(prefix='ptos-irq-restart-') as directory:
     if args.preempt:
         k.syms['CONF_WITH_IRQ_RESTART_TEST'].set_value(0)
         k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(0)
-        k.syms['CONF_WITH_PFORK'].set_value(0)
-        k.syms['CONF_WITH_NATIVE_PREEMPT'].set_value(2)
-        assert k.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'y'
+        k.syms['CONF_WITH_FORK'].set_value(0)
+        k.syms['CONF_WITH_PREEMPTION'].set_value(2)
+        assert k.syms['CONF_WITH_PREEMPTION'].str_value == 'y'
         assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
         assert k.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
     assert k.syms['CONF_WITH_IRQ_RESTART'].str_value == 'y'

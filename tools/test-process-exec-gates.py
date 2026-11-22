@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
     root.write_text('source "Kconfig"\n'
                     'config PROCESS_EXEC_VALIDATION_SELECT\n'
                     '    bool "Fixture-only production selector"\n'
-                    '    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM\n'
+                    '    depends on CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_SSYSTEM\n'
                     '    select CONF_WITH_PROCESS_EXEC\n')
     cases = [('scheduler disabled', False, False), ('test', False, True),
              ('production', True, False), ('both', True, True)]
@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
         config = kconfiglib.Kconfig(str(root), warn_to_stderr=False)
         config.load_config('configs/pc-x86_64_defconfig')
         config.syms['CONF_WITH_ELF_SHARED'].set_value(0)
-        config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2 if production or test else 0)
+        config.syms['CONF_WITH_MULTITHREADING'].set_value(2 if production or test else 0)
         config.syms['PROCESS_EXEC_VALIDATION_SELECT'].set_value(2 if production and test else 0)
         config.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2 if test else 0)
         expected = ('y' if production else 'n', 'y' if production or test else 'n', 'y' if test else 'n')
@@ -99,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
         if preset == 'pc-x86_64-eager':
             assert config.syms['CONF_WITH_PROCESS_EXEC'].str_value == 'y', preset
             assert config.syms['CONF_WITH_DEMAND_PAGING'].str_value == 'n', preset
-            config.syms['CONF_WITH_NATIVE_SCHED'].set_value(0)
+            config.syms['CONF_WITH_MULTITHREADING'].set_value(0)
         config.syms['PROCESS_EXEC_VALIDATION_SELECT'].set_value(2)
         config.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
         assert all(config.syms[x].str_value == 'n' for x in (

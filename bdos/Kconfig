@@ -9,102 +9,64 @@
 
 menu "GEMDOS (BDOS)"
 
-config CONF_WITH_IMAGE_POLICY
-    bool "Experimental immutable executable-policy preparation"
-    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
-    default n
-    help
-      Capture validated executable metadata by value and prepare it for the
-      existing unpublished NEW_PROCESS activation. This conveys no mapping,
-      loader, basepage, stack or cleanup ownership and cannot replace a live
-      executable. No public fork or Pexec(200) is enabled.
-
 config CONF_WITH_IMAGE_POLICY_TEST
-    bool "Native immutable executable-policy tests (test transport only)"
-    depends on CONF_WITH_IMAGE_POLICY && CONF_WITH_PRIVATE_CLONE_TEST
-    depends on CONF_WITH_SHARED_VM_PEXEC
+    bool "Immutable executable-policy preparation (test only)"
+    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_PRIVATE_CLONE
     default n
     help
-      Test policy capture and its existing trusted NEW_PROCESS publication
-      using the ordinary shared-VM clone. This is not private image ownership,
-      public fork or same-PROCESS executable replacement.
-config CONF_WITH_EXEC_REPLACE
-    bool "Same-PROCESS executable replacement core for Pexec(200)"
-    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
-    default y
-    help
-      Build the kernel-only replacement transaction for Pexec(200): exact
-      PROCESS/THREAD admission, private ELF staging, the sealed image bundle
-      and the NORETURN commit, at the scheduler root for an anchor and
-      through the launcher frame for a nested child, with old-image
-      retirement off-stack and the committed-exec generation
-      (see doc/exec-replacement.txt).
+      Verify immutable executable metadata capture and activation through
+      the trusted shared-VM clone. This has no public executable ABI.
 
-config CONF_WITH_PEXEC200
-    bool "Public Pexec(200): replace the program in the same process"
-    depends on CONF_WITH_EXEC_REPLACE
+config CONF_WITH_EXEC_REPLACE
+    bool "Pexec(200): replace the program in the same process"
+    depends on CONF_WITH_MULTITHREADING
+    depends on CONF_WITH_ELF_LOADER || (ARCH_M68K_CLASSIC && CONF_WITH_PRG_LOADER)
     default y
     help
-      Enable GEMDOS Pexec(200, path, tail, env), as in FreeMiNT: load an
-      ELF or classic PRG program into a new basepage and replace the calling
-      program with it, keeping the PROCESS, PID, open files, current
-      directories, parent and children, and freeing the old program's
-      basepage, environment and memory.
-      Success does not return; failure returns an error to the unchanged
-      original program. An asynchronously started PROCESS is replaced
-      through the scheduler-root handoff, a synchronously nested child
-      through its launcher frame (doc/exec-replacement.txt).
+      Replace the calling program with a new executable while keeping its
+      PROCESS, PID, THREAD, files, current directories, parent and children.
+      The replacement's format determines its startup ABI. On classic m68k
+      this supports PRG and ELF independently of the caller's format.
+      Successful replacement frees the old image after a safe handoff.
+      Failure returns an error to the original program.
 
 config CONF_WITH_EXEC_REPLACEMENT_TEST
     bool "Private executable image staging (test only)"
-    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_ELF_LOADER
-    select CONF_WITH_EXEC_REPLACE
-    select CONF_WITH_PEXEC200
+    depends on CONF_WITH_EXEC_REPLACE
     default n
     help
-      Build the Pexec(200) regression probes: private ELF staging and
+      Build the Pexec(200) regression probes: private image staging and
       reversible admission, injected failures at every receipt, image-bundle
       and commit stage, an identity/root/generation query and a committed-exec
-      generation waiter, plus the EXEC200 native test programs. Enables
-      public Pexec(200) in the test kernel. No shipped preset selects it.
+      generation waiter, plus the EXEC200 native test programs.
 
 config CONF_WITH_EXEC_HANDOFF_TEST
     bool "Same-image NORETURN execution transport (test only)"
-    depends on CONF_WITH_EXEC_REPLACEMENT_TEST && CONF_WITH_PCLONE
+    depends on CONF_WITH_EXEC_REPLACEMENT_TEST
     default n
     help
       Exercise the permanent scheduler root's same-PROCESS/TID handoff to
       fresh user startup and kernel stacks. Keeps the same image and root;
       this is not executable replacement or a committed-exec producer.
-      Pexec(200) remains EINVFN. No shipped preset enables this experiment.
+      No shipped preset enables this experiment.
 
 config CONF_WITH_PROCESS_FILES
-    bool "PROCESS-local descriptors and search state"
-    depends on CONF_WITH_USER_ASPACE && CONF_WITH_FAT_FILE_LIFETIMES
-    default y if CONF_WITH_NATIVE_SCHED
+    def_bool CONF_WITH_MULTITHREADING
     help
-      Give every managed PROCESS one local descriptor namespace with exact
-      SFT incarnation bindings, PROCESS-owned DTA/directory-search state
-      (#984) and reversible snapshot admission, which Pfork/Pvfork children
-      inherit. Nonmanaged boot callers retain legacy handles.
+      Build process_files.o and the PROCESS descriptor, DTA and search
+      state used by managed processes. Legacy callers keep their own handles.
 
 config CONF_WITH_PROCESS_FILES_TEST
-    bool "TEST ONLY: PROCESS-local descriptor test transport"
-    depends on CONF_WITH_USER_ASPACE && CONF_WITH_FAT_FILE_LIFETIMES
-    select CONF_WITH_PROCESS_FILES
+    bool "TEST ONLY: PROCESS file snapshot counters and fault injection"
+    depends on CONF_WITH_PROCESS_FILES
     default n
-    help
-      CONF_WITH_PROCESS_FILES plus its native test transport: private
-      Pclone descriptor-snapshot selectors, counters and failure injection.
 
 config CONF_WITH_PRIVATE_CLONE
-    bool "Independent MMU address-space clone (COW)"
-    depends on CONF_WITH_USER_ASPACE
-    default y if CONF_WITH_NATIVE_SCHED && (ARCH_X86_64 || (ARCH_ARM && CPU_ARMV7) || (ARCH_M68K_CLASSIC && !CONF_M68K_ROM_WINDOW && !CONF_WITH_MFASTCALL))
+    def_bool CONF_WITH_FORK || (CONF_WITH_PRIVATE_CLONE_TEST && !CONF_M68K_ROM_WINDOW && !CONF_WITH_MFASTCALL)
     help
-      Transactional private address-space cloning and anonymous COW on the
-      validated x32, ARMv7 and m68k 68040 MMU backends. By itself this does
-      not enable public Pfork/Pvfork or supply fork resource inheritance.
+      Build the COW clone implementation when public fork or the private-VM
+      regression selector can use this backend. ROM-window address spaces
+      do not implement cloning.
 
 config CONF_WITH_USER_PAGE_FAULTS
     def_bool CONF_WITH_DEMAND_PAGING || CONF_WITH_PRIVATE_CLONE
@@ -114,35 +76,20 @@ config CONF_WITH_USER_PAGE_FAULTS
 
 config CONF_WITH_PRIVATE_CLONE_TEST
     bool "Native private-VM clone/COW tests (test transport only)"
-    depends on CONF_WITH_PRIVATE_CLONE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+    depends on CONF_WITH_MULTITHREADING
     default n
     help
-      Enable private Pclone size tags for native COW construction tests.
-      Children start at an explicit entry: this is not fork-return or Pfork.
+      Enable private Pclone test selectors for clone and mapping lifetimes.
+      Private-VM cases use COW where the MMU backend provides it.
 
 config CONF_WITH_PRIVATE_SNAPSHOT_TEST
     bool "Native captured private-snapshot ownership tests (test only)"
-    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_SHARED_VM_PEXEC
+    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_PRIVATE_CLONE && CONF_WITH_DEMAND_PAGING
     default n
     help
       Verify a surviving shared descendant privately clones an absent captured
       ancestor stack, after the original stack owner has exited. This uses the
       existing trusted clone and mapping lifetime machinery, not public fork.
-
-config CONF_WITH_PCLONE
-    bool "Pclone"
-    depends on CONF_WITH_KPROC
-    default y if CONF_WITH_NATIVE_SCHED
-    help
-      Route Pclone through its architecture ABI dispatcher and validate its
-      arguments on address-space kernels. Managed native tasks on x32, ARM MMU
-      and m68k MMU can create a distinct process sharing their address space
-      with CLONE_VM, or add a thread to the current process with
-      CLONE_VM | CLONE_SAME_PROCESS. Unsupported policies, private-VM startup
-      and unmanaged execution contexts return EINVFN.
-      When PROCESS-local descriptors are enabled, CLONE_VM can also request
-      CLONE_COPY_ALL_HANDLES for an independent descriptor table.
-      Kernels without user address spaces return EINVFN without reading args.
 
 config CONF_PCLONE_STACK_ALIGNMENT
     int
@@ -161,24 +108,21 @@ config CONF_PCLONE_ENTRY_ALIGNMENT
     default 4 if ARCH_ARM
     default 2
 
-config CONF_WITH_NATIVE_SCHED
-    bool "Native process and thread support"
-    depends on CONF_WITH_USER_ASPACE
-    default y if !ARCH_ARM || CPU_ARMV7
+config CONF_WITH_MULTITHREADING
+    bool "Native process scheduling and multithreading"
+    depends on CONF_WITH_USER_ASPACE && (!ARCH_ARM || CPU_ARMV7)
+    default y
     help
-      Kernel-owned cooperative native process scheduling and standard MiNT
-      asynchronous launch, yield and child waits. Enabled by default in the
-      supported native process profile, including headless systems. CUIS also
-      selects this scheduler when enabled. Native USER timer preemption below
-      is opt-in.
-      Available on x32, ARM MMU and m68k MMU user-address-space kernels.
-      Scheduling is cooperative and does not require CUIS or external libaes.
+      Native PROCESS and THREAD scheduling, asynchronous launch, yield,
+      child and thread waits, runnable Pclone and Ptermgrp. Managed
+      processes own their descriptors, current directories and DTA state.
+      Available with or without a desktop.
 
-config CONF_WITH_NATIVE_PREEMPT
+config CONF_WITH_PREEMPTION
     bool "Timer preemption of supported native USER continuations"
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
-    depends on ARCH_X86_64 || (ARCH_ARM && CPU_ARMV7) || (ARCH_M68K_CLASSIC && !CONF_WITH_MFASTCALL && (MACHINE_VIRT_M68K || CONF_AMIGA_HIGHER_HALF_68040 || CONF_ATARI_HIGHER_HALF_68040))
-    default n
+    depends on CONF_WITH_MULTITHREADING
+    depends on ARCH_X86_64 || (ARCH_ARM && CPU_ARMV7) || (ARCH_M68K_CLASSIC && !CONF_WITH_MFASTCALL && (MACHINE_VIRT_M68K || CONF_M68K_ROM_WINDOW_040))
+    default y
     help
       Phase C: a 20 ms quantum on the existing 200 Hz system timer, using
       the ordinary scheduler and retained hardware IRQ return transaction.
@@ -187,11 +131,10 @@ config CONF_WITH_NATIVE_PREEMPT
       format-0 with supported idle FPU and the stack ABI. Runtime eligibility
       still refuses unsupported controls, frames and CPU/FPU combinations;
       selecting a 040 ROM does not qualify an actual 030 or 060 CPU.
-      Independent default-off gate pending exact-profile native acceptance
-      and #897 release configuration. This does not enable SMP.
+      Disable this option to retain cooperative scheduling.
 
 config CONF_WITH_IRQ_RESTART
-    def_bool CONF_WITH_IRQ_RESTART_TEST || CONF_WITH_NATIVE_PREEMPT
+    def_bool CONF_WITH_IRQ_RESTART_TEST || CONF_WITH_PREEMPTION
 
 
 config CONF_WITH_LEGACY_PEXEC
@@ -212,7 +155,7 @@ config CONF_WITH_STAGED_PEXEC
       program's. MMU ARM and x32 refuse them with EINVFN.
 
 config CONF_WITH_SHARED_VM_PEXEC
-    def_bool CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC && CONF_WITH_PRG_LOADER
+    def_bool CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC && CONF_WITH_PRG_LOADER
     help
       m68k MMU kernels: Pexec modes 4 and 104 start a staged PRG as a
       distinct PROCESS sharing the caller's address space, entered with the
@@ -223,7 +166,7 @@ config CONF_WITH_SHARED_VM_PEXEC
 
 config CONF_WITH_PROCESS_EXEC
     bool
-    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_SSYSTEM
     default y if !CONF_WITH_PROCESS_EXEC_TEST
     help
       PROCESS-owned launch and observation with S_PROCEXEC discovery. This
@@ -235,34 +178,16 @@ config CONF_WITH_PROCESS_EXEC_DISPATCH
 
 config CONF_WITH_PROCESS_EXEC_TEST
     bool "TEST ONLY: suppress PROCESS transport discovery"
-    depends on CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SSYSTEM
+    depends on CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_SSYSTEM
     default n
     help
       Keep the PROCESS transport callable while S_INQUIRE reports EINVFN.
       This exercises the dispatch and discovery boundary in validation builds.
 
 
-config CONF_WITH_PTERMGRP
-    bool "Cooperative PROCESS group termination"
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
-    default y
-    help
-      Terminate all managed threads of the calling PROCESS at safe kernel
-      boundaries. Nested synchronous children finish normally before their
-      suspended launcher thread can stop. No preemption is enabled.
-
-config CONF_WITH_PTHJOIN
-    bool "Managed per-TID thread joins"
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
-    default y
-    help
-      Retain small per-TID completion records after safe execution-stack reap.
-      Pthjoin joins only managed threads in the calling PROCESS; no GUI,
-      preemption, asynchronous signals or group termination is implied.
-
 config CONF_WITH_FORK_RETURN_TEST
     bool "Native saved syscall-return probe (test only)"
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+    depends on CONF_WITH_MULTITHREADING
     depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
     depends on !ARCH_ARM || CPU_ARMV7
     default n
@@ -274,34 +199,32 @@ config CONF_WITH_FORK_RETURN_TEST
       selector supplies full PROCESS resource inheritance or a public fork ABI.
       ARM admission is limited to the reviewed ARMv7 backend; the RPi1's
       VFP-only target is not supported by the D32 register probe.
-      This test selector is not Pfork or Pvfork (CONF_WITH_PFORK).
+      This test selector is not Pfork or Pvfork (CONF_WITH_FORK).
 
 config CONF_WITH_FORK_CORE
     bool
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PRIVATE_CLONE
+    depends on CONF_WITH_MULTITHREADING && CONF_WITH_PRIVATE_CLONE
     default y if CONF_WITH_FORK_RETURN_TEST && CONF_WITH_PRIVATE_CLONE_TEST
-    default y if CONF_WITH_PFORK
+    default y if CONF_WITH_FORK
     help
       Internal common PRIVATE_VM/COW fork and exact-child parent dependency,
       used by public Pfork/Pvfork and by the native test transport.
 
 config CONF_WITH_SAVED_RETURN
     bool
-    depends on CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+    depends on CONF_WITH_MULTITHREADING
     depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
     depends on !ARCH_ARM || CPU_ARMV7
-    default y if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK || CONF_WITH_NATIVE_PREEMPT
+    default y if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_FORK || CONF_WITH_PREEMPTION
     default y if ARCH_M68K && CONF_WITH_IRQ_RESTART_TEST
     help
       Internal: capture a system call's user return image so a new THREAD
       resumes after the same trap (Pfork/Pvfork and the test probe).
 
-config CONF_WITH_PFORK
+config CONF_WITH_FORK
     bool "Public Pfork and Pvfork"
-    depends on CONF_WITH_PRIVATE_CLONE && CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
-    depends on CONF_WITH_PTHJOIN && CONF_WITH_PROCESS_FILES && CONF_WITH_PEXEC200
-    depends on !ARCH_M68K || !CONF_WITH_MFASTCALL
-    depends on !ARCH_ARM || CPU_ARMV7
+    depends on CONF_WITH_EXEC_REPLACE
+    depends on ARCH_X86_64 || (ARCH_ARM && CPU_ARMV7) || (ARCH_M68K_CLASSIC && !CONF_M68K_ROM_WINDOW && !CONF_WITH_MFASTCALL)
     default y
     help
       MiNT Pfork() and Pvfork(): the sole THREAD of a PROCESS forks an

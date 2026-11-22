@@ -41,7 +41,7 @@ void *kalloc(ULONG size)
 }
 void kfree(void *p) { if (p) { CHECK(metadata_live);metadata_live--;free(p); } }
 void panic(const char *format,...) { fprintf(stderr,"unexpected panic: %s\n",format);abort(); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Physical/permission harness has one modeled execution context. Native
  * scheduler tests independently authenticate actual continuation identities. */
 UQUAD ksched_context_id(void) { return 1; }
@@ -454,7 +454,7 @@ static void duplicate_borrow_reference(void)
     CHECK(!pins(p) && procmem_free(p));kaspace_put(space);
 }
 
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 static void interrupt_pin_authority(void)
 {
     ASPACE *as=aspace_create();
@@ -512,7 +512,7 @@ int main(void)
 {
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
     failed_ownerless();overlapping_attempts();table_failures();successful_retirement();duplicate_borrow_reference();
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     interrupt_pin_authority();
 #endif
 #if defined(TEST_SHARED_PERMISSIONS)

@@ -95,7 +95,7 @@ static void files_orphan_source(void *argument)
         launch_entry(files_orphan_entry,CLONE_VM|CLONE_COPY_ALL_HANDLES,files_orphan.stack,&pid,NULL)<=0)
         files_orphan.error=1;
     files_orphan.pid=pid;
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     (void)term_group(74); /* retire just the source PROCESS */
     files_orphan.error=1;
 #endif

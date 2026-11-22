@@ -4,7 +4,7 @@ Managed THREAD joining (#893)
 ABI and capability
 ------------------
 
-CONF_WITH_PTHJOIN is opt-in and requires NATIVE_SCHED and PCLONE. It is
+Thread joining is included in CONF_WITH_MULTITHREADING. It is
 independent of CUIS/libaes. Disabled or unmanaged calls return EINVFN.
 GEMDOS 0x191 is Pthjoin(LONG tid, int32_t *status): return zero on success,
 negative GEMDOS error otherwise. The optional output is a native-endian,
@@ -61,7 +61,7 @@ still apply; no preemption is enabled here.
 Cooperative group termination
 ----------------------------
 
-CONF_WITH_PTERMGRP adds managed PROCESS-wide cancellation through the existing
+CONF_WITH_MULTITHREADING adds managed PROCESS-wide cancellation through the existing
 THREAD/launcher/root handoffs. See group-exit.txt for its pending nested-child
 and blocking-boundary contracts. Outstanding join claims are cancelled by safe
 THREAD reap; group cancellation never consumes a target status as a join.

@@ -2,7 +2,7 @@
 #include "pclone.h"
 #include "mman.h"
 #include "config.h"
-#if CONF_WITH_PCLONE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 typedef long long S64;
 extern S64 x32_probe_call(unsigned long long, S64, S64, S64);
 extern S64 x32_probe_clone_stack(void);
@@ -104,7 +104,7 @@ int x32_public_clone_checks(void)
             if (result<=0) return 0x100-(int)result;
             if (result!=tid) return 0x200;
             if (size<32 ? pid!=-9 : pid<=0) return 0x201;
-#if !CONF_WITH_NATIVE_PREEMPT
+#if !CONF_WITH_PREEMPTION
             if (entered) return 3; /* cooperative publication cannot dispatch */
 #endif
             /* Wait for any child when the old prefix omitted PID. */

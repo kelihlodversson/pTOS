@@ -276,7 +276,7 @@ static void phase1_account(const char *stage, long baseline)
     }
 }
 
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
 static volatile long anchored_thief_stop, anchored_thief_taken, anchored_thief_polls;
 #if defined(TEST_WITH_IRQ_RESTART)
 static volatile long anchored_thief_excluded;
@@ -370,7 +370,7 @@ static void test_public_contract(unsigned char *stack)
     ptest_assert_msg(result > 0 && tid == result && pid == Pgetpid(),
                      "same-PROCESS success returns TID and reports caller PID");
     if (result > 0) {
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
         int32_t status = -99;
         ptest_assert_msg(join_tid(result,&status) == 0 && status == 0,
                          "same-PROCESS void entry forces zero THREAD completion");
@@ -499,7 +499,7 @@ static void test_public_contract(unsigned char *stack)
         /* #1015: a managed THREAD's Pexec(0) child is an anchor that owns
          * dependents, and Pexec(0) returns its whole 16-bit status. */
         long status;
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
         /* Throughout, a sibling THREAD polls wait-any: the child is claimed
          * by its Pexec(0) before it runs, so no other THREAD can reap it. */
         int32_t thief_pid = 0, thief_tid = 0;
@@ -514,7 +514,7 @@ static void test_public_contract(unsigned char *stack)
         if (status != ANCHORED_PROBE_STATUS) printf("anchored Pexec(0) probe: %lx\r\n",(unsigned long)status);
         ptest_assert_msg(status == ANCHORED_PROBE_STATUS,
                          "Pexec(0) child is an anchor: Pclone, Pthjoin, Pfork and its 16-bit status");
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
         if (thief_tid > 0) {
             long polls = anchored_thief_polls;
             for (;;) {

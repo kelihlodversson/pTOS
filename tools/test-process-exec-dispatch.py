@@ -15,7 +15,7 @@ for preset in sorted(Path('configs').glob('*_defconfig')):
     ordinary=kconfiglib.Kconfig(warn_to_stderr=False)
     ordinary.load_config(str(preset))
     enabled = all(ordinary.syms[name].str_value == 'y' for name in (
-        'CONF_WITH_USER_ASPACE', 'CONF_WITH_NATIVE_SCHED', 'CONF_WITH_SSYSTEM'))
+        'CONF_WITH_USER_ASPACE', 'CONF_WITH_MULTITHREADING', 'CONF_WITH_SSYSTEM'))
     expected = 'y' if enabled else 'n'
     assert ordinary.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n', str(preset)
     assert ordinary.syms['CONF_WITH_PROCESS_EXEC'].str_value==expected, str(preset)
@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     config=kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/pc-x86_64_defconfig')
     config.syms['CONF_WITH_ELF_SHARED'].set_value(0)
-    config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
+    config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
     assert config.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='n'
     config.syms['CONF_WITH_PROCESS_EXEC_TEST'].set_value(2)
     assert config.syms['CONF_WITH_PROCESS_EXEC_TEST'].str_value=='y'

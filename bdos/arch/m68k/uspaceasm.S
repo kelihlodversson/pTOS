@@ -143,7 +143,7 @@ no_fpu_reset:
         sub.l   a4,a4
         sub.l   a5,a5
         sub.l   a6,a6
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_MFASTCALL
+#if CONF_WITH_MULTITHREADING && CONF_WITH_MFASTCALL
         move.l  (sp)+,a0                // native register-argument ABI
 #else
         addq.l  #4,sp

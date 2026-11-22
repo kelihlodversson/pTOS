@@ -4,7 +4,7 @@
  * and the original table vector until the entire borrow succeeds. Current
  * providers allocate without yielding, callbacks or user copy; preemption/SMP
  * require the documented owner/mapping locks, not local IRQ masking. */
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 BOOL aspace_retired_pin_overlap(const ASPACE *as,VADDR address,VADDR bytes)
 {
     ULONG i;

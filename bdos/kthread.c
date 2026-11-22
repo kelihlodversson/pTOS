@@ -18,7 +18,7 @@
 #include "exec_handoff.h"
 #endif
 
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
 struct thread_completion {
     struct thread_completion *next;
     KPROC *process; /* borrowed only while linked; retirement unlinks it */
@@ -60,7 +60,7 @@ struct kthread {
 #if CONF_WITH_FORK_CORE
     FORK_PARENT_DEPENDENCY *fork_parent;
 #endif
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     struct thread_completion *completion, *joining;
 #endif
 };
@@ -91,7 +91,7 @@ static KTHREAD *create_thread(KPROC *process,KASPACE *space,BOOL identity_only)
     KOWNER_GUARD guard;
     thread=kalloc(sizeof(*thread));if(!thread)return NULL;
     memset(thread,0,sizeof(*thread));
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     thread->completion=kalloc(sizeof(*thread->completion));
     if(!thread->completion) { kfree(thread);return NULL; }
     memset(thread->completion,0,sizeof(*thread->completion));
@@ -116,7 +116,7 @@ static KTHREAD *create_thread(KPROC *process,KASPACE *space,BOOL identity_only)
     kowner_leave(&guard);
     if(accepted)return thread;
     if(attached) { kaspace_put(thread->space);kproc_release(thread->process); }
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     completion_put(thread->completion);
 #endif
     kfree(thread);return NULL;
@@ -169,7 +169,7 @@ BOOL kthread_use_tpa_stack(KTHREAD *thread)
 }
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 BOOL kthread_clone_run_ready(const KTHREAD *thread)
 {
     return thread && thread->identity_only && thread->state == THREAD_NEW &&
@@ -196,7 +196,7 @@ static BOOL kthread_start_owned(KTHREAD *thread)
         !thread->reclaim_execution || !kproc_thread_start_allowed(thread->process) ||
         kproc_active_space(thread->process) != thread->space)
         return FALSE;
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     {
         struct thread_completion *record = thread->completion;
         record->tid = thread->tid;
@@ -226,7 +226,7 @@ BOOL kthread_exec_handoff_ready(const KTHREAD *thread, const void *execution)
 {
     return thread && kthread_is_executing(thread) && thread->attached &&
         !thread->identity_only && thread->execution == execution && thread->reclaim_execution
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
         && !thread->joining
 #endif
         ;
@@ -358,7 +358,7 @@ BOOL kthread_reap(KTHREAD *thread)
     dispose = thread->attached &&
         kproc_thread_detach(process, thread, thread->process_next);
     kaspace_put(thread->space);
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     kthread_join_cancel(thread);
     kowner_enter(&guard,KOWNER_PROCESS);
     thread->completion->thread = NULL;
@@ -422,7 +422,7 @@ FORK_PARENT_DEPENDENCY *kthread_fork_dependency(const KTHREAD *thread)
 /* Used only to walk the process's non-owning membership list. */
 KTHREAD **kthread_next_link(KTHREAD *thread) { return &thread->process_next; }
 
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
 /* Serialized cooperative lifecycle operations. Registry membership owns only
  * small completion metadata, never PROCESS/ASPACE/resources or a user PD. */
 /* Called with PROCESS ownership. Detach only; caller frees after unlocking. */

@@ -17,7 +17,7 @@ typedef struct {
     UWORD depth,rank,previous;
 } KOWNER_GUARD;
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* CPU selection and local IRQ mechanics remain in the existing backend. */
 KOWNER_CPU *kowner_cpu(void);
 uintptr_t kowner_irq_save(void);

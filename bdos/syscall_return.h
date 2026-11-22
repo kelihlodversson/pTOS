@@ -45,7 +45,7 @@ typedef struct syscall_return {
 #define FORK_RETURN_PRIVATE 0x8000U /* private COW child (needs CONF_WITH_PRIVATE_CLONE) */
 #define FORK_RETURN_VFORK   0x4000U /* PRIVATE required; exact-child parent wait */
 LONG proc_clone_return_probe(SYSCALL_RETURN *, UWORD fail_stage);
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
 #include "mintproc.h"
 /* Public Pfork (vfork FALSE) / Pvfork (TRUE) from a captured trap. */
 LONG proc_clone_fork(SYSCALL_RETURN *, BOOL vfork);

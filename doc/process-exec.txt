@@ -4,7 +4,7 @@ PROCESS launch request transport (#907 / #931)
 Discovery and activation
 ------------------------
 Ssystem(S_INQUIRE, S_PROCEXEC) advertises PROCESS launch and observation on
-USER_ASPACE, NATIVE_SCHED and SSYSTEM kernels. S_PROCEXEC is signed -9.
+MULTITHREADING and SSYSTEM kernels. S_PROCEXEC is signed -9.
 CONF_WITH_PROCESS_EXEC_TEST keeps dispatch callable and suppresses discovery
 for validation. Unsupported kernels return EINVFN for both operations.
 

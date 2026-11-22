@@ -12,7 +12,7 @@
  */
 
 #include "asmdefs.h"
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 #include "arch/m68k/irqframe.h"
 #endif
 
@@ -24,7 +24,7 @@
         .text
 
 C_SYM(goldfish_rtc_isr):
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
         M68K_IRQ_CAPTURE
 #endif
         movem.l d0-d2/a0-a1,-(sp)      // save the registers goldfish_rtc_service() clobbers (d2 too under -mfastcall)

@@ -47,7 +47,7 @@
 #if ARCH_X86_64
 #include "process.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "ksched_lifetime.h"
 #include "kthread.h"
@@ -90,7 +90,7 @@ static void proc_go(PD *p, WORD entry_type);
  * global variables
  */
 
-#if !CONF_WITH_NATIVE_SCHED
+#if !CONF_WITH_MULTITHREADING
 PD      *run;           /* classic single-execution ABI storage */
 #endif /* native kernels export the CPU-owned slot from native_sched.c */
 
@@ -136,7 +136,7 @@ static BOOL prepare_launch(PD *p)
 {
     if (kernel_code_pd == p)
         return TRUE;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         /* A managed THREAD's synchronous child gets its own initial THREAD
          * and a scheduler-owned association with this carrier. Every other
@@ -159,7 +159,7 @@ BOOL take_kernel_code_pd(PD *p)
 }
 #endif /* CONF_WITH_USER_ASPACE */
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static BOOL schedule_launch(PD *p)
 {
     /* ROM entry points and explicit accessory starts retain their existing
@@ -184,7 +184,7 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void proc_release_block(void *base)
 {
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
     if(kproc_shared_exec_retire_source(base)) return;
 #endif
     /* the tables are in the record: release through it, then drop it */
@@ -210,7 +210,7 @@ static void proc_release_block(void *base)
 static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
     if(kproc_shared_exec_retire_source(base)) return;
 #endif
 #if CONF_WITH_USER_ASPACE
@@ -586,10 +586,10 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         flag &= ~PE_KERNEL;
     } else if (!pexec_public_mode(flag))
         return EINVFN;
-#if CONF_WITH_PEXEC200
+#if CONF_WITH_EXEC_REPLACE
     if (flag == PE_EXEC_REPLACE) return proc_exec_replace(path, tail, env);
 #endif
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
     /* #1015: a managed caller's Pexec(0) child is an anchor, launched as by
      * Pexec(100) (it owns its basepage and environment, and can own
      * dependents), and the calling THREAD waits for exactly that child, as
@@ -615,7 +615,7 @@ long xexec_selftest(WORD flag, char *path, char *tail, char *env)
     return exec_common(flag|PE_KERNEL,path,tail,env,FALSE,NULL,NULL,NULL,NULL);
 }
 #endif
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)
 {
@@ -653,7 +653,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     ULONG hdrflags;
     LONG rc;
     LONG max;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     LONG scheduled_result;
 #endif
     BOOL kernel = CONF_WITH_USER_ASPACE && (flag & PE_KERNEL) != 0;
@@ -666,13 +666,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     PD *cur_p; /* assigned before setjmp, never changed across its return */
     FS_ERROR_SCOPE loader_error;
 #endif
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
     PROCESS_OBSERVER *observed = NULL;
 #else
     UNUSED(observe);
     UNUSED(prepared);
 #endif
-#if !CONF_WITH_NATIVE_SCHED
+#if !CONF_WITH_MULTITHREADING
     UNUSED(deferred);
     UNUSED(directory);
 #endif
@@ -777,7 +777,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
 
         return (long)p;
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_LEGACY_PEXEC
+#if CONF_WITH_MULTITHREADING && CONF_WITH_LEGACY_PEXEC
     case 104: /* m68k MMU: async shared-VM start of a staged PRG (#1018) */
 #if CONF_WITH_SHARED_VM_PEXEC
         return caller_has_aspace() ? proc_shared_vm_exec((PD *)tail,TRUE) : EINVFN;
@@ -792,7 +792,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         if (!kproc_create(p)) return ENSMEM;
         return ksched_spawn(p);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     case PE_ASYNC_LOADGO:
         if (!ksched_async_allowed()) return EINVFN;
         break;
@@ -809,7 +809,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         if (!kproc_create(p))
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (schedule_launch(p)) return run_scheduled(p, TRUE);
 #endif
         if (!prepare_launch(p))
@@ -824,7 +824,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         /* Ring-3 mode 4 is shared-VM Pexec of a staged PRG (#894, #1018);
          * without the scheduler it is refused before touching the image. */
         if (flag == PE_GO && caller_has_aspace()) {
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
             return proc_shared_vm_exec((PD *)tail,FALSE);
 #else
             return EINVFN;
@@ -839,7 +839,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         if (flag == PE_GO && !kproc_create(p))
             return ENSMEM;
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (schedule_launch(p)) return run_scheduled(p, FALSE);
 #endif
         if (flag == PE_GO && !prepare_launch(p))
@@ -986,7 +986,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
      * or the parent
      */
     owner = (replacement || flag == PE_LOADGO
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
              || flag == PE_ASYNC_LOADGO
 #endif
             ) ? p : run;
@@ -1088,39 +1088,39 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
      * their later failure path disposes these references explicitly. */
 #if CONF_WITH_USER_ASPACE
     if (flag != PE_LOAD
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         && flag != PE_ASYNC_LOADGO
         && !schedule_launch(cur_p)
 #endif
         && !prepare_launch(cur_p)) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         KSCHED_CLEANUP_SCOPE scope = {0};
         ksched_cleanup_begin(&scope);
 #endif
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_cleanup_end(&scope);
 #endif
         return ENSMEM;
     }
 #endif
 #if CONF_WITH_PLUGGABLE_FS || CONF_WITH_USER_ASPACE
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
     KSCHED_CLEANUP_SCOPE scope = {0};
     /* A prepared association stays private through inherited-resource
      * acquisition and its complete failure cleanup. */
     ksched_cleanup_begin(&scope);
 #endif
-#if CONF_WITH_NATIVE_SCHED && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
+#if CONF_WITH_MULTITHREADING && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
     rc = replacement ? E_OK : (flag == PE_LOADGO && ksched_test_nested_injected(6) ? ENSMEM : init_pd_files(cur_p));
 #else
     rc = replacement ? E_OK : init_pd_files(cur_p);
 #endif
     if (rc != E_OK) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         /* A prepared nested association is still private: retire its THREAD
          * before the PROCESS it is attached to. */
         ksched_nested_cancel(cur_p);
@@ -1128,12 +1128,12 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_cleanup_end(&scope);
 #endif
         return rc;
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
     }
 #endif
@@ -1151,7 +1151,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
      */
     invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (flag == PE_ASYNC_LOADGO) {
         rc = directory ? fs_set_process_directory(directory,cur_p) : E_OK;
 #if CONF_WITH_USER_ASPACE
@@ -1177,7 +1177,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 #endif
     if (flag != PE_LOAD) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (schedule_launch(cur_p)) {
             rc = ksched_exec(cur_p, TRUE, &scheduled_result);
             if (rc < 0) proc_discard_scheduled(cur_p);
@@ -1584,7 +1584,7 @@ static void proc_enter_user(WORD entry_type)
 
 static void proc_go(PD *p, WORD entry_type)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     PD *controller=ksched_launch_controller(p);
 #endif
     KDEBUG(("BDOS xexec: trying to load (and execute) a process on %p ...\n",p->p_tbase));
@@ -1596,13 +1596,13 @@ static void proc_go(PD *p, WORD entry_type)
      * back and dereference it on every Pterm(), so a truncated value
      * here would fault there instead of trapping at the point of
      * corruption. */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     p->p_parent=PTR_TO_USERPTR(controller ? controller : run);
 #else
     p->p_parent = PTR_TO_USERPTR(run);
 #endif
 #if CONF_WITH_KPROC
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (!controller && !kproc_clone_startup(p))
 #endif
         kproc_set_parent(p, run);   /* clone parent retain was prepared before commit */
@@ -1617,7 +1617,7 @@ static void proc_go(PD *p, WORD entry_type)
     proc_launch_prepare(p, &supstk[SUPSIZ]);   /* arch: launch.c */
 
     /* the new process is the one to run */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* No-fail: a prepared nested execution becomes this carrier's innermost
      * owner, with the enclosing owner and launcher chain recorded. */
     ksched_nested_enter(p);
@@ -1630,7 +1630,7 @@ static void proc_go(PD *p, WORD entry_type)
     proc_enter_user(entry_type);
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 LONG proc_prepare_scheduled(PD *p)
 {
     if (!kproc_unlaunched(p)) return EIMBA;
@@ -1679,12 +1679,12 @@ LONG proc_start_accessory(PD *p)
 
 #endif
 
-#if ARCH_X86_64 || CONF_WITH_NATIVE_SCHED
+#if ARCH_X86_64 || CONF_WITH_MULTITHREADING
 void proc_discard_scheduled(PD *p)
 {
 #if CONF_WITH_USER_ASPACE
     KPROC *process;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
@@ -1694,7 +1694,7 @@ void proc_discard_scheduled(PD *p)
         proc_dispose_process(process);
         kproc_release(process);
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope); /* enclosing launch cleanup owns the checkpoint */
 #endif
 #else
@@ -1744,13 +1744,13 @@ void proc_dispose_process(KPROC *process)
 #endif
     if (complete) {
         kproc_complete(p, status);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_exiting(p, status);
 #endif
     }
     proc_release_resources(p, FALSE);
     kproc_finish_discard_allocations(process);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (complete)
         ksched_exited_identity(process, p);
 #endif
@@ -1763,7 +1763,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 {
     PD *p;
     FS_ERROR_STATE saved_error;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     BOOL managed, nested;
 #endif
 
@@ -1787,7 +1787,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     if (!kproc_commit_exit_handoff(process, &p))
         panic("invalid exit handoff");
     kproc_complete(p, status);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     managed = ksched_finalizing_process(process);
     ksched_exiting(p, status);
 #endif
@@ -1801,21 +1801,21 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
     UNUSED(resident_len);
 #endif
     proc_release_resources(p, TRUE);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_exited_identity(process, p);
     /* Nested THREAD ownership can be the final KASPACE/allocation pin.
      * Retire it after the launcher has stopped, before making completion
      * observable. The caller's handoff reference keeps PROCESS alive. */
     nested = ksched_nested_leave(process);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (!managed)
 #endif
         kproc_publish_observers(process);
-#if CONF_WITH_NATIVE_SCHED && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
+#if CONF_WITH_MULTITHREADING && (CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST)
     if (nested) ksched_test_nested_published(process);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     UNUSED(nested);
 #endif
     *fs_error_current() = saved_error;
@@ -1823,7 +1823,7 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 
 BOOL proc_prepare_completion(KPROC *process, struct kthread *thread, UWORD status)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* Runnable scheduler integration must account for task completion,
      * orphaning and its separate stack handoff before using this path. */
     if (ksched_active())
@@ -1861,14 +1861,14 @@ void xterm(UWORD rc)
     PD *p = run;
 #if CONF_WITH_USER_ASPACE
     KPROC *fallback_observer = NULL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KPROC *exit_identity;
 #endif
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KTHREAD *thread = ksched_exit_thread(p);
     if (ksched_cleanup_active()) panic("nonreturning termination inside protected cleanup");
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (thread) {
         ksched_enter_exit(p);
         (void)kproc_group_status(kthread_process(thread), &rc);
@@ -1877,7 +1877,7 @@ void xterm(UWORD rc)
 #endif
 
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     kproc_require_exit_thread(p, thread);
 #else
     kproc_require_no_threads(p);
@@ -1887,7 +1887,7 @@ void xterm(UWORD rc)
     x86_64_memtest_callback_exit(p, rc);
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (!thread || kproc_thread_is_sole(kthread_process(thread), thread))
 #endif
     {
@@ -1922,7 +1922,7 @@ void xterm(UWORD rc)
         panic("xterm: process disposal already committed");
     fallback_observer = kproc_retain(p);
     if (!fallback_observer) panic("fallback observer retention failed");
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     exit_identity = fallback_observer; /* Borrowed from local or launcher ownership. */
 #endif
     if (proc_defer_observer(p, fallback_observer)) fallback_observer = NULL;
@@ -1930,7 +1930,7 @@ void xterm(UWORD rc)
 #if CONF_WITH_KPROC
     kproc_complete(p, rc);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_exiting(p, rc);
 #endif
 #if CONF_WITH_KPROC
@@ -1941,7 +1941,7 @@ void xterm(UWORD rc)
     run = (PD *)USERPTR_TO_PTR(run->p_parent);
 #endif
     proc_release_resources(p, TRUE);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* All process resources are gone. No cleanup can return to the caller
      * through the disk-error handler after making its successor runnable. */
     ksched_exited_identity(exit_identity, p);
@@ -1971,7 +1971,7 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
 
     kcprintf("process fault: %s code=0x%lx addr=0x%lx pc=0x%lx sp=0x%lx\n",
              cause, (long)code, (long)address, (long)pc, (long)sp);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_fault(run, 11); /* Keep a specific CPU/paging signal if already recorded. */
 #else
     kproc_note_fault(run, 11);
@@ -1991,7 +1991,7 @@ void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp
  */
 long xtermres(long blkln, WORD rc)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KTHREAD *thread = ksched_exit_thread(run);
     if (thread && !kproc_thread_is_sole(kthread_process(thread), thread))
         return EACCDN;

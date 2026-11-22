@@ -25,7 +25,7 @@ ifneq ($(CONF_WITH_KCALL)$(CONF_WITH_VDI_SCALABLE_FONTS)$(CONF_WITH_ELF_SHARED)$
 obj-y += kfile.o
 endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
-obj-$(CONF_WITH_PCLONE) += clone.o clone_args.o
+obj-$(CONF_WITH_MULTITHREADING) += clone.o clone_args.o
 obj-$(CONF_WITH_FORK_CORE) += fork_parent.o
 obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o proc_clone.o process_observer.o thread_startup.o
 obj-$(CONF_WITH_PROCESS_FILES) += process_files.o
@@ -48,12 +48,12 @@ obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)
 obj-$(CONF_WITH_MMAP) += fileback.o
 
 # Native kernel tasks for external libaes, independent of kernel AES.
-obj-$(CONF_WITH_NATIVE_SCHED) += kowner.o process_exec.o process_exec_request.o native_sched.o sched_lifetime.o native_sched_entry.o kthread_context.o $(if $(ARCH_X86_64),thread_startup_x32.o interrupt_user.o,thread_startup32.o interrupt_user.o) thread_return.o
+obj-$(CONF_WITH_MULTITHREADING) += kowner.o process_exec.o process_exec_request.o native_sched.o sched_lifetime.o native_sched_entry.o kthread_context.o $(if $(ARCH_X86_64),thread_startup_x32.o interrupt_user.o,thread_startup32.o interrupt_user.o) thread_return.o
 obj-$(CONF_WITH_SHARED_VM_PEXEC) += shared_vm_exec.o
 obj-$(CONF_WITH_IRQ_RESTART) += interrupt_restart.o
 
 # Native ownership assertions, using only existing memory/rollback test gates.
-ifeq ($(CONF_WITH_NATIVE_SCHED),y)
+ifeq ($(CONF_WITH_MULTITHREADING),y)
 ifneq ($(filter y,$(CONF_WITH_EXIT_HANDOFF_TEST) $(CONF_WITH_X86_64_MEMTEST)),)
 obj-y += region_selftest.o
 endif

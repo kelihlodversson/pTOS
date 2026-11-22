@@ -3,7 +3,7 @@
 #include "test.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
-#include "../../include/shared_pexec_test.h"
+#include "../../include/mapping_lifetime_test.h"
 #include "../../include/image_policy_test.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
@@ -45,24 +45,24 @@ static void image_policy_entry(void *argument)
         image_policy_error=1;
     (void)Pterm(71);
 }
-static int image_policy_snapshot(SHARED_PEXEC_SNAPSHOT *snapshot)
+static int image_policy_snapshot(MAPPING_LIFETIME_SNAPSHOT *snapshot)
 {
     memset(snapshot,0,sizeof(*snapshot));
-    return pclone_trap(snapshot,SHARED_PEXEC_SNAPSHOT_QUERY)==0;
+    return pclone_trap(snapshot,MLT_SNAPSHOT)==0;
 }
-static int image_policy_same(const SHARED_PEXEC_SNAPSHOT *before,const SHARED_PEXEC_SNAPSHOT *after)
+static int image_policy_same(const MAPPING_LIFETIME_SNAPSHOT *before,const MAPPING_LIFETIME_SNAPSHOT *after)
 {
     int i,ok=1;
-    for (i=0;i<SP_COUNT;i++) if(before->count[i]!=after->count[i]) {
+    for (i=0;i<MLT_FIELDS;i++) if(before->value[i]!=after->value[i]) {
         printf("image policy conservation[%d]: %lu -> %lu\r\n",i,
-            (unsigned long)before->count[i],(unsigned long)after->count[i]);ok=0;
+            (unsigned long)before->value[i],(unsigned long)after->value[i]);ok=0;
     }
     return ok;
 }
 static void test_image_policy(void)
 {
     struct ptos_clone_args args={0};
-    SHARED_PEXEC_SNAPSHOT before,during,after;
+    MAPPING_LIFETIME_SNAPSHOT before,during,after;
     long stack=Malloc(32768),tid,result,parent=Pgetpid();
     int cycle,stage,ok=1;
     ptest_begin("immutable executable policy through existing clone activation");
@@ -86,10 +86,10 @@ static void test_image_policy(void)
         }
         tid=pclone_trap(&args,IMAGE_POLICY_CLONE|sizeof(args));
         if(tid<=0) {ok=0;break;}
-        if(!image_policy_snapshot(&during) || during.count[SP_PROCESSES]!=before.count[SP_PROCESSES]+1 ||
-            during.count[SP_THREADS]!=before.count[SP_THREADS]+1 || during.count[SP_SPACES]!=before.count[SP_SPACES] ||
-            during.count[SP_SPACE_REFS]<=before.count[SP_SPACE_REFS] ||
-            during.count[SP_PROCESS_REFS]<=before.count[SP_PROCESS_REFS]) ok=0;
+        if(!image_policy_snapshot(&during) || during.value[MLT_PROCESSES]!=before.value[MLT_PROCESSES]+1 ||
+            during.value[MLT_THREADS]!=before.value[MLT_THREADS]+1 || during.value[MLT_ROOTS]!=before.value[MLT_ROOTS] ||
+            during.value[MLT_SPACE_REFS]<=before.value[MLT_SPACE_REFS] ||
+            during.value[MLT_PROCESS_REFS]<=before.value[MLT_PROCESS_REFS]) ok=0;
         result=Pwaitpid(-1,0,0);
         if ((result>>16)!=image_policy_pid || (result&65535)!=71 || image_policy_pid==parent ||
             image_policy_tid!=tid || image_policy_error) ok=0;

@@ -165,7 +165,7 @@ static void trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3);
  */
 /* The loaded swap state belongs to this CPU alongside its entry stack slots. */
 
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 #include "arch/x86_64/irqframe.h"
 #include "../../../bdos/interrupt_restart.h"
 void x86_64_irq_read_controls(X86_IRQ_CONTROLS *c)
@@ -239,7 +239,7 @@ static LONG return_probe(x86_64_trap_frame_t *f)
     if (u->rsp<144 || u->rsp>USER_VA_LIMIT) return EINVFN;
     saved.mappings.stack_base=((u->rsp + 15) & ~15ULL) - 144;
     saved.mappings.stack_size=144;
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
     if ((ULONG)f->rax != 0x190)
         return proc_clone_fork(&saved, (ULONG)f->rax == GEMDOS_PVFORK);
 #endif
@@ -283,7 +283,7 @@ void x86_64_trap_dispatch(x86_64_trap_frame_t *frame, int from_ring3)
         (frame->rax == 0x100000190ULL && !frame->rdi &&
          (frame->rsi & 0xffff0000UL) == FORK_RETURN_PROBE) ||
 #endif
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
         frame->rax == (0x100000000ULL | GEMDOS_PFORK) ||
         frame->rax == (0x100000000ULL | GEMDOS_PVFORK) ||
 #endif

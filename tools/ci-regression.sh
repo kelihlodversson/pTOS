@@ -98,37 +98,35 @@ case "$machine" in
 import kconfiglib, os
 config = kconfiglib.Kconfig()
 config.load_config()
-config.syms['CONF_WITH_PCLONE'].set_value(2)
-config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
-config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
-config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].set_value(2)
-assert config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].str_value == 'y'
-assert config.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'y'
-config.syms['CONF_WITH_PTHJOIN'].set_value(2)
-config.syms['CONF_WITH_PTERMGRP'].set_value(2)
-config.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
-assert config.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
-assert config.syms['CONF_WITH_PTERMGRP'].str_value == 'y'
-assert config.syms['CONF_WITH_PTHJOIN'].str_value == 'y'
+for required in ('CONF_WITH_MULTITHREADING', 'CONF_WITH_FORK', 'CONF_WITH_EXEC_REPLACE'):
+    assert config.syms[required].str_value == 'y', required
+for probe in ('CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_FORK_RETURN_TEST'):
+    config.syms[probe].set_value(2)
+    assert config.syms[probe].str_value == 'y', probe
 if os.environ.get('IRQ_RESTART_TEST') == '1':
+    config.syms['CONF_WITH_PREEMPTION'].set_value(0)
     config.syms['CONF_WITH_MMAP'].set_value(2)
     config.syms['CONF_WITH_IRQ_RESTART_TEST'].set_value(2)
     assert config.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'y'
-    assert config.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'n'
-if os.environ.get('NATIVE_PREEMPT') == '1':
-    config.syms['CONF_WITH_NATIVE_PREEMPT'].set_value(2)
-    assert config.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'y'
+    assert config.syms['CONF_WITH_PREEMPTION'].str_value == 'n'
+else:
+    assert config.syms['CONF_WITH_PREEMPTION'].str_value == 'y'
     assert config.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
     if config.syms['CONF_WITH_CUIS'].str_value == 'y':
-        # The defconfig step can record an explicit n before the test gates
-        # are enabled. Wait for actual admission before a peer resumes or
-        # cancels an operation that can be preempted before entering CUIS.
         config.syms['CONF_WITH_CUIS_WAIT_TEST'].set_value(2)
         assert config.syms['CONF_WITH_CUIS_WAIT_TEST'].str_value == 'y'
 if config.syms['ARCH_X86_64'].str_value != 'y':
     config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'
-assert config.syms['CONF_WITH_PCLONE'].str_value == 'y'
+assert config.syms['CONF_WITH_MULTITHREADING'].str_value == 'y'
+if os.environ.get('PRG_ONLY_EXEC') == '1':
+    assert config.syms['MACHINE_VIRT_M68K'].str_value == 'y'
+    config.syms['CONF_WITH_ELF_SHARED'].set_value(0)
+    config.syms['CONF_WITH_ELF_LOADER'].set_value(0)
+    for name in ('CONF_WITH_ELF_LOADER', 'CONF_WITH_ELF_SHARED'):
+        assert config.syms[name].str_value == 'n', name
+    for name in ('CONF_WITH_PRG_LOADER', 'CONF_WITH_EXEC_REPLACE', 'CONF_WITH_FORK'):
+        assert config.syms[name].str_value == 'y', name
 if os.environ.get('EXEC_REPLACEMENT_TEST') == '1':
     config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == 'y'
@@ -140,13 +138,9 @@ if os.environ.get('SHARED_VM_PEXEC') == '1':
     # m68k MMU kernels only (#1018); derived, never forced.
     assert config.syms['CONF_WITH_SHARED_VM_PEXEC'].str_value == 'y'
 if os.environ.get('SHARED_VM_PEXEC') == '1' or os.environ.get('EXEC_STAGING_PROFILE') == '1':
-    config.syms['CONF_WITH_IMAGE_POLICY'].set_value(2)
-    assert config.syms['CONF_WITH_IMAGE_POLICY'].str_value == 'y'
-    # These two exercise shared-VM Pexec: m68k MMU kernels only (#1018).
-    shared = config.syms['CONF_WITH_SHARED_VM_PEXEC'].str_value == 'y'
     for required in ('CONF_WITH_IMAGE_POLICY_TEST', 'CONF_WITH_PRIVATE_SNAPSHOT_TEST'):
-        config.syms[required].set_value(2 if shared else 0)
-        assert config.syms[required].str_value == ('y' if shared else 'n'), required
+        config.syms[required].set_value(2)
+        assert config.syms[required].str_value == 'y', required
     for required in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_MMAP'):
         config.syms[required].set_value(2)
         assert config.syms[required].str_value == 'y', required
@@ -158,8 +152,8 @@ if os.environ.get('PROCESS_FILES_TEST') == '1':
     config.syms['CONF_WITH_PROCESS_FILES_TEST'].set_value(2)
     assert config.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'y'
     # Public Pfork/Pvfork over the PROCESS descriptor snapshot.
-    config.syms['CONF_WITH_PFORK'].set_value(2)
-    assert config.syms['CONF_WITH_PFORK'].str_value == 'y'
+    config.syms['CONF_WITH_FORK'].set_value(2)
+    assert config.syms['CONF_WITH_FORK'].str_value == 'y'
     backend = os.environ.get('PROCESS_FILES_FS', 'fat')
     assert backend in ('fat', 'pfs'), backend
     config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
@@ -175,7 +169,7 @@ make $make_args 2>&1 | tee -a build.log
 tools/check-build-warnings.sh build.log
 if [ "${IRQ_RESTART_TEST:-0}" = 1 ]; then
     grep -qx '#define CONF_WITH_IRQ_RESTART_TEST 1' obj/autoconf.h
-    if grep -qx '#define CONF_WITH_NATIVE_PREEMPT 1' obj/autoconf.h; then
+    if grep -qx '#define CONF_WITH_PREEMPTION 1' obj/autoconf.h; then
         echo 'B2 validation must run with production timer preemption disabled' >&2
         exit 2
     fi
@@ -183,7 +177,7 @@ if [ "${IRQ_RESTART_TEST:-0}" = 1 ]; then
 fi
 if [ "${SHARED_VM_PEXEC:-0}" = 1 ]; then
     for symbol in CONF_WITH_SHARED_VM_PEXEC CONF_WITH_ELF_SHARED CONF_WITH_MMAP \
-                  CONF_WITH_PRIVATE_CLONE_TEST CONF_WITH_NATIVE_SCHED CONF_WITH_PCLONE; do
+                  CONF_WITH_PRIVATE_CLONE_TEST CONF_WITH_MULTITHREADING; do
         grep -q "^#define $symbol 1$" obj/autoconf.h || {
             echo "positive shared-Pexec configuration missing effective $symbol" >&2
             exit 2

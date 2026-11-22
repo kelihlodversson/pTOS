@@ -12,7 +12,7 @@ typedef struct {
     long code, rw;
     int drive;
 } FS_ERROR_STATE;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 FS_ERROR_STATE *fs_error_current(void);
 #else
 /* Classic kernels have no CPU selection. Keep every access a direct constant

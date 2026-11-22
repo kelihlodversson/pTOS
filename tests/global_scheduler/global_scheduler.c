@@ -3,7 +3,7 @@
 void test_global_scheduler(void);
 void test_global_scheduler(void)
 {
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_USER_ASPACE)
+#if defined(TEST_WITH_MULTITHREADING) && defined(TEST_WITH_USER_ASPACE)
     long h;
     ptest_begin("global_scheduler");
     h=Fopen("C:\\GLOBALOK.ON",0);

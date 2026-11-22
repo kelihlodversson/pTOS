@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-fork-parent-') as directory:
     work = Path(directory)
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/pc-x86_64_defconfig')
-    for symbol in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN',
+    for symbol in ('CONF_WITH_MULTITHREADING',
                    'CONF_WITH_PRIVATE_CLONE', 'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_FORK_RETURN_TEST'):
         config.syms[symbol].set_value(2)
     assert config.syms['CONF_WITH_FORK_CORE'].str_value == 'y'

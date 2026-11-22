@@ -27,7 +27,7 @@
 
 extern void proc_fault(const char *cause, UQUAD code, UQUAD address, UQUAD pc, UQUAD sp) NORETURN;
 #include "../../../bdos/kproc.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
 extern PD *run;
@@ -35,7 +35,7 @@ extern PD *run;
  * Native scheduling owns per-THREAD intent until final PROCESS completion. */
 static void note_process_fault(WORD signal)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_fault(run, signal);
 #else
     kproc_note_fault(run, signal);

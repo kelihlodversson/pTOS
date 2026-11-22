@@ -24,7 +24,7 @@ typedef struct {
     PD *pd;
     UQUAD cr3, kernel_rsp, user_rsp, irq_rsp, flags;
     X86_64_PROCESS_LAUNCH *launch;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     UQUAD native_task;
 #endif
     FS_ERROR_STATE disk_error;

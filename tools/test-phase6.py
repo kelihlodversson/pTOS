@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-phase6-') as directory:
     cases = {
         'fs': ('virt-arm-aspace', ['tests/fork_descriptor_control.c', 'bdos/fsclose.c',
                     'bdos/fsopnclo.c', 'bdos/fshand.c', 'bdos/fsmain.c']),
-        'lazy': ('pc-x86_64', ['tests/fork_lazy_control.c', 'bdos/kaspace.c']),
+        'lazy': ('pc-x86_64', ['tests/fork_lazy_control.c', 'bdos/kaspace.c', 'bdos/kowner.c', 'tests/kowner_model.c']),
     }
     for name, (preset, sources) in cases.items():
         if args.require and args.require != name:
@@ -47,12 +47,12 @@ with tempfile.TemporaryDirectory(prefix='ptos-phase6-') as directory:
         if name == 'fs':
             config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2)
         else:
-            for symbol in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_ELF_SHARED',
-                           'CONF_WITH_CUIS', 'CONF_WITH_X32_VDI', 'CONF_WITH_USER_CALLBACKS'):
+            for symbol in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_X32_VDI', 'CONF_WITH_USER_CALLBACKS'):
                 config.syms[symbol].set_value(0)
             config.syms['CONF_WITH_X86_64_MEMTEST'].set_value(2)
             config.syms['CONF_WITH_MMAP'].set_value(0)
-            config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
+            config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
+            config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].set_value(2)
         config.write_config(str(work/'config'))
         subprocess.run([sys.executable, 'tools/genconfig.py', '--kconfig', 'Kconfig',
                         '--config', str(work/'config'), '--header', str(work/'autoconf.h'),

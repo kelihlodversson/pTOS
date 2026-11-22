@@ -70,7 +70,7 @@ configuration gate, S_INQUIRE discovery and corresponding acceptance tests.
 It must not modify request decoding, launch ownership, cancellation boundaries,
 completion observation, scheduler policy or the filesystem implementation.
 S_PROCEXEC remains signed Ssystem selector -9 (0xfff7), not a new trap family.
-Supported USER_ASPACE + NATIVE_SCHED + SSYSTEM kernels may expose it only after
+Supported MULTITHREADING + SSYSTEM kernels may expose it only after
 explicit owner activation approval. Other kernels return EINVFN for dispatch
 and inquiry. Ordinary presets must remain unchanged until that approval.
 

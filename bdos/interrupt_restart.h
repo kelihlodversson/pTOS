@@ -25,7 +25,7 @@ typedef struct {
     BOOL peer_ran, capture_only, captured, suppress_credit, transported;
     BOOL automatic, reap_pending; /* reusable timer views; safe-context cleanup */
 } IRQ_RESTART;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 LONG interrupt_restart_reserve(IRQ_RESTART *);
 void interrupt_restart_reap(struct kthread_context *); /* off-CPU root only */
 void ksched_preempt_tick(void); /* 200 Hz IRQ: CPU metadata only */

@@ -30,11 +30,23 @@ static void verify_irq_replacement(void)
 }
 #endif
 
+#ifndef EXEC200_IMAGE_NAME
+#define EXEC200_IMAGE_NAME "EXEC200B.TOS"
+#endif
+
 int main(void)
 {
     EXEC200_TAIL t;
     long result;
     exec200_verify("image", &t);
+#ifdef __mc68000__
+#ifdef EXEC200_PRG
+    if (t.generation == 1) (void)Cconws("native Pexec(200) PRG to PRG: PASS\r\n");
+#else
+    if (t.generation == 1) (void)Cconws("native Pexec(200) PRG to ELF: PASS\r\n");
+    if (t.generation == 2) (void)Cconws("native Pexec(200) ELF to ELF: PASS\r\n");
+#endif
+#endif
     if (t.generation == 1) {
 #if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
         if (t.nested == 2) {
@@ -48,7 +60,7 @@ int main(void)
         while (!t.nested && Fsfirst("GO970.TMP", 0)) (void)Syield();
         /* Leave a multi-match search open on the default DTA. */
         if (Fsfirst("*.TOS", 0)) exec200_fail("image", "open search", 0);
-        result = exec200_next("EXEC200B.TOS", 0, &t, 0);   /* inherits this environment */
+        result = exec200_next(EXEC200_IMAGE_NAME, 0, &t, 0);   /* inherits this environment */
         exec200_fail("image", "second Pexec(200) returned", result);
     }
     if (t.generation != 2) exec200_fail("image", "unexpected generation", (long)t.generation);

@@ -7,7 +7,7 @@ CONF_WITH_PRIVATE_CLONE is on by default in the native process profile (MMU
 kernels with demand paging: x32, ARMv7, m68k without fastcall; the m68k backend
 is validated on the 68040 only). It implements the
 PRIVATE_VM construction policy in the existing proc_clone transaction. It does
-is the construction public Pfork/Pvfork (CONF_WITH_PFORK, fork.txt) use.
+is the construction public Pfork/Pvfork (CONF_WITH_FORK, fork.txt) use.
 Ordinary Pclone without CLONE_VM still returns EINVFN.
 
 Native backend evidence: x32 QEMU, ARM A32 Cortex-A7 QEMU and m68k 68040 QEMU.
@@ -75,7 +75,7 @@ Ordinary Pexec construction defaults are unchanged.
 
 Validation and reproduction
 ---------------------------
-The native test requires CONF_WITH_PRIVATE_CLONE_TEST, NATIVE_SCHED and PCLONE.
+The native test requires CONF_WITH_PRIVATE_CLONE_TEST and a COW backend.
 It uses private tagged Pclone size values; no production ABI opcode/flag is
 assigned. It checks distinct PID/TID/root, private global/heap/mmap writes in
 both write orders, lazy pages, independent stack storage, 24 injected backend

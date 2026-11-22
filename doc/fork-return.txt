@@ -18,7 +18,7 @@ Public Pexec(200) (#970, #999), including from a private-VM child (#1003), now
 advances the committed-exec generation, and a native test proves that a Pvfork
 child's committed Pexec(200) releases its parent. Hosted epoch models test
 readiness ownership only. Public Pfork/Pvfork are implemented behind
-CONF_WITH_PFORK; see the public Pfork/Pvfork section of phase6-acceptance.txt.
+CONF_WITH_FORK; see the public Pfork/Pvfork section of phase6-acceptance.txt.
 
 The parent-policy cases run in the small FORKPAR.TOS companion after the
 existing managed self-test, preserving the classic two-MiB procmem limit and
@@ -64,7 +64,7 @@ child backs such a page from its own record (tests/pclone/pclone.c, captured
 snapshot run). Moved image nheap and other
 existing private-runtime restrictions remain. The probe itself (resources=0)
 claims no descriptor, basepage, environment, DTA/search or signal inheritance;
-public Pfork/Pvfork (CONF_WITH_PFORK) request the descriptors, directories and
+public Pfork/Pvfork (CONF_WITH_FORK) request the descriptors, directories and
 DTA/search state through the PROCESS file snapshot (#969, #984).
 Final source evidence/limits live in phase6-acceptance.txt and its Draft PR.
 
@@ -73,7 +73,7 @@ Historical shared proof contract follows
 
 This is a tightly gated, shared-VM native continuation proof, NOT Pfork or
 Pvfork. (When written, public opcodes 0x11b and 0x113 returned EINVFN; they are
-now implemented behind CONF_WITH_PFORK.) The independent
+now implemented behind CONF_WITH_FORK.) The independent
 COW prerequisite is integrated separately; this saved-return probe remains
 shared-VM only. Complete fork inheritance, a vfork dependency object and
 Pexec(200) detach are not implemented.

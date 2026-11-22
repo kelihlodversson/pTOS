@@ -2,7 +2,7 @@
 #include "config.h"
 #include "pclone.h"
 #include "threadcalls.h"
-#if CONF_WITH_PCLONE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 typedef long long S64;
 extern S64 x32_probe_call(unsigned long long,S64,S64,S64);
 extern unsigned x32_thread_registers(unsigned seed);
@@ -31,7 +31,7 @@ static void yield(void) { CALL(0xff,0,0,0); }
 static void finish(int status) { CALL(0x4c,status,0,0); for (;;) ; }
 static void increment(volatile unsigned *value)
 {
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     (void)__sync_fetch_and_add(value,1);
 #else
     (*value)++;
@@ -39,7 +39,7 @@ static void increment(volatile unsigned *value)
 }
 static void error(unsigned bits)
 {
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     (void)__sync_fetch_and_or(&errors,bits);
 #else
     errors|=bits;
@@ -55,7 +55,7 @@ static void worker(void *argument)
     if (clone_irq_registers()) error(4);
     if (x32_thread_registers(w->seed) || canary!=w->seed) error(2);
     increment(&ready);
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if(w->kind==7) {
         /* Observe actual initial-TID completion, not its last USER store.
          * This sibling remains live while the parent checks WNOHANG. */
@@ -66,7 +66,7 @@ static void worker(void *argument)
     while(!release_workers) yield();
     increment(&count);
     if (failure_status) finish(failure_status);
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     if(w->kind==8 || w->kind==9) {
         /* Keep the intended status/fault as the final THREAD event even if
          * a timer interrupts the ordinary sibling just before its return. */
@@ -76,7 +76,7 @@ static void worker(void *argument)
     if (w->kind==6) {
         static const char empty_tail[2]={0,0};
         if(CALL(0x4b,0,"C:\\X32HELLO.TOS",empty_tail)!=0) finish(94);
-        if(create(&workers[1],CONF_WITH_NATIVE_PREEMPT ? 9 : 3,
+        if(create(&workers[1],CONF_WITH_PREEMPTION ? 9 : 3,
                   CLONE_VM|CLONE_SAME_PROCESS)<=0) finish(93);
         finish(0x44);
     }
@@ -124,11 +124,11 @@ static void group_entry(void *argument)
     invalid.stack_base=invalid_stack;invalid.stack_size=sizeof(invalid_stack);
     invalid.child_tid=&tid;invalid.child_pid=&pid;
     if(CALL(GEMDOS_PCLONE,&invalid,32,0)!=-36 || tid!=-7 || pid!=-9) finish(41);
-    if(create(&workers[0],CONF_WITH_NATIVE_PREEMPT ? 7 : 0,CLONE_VM|CLONE_SAME_PROCESS)<=0 ||
-       create(&workers[1],final_fault ? (CONF_WITH_NATIVE_PREEMPT ? 8 : 2) :
-                                      (CONF_WITH_NATIVE_PREEMPT ? 9 : 3),
+    if(create(&workers[0],CONF_WITH_PREEMPTION ? 7 : 0,CLONE_VM|CLONE_SAME_PROCESS)<=0 ||
+       create(&workers[1],final_fault ? (CONF_WITH_PREEMPTION ? 8 : 2) :
+                                      (CONF_WITH_PREEMPTION ? 9 : 3),
               CLONE_VM|CLONE_SAME_PROCESS)<=0) finish(42);
-#if !CONF_WITH_NATIVE_PREEMPT
+#if !CONF_WITH_PREEMPTION
     leader_stopped=1;
 #endif
     /* Public void return stops this initial TID only. */
@@ -209,7 +209,7 @@ int x32_same_threads(int test)
         while(ready<THREADS) yield();
         if(errors) { return fail(0x100+errors); }
         release_workers=1;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
         for(i=0;i<THREADS;i++)
             if(CALL(GEMDOS_PTHJOIN,workers[i].tid,0,0)) return fail(12);
         if(count!=THREADS) return fail(12);
@@ -241,7 +241,7 @@ int x32_same_threads(int test)
         if(tid!=-7 || pid!=-9) return fail(15);
     }
     release_workers=1;
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     for(i=0;i<12;i++)
         if(CALL(GEMDOS_PTHJOIN,workers[i].tid,0,0)) return fail(16);
     if(count!=12) return fail(16);

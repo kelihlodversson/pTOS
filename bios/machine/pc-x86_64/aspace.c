@@ -817,7 +817,7 @@ BOOL aspace_private_range_ok(const ASPACE *as, UQUAD va, UQUAD bytes)
     first = va & ~(UQUAD)(X86_64_PAGE_SIZE - 1);
     return range_is_private(as, first, (va + bytes - first + X86_64_PAGE_SIZE - 1) / X86_64_PAGE_SIZE);
 }
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
 {
     VADDR page,last;

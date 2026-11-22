@@ -20,11 +20,11 @@
 #include "kproc.h"
 #include "bdosstub.h"
 #include "mintproc.h"
-#if CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
 #include "pclone.h"
 #include "clone.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "threadcalls.h"
 #endif
@@ -154,12 +154,12 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
     {
     case GEMDOS_PFORK:
     case GEMDOS_PVFORK:
-        /* With CONF_WITH_PFORK the architecture trap captures the caller's
+        /* With CONF_WITH_FORK the architecture trap captures the caller's
          * return image and forks before this dispatcher (proc_clone_fork);
          * a call that reaches here is unsupported or its CPU state was not
          * admitted. Fail before constructing identities or suspending. */
         return EINVFN;
-#if CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
     case GEMDOS_PCLONE:
 #if CONF_WITH_NATIVE_ABI
         return xclone((UQUAD)(unsigned long)((const long *)pw)[1],
@@ -168,8 +168,8 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
         return xclone(ARG_P(1), ARG_P(3));
 #endif
 #endif
-#if CONF_WITH_NATIVE_SCHED
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
+#if CONF_WITH_MULTITHREADING
     case GEMDOS_PTHJOIN:
         return ksched_join((ULONG)ARG_P(1), ARG_P(
 #if CONF_WITH_NATIVE_ABI
@@ -179,7 +179,7 @@ long mintproc_call(long fn, const void *pw, BOOL *handled)
 #endif
         ));
 #endif
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     case GEMDOS_PTERMGRP: return ksched_termgrp((UWORD)ARG_W(1));
 #endif
     case GEMDOS_SYIELD: return ksched_yield();

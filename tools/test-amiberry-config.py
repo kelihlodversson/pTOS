@@ -43,8 +43,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-amiberry-config-') as directory:
         configured = scope['k']
         assert configured.syms['CONF_WITH_MFASTCALL'].str_value == ('y' if fastcall else 'n')
         assert configured.syms['CONF_WITH_SAVED_RETURN'].str_value == ('y' if proof or (restart and not fastcall) else 'n')
-        assert configured.syms['CONF_WITH_PFORK'].str_value == 'n'
-        assert configured.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == ('y' if preempt else 'n')
+        assert configured.syms['CONF_WITH_FORK'].str_value == 'n'
+        assert configured.syms['CONF_WITH_PREEMPTION'].str_value == ('y' if preempt else 'n')
         assert configured.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == ('y' if restart else 'n')
         assert configured.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'
 print('Amiberry native config: cooperative, deferred IRQ, timer and unsupported stack/FPU profiles: PASS (configuration only)')
