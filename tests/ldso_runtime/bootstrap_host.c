@@ -39,12 +39,12 @@ static uint32_t get(const unsigned char *p)
     return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
 #endif
 }
-static void count(unsigned char *p,unsigned n)
+static void put_halfword(unsigned char *p,unsigned n)
 {
 #if defined(BOOT_TEST_M68K)
-    p[44]=n>>8;p[45]=n;
+    p[0]=n>>8;p[1]=n;
 #else
-    p[44]=n;p[45]=n>>8;
+    p[0]=n;p[1]=n>>8;
 #endif
 }
 static void populate(unsigned char *p,int bad)
@@ -55,7 +55,8 @@ static void populate(unsigned char *p,int bad)
 #else
     put(p,0x464c457f);p[5]=1;
 #endif
-    p[4]=1;put(p+28,52);count(p,2);
+    p[4]=1;put(p+28,52);
+    put_halfword(p+40,52);put_halfword(p+42,32);put_halfword(p+44,2);
     put(p+52,1);put(p+72,8192);put(p+76,6);
     put(p+84,2);put(p+92,0x200);put(p+100,32);
     put(p+0x200,TABLE_TAG);put(p+0x204,0x300);
@@ -104,7 +105,7 @@ static int verify(uint32_t base)
         CHECK(dl_bootstrap(stack) && !memcmp(before,p+0x400,sizeof(before)));
     }
     stack[4]=base;
-    for(i=0;i<9;i++) {
+    for(i=0;i<11;i++) {
         populate(p,0);memcpy(before,p+0x400,sizeof(before));
         switch(i) {
         case 0: put(p+28,4090);break; /* PHDR crosses initial page */
@@ -115,8 +116,10 @@ static int verify(uint32_t base)
         case 5: put(p+0x300,0x200);break; /* metadata destination */
         case 6: put(p+0x300,0x408);break; /* overlapping destinations */
         case 7: /* An unused late PT_LOAD must also pass the full bounds check. */
-            count(p,3);put(p+116,1);put(p+124,0xfffff000U);put(p+136,16);put(p+140,6);break;
+            put_halfword(p+44,3);put(p+116,1);put(p+124,0xfffff000U);put(p+136,16);put(p+140,6);break;
         case 8: put(p+72,0x80000000U-base+1);break; /* one byte beyond user ceiling */
+        case 9: put_halfword(p+40,51);break; /* unexpected ELF32 header size */
+        case 10: put_halfword(p+42,31);break; /* unexpected ELF32 PHDR size */
         }
         CHECK(dl_bootstrap(stack) && !memcmp(before,p+0x400,sizeof(before)));
     }
