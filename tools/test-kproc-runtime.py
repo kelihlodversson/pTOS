@@ -35,10 +35,10 @@ with tempfile.TemporaryDirectory(prefix="ptos-kproc-runtime-") as directory:
         else:
             assert k.syms["CONF_WITH_SHARED_VM_PEXEC"].str_value == "n"
         k.syms["CONF_WITH_ELF_SHARED"].set_value(2)
-        k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(2 if args.image_policy else 0)
+        k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(0)
         k.syms["CONF_WITH_MMAP"].set_value(2)
         k.syms["CONF_WITH_FORK"].set_value(0)
-        assert (k.syms["CONF_WITH_PRIVATE_CLONE"].str_value == "y") == args.image_policy
+        assert k.syms["CONF_WITH_PRIVATE_CLONE"].str_value == "n"
         for name in ["CONF_WITH_MULTITHREADING", "CONF_WITH_ELF_SHARED"]:
             assert k.syms[name].str_value == "y", name
         k.write_config(str(work / "config"))

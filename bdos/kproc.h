@@ -270,12 +270,12 @@ LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PER
 void kproc_shared_exec_finish(KPROC *);
 #endif
 LONG kproc_shared_exec_take_mapping_owners(KPROC *,KASPACE_MEMBER **);
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
 LONG kproc_shared_dependencies_prepare(KPROC *,KPROC *);
-#if CONF_WITH_PRIVATE_CLONE_TEST
+#endif
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 void kproc_shared_dependency_test_fail_after(UWORD);
 UWORD kproc_shared_dependency_test_steps(void);
-#endif
 #endif
 void kproc_shared_exec_abort(KPROC *);
 BOOL kproc_shared_exec_ready(const KPROC *,struct kthread *);

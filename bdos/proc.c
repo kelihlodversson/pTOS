@@ -184,7 +184,7 @@ static void release_pd_files(PD *r);
  * exactly once -- the record is the proof it has not been done. */
 static void proc_release_block(void *base)
 {
-#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_MULTITHREADING && (CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE)
     if(kproc_shared_exec_retire_source(base)) return;
 #endif
     /* the tables are in the record: release through it, then drop it */
@@ -210,7 +210,7 @@ static void proc_release_block(void *base)
 static void proc_drop_child_record(void *base)
 {
     PD *child = (PD *)base;
-#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_MULTITHREADING && (CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE)
     if(kproc_shared_exec_retire_source(base)) return;
 #endif
 #if CONF_WITH_USER_ASPACE

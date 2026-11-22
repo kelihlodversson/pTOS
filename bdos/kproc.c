@@ -157,13 +157,13 @@ struct kproc {
     UQUAD tpa_gen;              /* a freed-and-reused address is not trusted */
     UBYTE *user_start;
     UBYTE *user_end;
+#if CONF_WITH_PROCESS_FILES
+    BOOL independent_dta;     /* leave the source's shared basepage mirror alone */
+#endif
 #if CONF_WITH_PRIVATE_CLONE
     /* Logical user context survives generic shared descendants independently
      * of each PROCESS's supervisor-only compatibility allocations. */
     BOOL logical_context;
-#if CONF_WITH_PROCESS_FILES
-    BOOL independent_dta;     /* leave the source's shared basepage mirror alone */
-#endif
     VADDR logical_basepage,logical_environment,logical_bp_bytes,logical_env_bytes;
 #endif
     ASPACE *aspace;      /* borrowed from active_space */
@@ -887,14 +887,13 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     if (!kproc_clone_target_ready(target, NULL) || target->parent_identity ||
         !(parent = kproc_retain_live(source)))
         return FALSE;
-#if CONF_WITH_PRIVATE_CLONE
-    /* Numerical user address only. Search caches/iterators remain empty;
-     * a factory PD's supervisor-only default is not the inherited user DTA. */
-    target->dta=source->dta;
 #if CONF_WITH_PROCESS_FILES
-    /* Descendants sharing the logical basepage also share its mirror. */
+    /* Numerical user address only. Search caches and iterators remain empty.
+     * Shared-root descendants use this even on MMUs without COW cloning. */
+    target->dta=source->dta;
     target->independent_dta=source->independent_dta;
 #endif
+#if CONF_WITH_PRIVATE_CLONE
     target->logical_context=TRUE;
     target->logical_basepage=source->logical_context?source->logical_basepage:(VADDR)(uintptr_t)source->user_start;
     target->logical_environment=source->logical_context?source->logical_environment:(VADDR)(uintptr_t)source->env_start;
@@ -918,9 +917,7 @@ void kproc_clone_clear_dta(KPROC *target)
 {
     if (!kproc_clone_target_ready(target, NULL)) panic("clone DTA: invalid target");
     target->dta = NULL;
-#if CONF_WITH_PRIVATE_CLONE
     target->independent_dta = TRUE;
-#endif
 }
 #endif
 enum { MAPPING_PREPARING=1,MAPPING_PREPARED,MAPPING_ABORTING };
@@ -1244,7 +1241,7 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
     p->active_space = space; /* transfer the transaction's owning reference */
     p->aspace = kaspace_backend(space);
     p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
-#if CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_MULTITHREADING
     if(p->shared_inherited) p->shared_inherited->committed=TRUE;
 #endif
     return TRUE;
@@ -1933,9 +1930,7 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
         p->parent = p->clone_controller_pd; /* logical identity remains separate */
     }
     if(p->shared_exec) shared_exec_commit(p);
-#if CONF_WITH_SHARED_VM_PEXEC
     if(p->shared_inherited) p->shared_inherited->committed=TRUE;
-#endif
     p->active_space = space; p->aspace = kaspace_backend(space);
     p->clone_guarded = TRUE; p->clone_identity_only = FALSE;
     p->child_usage_at_wait = wait_usage;
@@ -2899,9 +2894,7 @@ void kproc_destroy(PD *pd)
             kproc_load_leave();             /* (a disk error jumped out of a load) */
 #if CONF_WITH_MULTITHREADING
             kproc_clone_drop_compat(kproc);
-#if CONF_WITH_SHARED_VM_PEXEC
             kproc_shared_exec_abort(kproc);
-#endif
 #endif
             kaspace_member_release(&kproc->mapping_members);
             kproc->allocation_scope=NULL;
@@ -6583,8 +6576,10 @@ static BOOL shared_failure_point(void)
     shared_steps++;
     return shared_fail_after && !--shared_fail_after;
 }
-#elif CONF_WITH_SHARED_VM_PEXEC
+#else
+#if CONF_WITH_SHARED_VM_PEXEC
 static BOOL shared_failure_point(void) {return FALSE;}
+#endif
 #define shared_dependency_point() FALSE
 #endif
 #include "kproc_shared_exec.h"

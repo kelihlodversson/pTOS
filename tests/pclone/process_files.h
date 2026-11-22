@@ -222,9 +222,12 @@ static void test_process_files(void)
             }
             files_probe.gate=1;status=Pwaitpid(size==PTOS_CLONE_ARGS_MIN_SIZE?-1:pid,0,0);
             if (size==PTOS_CLONE_ARGS_MIN_SIZE) pid=status>>16;
-            if (files_probe.error || (status>>16)!=pid || (status&65535)!=73)
-                printf("descriptor clone mode %d pid %ld worker %ld status %lx checks %lx\r\n",
-                       mode,(long)pid,files_probe.pid,(unsigned long)status,(unsigned long)files_probe.error);
+            if (files_probe.error || (status>>16)!=pid || (status&65535)!=73) {
+                char detail[128];
+                sprintf(detail,"descriptor clone mode %d pid %ld worker %ld status %lx checks %lx\r\n",
+                        mode,(long)pid,files_probe.pid,(unsigned long)status,(unsigned long)files_probe.error);
+                conws(detail);
+            }
             ptest_assert_msg(pid>0 && pid!=Pgetpid() && (status>>16)==pid && (status&65535)==73 && !files_probe.error &&
                              files_probe.pid==pid,"child inherits same local numbers, OFD cursor and independently closes");
             ptest_assert_msg(Pwaitpid(pid,1,0)==-33L,"descriptor child completion is publicly reaped once");

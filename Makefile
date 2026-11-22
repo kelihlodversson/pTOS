@@ -1967,7 +1967,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(and $(CONF_WITH_PREEMPTION),$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_NATIVE_PREEMPT_PROBES) \
               $(if $(filter y,$(CONF_WITH_IRQ_RESTART_TEST)),-DTEST_WITH_IRQ_RESTART) \
               $(if $(filter y,$(CONF_WITH_PREEMPTION)),-DTEST_WITH_PREEMPTION) \
-              $(if $(filter y,$(CONF_WITH_IMAGE_POLICY_TEST)),-DTEST_WITH_IMAGE_POLICY_TEST) \
+              $(if $(and $(CONF_WITH_IMAGE_POLICY_TEST),$(CONF_WITH_PRIVATE_CLONE_TEST),$(CONF_WITH_PRIVATE_CLONE)),-DTEST_WITH_IMAGE_POLICY_TEST) \
               $(if $(filter y,$(CONF_WITH_PRIVATE_SNAPSHOT_TEST)),-DTEST_WITH_PRIVATE_SNAPSHOT) \
               $(if $(filter y,$(CONF_WITH_PROCESS_FILES_TEST)),-DTEST_WITH_PROCESS_FILES) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC)),-DTEST_WITH_PROCESS_EXEC) \
@@ -2094,7 +2094,7 @@ PREEMPT.TOS: $(TEST_STARTUP) obj/preempt_image.o obj/preempt_registers.o obj/pre
 endif
 TOCLEAN += PREEMPT.TOS
 
-ifeq ($(CONF_WITH_IMAGE_POLICY_TEST),y)
+ifeq ($(and $(CONF_WITH_IMAGE_POLICY_TEST),$(CONF_WITH_PRIVATE_CLONE_TEST),$(CONF_WITH_PRIVATE_CLONE)),y)
 TEST_IMAGE_POLICY_FILES = IMAGEPOL.TOS
 obj/image_policy_native.o: tests/pclone/image_policy_native.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@

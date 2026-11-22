@@ -11,11 +11,12 @@ menu "GEMDOS (BDOS)"
 
 config CONF_WITH_IMAGE_POLICY_TEST
     bool "Immutable executable-policy preparation (test only)"
-    depends on CONF_WITH_PRIVATE_CLONE_TEST && CONF_WITH_PRIVATE_CLONE
+    depends on CONF_WITH_MULTITHREADING
     default n
     help
       Verify immutable executable metadata capture and activation through
-      the trusted shared-VM clone. This has no public executable ABI.
+      the trusted shared-VM clone. The native companion also uses the
+      clone lifetime diagnostics. This has no public executable ABI.
 
 config CONF_WITH_EXEC_REPLACE
     bool "Pexec(200): replace the program in the same process"

@@ -3,7 +3,7 @@ static struct shared_exec_regions *shared_regions(const KPROC *p)
     if(p->shared_exec && p->shared_inherited) panic("duplicate special execution region owner");
     return p->shared_exec?p->shared_exec:p->shared_inherited;
 }
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
 static LONG shared_logical(struct shared_exec_regions *set,KPROC *source,VADDR va,VADDR bytes,UWORD access)
 {
     KASPACE_RESERVATION_INFO info;
@@ -122,7 +122,7 @@ void kproc_shared_exec_abort(KPROC *process)
     process->shared_exec=process->shared_inherited=NULL;
     shared_regions_release(process,set); /* close admission before callbacks */
 }
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
 LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
 {
     struct shared_exec_regions *set,*inherited;
@@ -131,6 +131,13 @@ LONG kproc_shared_dependencies_prepare(KPROC *target,KPROC *source)
     if(!target || !source || target==source || target->shared_exec || target->shared_inherited ||
         target->threads || target->mapping_preparation!=MAPPING_PREPARED ||
         !source->active_space || !mapping_owner_live(source)) return EACCDN;
+#if !CONF_WITH_SHARED_VM_PEXEC
+    /* Native private snapshots carry release authority for compatibility
+     * pages and an optional lazy top stack. A new PROCESS sharing that
+     * root must retain those dependencies before the snapshot owner exits. */
+    if (!source->shared_inherited && !kproc_private_image_addresses(source,NULL,NULL,NULL))
+        return E_OK;
+#endif
     set=shared_dependency_point()?NULL:kalloc(sizeof(*set));if(!set) return ENSMEM;
     memset(set,0,sizeof(*set));
     set->space=shared_dependency_point()?NULL:kaspace_share(source->active_space);

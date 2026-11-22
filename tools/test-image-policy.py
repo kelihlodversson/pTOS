@@ -28,7 +28,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-image-policy-") as directory:
     if args.shared:
         config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
         assert config.syms["CONF_WITH_ELF_SHARED"].str_value == "y"
-    for name in ("CONF_WITH_MMAP", "CONF_WITH_X86_64_MEMTEST", "CONF_WITH_MULTITHREADING", "CONF_WITH_PRIVATE_CLONE_TEST", "CONF_WITH_IMAGE_POLICY_TEST"):
+    config.syms["CONF_WITH_FORK"].set_value(0)
+    for name in ("CONF_WITH_MMAP", "CONF_WITH_X86_64_MEMTEST", "CONF_WITH_MULTITHREADING", "CONF_WITH_IMAGE_POLICY_TEST"):
         config.syms[name].set_value(2)
         assert config.syms[name].str_value == "y", name
     config.write_config(str(work / "config"))

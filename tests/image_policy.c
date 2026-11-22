@@ -8,6 +8,18 @@
 #include "kproc_image_policy.h"
 #include "ksched_lifetime.h"
 
+/* This fixture never requests descriptor inheritance. Separate hosted
+ * descriptor fixtures exercise the real snapshot implementation. */
+BOOL process_files_init(PROCESS_FILES *files,KPROC *owner,SBYTE *standard)
+{ (void)files; (void)owner; (void)standard; return TRUE; }
+void process_files_retire(PROCESS_FILES *files) { (void)files; }
+LONG kproc_files_snapshot_begin(KPROC *source,KPROC_FILE_SNAPSHOT **snapshot)
+{ (void)source; (void)snapshot; CHECK(0); return EINVFN; }
+LONG kproc_files_snapshot_prepare(KPROC_FILE_SNAPSHOT *snapshot,KPROC *target,UWORD policy)
+{ (void)snapshot; (void)target; (void)policy; CHECK(0); return EINVFN; }
+void kproc_files_snapshot_end(KPROC_FILE_SNAPSHOT **snapshot)
+{ CHECK(snapshot && !*snapshot); }
+
 static unsigned cleanup_depth;
 static BOOL poison_next_allocation;
 void *kalloc(ULONG bytes)

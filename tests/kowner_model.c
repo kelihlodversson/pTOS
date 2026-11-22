@@ -4,11 +4,14 @@
 #include "kowner.h"
 #include "ksched.h"
 #include "kthread.h"
+#include "kproc.h"
 #if CONF_WITH_MULTITHREADING
 /* These fixtures have one executing owner unless they provide a scheduler model. */
 UQUAD __attribute__((weak)) ksched_context_id(void) { return 1; }
 void __attribute__((weak)) kthread_forget_completions(struct kproc *process)
 { (void)process; }
+BOOL __attribute__((weak)) kproc_group_status(const KPROC *process, UWORD *status)
+{ (void)process; (void)status; return FALSE; }
 static KOWNER_CPU cpu;
 static uintptr_t flags=0x200;
 KOWNER_CPU *__attribute__((weak)) kowner_cpu(void) { return &cpu; }
