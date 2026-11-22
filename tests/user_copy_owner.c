@@ -141,6 +141,7 @@ int main(void)
     {
         int execution[3];
         UWORD status;
+        BOOL final=TRUE;
         KTHREAD *a=kthread_create(&child),*b=kthread_create(&child),*c;
         CHECK(a && b);
         CHECK(kthread_set_execution(a,&execution[0],copy_execution_reap));
@@ -149,19 +150,24 @@ int main(void)
         process->started=TRUE;process->threaded=TRUE;
         address=kproc_mmap(&child,0,USER_PAGE_SIZE,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,0,0);
         CHECK(address>0 && kproc_user_copy_begin(&copy,address,sizeof(input),TRUE)==E_OK);
-        CHECK(kproc_prepare_thread_exit_handoff(process,b));
+        CHECK(kproc_prepare_thread_exit_handoff(process,b,&final) && !final);
         CHECK(kthread_finish_exit(b,7) && kthread_reap(b));
         CHECK(process->user_copies==1 && process->disposal_state==PROCESS_LIVE && executions_reaped==1);
         c=kthread_create(&child);CHECK(c);
         CHECK(kthread_set_execution(c,&execution[2],copy_execution_reap) && kthread_start(c));
         CHECK(kproc_request_group_exit(process,61) && kproc_request_group_exit(process,62));
         CHECK(kproc_group_status(process,&status) && status==61 && !kthread_create(&child));
-        CHECK(kproc_prepare_thread_exit_handoff(process,c));
+        CHECK(kproc_prepare_thread_exit_handoff(process,c,&final) && !final);
         CHECK(kthread_finish_exit(c,status) && kthread_reap(c));
-        CHECK(executions_reaped==2 && !kproc_prepare_thread_exit_handoff(process,a));
+        final=TRUE;
+        CHECK(executions_reaped==2);
+        CHECK(!kproc_prepare_thread_exit_handoff(process,a,&final) && final);
         CHECK(process->disposal_state==PROCESS_LIVE && kproc_user_copy_write(&copy,&input));
         kproc_user_copy_end(&copy);
-        CHECK(kproc_prepare_thread_exit_handoff(process,a));
+        CHECK(!kproc_prepare_thread_exit_handoff(process,a,NULL));
+        CHECK(process->disposal_state==PROCESS_LIVE);
+        final=FALSE;
+        CHECK(kproc_prepare_thread_exit_handoff(process,a,&final) && final);
         CHECK(kthread_finish_exit(a,status) && kthread_reap(a));
         CHECK(!process->threads && !process->user_copies && executions_reaped==3);
         puts("Retained copy permits ordinary/cancelled sibling stop, preserves first group status, and excludes final PROCESS handoff: PASS (production owners; CPU modeled)");

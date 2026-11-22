@@ -319,11 +319,12 @@ BOOL proc_defer_observer(PD *pd, KPROC *observer);
 /* Borrow handoff reference on success. Escaping disk errors consume it and
  * panic; other teardown callbacks must not exit non-locally. */
 void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resident_len);
-BOOL kproc_prepare_exit_handoff(KPROC *process);
 /* Backend-owned executing threads use the launcher handoff. A non-final
  * thread leaves PROCESS live; only the final association reserves disposal.
  * Detachment is deferred until the caller has left its syscall stack. */
-BOOL kproc_prepare_thread_exit_handoff(KPROC *process, struct kthread *thread);
+/* final is required and is written only on success. It reports whether
+ * this exit also retires the PROCESS. Failure leaves the PROCESS unchanged. */
+BOOL kproc_prepare_thread_exit_handoff(KPROC *process, struct kthread *thread, BOOL *final);
 BOOL kproc_finish_thread_handoff(KPROC *process, struct kthread *thread);
 void kproc_require_exit_thread(PD *pd, struct kthread *thread);
 BOOL kproc_exit_handoff_pending(const KPROC *process);
