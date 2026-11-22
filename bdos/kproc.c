@@ -5604,8 +5604,8 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
     return TRUE;
 }
 
-/* The same, and the pages of its lazy areas that are not there yet get their
- * physical pages now (what a read or write of them by the process would do).
+/* Check the range and resolve COW for writes, including on eager kernels.
+ * For lazy areas, supply the physical pages a user access would fault in.
  * The first pass rejects a range before any page is backed.  A range that is
  * fine but cannot be backed returns its precise error to the owning wrapper. */
 static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write, BOOL *backing_failed)

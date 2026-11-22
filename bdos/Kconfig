@@ -167,10 +167,10 @@ config CONF_WITH_NATIVE_SCHED
     default y if !ARCH_ARM || CPU_ARMV7
     help
       Kernel-owned cooperative native process scheduling and standard MiNT
-      asynchronous launch, yield and child waits. Selected by CUIS and on by
-      default in the native process profile; independent of GUI session and
-      input services. Cooperative by default; the independent native USER
-      timer-preemption capability below is explicitly opt-in.
+      asynchronous launch, yield and child waits. Enabled by default in the
+      supported native process profile, including headless systems. CUIS also
+      selects this scheduler when enabled. Native USER timer preemption below
+      is opt-in.
       Available on x32, ARM MMU and m68k MMU user-address-space kernels.
       Scheduling is cooperative and does not require CUIS or external libaes.
 
