@@ -2894,7 +2894,9 @@ void kproc_destroy(PD *pd)
             kproc_load_leave();             /* (a disk error jumped out of a load) */
 #if CONF_WITH_MULTITHREADING
             kproc_clone_drop_compat(kproc);
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
             kproc_shared_exec_abort(kproc);
+#endif
 #endif
             kaspace_member_release(&kproc->mapping_members);
             kproc->allocation_scope=NULL;

@@ -41,13 +41,13 @@ for demand in 0 1; do
         -ffunction-sections -fdata-sections -fno-pie -no-pie \
         -iquote include -I"$work" -I"$work/base" -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
         -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
-        tests/clone/exec_permissions.c -Wl,--gc-sections -o "$work/exec-permissions"
+        tests/clone/exec_permissions.c bdos/kowner.c tests/kowner_model.c -Wl,--gc-sections -o "$work/exec-permissions"
     "$work/exec-permissions"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
         -ffunction-sections -fdata-sections -fno-pie -no-pie \
         -iquote include -I"$work" -I"$work/base" -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
         -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
-        tests/clone/reservation_permissions.c -Wl,--gc-sections -o "$work/reservation-permissions"
+        tests/clone/reservation_permissions.c bdos/kowner.c tests/kowner_model.c -Wl,--gc-sections -o "$work/reservation-permissions"
     "$work/reservation-permissions"
 done
 echo 'Production KPROC staged-image/heap entry permissions (host page-table model): PASS'
@@ -57,6 +57,6 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
     -ffunction-sections -fdata-sections -fno-pie -no-pie \
     -iquote include -I"$work/base" -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
     -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
-    tests/clone/procmem_text.c -Wl,--gc-sections -o "$work/procmem-text"
+    tests/clone/procmem_text.c bdos/kowner.c tests/kowner_model.c -Wl,--gc-sections -o "$work/procmem-text"
 "$work/procmem-text"
 echo 'Production PRG borrowed-text preflight/rights publication (host MMU model): PASS'

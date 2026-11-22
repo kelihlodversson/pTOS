@@ -42,6 +42,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     # The same production registry with native owner teardown enabled: model
     # a prepared-child finalizer at proc_exec_owner_exit and use real ixforce.
     config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
+    config.syms['CONF_WITH_FORK'].set_value(0)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)

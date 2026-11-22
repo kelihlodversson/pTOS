@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     config.load_config('tools/hosted-legacy-profile.config', replace=False)
     config.syms['CONF_WITH_ELF_SHARED'].set_value(0)
     config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
+    config.syms['CONF_WITH_FORK'].set_value(0)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)

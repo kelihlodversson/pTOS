@@ -108,6 +108,40 @@ void proc_exec_owner_exit(KPROC *owner)
     memset(&sft[0],0,sizeof(sft[0])); /* End the fixture's synthetic file. */
 }
 #endif
+static void check_standard_invalidation(void)
+{
+    KPROC *parent=kproc_find(&caller),*process=kproc_find(&child);
+#if CONF_WITH_PROCESS_FILES
+    PROCESS_FILE_BINDING *bindings[] = {
+        &parent->files.binding[0], &process->files.binding[1], &process->files.binding[2]
+    };
+    PROCESS_FILE_BINDING original[ARRAY_SIZE(bindings)];
+    unsigned i;
+    assert(process_files_bind_bios(&caller,0,-1)==E_OK);
+    assert(process_files_bind_bios(&child,1,-1)==E_OK);
+    assert(process_files_bind_bios(&child,2,-1)==E_OK);
+    for (i=0; i<ARRAY_SIZE(bindings); i++) {
+        original[i]=*bindings[i];
+        /* Model existing aliases without opening or closing a file. */
+        bindings[i]->handle=i==2 ? NUMSTD+1 : NUMSTD;
+        bindings[i]->incarnation=i==2 ? 2 : 1;
+    }
+    sft[0].f_incarnation=1;
+#endif
+    parent->uft[0]=NUMSTD;
+    process->uft[1]=NUMSTD;
+    process->uft[2]=NUMSTD+1;
+    kproc_standard_file_invalidate(NUMSTD);
+    assert(parent->uft[0]<0 && process->uft[1]<0 && process->uft[2]==NUMSTD+1);
+#if CONF_WITH_PROCESS_FILES
+    for (i=0; i<ARRAY_SIZE(bindings); i++) *bindings[i]=original[i];
+    sft[0].f_incarnation=0;
+    parent->uft[0]=original[0].handle;
+    process->uft[1]=original[1].handle;
+    process->uft[2]=original[2].handle;
+#endif
+}
+
 int main(void)
 {
     PROCESS_OBSERVER *a=NULL,*b=NULL,*replacement=NULL;
@@ -117,12 +151,7 @@ int main(void)
     ULONG references;
     ULONG first_order;
     assert(kproc_create(&caller) && kproc_create(&child));
-    kproc_find(&caller)->uft[0]=NUMSTD;
-    kproc_find(&child)->uft[1]=NUMSTD;
-    kproc_find(&child)->uft[2]=NUMSTD+1;
-    kproc_standard_file_invalidate(NUMSTD);
-    assert(kproc_find(&caller)->uft[0]<0 && kproc_find(&child)->uft[1]<0 &&
-           kproc_find(&child)->uft[2]==NUMSTD+1);
+    check_standard_invalidation();
     p=kproc_retain(&child); assert(p);
     assert(process_observer_attach(p,&a)==0 && process_observer_attach(p,&b)==0);
     assert(process_observer_attach(p,&a)==EINVAL && p->references==4);

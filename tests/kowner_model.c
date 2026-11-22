@@ -3,9 +3,9 @@
 #include "emutos.h"
 #include "kowner.h"
 #include "ksched.h"
-#include "kthread.h"
-#include "kproc.h"
 #if CONF_WITH_MULTITHREADING
+#include "../bdos/kthread.h"
+#include "../bdos/kproc.h"
 /* These fixtures have one executing owner unless they provide a scheduler model. */
 UQUAD __attribute__((weak)) ksched_context_id(void) { return 1; }
 void __attribute__((weak)) kthread_forget_completions(struct kproc *process)
