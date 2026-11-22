@@ -75,7 +75,7 @@ BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
     return hold_acquire(base,allocation,expected_owner,offset,bytes,rights,
                         owner_number,owner_identity,result);
 }
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
 /* Kernel metadata lifetime only. This token can never authenticate a USER
  * mapping, executable permission journal or a user allocation grant. */
 BOOL procmem_hold_lifetime(const void *base,UQUAD allocation,const void *expected_owner,

@@ -90,7 +90,7 @@ typedef struct {
 BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
         const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
         UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
 BOOL procmem_hold_lifetime(const void *base,UQUAD allocation,const void *expected_owner,
         UQUAD owner_number,void *owner_identity,PROCMEM_HOLD *result);
 #endif
