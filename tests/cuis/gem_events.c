@@ -108,8 +108,9 @@ int main(int argc, char **argv, char **envp)
     VERIFY(multi(MU_MESAG, ~0UL, received, state, &global) == MU_MESAG && received[0] == 901 && received[1] == peer && received[3] == pid);
     VERIFY(process(0x13a, pid, 0, 0, 0) == (LONG)(((ULONG)pid << 16) | 37));
     pid = spawn('z'); VERIFY(pid > 0);
-    VERIFY(multi(MU_MESAG | MU_TIMER, 0, received, state, NULL) == (MU_MESAG | MU_TIMER) && received[1] > 0 && received[3] == pid);
+    /* Wait for the child to queue its message before the zero-time poll. */
     VERIFY(process(0x13a, pid, 0, 0, 0) == (LONG)(((ULONG)pid << 16) | 37));
+    VERIFY(multi(MU_MESAG | MU_TIMER, 0, received, state, NULL) == (MU_MESAG | MU_TIMER) && received[1] > 0 && received[3] == pid);
     pid = spawn('f'); VERIFY(pid > 0);
     status = process(0x13a, pid, 0, 0, 0);
     VERIFY(status == (LONG)(((ULONG)pid << 16) | 0x0b00));
