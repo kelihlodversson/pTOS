@@ -30,10 +30,11 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror \
 "$work/handler"
 echo 'Production xclone handler negative-argument tests: PASS'
 
-# Actual KPROC logical entry policy with either demand-paging mode. Only the
-# paging option changes in this host test header; no shipped preset changes.
+# Actual KPROC logical entry policy with either demand-paging mode. The
+# profile excludes COW, so the fault path follows demand paging here.
 for demand in 0 1; do
-    sed "s/#define CONF_WITH_DEMAND_PAGING [01]/#define CONF_WITH_DEMAND_PAGING $demand/" \
+    sed -e "s/#define CONF_WITH_DEMAND_PAGING [01]/#define CONF_WITH_DEMAND_PAGING $demand/" \
+        -e "s/#define CONF_WITH_USER_PAGE_FAULTS [01]/#define CONF_WITH_USER_PAGE_FAULTS $demand/" \
         "$work/base/autoconf.h" > "$work/autoconf.h"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
         -ffunction-sections -fdata-sections -fno-pie -no-pie \

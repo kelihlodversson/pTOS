@@ -19,7 +19,7 @@
 #include "tosvars.h"
 #include "procmem.h"
 #include "aspace32.h"
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
 #include "bdosdefs.h"
 #include "../bdos/kproc.h"
 #include "gemerror.h"
@@ -100,7 +100,7 @@ void m68k_user_fault(const UBYTE *f)
     proc_fault(cause_of(vector), (UQUAD)vector, address, pc, (UQUAD)usp);
 }
 
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
 extern PD *run;                         /* bdos/proc.c */
 
 /* offsets in the 68040 access error frame (format 7) */
@@ -308,6 +308,6 @@ int m68k_user_busfault(const UBYTE *f)
         return 0;
     return 1;
 }
-#endif /* CONF_WITH_DEMAND_PAGING */
+#endif /* CONF_WITH_USER_PAGE_FAULTS */
 
 #endif /* CONF_WITH_USER_ASPACE */

@@ -25,15 +25,13 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     config.syms["CONF_WITH_ELF_SHARED"].set_value(0)
     assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
-    # Without CUIS, native scheduling stays on only through the default
-    # native process profile of the MMU presets (BUILD_FORK_PROFILE).
+    # The native process profile of the MMU presets does not depend on CUIS.
     assert (config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y") == available
 
-# Native scheduling is selectable without either AES on all MMU targets.
-for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
+# Native scheduling defaults on without either AES on all MMU targets.
+for preset in ("pc-x86_64", "pc-x86_64-eager", "virt-arm-aspace", "virt-m68k-aspace"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/" + preset + "_defconfig")
-    config.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
     assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y"
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
@@ -89,6 +87,7 @@ for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/" + preset + "_defconfig")
     assert config.syms["CONF_WITH_PTHJOIN"].str_value == "y"
+    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "y"
     config.load_config("tools/hosted-legacy-profile.config", replace=False)
     assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
     config.syms["CONF_WITH_PTERMGRP"].set_value(2)

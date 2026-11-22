@@ -2407,7 +2407,7 @@ void test_pclone(void)
                 conws("native CUIS retained stream ownership: PASS (parent verified)\r\n");
 #endif
         }
-#if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_PFORK) || (defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST))
         /* Keep the new fixture out of this self-reloading image: three
          * classic PRG copies must fit the unchanged procmem window. */
         ptest_log_flush();

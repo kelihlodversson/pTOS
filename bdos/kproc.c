@@ -5452,14 +5452,16 @@ static BOOL lazy_area(const KPROC *kproc, VADDR va, UWORD *prot)
     return FALSE;               /* (without demand paging nothing is lazy) */
 }
 
-#if CONF_WITH_DEMAND_PAGING
-/* backs the page of a lazy area; the stack remembers how far down it has been */
+#if CONF_WITH_USER_PAGE_FAULTS
+/* Resolve COW or back a lazy page and remember the stack's low page. */
 static int back_page(KPROC *kproc, VADDR va, UWORD access)
 {
-#if !CONF_WITH_MMAP
+#if !CONF_WITH_MMAP && !CONF_WITH_PRIVATE_CLONE
     UNUSED(access);
 #endif
+#if CONF_WITH_DEMAND_PAGING
     UWORD prot;
+#endif
 
 #if CONF_WITH_PRIVATE_CLONE
     /* Syscall copyout must split the same shared anonymous leaf as a user
@@ -5475,6 +5477,7 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
         if (rc >= 0) return rc;
     }
 #endif
+#if CONF_WITH_DEMAND_PAGING
     if (!lazy_area(kproc, va, &prot) || !(prot & ASPACE_PROT_USER)) return 0;
     if (!aspace_fault_in(kproc->aspace, va, prot)) return 2;
     va &= ~(USER_PAGE_SIZE - 1);
@@ -5482,15 +5485,20 @@ static int back_page(KPROC *kproc, VADDR va, UWORD access)
         (!kproc->stack_low || va < kproc->stack_low))
         kproc->stack_low = va;
     return TRUE;
+#else
+    return 0;
+#endif
 }
 
 #endif
 
 static int demand_page(PD *pd, VADDR va, UWORD access)
 {
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
     KPROC *kproc = kproc_find(pd);
+#if CONF_WITH_DEMAND_PAGING
     UWORD prot;
+#endif
 
     if (!kproc || !kproc->aspace)
         return 0;
@@ -5500,6 +5508,7 @@ static int demand_page(PD *pd, VADDR va, UWORD access)
         if (result >= 0) return result;
     }
 #endif
+#if CONF_WITH_DEMAND_PAGING
 #if CONF_WITH_MMAP
     {
         int rc = kaspace_mmap_demand_page(kproc->active_space, va, access);
@@ -5518,6 +5527,9 @@ static int demand_page(PD *pd, VADDR va, UWORD access)
     }
     return back_page(kproc, va, access);
 #else
+    return 0;
+#endif
+#else
     UNUSED(pd);
     UNUSED(va);
     UNUSED(access);
@@ -5527,7 +5539,7 @@ static int demand_page(PD *pd, VADDR va, UWORD access)
 
 int kproc_demand_page(PD *pd,VADDR va,UWORD access)
 {
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
     KPROC_USER_COPY operation={0};
     LONG error;
     int result;
@@ -5542,8 +5554,8 @@ int kproc_demand_page(PD *pd,VADDR va,UWORD access)
 #endif
 }
 
-#if CONF_WITH_DEMAND_PAGING
-/* A kernel call needs a page of a lazy area and no physical page is left: the
+#if CONF_WITH_USER_PAGE_FAULTS
+/* A kernel copy needs backing and no physical page is left: the
  * same end as a touch of the page by the process itself, not a bad pointer. */
 static void lazy_oom(void)
 {
@@ -5594,13 +5606,13 @@ static BOOL range_allowed(KPROC *kproc, VADDR address, ULONG size, BOOL write)
     return TRUE;
 }
 
-/* The same, and the pages of its lazy areas that are not there yet get their
- * physical pages now (what a read or write of them by the process would do).
+/* Check the range and resolve COW for writes, including on eager kernels.
+ * For lazy areas, supply the physical pages a user access would fault in.
  * The first pass rejects a range before any page is backed.  A range that is
  * fine but cannot be backed returns its precise error to the owning wrapper. */
 static LONG back_user_range(KPROC *kproc, VADDR address, ULONG size, BOOL write, BOOL *backing_failed)
 {
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
     VADDR first = address & ~(USER_PAGE_SIZE - 1);
     VADDR last = (address + size - 1) & ~(USER_PAGE_SIZE - 1), page;
 
@@ -5632,7 +5644,7 @@ static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
     LONG error=back_user_range(kproc,address,size,write,&backing_failed);
     if (error==E_OK) return TRUE;
     if (error==EIMBA && !backing_failed) return FALSE;
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
     if (error==EREADF) {
         kcprintf("process: file mapping I/O error\n");
 #if CONF_WITH_NATIVE_SCHED
@@ -6488,7 +6500,7 @@ static LONG copy_user_operation(VADDR address,void *destination,const void *sour
     LONG error;
     if(!bytes)return E_OK;
     error=kproc_user_copy_begin(&copy,address,bytes,write);
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
     if(error==EIMBA && copy.backing_failed && fatal)lazy_oom();
 #else
     UNUSED(fatal);
@@ -6501,7 +6513,7 @@ static LONG copy_user_operation(VADDR address,void *destination,const void *sour
 static BOOL ordinary_copy_error(LONG error)
 {
     if(error==E_OK)return TRUE;
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
     if(error==EREADF) {
         kcprintf("process: file mapping I/O error\n");
 #if CONF_WITH_NATIVE_SCHED

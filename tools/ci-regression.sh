@@ -119,6 +119,12 @@ if os.environ.get('NATIVE_PREEMPT') == '1':
     config.syms['CONF_WITH_NATIVE_PREEMPT'].set_value(2)
     assert config.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'y'
     assert config.syms['CONF_WITH_IRQ_RESTART_TEST'].str_value == 'n'
+    if config.syms['CONF_WITH_CUIS'].str_value == 'y':
+        # The defconfig step can record an explicit n before the test gates
+        # are enabled. Wait for actual admission before a peer resumes or
+        # cancels an operation that can be preempted before entering CUIS.
+        config.syms['CONF_WITH_CUIS_WAIT_TEST'].set_value(2)
+        assert config.syms['CONF_WITH_CUIS_WAIT_TEST'].str_value == 'y'
 if config.syms['ARCH_X86_64'].str_value != 'y':
     config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].set_value(2)
     assert config.syms['CONF_WITH_EXIT_HANDOFF_TEST'].str_value == 'y'

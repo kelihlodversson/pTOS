@@ -11,6 +11,7 @@
 #include <mint/basepage.h>
 #include "trap.h"
 
+#if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static volatile struct {
     unsigned long cell;
     unsigned char *heap;
@@ -231,6 +232,7 @@ static void test_cow_vfork_exec_release(void)
     ptest_assert_msg(Fdelete("C:\\FORKGO.TMP")==0,"Pvfork exec release test file");
 }
 #endif
+#endif /* private COW instrumentation */
 #if defined(TEST_WITH_PFORK) && !defined(__mc68000__)
 /* Pfork with untouched, demand-paged stack pages just below its SP: an
  * alloca()'d gap is never written, and its size sweeps SP across a page. */
@@ -300,9 +302,12 @@ static void test_public_fork(void)
     (void)Fdelete("C:\\FORKGO.TMP");
     pid=Pvfork();
     if(pid==0) {
-        /* The parent must be blocked on this exact child before its exec:
-         * a Pvfork that behaved like Pfork would fail here. */
+        /* Give an incorrectly runnable parent a chance to create the gate. */
+        (void)Syield();
+        if(Fsfirst("C:\\FORKGO.TMP",0)==0) Pterm(77);
+#if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
         if(pclone_trap(0,0x895ffffdUL)!=1) Pterm(77);
+#endif
         (void)Pexec(200,"FORKPAR.TOS","\001W",0);
         Pterm(75);
         for(;;) { }
@@ -338,7 +343,8 @@ int main(void)
     }
 #endif
     ptest_log_append();
-    ptest_begin("COW suspended parent dependency (test-only)");
+    ptest_begin("fork and suspended parent dependency");
+#if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     private_probe.heap=(unsigned char *)Malloc(12288);
     ptest_assert_msg(private_probe.heap!=NULL,"COW parent-policy private heap reservation");
     if(private_probe.heap) {
@@ -346,16 +352,19 @@ int main(void)
 #if defined(TEST_WITH_PEXEC200)
         test_cow_vfork_exec_release();
 #endif
-#if defined(TEST_WITH_PFORK)
-        test_public_fork();
-#endif
         ptest_assert_msg(Mfree(private_probe.heap)==0,"COW parent-policy heap released after final child reap");
     }
+#endif
+#if defined(TEST_WITH_PFORK)
+    test_public_fork();
+#endif
     ptest_pass();
     failures=ptest_failures();
+#if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     if(!failures)conws("native COW Pvfork parent dependency (test-only, no exec commit): PASS\r\n");
 #if defined(TEST_WITH_PEXEC200)
     if(!failures)conws("native COW Pvfork parent released at committed Pexec(200): PASS\r\n");
+#endif
 #endif
 #if defined(TEST_WITH_PFORK)
     if(!failures)conws("native public Pfork/Pvfork with inherited descriptors: PASS\r\n");

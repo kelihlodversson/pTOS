@@ -143,7 +143,7 @@ void arm_gemdos_dispatch(struct uframe *f)
         f->r[0] = (ULONG)osif(pw);
 }
 
-#if CONF_WITH_DEMAND_PAGING
+#if CONF_WITH_USER_PAGE_FAULTS
 /*
  * A data or prefetch abort in the process that is running (bios/arch/arm/vectors.c
  * asks before it ends the process): if it is a translation or permission fault
