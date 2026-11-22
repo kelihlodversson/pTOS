@@ -19,7 +19,7 @@
 #include "pgtable.h"
 #undef X86_64_PHYS_MAP_BASE
 #define X86_64_PHYS_MAP_BASE 0
-#include "../bios/machine/pc-x86_64/procmem.c"
+#include "../bios/procmem.c"
 #include "../bios/machine/pc-x86_64/aspace.c"
 #endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"borrow:%d: %s\n",__LINE__,#c);abort(); } } while (0)

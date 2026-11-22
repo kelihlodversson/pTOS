@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "emutos.h"
-#include "../bios/machine/pc-x86_64/procmem.c"
+#include "../bios/procmem.c"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"allocation observer:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static unsigned allocations, frees, notifications;
 static void *watched;

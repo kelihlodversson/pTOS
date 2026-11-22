@@ -1,15 +1,8 @@
 /*
- * procmem.c - tracked process memory window (32-bit MMU configurations)
+ * procmem.c - tracked process memory window
  *
- * See include/procmem.h for the contract.  The window is PROCMEM_WINDOW_BYTES
- * of virtual address space at PROCMEM_WINDOW_BASE (doc/mmu-address-space.txt:
- * 0x0e000000 - 0x0e1fffff of the user half), below USER_VA_LIMIT, so any
- * address in it fits the 32-bit GEMDOS ABI fields.  Its physical backing is
- * one contiguous block of pages taken from the page allocator wherever it
- * happens to lie; aspace.c maps it (supervisor-only) into the kernel's own
- * address space, and a process's address space maps the blocks it owns.
- * (The x86-64 kernel has its own, bios/machine/pc-x86_64/procmem.c: found
- * first through vpath.)
+ * See include/procmem.h for the allocation and ownership contract. The
+ * kernel maps the low virtual window to architecture-owned physical backing.
  *
  * Copyright (C) 2026 The pTOS development team.
  *
@@ -19,37 +12,51 @@
 
 #include "config.h"
 
-#if CONF_WITH_PROCMEM && !defined(__x86_64__)
+#if CONF_WITH_PROCMEM
 
 #include "portab.h"
 #include "string.h"
 #include "kheap.h"
 #include "procmem.h"
+#ifdef MACHINE_PC_X86_64
+#include "pc_x86_64_memory.h"
+#include "pgtable.h"
+#include "pmem.h"
+#else
 #include "pmem32.h"
 #include "aspace32.h"
+#endif
 
-#define PAGE            PMEM32_PAGE
-#define WINDOW_PAGES    (PROCMEM_WINDOW_BYTES / PAGE)
+#define WINDOW_PAGES    (USER_PROCMEM_SIZE / USER_PAGE_SIZE)
 #define WORDS           ((WINDOW_PAGES + 31) / 32)
 
 /* The whole window must be representable in a 32-bit ABI field. */
 typedef char window_is_below_limit[
-    (PROCMEM_WINDOW_BASE + PROCMEM_WINDOW_BYTES <= USER_VA_LIMIT) ? 1 : -1];
+    (USER_PROCMEM_BASE + USER_PROCMEM_SIZE <= USER_VA_LIMIT) ? 1 : -1];
 
 /* The default program image region does not overlap the process window and
  * the stack ends at the top of the user half. */
 typedef char image_outside_window[
-    (USER_IMAGE_BASE + USER_IMAGE_SIZE <= PROCMEM_WINDOW_BASE ||
-     USER_IMAGE_BASE >= PROCMEM_WINDOW_BASE + PROCMEM_WINDOW_BYTES) ? 1 : -1];
+    (USER_IMAGE_BASE + USER_IMAGE_SIZE <= USER_PROCMEM_BASE ||
+     USER_IMAGE_BASE >= USER_PROCMEM_BASE + USER_PROCMEM_SIZE) ? 1 : -1];
 typedef char stack_below_limit[
     (USER_STACK_TOP <= USER_VA_LIMIT &&
      USER_STACK_SIZE <= USER_STACK_TOP &&   /* before subtracting: no wrap */
      USER_IMAGE_BASE + USER_IMAGE_SIZE <= USER_STACK_TOP - USER_STACK_SIZE) ? 1 : -1];
 
+#ifdef MACHINE_PC_X86_64
+typedef char window_matches_pc_layout[
+    (X86_64_LOW_TPA_VIRT_BASE == USER_PROCMEM_BASE &&
+     X86_64_LOW_TPA_BYTES == USER_PROCMEM_SIZE &&
+     X86_64_PAGE_SIZE == USER_PAGE_SIZE) ? 1 : -1];
+#else
+typedef char window_matches_pmem32_page[(PMEM32_PAGE == USER_PAGE_SIZE) ? 1 : -1];
+#endif
+
 struct allocation_hold;
 struct alloc {
     struct alloc *next;
-    ULONG va;
+    VADDR va;
     ULONG pages;
     const void *owner;          /* identity of the owning process, or NULL */
     struct allocation_hold *holds;
@@ -87,6 +94,35 @@ static void set_pages(ULONG first, ULONG n, BOOL value)
     }
 }
 
+#ifdef MACHINE_PC_X86_64
+void x86_64_low_tpa_init(void)
+{
+    /*
+     * x86_64_map_kernel_pages() requires a 2 MiB-aligned backing_phys,
+     * while the page allocator only guarantees 4 KiB: take twice the size,
+     * align inside it, and hand the slack on either side back.  Unlike the
+     * earlier version there is no "below 4 GiB" limit here -- this is the
+     * physical side of the story, and the mapping makes any RAM address
+     * reachable at the window's low virtual address. This boot-time allocator
+     * panics on exhaustion, so raw is always a valid physical base here.
+     */
+    UQUAD pages = (X86_64_LOW_TPA_BYTES + X86_64_PAGE_2M_SIZE) / X86_64_PAGE_SIZE;
+    UQUAD raw = x86_64_pmem_alloc_pages(pages);
+    UQUAD phys = (raw + X86_64_PAGE_2M_SIZE - 1) & ~(X86_64_PAGE_2M_SIZE - 1);
+    UQUAD end = phys + X86_64_LOW_TPA_BYTES;
+
+    if (phys > raw)
+        x86_64_pmem_free_pages(raw, (phys - raw) / X86_64_PAGE_SIZE);
+    if (raw + pages * X86_64_PAGE_SIZE > end)
+        x86_64_pmem_free_pages(end, (raw + pages * X86_64_PAGE_SIZE - end) / X86_64_PAGE_SIZE);
+
+    x86_64_map_kernel_pages(X86_64_LOW_TPA_VIRT_BASE, phys,
+                            X86_64_LOW_TPA_BYTES / X86_64_PAGE_2M_SIZE);
+    window_phys = phys;
+    memset(used, 0, sizeof(used));
+    free_pages = WINDOW_PAGES;
+}
+#else
 /* Takes the backing pages; aspace.c maps them into the kernel's address space. */
 BOOL procmem_window_init(PADDR *phys)
 {
@@ -95,24 +131,26 @@ BOOL procmem_window_init(PADDR *phys)
     if (p == PMEM32_NONE)
         return FALSE;
     window_phys = p;
-    memset(pmem32_virt(p), 0, PROCMEM_WINDOW_BYTES);
+    memset(pmem32_virt(p), 0, USER_PROCMEM_SIZE);
     memset(used, 0, sizeof(used));
     free_pages = WINDOW_PAGES;
     *phys = p;
     return TRUE;
 }
 
+#endif
+
 BOOL procmem_contains(const void *p)
 {
-    ULONG a = (ULONG)(uintptr_t)p;
+    VADDR a = (VADDR)(uintptr_t)p;
 
-    return a >= PROCMEM_WINDOW_BASE &&
-           a < PROCMEM_WINDOW_BASE + PROCMEM_WINDOW_BYTES;
+    return a >= USER_PROCMEM_BASE &&
+           a < USER_PROCMEM_BASE + USER_PROCMEM_SIZE;
 }
 
 PADDR procmem_phys_of(VADDR va)
 {
-    return window_phys + (va - PROCMEM_WINDOW_BASE);
+    return window_phys + (va - USER_PROCMEM_BASE);
 }
 
 /* First-fit search for `pages` consecutive free window pages. */
@@ -137,12 +175,12 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
 {
     struct alloc *a;
     ULONG pages, first;
-    ULONG va;
+    VADDR va;
 
     if (gens >= ~(UQUAD)0 - 1 || !bytes || !window_phys ||
-        bytes > PROCMEM_WINDOW_BYTES)       /* also rules out overflow below */
+        bytes > USER_PROCMEM_SIZE)       /* also rules out overflow below */
         return NULL;
-    pages = (bytes + PAGE - 1) / PAGE;
+    pages = (bytes + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
     if (pages > free_pages || !find_run(pages, &first))
         return NULL;
 
@@ -150,7 +188,7 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     if (!a)
         return NULL;
 
-    va = PROCMEM_WINDOW_BASE + first * PAGE;
+    va = USER_PROCMEM_BASE + first * USER_PAGE_SIZE;
     a->va = va;
     a->pages = pages;
     a->owner = NULL;
@@ -169,13 +207,20 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     free_pages -= pages;
     live_allocs++;
 
-    /* Zero through the window of the kernel half: unlike the low alias, it is
-     * present whichever address space is currently loaded. */
-    if (flags & PROCMEM_ZERO)
-        memset(pmem32_virt(procmem_phys_of(va)), 0, pages * PAGE);
+    /* The physical alias is available under every address space. */
+    if (flags & PROCMEM_ZERO) {
+        PADDR physical = procmem_phys_of(va);
+#ifdef MACHINE_PC_X86_64
+        void *alias = (void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + physical);
+#else
+        void *alias = pmem32_virt(physical);
+#endif
+        memset(alias, 0, pages * USER_PAGE_SIZE);
+    }
     return (void *)(uintptr_t)va;
 }
 
+#ifndef MACHINE_PC_X86_64
 ULONG procmem_largest_free(void)
 {
     ULONG i, run = 0, best = 0;
@@ -188,15 +233,17 @@ ULONG procmem_largest_free(void)
         if (++run > best)
             best = run;
     }
-    return best * (ULONG)PAGE;
+    return best * (ULONG)USER_PAGE_SIZE;
 }
+
+#endif
 
 static struct alloc **find_link(const void *p)
 {
     struct alloc **link;
 
     for (link = &allocs; *link; link = &(*link)->next)
-        if ((*link)->va == (ULONG)(uintptr_t)p)
+        if ((*link)->va == (VADDR)(uintptr_t)p)
             return link;
     return NULL;
 }
@@ -208,7 +255,7 @@ static void release(struct alloc **link)
     void *token = a->notify_token;
 
     *link = a->next;
-    set_pages((ULONG)((a->va - PROCMEM_WINDOW_BASE) / PAGE),
+    set_pages((ULONG)((a->va - USER_PROCMEM_BASE) / USER_PAGE_SIZE),
               a->pages, FALSE);
     free_pages += a->pages;
     live_allocs--;
@@ -216,9 +263,9 @@ static void release(struct alloc **link)
     if (notify) notify(token);
 }
 
-#define HOLD_PAGE PAGE
-#define HOLD_WINDOW PROCMEM_WINDOW_BASE
-#define HOLD_PIN_PAGE PAGE
+#define HOLD_PAGE USER_PAGE_SIZE
+#define HOLD_WINDOW USER_PROCMEM_BASE
+#define HOLD_PIN_PAGE USER_PAGE_SIZE
 #include "procmem_hold.h"
 
 /* A deferred decision belongs to this allocation record, not its former
@@ -298,7 +345,7 @@ void procmem_pin(VADDR va, VADDR bytes, int delta)
     struct alloc *a;
 
     for (a = allocs; a; a = a->next)
-        if (a->va < va + bytes && va < a->va + (ULONG)a->pages * PAGE) {
+        if (a->va < va + bytes && va < a->va + (VADDR)a->pages * USER_PAGE_SIZE) {
             if (delta > 0)
                 a->pins++;
             else if (a->pins)
@@ -318,19 +365,19 @@ ULONG procmem_size(const void *p)
 {
     struct alloc **link = find_link(p);
 
-    return link ? (*link)->pages * (ULONG)PAGE : 0;
+    return link ? (*link)->pages * (ULONG)USER_PAGE_SIZE : 0;
 }
 
 BOOL procmem_range_live(VADDR va, VADDR bytes)
 {
     ULONG first, last, i;
 
-    if (!bytes || va < PROCMEM_WINDOW_BASE ||
+    if (!bytes || va < USER_PROCMEM_BASE ||
         va + bytes < va ||
-        va + bytes > PROCMEM_WINDOW_BASE + PROCMEM_WINDOW_BYTES)
+        va + bytes > USER_PROCMEM_BASE + USER_PROCMEM_SIZE)
         return FALSE;
-    first = (va - PROCMEM_WINDOW_BASE) / PAGE;
-    last = (va + bytes - 1 - PROCMEM_WINDOW_BASE) / PAGE;
+    first = (va - USER_PROCMEM_BASE) / USER_PAGE_SIZE;
+    last = (va + bytes - 1 - USER_PROCMEM_BASE) / USER_PAGE_SIZE;
     for (i = first; i <= last; i++)
         if (!page_used((ULONG)i))
             return FALSE;
@@ -415,14 +462,14 @@ void procmem_keep(const void *owner, ULONG keep_bytes, void (*pre_keep)(void *ba
     while ((a = owned_before(owner, before)) != NULL) {
         before = generation = a->gen;
         base = (void *)(uintptr_t)a->va;
-        if (a->va == (ULONG)(uintptr_t)owner) {
+        if (a->va == (VADDR)(uintptr_t)owner) {
             /* the owner's own block: keep only the requested prefix, in
              * whole pages, and give the tail back -- unless a live address
              * space can still reach it */
-            ULONG keep = (ULONG)((keep_bytes + PAGE - 1) / PAGE);
+            ULONG keep = (ULONG)((keep_bytes + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE);
 
             if (keep_bytes && keep && keep < a->pages && !a->pins && !a->hold_count) {
-                set_pages((ULONG)((a->va - PROCMEM_WINDOW_BASE) / PAGE) + keep,
+                set_pages((ULONG)((a->va - USER_PROCMEM_BASE) / USER_PAGE_SIZE) + keep,
                           a->pages - keep, FALSE);
                 free_pages += a->pages - keep;
                 a->pages = keep;
@@ -449,8 +496,6 @@ void procmem_stats(PROCMEM_STATS *stats)
     stats->bad_frees = bad_frees;
 }
 
-#endif /* CONF_WITH_PROCMEM */
-
 #if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 #include "shared_pexec_test.h"
 void procmem_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
@@ -466,3 +511,5 @@ void procmem_shared_snapshot(SHARED_PEXEC_SNAPSHOT *out)
     }
 }
 #endif
+
+#endif /* CONF_WITH_PROCMEM */
