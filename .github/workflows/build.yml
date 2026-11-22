@@ -750,7 +750,8 @@ jobs:
               assert config.syms[name].str_value == 'n', name
           for name in ('CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_SAVED_RETURN', 'CONF_WITH_PFORK'):
               assert config.syms[name].str_value == 'y', name
-          for name in ('CONF_WITH_MMAP', 'CONF_WITH_IRQ_RESTART_TEST'):
+          for name in ('CONF_WITH_MMAP', 'CONF_WITH_IRQ_RESTART_TEST',
+                       'CONF_WITH_CUIS', 'CONF_WITH_CUIS_WAIT_TEST'):
               assert config.syms[name].str_value == 'n', name
           config.write_config()
           PY
