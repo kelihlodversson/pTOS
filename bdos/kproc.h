@@ -322,7 +322,8 @@ void proc_finalize_exit(KPROC *process, UWORD status, BOOL resident, ULONG resid
 /* Backend-owned executing threads use the launcher handoff. A non-final
  * thread leaves PROCESS live; only the final association reserves disposal.
  * Detachment is deferred until the caller has left its syscall stack. */
-/* On success, final receives whether this exit also retires the PROCESS. */
+/* final is required and is written only on success. It reports whether
+ * this exit also retires the PROCESS. Failure leaves the PROCESS unchanged. */
 BOOL kproc_prepare_thread_exit_handoff(KPROC *process, struct kthread *thread, BOOL *final);
 BOOL kproc_finish_thread_handoff(KPROC *process, struct kthread *thread);
 void kproc_require_exit_thread(PD *pd, struct kthread *thread);

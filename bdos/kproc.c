@@ -2631,8 +2631,13 @@ static BOOL kproc_prepare_thread_exit_handoff_owned(KPROC *process, KTHREAD *thr
 }
 BOOL kproc_prepare_thread_exit_handoff(KPROC *process, KTHREAD *thread, BOOL *final)
 {
-    KOWNER_GUARD owner_guard; kowner_enter(&owner_guard,KOWNER_PROCESS);
-    BOOL result=kproc_prepare_thread_exit_handoff_owned(process,thread);
+    KOWNER_GUARD owner_guard;
+    BOOL result;
+
+    if (!final)
+        return FALSE;
+    kowner_enter(&owner_guard, KOWNER_PROCESS);
+    result = kproc_prepare_thread_exit_handoff_owned(process, thread);
     if (result)
         *final = process->disposal_state == PROCESS_EXIT_HANDOFF;
     kowner_leave(&owner_guard);

@@ -141,7 +141,7 @@ int main(void)
     {
         int execution[3];
         UWORD status;
-        BOOL final;
+        BOOL final=TRUE;
         KTHREAD *a=kthread_create(&child),*b=kthread_create(&child),*c;
         CHECK(a && b);
         CHECK(kthread_set_execution(a,&execution[0],copy_execution_reap));
@@ -159,9 +159,14 @@ int main(void)
         CHECK(kproc_group_status(process,&status) && status==61 && !kthread_create(&child));
         CHECK(kproc_prepare_thread_exit_handoff(process,c,&final) && !final);
         CHECK(kthread_finish_exit(c,status) && kthread_reap(c));
-        CHECK(executions_reaped==2 && !kproc_prepare_thread_exit_handoff(process,a,&final) && !final);
+        final=TRUE;
+        CHECK(executions_reaped==2);
+        CHECK(!kproc_prepare_thread_exit_handoff(process,a,&final) && final);
         CHECK(process->disposal_state==PROCESS_LIVE && kproc_user_copy_write(&copy,&input));
         kproc_user_copy_end(&copy);
+        CHECK(!kproc_prepare_thread_exit_handoff(process,a,NULL));
+        CHECK(process->disposal_state==PROCESS_LIVE);
+        final=FALSE;
         CHECK(kproc_prepare_thread_exit_handoff(process,a,&final) && final);
         CHECK(kthread_finish_exit(a,status) && kthread_reap(a));
         CHECK(!process->threads && !process->user_copies && executions_reaped==3);

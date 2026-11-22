@@ -2047,8 +2047,11 @@ void ksched_finish_exit(KPROC *process, PD *pd, UWORD status, BOOL final)
 {
     KTHREAD *thread = ksched_exit_thread(pd);
     KSCHED_NESTED *frame;
-    if ((!thread || kproc_exit_handoff_pending(process)) != final)
-        panic("thread exit finalization changed");
+    BOOL pending_final = !thread || kproc_exit_handoff_pending(process);
+
+    if (pending_final != final)
+        panic("scheduler: exit finality changed for PD %p THREAD %p (prepared %d, pending %d)",
+              (void *)pd, (void *)thread, final, pending_final);
     if (!thread) return; /* Untracked legacy child: no THREAD membership to retire. */
     frame = execution_cpu.current->nested;
     if (frame) {
