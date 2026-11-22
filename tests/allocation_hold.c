@@ -2,14 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "emutos.h"
-#if defined(ALLOCATION_HOLD_GENERIC)
-/* Select the 32-bit physical-memory declarations after the host headers. */
-#undef __x86_64__
-#endif
+/* The generated target config selects the same procmem backend as a native build. */
 #include "../bios/procmem.c"
-#if defined(ALLOCATION_HOLD_GENERIC)
-#define __x86_64__ 1
-#endif
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"allocation hold:%d: %s\n",__LINE__,#c); abort(); } } while (0)
 static unsigned allocated, freed, fail_alloc, notices;
 void *kalloc(ULONG bytes) { void *p; if(fail_alloc) return NULL; p=calloc(1,bytes); if(p) allocated++; return p; }
