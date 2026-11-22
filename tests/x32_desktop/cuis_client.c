@@ -19,11 +19,7 @@ static void record(const char *event, unsigned number, unsigned window)
         number = window;
     }
     text[used++] = '\r'; text[used++] = '\n';
-    for (at = 0; at < used; at++) {
-        register unsigned long long ax __asm__("rax") = (13ULL << 32) | 3;
-        __asm__ volatile ("syscall" : "+a"(ax) : "D"(1ULL),"S"((unsigned long long)text[at])
-                          : "rcx","r11","memory","cc");
-    }
+    ptos_write(-2, text, used);  /* AUX: */
 }
 static VDICONTROL control;
 static WORD input[16], points[8], output[64], coordinates[16];
