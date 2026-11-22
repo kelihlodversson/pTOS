@@ -18,7 +18,7 @@
 #include "string.h"
 #include "kheap.h"
 #include "procmem.h"
-#if MACHINE_PC_X86_64
+#ifdef MACHINE_PC_X86_64
 #include "pc_x86_64_memory.h"
 #include "pgtable.h"
 #include "pmem.h"
@@ -44,7 +44,7 @@ typedef char stack_below_limit[
      USER_STACK_SIZE <= USER_STACK_TOP &&   /* before subtracting: no wrap */
      USER_IMAGE_BASE + USER_IMAGE_SIZE <= USER_STACK_TOP - USER_STACK_SIZE) ? 1 : -1];
 
-#if MACHINE_PC_X86_64
+#ifdef MACHINE_PC_X86_64
 typedef char window_matches_pc_layout[
     (X86_64_LOW_TPA_VIRT_BASE == USER_PROCMEM_BASE &&
      X86_64_LOW_TPA_BYTES == USER_PROCMEM_SIZE &&
@@ -94,7 +94,7 @@ static void set_pages(ULONG first, ULONG n, BOOL value)
     }
 }
 
-#if MACHINE_PC_X86_64
+#ifdef MACHINE_PC_X86_64
 void x86_64_low_tpa_init(void)
 {
     /*
@@ -210,7 +210,7 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     /* The physical alias is available under every address space. */
     if (flags & PROCMEM_ZERO) {
         PADDR physical = procmem_phys_of(va);
-#if MACHINE_PC_X86_64
+#ifdef MACHINE_PC_X86_64
         void *alias = (void *)(uintptr_t)(X86_64_PHYS_MAP_BASE + physical);
 #else
         void *alias = pmem32_virt(physical);
@@ -220,7 +220,7 @@ void *procmem_alloc(ULONG bytes, UWORD flags)
     return (void *)(uintptr_t)va;
 }
 
-#if !MACHINE_PC_X86_64
+#ifndef MACHINE_PC_X86_64
 ULONG procmem_largest_free(void)
 {
     ULONG i, run = 0, best = 0;
