@@ -5913,6 +5913,7 @@ static void test_async_processes(void)
                       "PE_GO retained environment and basepage remain freeable");
             }
         }
+        settle_scheduler();
         if (result != (i == 3 ? 77 : i == 4 ? 0xffff : 0))
             kcprintf("async fixture %u returned %ld\n", (unsigned)i, (long)result);
         CHECK(result == (i == 3 ? 77 : i == 4 ? 0xffff : 0),
