@@ -84,6 +84,9 @@ int main(int argc, char **argv, char **envp)
         parent = (LONG)unhex(argv[1]+10);
         CHECK(call(0x3d, (uintptr_t)argv[0], 0, 0, 0) >= 0); /* exit must close this */
         if (mode == 'd') {
+            /* Timer preemption may run the child before its parent exits. */
+            for (i = 0; i < 200 && call(0x10c, 0, 0, 0, 0) == parent; i++)
+                CHECK(probe_packet_wait(session, 5) == CUIS_READY_TIMER);
             CHECK(call(0x10c, 0, 0, 0, 0) != parent);
             CHECK(probe_packet_write((LONG)unhex(argv[1]+2), session, 1, 2, 3, 4) == EACCDN);
             CHECK(probe_packet_wait(session, 5) == CUIS_READY_TIMER);

@@ -55,6 +55,7 @@ void gem_menubar_input_stage(short stage)
 static int graphics_checks(void)
 {
     short physical, virtual_handle, w,h,bw,bh,x,y, color, pen, background, i;
+    short last_x = -1, last_y = -1;
     short input[11] = { 1,1,1,1,1,1,1,0,1,1,2 }, output[57];
     AESGLOBAL global = { 0 };
     MFORM custom = { 0 };
@@ -70,7 +71,16 @@ static int graphics_checks(void)
     v_clsvwk(virtual_handle);
     VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
     ptos_write(1,ready,sizeof(ready)-1);
-    do { VERIFY(evnt_timer(0) == 1 && graf_mkstate(&x,&y,NULL,NULL) == 1); } while (x != 300 || y != 250);
+    do {
+        VERIFY(evnt_timer(0) == 1 && graf_mkstate(&x,&y,NULL,NULL) == 1);
+        if (x != last_x || y != last_y) {
+            char position[48];
+            int length = __builtin_sprintf(position,"x32 GEM graphics pointer: %d %d\r\n",x,y);
+            VERIFY(ptos_write(-2,position,length) == length); /* AUX: */
+            last_x = x;
+            last_y = y;
+        }
+    } while (x != 300 || y != 250);
     VERIFY(evnt_timer(20) == 1);
     /* Earlier GUI clients may have made the default cursor visible. Sample
      * its backing pixel, independently of their final cursor state. */
