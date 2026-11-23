@@ -226,8 +226,9 @@ static long clone_request(uint64_t address, uint64_t size)
         return interrupt_restart_test(address,size);
 #endif
 #if CONF_WITH_CUIS_WAIT_TEST
-    if (size==KSCHED_TEST_WAIT_ADMISSION)
-        return address<=0xffffffffULL?ksched_test_wait_admission((ULONG)address):EINVAL;
+    if (size==KSCHED_TEST_WAIT_ADMISSION || size==KSCHED_TEST_RAW_WAIT_ADMISSION)
+        return address<=0xffffffffULL?
+            ksched_test_wait_admission((ULONG)address,size==KSCHED_TEST_RAW_WAIT_ADMISSION):EINVAL;
 #endif
 #if CONF_WITH_PREEMPTION && CONF_WITH_PRIVATE_CLONE_TEST
     if (!address && (size==IRQ_PREEMPT_TEST_RESET || size==IRQ_PREEMPT_TEST_PATTERNS))

@@ -165,7 +165,9 @@ KSCHED_WAIT_RESULT ksched_wait_cancelable_observed(BOOL (*ready)(void *), void *
 BOOL ksched_wait_ready(BOOL (*ready)(void *), void *argument);
 #if CONF_WITH_CUIS_WAIT_TEST
 #define KSCHED_TEST_WAIT_ADMISSION 0xc713c103UL
-LONG ksched_test_wait_admission(ULONG tid); /* zero returns the caller's TID */
+#define KSCHED_TEST_RAW_WAIT_ADMISSION 0xc713c104UL
+/* Zero TID returns the caller's TID. For a raw wait, 2 also witnesses group exit. */
+LONG ksched_test_wait_admission(ULONG tid, BOOL raw);
 #endif
 #if CONF_WITH_PRIVATE_CLONE_TEST
 LONG ksched_test_process_waiters(WORD pid);

@@ -1343,9 +1343,28 @@ static void native_resume_peer(void *argument)
 }
 static struct {
     volatile long mode, ready, go, error, replacement, requested, returned;
-    long session, peer_session, parent_pid, parent_client, peer_client;
+    long session, peer_session, parent_pid, parent_client, peer_client, writer;
     unsigned char *data, *output, *late;
 } native_stream;
+static const unsigned char stream_group_packet[16]={0x61,0x72,0x34,0x85};
+
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+#define RAW_WAIT_ADMISSION_TEST 0xc713c104UL
+enum { RAW_WAIT_ADMITTED=1, RAW_WAIT_GROUP_EXIT };
+
+static int stream_wait_admitted(long tid,int expected)
+{
+    ULONG start=(ULONG)Ssystem(S_GETLVAL,0x4baL,0L);
+    do {
+        long state=pclone_trap((void *)(uintptr_t)tid,RAW_WAIT_ADMISSION_TEST);
+        if (state==expected) return 1;
+        if (state<0 || native_stream.error) return 0;
+        (void)Syield();
+    } while ((ULONG)Ssystem(S_GETLVAL,0x4baL,0L)-start<1000UL);
+    return 0;
+}
+#endif
+
 static long stream_call(unsigned fn,long session,void *data,long length,long block,long *sender)
 {
     return native_cuis6(fn,(unsigned long)session,(unsigned long)data,(unsigned long)length,
@@ -1413,7 +1432,11 @@ static void stream_native_retire_writer(void *argument)
 }
 static void stream_native_killer(void *argument)
 {
-    (void)argument; native_stream.requested=1;
+    (void)argument;
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    if (!stream_wait_admitted(native_stream.writer,RAW_WAIT_ADMITTED)) native_stream.error=1;
+#endif
+    native_stream.requested=1;
     (void)term_group(73);
     native_stream.error=1;
 }
@@ -1423,15 +1446,20 @@ static void stream_native_group(void *argument)
     long own=native_cuis(0,0,0);
     native_stream.peer_client=stream_client_id(own);
     (void)argument;
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+    native_stream.writer=wait_admission(0);
+#endif
     if (own<0 || stream_call(30,native_stream.session,native_stream.data,32767,0,0)!=32767 ||
         stream_call(30,native_stream.session,native_stream.data,32767,0,0)!=32767 ||
         stream_call(30,native_stream.session,native_stream.data,2,0,0)!=2 ||
         launch_entry(stream_native_killer,CLONE_VM|CLONE_SAME_PROCESS,runnable_stacks[2],&pid,&tid)<=0) {
         native_stream.error=1; return;
     }
-    if (stream_call(30,native_stream.session,native_stream.data,16,1,0)!=16) native_stream.error=1;
-    native_stream.returned=1; /* Raw stream wait completes; cancellation is still deferred. */
-    (void)Syield(); /* Safe ordinary checkpoint after all stream resources are gone. */
+    if (stream_call(30,native_stream.session,(void *)stream_group_packet,
+                    sizeof(stream_group_packet),1,0)!=sizeof(stream_group_packet))
+        native_stream.error=1;
+    native_stream.returned=1;
+    (void)Syield(); /* A USER IRQ or this ordinary checkpoint may deliver cancellation. */
     native_stream.error=1;
 }
 static void test_native_streams(void)
@@ -1512,8 +1540,13 @@ static void test_native_streams(void)
     rc=launch_entry(stream_native_group,CLONE_VM,runnable_stacks[1],&pid,&tid);
     ptest_assert_msg(rc>0,"pending-stream group constructed");
     if (rc>0) {
+#if defined(TEST_WITH_CUIS_WAIT_TEST)
+        ptest_assert_msg(stream_wait_admitted(tid,RAW_WAIT_GROUP_EXIT),
+                         "group exit is pending while the writer owns a blocked raw wait");
+#else
         for (spin=0;spin<2000 && !native_stream.requested;spin++) (void)Syield();
         ptest_assert_msg(native_stream.requested && !native_stream.error,"group request during admitted raw stream wait");
+#endif
         for (spin=0;spin<16;spin++) {
             ptest_assert_msg(Pwaitpid(pid,1,0)==0 && !native_stream.returned,"noncancellable stream retains group until ordinary progress");
             (void)Syield();
@@ -1521,10 +1554,16 @@ static void test_native_streams(void)
         ptest_assert_msg(stream_call(31,native_stream.session,native_stream.output,16,0,&sender)==16 && sender==native_stream.peer_client,
                          "independent PROCESS reader makes progress");
         rc=Pwaitpid(pid,0,0);
-        ptest_assert_msg((rc>>16)==pid && (rc&65535)==73 && native_stream.returned && !native_stream.error,
-                         "group exits at later safe checkpoint with committed stream intact");
+        ptest_assert_msg((rc>>16)==pid && (rc&65535)==73 && !native_stream.error,
+                         "group exits at a safe checkpoint after stream progress");
         ptest_assert_msg(Pwaitpid(pid,1,0)==-33L && stream_call(89,native_stream.session,0,0,0,0)==65536L,
                          "one PROCESS completion, no retraction of committed packet");
+        ptest_assert_msg(stream_call(31,native_stream.session,native_stream.output,32767,0,0)==32767 &&
+                         stream_call(31,native_stream.session,native_stream.output,32753,0,0)==32753 &&
+                         stream_call(31,native_stream.session,native_stream.output,sizeof(stream_group_packet),0,&sender)==sizeof(stream_group_packet) &&
+                         sender==native_stream.peer_client &&
+                         !memcmp(native_stream.output,stream_group_packet,sizeof(stream_group_packet)),
+                         "the committed packet retains exact bytes and sender after group exit");
     }
     ptest_assert_msg(native_cuis(2,native_stream.session,0)==0 && Mfree(native_stream.data)==0 &&
                      Mfree(native_stream.output)==0,"stream buffers and GUI resources reclaimed");
