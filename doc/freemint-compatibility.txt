@@ -17,7 +17,7 @@ with pTOS's MMU Pvfork policy. Explicitly shared mappings retain their own
 semantics; pTOS's public MAP_SHARED is currently unsupported. Non-MMU fork is
 outside this initial implementation.
 
-Public Pfork/Pvfork are available with CONF_WITH_PFORK, which is built in by
+Public Pfork/Pvfork are available with CONF_WITH_FORK, which is built in by
 default on MMU kernels with demand paging (x32, ARMv7, m68k without fastcall),
 together with the native scheduling, Pclone, Pthjoin, private clone,
 PROCESS-local files and public Pexec(200) it needs. Elsewhere both calls return

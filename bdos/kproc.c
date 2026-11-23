@@ -14,7 +14,7 @@
 #include "gemerror.h"
 #include "kproc.h"
 #include "kowner.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "ksched_lifetime.h"
 #include "ksched_sequence.h"
@@ -79,7 +79,7 @@ enum { PROCESS_LIVE, PROCESS_DISPOSAL_PENDING, PROCESS_EXIT_HANDOFF,
 
 #if CONF_WITH_KPROC
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Loader-owned shared-VM attachments. The existing allocator and KASPACE
  * ledgers own all ranges; this bounded PROCESS record owns their R1/R2 tokens.
  * All preparation is no-yield and covered by the caller's cleanup scope. */
@@ -157,13 +157,13 @@ struct kproc {
     UQUAD tpa_gen;              /* a freed-and-reused address is not trusted */
     UBYTE *user_start;
     UBYTE *user_end;
+#if CONF_WITH_PROCESS_FILES
+    BOOL independent_dta;     /* leave the source's shared basepage mirror alone */
+#endif
 #if CONF_WITH_PRIVATE_CLONE
     /* Logical user context survives generic shared descendants independently
      * of each PROCESS's supervisor-only compatibility allocations. */
     BOOL logical_context;
-#if CONF_WITH_PROCESS_FILES
-    BOOL independent_dta;     /* leave the source's shared basepage mirror alone */
-#endif
     VADDR logical_basepage,logical_environment,logical_bp_bytes,logical_env_bytes;
 #endif
     ASPACE *aspace;      /* borrowed from active_space */
@@ -175,7 +175,7 @@ struct kproc {
     KASPACE_SCOPE *prepared_allocation_scope;
     KTHREAD *threads;     /* non-owning execution membership */
     UBYTE disposal_state; /* identity survives the final live-resource cleanup */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     struct shared_exec_regions *shared_exec;
     /* Mutually exclusive with shared_exec: generic descendants retain the
      * same bounded special R1/R2 receipts without loaded-entry/stack policy. */
@@ -188,7 +188,7 @@ struct kproc {
     struct process_exec_handle *exec_handles; /* Owned launch/observation rights, no status copy. */
     KSCHED_WAIT_SEQUENCE exec_closes;
     BOOL clone_guarded;
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     BOOL group_exiting;
     UWORD group_status;
 #endif
@@ -212,12 +212,12 @@ struct kproc {
     BOOL completion_pending;
     UWORD pending_status;
     PD *creator;                /* who made the basepage (Pexec() modes 3, 5, 7) */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     PD *async_parent;           /* stable controller for exit, not logical PPID */
 #endif
     PROG_LAYOUT layout;          /* the program to map private (built in, or loaded) */
     BOOL has_image;             /* ... if there is one */
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     KPROC_IMAGE_PREPARATION *image_preparation; /* borrowed exact construction */
     BOOL image_policy_only; /* projected metadata never mints image authority */
 #endif
@@ -225,7 +225,7 @@ struct kproc {
 #if KPROC_LEGACY_PRG
     ULONG legacy_text_bytes;    /* trusted loader snapshot, never reread from user PD */
     BOOL legacy_text_recorded;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     VADDR legacy_text_entry; /* recorded at the same authenticated loader boundary */
 #endif
 #endif
@@ -264,7 +264,7 @@ struct kproc {
  * The PROCESS owns this draft through abort, then retains its logical VAs. */
 struct private_image_snapshot {
     BOOL committed,has_image,legacy,top_stack;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     BOOL policy_only;
 #endif
     VADDR basepage,environment,basepage_bytes,environment_bytes,dta,stack_size,stack_low,stack_top,entry;
@@ -304,7 +304,7 @@ VADDR kproc_test_contended_allocation(void)
 }
 #endif
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static BOOL mapping_idle(void *space) { return !kaspace_mutation_busy(space); }
 #endif
 static BOOL mapping_wait_idle(KASPACE *space)
@@ -316,7 +316,7 @@ static BOOL mapping_wait_idle(KASPACE *space)
     if (!retained) return FALSE;
     while (kaspace_mutation_busy(space)) {
         if (kaspace_mutation_reentrant(space)) { ready=FALSE;break; }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #if CONF_WITH_PRIVATE_CLONE_TEST
         if (mapping_wait_count==0xffffffffUL) panic("mapping wait counter exhausted");
         mapping_wait_count++;
@@ -409,7 +409,7 @@ static WORD new_pid(void)
                 if (k->pid == pid)
                     break;
         if (!k
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
             && !ksched_pid_reserved(pid)
 #endif
         ) return pid;
@@ -590,7 +590,7 @@ KPROC *kproc_retain_identity(KPROC *process)
     kowner_leave(&owner_guard);
     return result;
 }
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 struct process_exec_handle **kproc_exec_handles(KPROC *owner)
 {
     return owner && !owner->retired ? &owner->exec_handles : NULL;
@@ -887,14 +887,13 @@ BOOL kproc_clone_inherit_identity(KPROC *target, KPROC *source)
     if (!kproc_clone_target_ready(target, NULL) || target->parent_identity ||
         !(parent = kproc_retain_live(source)))
         return FALSE;
-#if CONF_WITH_PRIVATE_CLONE
-    /* Numerical user address only. Search caches/iterators remain empty;
-     * a factory PD's supervisor-only default is not the inherited user DTA. */
-    target->dta=source->dta;
 #if CONF_WITH_PROCESS_FILES
-    /* Descendants sharing the logical basepage also share its mirror. */
+    /* Numerical user address only. Search caches and iterators remain empty.
+     * Shared-root descendants use this even on MMUs without COW cloning. */
+    target->dta=source->dta;
     target->independent_dta=source->independent_dta;
 #endif
+#if CONF_WITH_PRIVATE_CLONE
     target->logical_context=TRUE;
     target->logical_basepage=source->logical_context?source->logical_basepage:(VADDR)(uintptr_t)source->user_start;
     target->logical_environment=source->logical_context?source->logical_environment:(VADDR)(uintptr_t)source->env_start;
@@ -918,9 +917,7 @@ void kproc_clone_clear_dta(KPROC *target)
 {
     if (!kproc_clone_target_ready(target, NULL)) panic("clone DTA: invalid target");
     target->dta = NULL;
-#if CONF_WITH_PRIVATE_CLONE
     target->independent_dta = TRUE;
-#endif
 }
 #endif
 enum { MAPPING_PREPARING=1,MAPPING_PREPARED,MAPPING_ABORTING };
@@ -994,7 +991,7 @@ LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source)
     snapshot=kalloc(sizeof(*snapshot));
     if (!snapshot) return ENSMEM;
     bzero(snapshot,sizeof(*snapshot));
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     snapshot->policy_only=source->image_policy_only;
 #endif
     snapshot->basepage=source->logical_context?source->logical_basepage:(VADDR)(uintptr_t)source->user_start;
@@ -1023,7 +1020,7 @@ LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source)
     snapshot->top_stack=owns_top_stack(source);
 #if KPROC_LEGACY_PRG
     snapshot->text_bytes=source->legacy_text_bytes;snapshot->text_recorded=source->legacy_text_recorded;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     snapshot->text_entry=source->legacy_text_entry;
 #endif
 #endif
@@ -1043,7 +1040,7 @@ static void private_image_commit(KPROC *target)
 {
     struct private_image_snapshot *snapshot=target->private_image;
     if (!snapshot || snapshot->committed) return;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     target->image_policy_only=snapshot->policy_only;
 #endif
     target->layout=snapshot->layout;target->has_image=snapshot->has_image;target->legacy=snapshot->legacy;
@@ -1057,7 +1054,7 @@ static void private_image_commit(KPROC *target)
 #endif
 #if KPROC_LEGACY_PRG
     target->legacy_text_bytes=snapshot->text_bytes;target->legacy_text_recorded=snapshot->text_recorded;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     target->legacy_text_entry=snapshot->text_entry;
 #endif
 #endif
@@ -1108,7 +1105,7 @@ KASPACE *kproc_active_space(const KPROC *process)
         process->disposal_state == PROCESS_LIVE ? process->active_space : NULL;
 }
 
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
 static BOOL kproc_group_status_owned(const KPROC *process, UWORD *status)
 {
     if (!process || !process->group_exiting) return FALSE;
@@ -1168,14 +1165,14 @@ static BOOL kproc_thread_attach_space_owned(KPROC *p, KASPACE *construction_spac
     KTHREAD *thread, KPROC **process, KASPACE **space, KTHREAD **next, BOOL identity_only)
 {
     KASPACE *as;
-#if !CONF_WITH_NATIVE_SCHED
+#if !CONF_WITH_MULTITHREADING
     UNUSED(identity_only);
 #endif
     if (!thread || !construction_space || !p ||
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
         p->group_exiting ||
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         (p->clone_guarded && !identity_only) ||
 #if CONF_WITH_EXEC_REPLACE
         p->exec_replacement_ticket ||
@@ -1220,7 +1217,7 @@ BOOL kproc_thread_attach(PD *pd, KTHREAD *thread, KPROC **process,
 BOOL kproc_clone_target_ready(const KPROC *p, KTHREAD *thread)
 {
     ULONG i;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (p && p->shared_exec) return kproc_shared_exec_ready(p,thread);
 #endif
     if (!p || !p->pd || p->started || p->completed ||
@@ -1244,7 +1241,7 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
     p->active_space = space; /* transfer the transaction's owning reference */
     p->aspace = kaspace_backend(space);
     p->clone_identity_only = TRUE; /* existing loaders/scheduler cannot start it */
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_MULTITHREADING
     if(p->shared_inherited) p->shared_inherited->committed=TRUE;
 #endif
     return TRUE;
@@ -1253,7 +1250,7 @@ BOOL kproc_clone_adopt_space(KPROC *p, KTHREAD *thread, KASPACE *space)
 static BOOL mapping_owner_live(const KPROC *p)
 {
     return kproc_thread_start_allowed(p)
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
         && !kproc_group_status(p,NULL)
 #endif
         ;
@@ -1304,7 +1301,7 @@ failed:
 LONG kproc_clone_prepare_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,
                                       BOOL private_vm,KASPACE_MEMBER **result)
 { return prepare_mapping_owners(p,source,space,private_vm,result); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 LONG kproc_prepare_loaded_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,KASPACE_MEMBER **result)
 { return prepare_mapping_owners(p,source,space,FALSE,result); }
 #endif
@@ -1312,7 +1309,7 @@ LONG kproc_prepare_loaded_mapping_owners(KPROC *p,KPROC *source,KASPACE *space,K
 void kproc_abort_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members)
 {
     KASPACE_MEMBER *owned,*token;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
 #endif
     if (!p || !members || !*members) return;
@@ -1323,7 +1320,7 @@ void kproc_abort_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members
         panic("mapping preparation abort owner changed");
     p->mapping_preparation=MAPPING_ABORTING;
     owned=*members;*members=NULL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_begin(&scope);
 #endif
     kaspace_attachment_release_owner(space,p->number,p);
@@ -1332,7 +1329,7 @@ void kproc_abort_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **members
         p->prepared_mapping_members=NULL;p->mapping_preparation=0;
         p->prepared_allocation_scope=NULL;
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
 }
@@ -1380,13 +1377,13 @@ LONG kproc_mapping_attach(KPROC *source,KPROC *target,UQUAD birth,VADDR address,
 {
     LONG error;
     KASPACE *space;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
 #endif
     if (!mapping_owner_live(source) || !mapping_owner_live(target) ||
         !source->active_space || source->active_space!=target->active_space ||
         !kaspace_member_matches(target->mapping_members,target->active_space,target->number,target)) return EACCDN;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_begin(&scope);
 #endif
     space=kaspace_share(source->active_space);
@@ -1397,7 +1394,7 @@ LONG kproc_mapping_attach(KPROC *source,KPROC *target,UQUAD birth,VADDR address,
     else error=kaspace_attachment_acquire(space,birth,address,bytes,
                                          source->number,source,target->number,target,result);
     kaspace_put(space);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return error;
@@ -1406,15 +1403,15 @@ LONG kproc_mapping_attach(KPROC *source,KPROC *target,UQUAD birth,VADDR address,
 BOOL kproc_mapping_detach(KPROC *owner,KASPACE_ATTACHMENT *claim)
 {
     BOOL released;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
 #endif
     if (!mapping_owner_live(owner)) return FALSE;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_begin(&scope);
 #endif
     released=kaspace_attachment_release(claim,owner->number,owner);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return released;
@@ -1459,7 +1456,7 @@ void kproc_clone_commit_mapping_owners(KPROC *p,KASPACE *space,KASPACE_MEMBER **
     p->prepared_allocation_scope=NULL;
 }
 
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
 enum { IMAGE_PREPARED,IMAGE_COMMITTED,IMAGE_CANCELLED };
 #if CONF_WITH_IMAGE_POLICY_TEST
 static UWORD image_policy_fail_stage;
@@ -1757,7 +1754,7 @@ LONG kproc_image_policy_test_query(const KPROC *source,UWORD selector)
 #endif
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #if CONF_WITH_X86_64_MEMTEST
 static UWORD fail_clone_compat;
 static BOOL fail_clone_controller;
@@ -1836,7 +1833,7 @@ BOOL kproc_clone_parent_ready(const KPROC *p)
     /* The caller's execution owner, rather than an identity-only observer,
      * must retain parent resources throughout this synchronous root call. */
     return kproc_active_space(p) && p->threads != NULL
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
         && !p->group_exiting
 #endif
         ;
@@ -1920,7 +1917,7 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
      * fail-stop on kernel misuse instead of exposing a generic guard bypass. */
     if (!p || !p->threads || !kproc_clone_run_ready(p, p->threads, space) ||
         !startup || !physical || !top) panic("unprepared clone PROCESS activation");
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     image_policy_commit(p);
 #endif
 #if CONF_WITH_PRIVATE_CLONE
@@ -1933,9 +1930,7 @@ void kproc_clone_commit_run(KPROC *p, KASPACE *space, void *startup, PADDR physi
         p->parent = p->clone_controller_pd; /* logical identity remains separate */
     }
     if(p->shared_exec) shared_exec_commit(p);
-#if CONF_WITH_SHARED_VM_PEXEC
     if(p->shared_inherited) p->shared_inherited->committed=TRUE;
-#endif
     p->active_space = space; p->aspace = kaspace_backend(space);
     p->clone_guarded = TRUE; p->clone_identity_only = FALSE;
     p->child_usage_at_wait = wait_usage;
@@ -2016,7 +2011,7 @@ static BOOL exec_replacement_source(KPROC *process,KTHREAD *thread,KASPACE *sele
         kaspace_mutation_busy(original) || kaspace_mutation_busy(selected) ||
         !aspace_root(kaspace_backend(selected)) ||
         aspace_root(kaspace_backend(selected))==aspace_root(kaspace_backend(original))) return FALSE;
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (process->group_exiting) return FALSE;
 #endif
     for (peer=kproc_list;peer;peer=peer->next) {
@@ -2193,7 +2188,7 @@ static BOOL exec_image_source_ok(const KPROC *source, const KPROC *image)
     if (!source || !source->pd || !source->started || !source->active_space || !source->aspace ||
         source->kstack_phys)
         return FALSE;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (source->shared_exec || source->shared_inherited ||
         (source->clone_guarded && !exec_private_clone(source)) ||
         (source->clone_compat && !exec_private_clone(source)) || source->clone_startup)
@@ -2290,7 +2285,7 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     if (exec_image_injected(4)) goto failed;
     /* 5: the PD exit status is written through, as for the original launch. */
     parent = source->parent;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     exit_parent = source->async_parent ? source->async_parent : parent;
 #else
     exit_parent = parent;
@@ -2298,7 +2293,7 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     if (!exit_parent ||
         !aspace_map_procmem(as, (VADDR)(uintptr_t)exit_parent, sizeof(PD), ASPACE_PROT_WRITE))
         goto failed;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (!source->async_parent && parent != ksched_controller_pd() &&
         !aspace_map_procmem(as, (VADDR)(uintptr_t)ksched_controller_pd(), sizeof(PD), ASPACE_PROT_WRITE))
         goto failed;
@@ -2410,7 +2405,7 @@ static void exec_image_rekey(PD *old, PD *new)
     for (k = kproc_list; k; k = k->next) {
         if (k->parent == old) k->parent = new;
         if (k->creator == old) k->creator = new;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (k->async_parent == old) k->async_parent = new;
 #endif
     }
@@ -2458,7 +2453,7 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
     /* Image, interpreter and stack. */
     s->layout = i->layout; s->has_image = i->has_image;
     i->has_image = FALSE; memset(&i->layout, 0, sizeof(i->layout));
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     s->image_policy_only = FALSE;
 #endif
 #if CONF_WITH_ELF_SHARED
@@ -2472,7 +2467,7 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
 #if KPROC_LEGACY_PRG
     s->legacy_text_bytes = i->legacy_text_bytes; s->legacy_text_recorded = i->legacy_text_recorded;
     i->legacy_text_bytes = 0; i->legacy_text_recorded = FALSE;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     s->legacy_text_entry = i->legacy_text_entry; i->legacy_text_entry = 0;
 #endif
 #endif
@@ -2591,10 +2586,10 @@ BOOL kproc_exec_handoff_allowed(KPROC *process, KTHREAD *thread, BOOL replacing)
         process->user_copies || process->exec_committing || !process->exec_replacement_ticket != !replacing ||
         (process->clone_guarded && (!replacing || !exec_private_clone(process))) ||
         kaspace_mutation_busy(process->active_space)) return FALSE;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     if (process->image_preparation) return FALSE;
 #endif
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (process->group_exiting) return FALSE;
 #endif
     for (peer = kproc_list; peer; peer = peer->next)
@@ -2616,7 +2611,7 @@ static BOOL kproc_prepare_thread_exit_handoff_owned(KPROC *process, KTHREAD *thr
         process->completed || !process->pd)
         return FALSE;
     if (thread && !sole_execution_thread(process, thread)) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (process->threaded && kthread_is_executing(thread) &&
             kproc_clone_sibling_ready(process, thread, kthread_aspace(thread)))
             return TRUE; /* only this execution stops; PROCESS remains live */
@@ -2651,7 +2646,7 @@ static BOOL kproc_finish_thread_handoff_owned(KPROC *process, KTHREAD *thread)
         process->threads = NULL;
         return TRUE;
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (process->threaded && process->disposal_state == PROCESS_LIVE &&
         kproc_clone_sibling_ready(process, thread, kthread_aspace(thread))) {
         kproc_thread_detach(process, thread, *kthread_next_link(thread));
@@ -2742,7 +2737,7 @@ void kproc_require_exit_thread(PD *pd, KTHREAD *thread)
 {
     KPROC *process = kproc_find(pd);
     if (process && process->threads && !sole_execution_thread(process, thread)) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (process->threaded && kthread_is_executing(thread) &&
             kproc_clone_sibling_ready(process, thread, kthread_aspace(thread))) return;
 #endif
@@ -2830,7 +2825,7 @@ void kproc_destroy(PD *pd)
             if (kproc->threads)
                 panic("kproc_destroy: attached non-runnable threads");
             kproc->file_cleanup_started=TRUE;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
             image_policy_cancel(kproc);
 #endif
 #endif
@@ -2844,7 +2839,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_CALLBACKS
             user_callback_process_exit(pd);
 #endif
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
             kthread_forget_completions(kproc);
 #endif
 #if CONF_WITH_USER_ASPACE
@@ -2874,12 +2869,12 @@ void kproc_destroy(PD *pd)
              * stand in for disposing this PROCESS's construction pin rights. */
             retire_process_borrows(kproc);
 #endif
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
             /* Registry cursor is detached; the lookup reference still owns
              * this identity. Child teardown cannot invalidate an outer link. */
             proc_exec_owner_exit(kproc);
 #endif
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_MULTITHREADING && CONF_WITH_X86_64_MEMTEST
             if (kproc->test_controller_first) clone_drop_controller(kproc);
 #endif
             /* Identity-only construction/cancellation consumed no child CPU
@@ -2888,7 +2883,7 @@ void kproc_destroy(PD *pd)
 #if CONF_WITH_USER_ASPACE
                 && kproc->started
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
                 /* Active clones keep logical parent identity: their usage
                  * is credited by existing Pwait, never also at retirement. */
                 && !kproc->child_usage_at_wait
@@ -2897,9 +2892,9 @@ void kproc_destroy(PD *pd)
                 launcher->child_ticks += (ULONG)hz_200 - kproc->start_tick;
 #if CONF_WITH_USER_ASPACE
             kproc_load_leave();             /* (a disk error jumped out of a load) */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
             kproc_clone_drop_compat(kproc);
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
             kproc_shared_exec_abort(kproc);
 #endif
 #endif
@@ -3494,7 +3489,7 @@ static BOOL prepare_failed(KPROC *kproc, KASPACE *owner)
     return FALSE;
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 void kproc_add_child_usage(PD *pd, ULONG milliseconds)
 {
     KPROC *kproc = kproc_find(pd);
@@ -3644,7 +3639,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         !aspace_map_procmem(as, tpa, hitpa - tpa,
                                    tpa_prot) ||
         !aspace_map_procmem(as, (VADDR)(uintptr_t)
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
                                    (kproc->async_parent ? kproc->async_parent : parent),
 #else
                                    parent,
@@ -3661,7 +3656,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         !aspace_mark_procmem_text(as, tpa + sizeof(PD), kproc->legacy_text_bytes))
         return prepare_failed(kproc, owner);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* The kernel controller mapping belongs to the ASPACE, not whichever
      * PROCESS first launches through it. It survives all shared-VM peers. */
     if (!kproc->async_parent && parent!=ksched_controller_pd() &&
@@ -4441,7 +4436,7 @@ BOOL kproc_record_legacy_text(PD *pd, ULONG text_bytes)
         text > (VADDR)(uintptr_t)kproc->user_end ||
         (VADDR)text_bytes > (VADDR)(uintptr_t)kproc->user_end - text) return FALSE;
     kproc->legacy_text_bytes = text_bytes;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     kproc->legacy_text_entry=text;
 #endif
     kproc->legacy_text_recorded = TRUE;
@@ -4577,7 +4572,7 @@ PADDR kproc_take_kernel_stack(PD *pd, uintptr_t *top)
     phys = kproc->kstack_phys;
     *top = kproc->kstack_top;
     kproc->kstack_phys = 0;         /* the launcher frees it, after the exit */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     kproc->clone_startup = NULL; /* borrowed first-thread draft ends at launch */
 #endif
     return phys;
@@ -4607,7 +4602,7 @@ static VADDR stack_bytes(const KPROC *kproc)
  * inherited limit is policy, never authority to invent a top-of-VA stack. */
 static BOOL owns_top_stack(const KPROC *kproc)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     return !kproc->shared_exec && (!kproc->clone_guarded || kproc->clone_top_stack);
 #else
     UNUSED(kproc);
@@ -5064,14 +5059,14 @@ LONG kproc_mmap(PD *pd,UQUAD address,UQUAD length,UQUAD protection,UQUAD flags,U
 {
     MAPPING_MUTATION mutation;
     LONG result=EACCDN;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) {
         result=do_mmap(pd,address,length,protection,flags,fd,offset);mapping_close(&mutation);
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return result;
@@ -5172,12 +5167,12 @@ LONG kproc_munmap(PD *pd,UQUAD address,UQUAD length)
 {
     MAPPING_MUTATION mutation;
     LONG result=EACCDN;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) { result=do_munmap(pd,address,length);mapping_close(&mutation); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return result;
@@ -5204,7 +5199,7 @@ static BOOL standard_image_range(const KPROC *kproc, UQUAD address, UQUAD length
     UQUAD page;
     ULONG which, i;
     if (!kproc->standard_entry ||
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
         kproc->image_policy_only ||
 #endif
         address > USER_VA_LIMIT || length > USER_VA_LIMIT - address)
@@ -5321,12 +5316,12 @@ LONG kproc_mprot(PD *pd,UQUAD address,UQUAD length,UQUAD protection)
 {
     MAPPING_MUTATION mutation;
     LONG result=EACCDN;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) { result=do_mprot(pd,address,length,protection);mapping_close(&mutation); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return result;
@@ -5563,7 +5558,7 @@ static void lazy_oom(void)
 #if CONF_WITH_X86_64_MEMTEST && CONF_WITH_USER_CALLBACKS
     x86_64_memtest_callback_lazy_oom();
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_fault(run, 9); /* SIGKILL, as for a user-mode paging failure */
 #endif
 #if CONF_WITH_USER_CALLBACKS
@@ -5647,7 +5642,7 @@ static BOOL demand_range(KPROC *kproc, VADDR address, ULONG size, BOOL write)
 #if CONF_WITH_USER_PAGE_FAULTS
     if (error==EREADF) {
         kcprintf("process: file mapping I/O error\n");
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_fault(run,10);
 #endif
         xterm((UWORD)-1);
@@ -5702,7 +5697,7 @@ LONG kproc_psetlimit(PD *pd, WORD mode, LONG value)
                 return ERANGE;
             size = ((VADDR)value + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1);
         }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         /* This stack is resident and sealed in a shared root. A scalar limit
          * update cannot relocate it or manufacture an unrelated lazy stack. */
         if (kproc->shared_exec)
@@ -5820,14 +5815,14 @@ VADDR kproc_uheap_alloc(PD *pd, ULONG bytes)
 {
     MAPPING_MUTATION mutation;
     VADDR result=0;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) {
         result=heap_alloc(mutation.process,bytes);mapping_close(&mutation);
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return result;
@@ -5862,12 +5857,12 @@ ULONG kproc_uheap_largest(PD *pd)
 {
     MAPPING_MUTATION mutation;
     ULONG result=0;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) { result=do_heap_largest(pd);mapping_close(&mutation); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return result;
@@ -5950,12 +5945,12 @@ LONG kproc_uheap_free(PD *pd,VADDR va)
 {
     MAPPING_MUTATION mutation;
     LONG result=EIMBA;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) { result=do_heap_free(pd,va);mapping_close(&mutation); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return result;
@@ -6001,12 +5996,12 @@ LONG kproc_uheap_shrink(PD *pd,VADDR va,long len)
 {
     MAPPING_MUTATION mutation;
     LONG result=EIMBA;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     if (mapping_open(pd,&mutation)) { result=do_heap_shrink(pd,va,len);mapping_close(&mutation); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return result;
@@ -6110,7 +6105,7 @@ LONG kproc_allocation_hold(PD *pd, const void *base, UQUAD generation,
     if (!owner || kproc_live_pd(owner) != pd || procmem_owner(base) != pd) {
         kproc_release(owner); return EACCDN;
     }
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (kproc_group_status(owner,NULL)) { kproc_release(owner); return EACCDN; }
 #endif
     address += offset;
@@ -6209,7 +6204,7 @@ LONG kproc_reservation_info(PD *pd, VADDR address, VADDR bytes,
         }
     }
     if (!birth && owner->has_image
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
         && !owner->image_policy_only
 #endif
         ) {
@@ -6282,7 +6277,7 @@ LONG kproc_reservation_hold(PD *pd, VADDR address, VADDR bytes,
     if (!owner || kproc_live_pd(owner) != pd || !(space=kproc_active_space(owner))) {
         kproc_release(owner); return EACCDN;
     }
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (kproc_group_status(owner,NULL)) { kproc_release(owner); return EACCDN; }
 #endif
     {
@@ -6320,13 +6315,13 @@ BOOL kproc_reservation_release(KASPACE_RESERVATION_HOLD *hold)
 {
     void *identity = NULL;
     BOOL released;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     released=kaspace_reservation_release(hold,&identity);
     if (released) kproc_release(identity);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope); /* no checkpoint with a caller's batch still owned */
 #endif
     return released;
@@ -6352,13 +6347,13 @@ BOOL kproc_allocation_release(KPROC_ALLOCATION_HOLD *hold)
 {
     void *identity = NULL;
     BOOL released;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
     released=hold && procmem_hold_release(&hold->token,&identity);
     if (released) kproc_release(identity); /* already unpublished */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     return released;
@@ -6369,7 +6364,7 @@ BOOL kproc_validate_user_range(VADDR address, ULONG size)
     return validate_user(address, size, FALSE);
 }
 
-#if CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
 BOOL kproc_validate_user_exec(VADDR address)
 {
     KPROC *kproc = kproc_find(run);
@@ -6406,7 +6401,7 @@ static LONG user_operation_begin(KPROC_USER_COPY *copy,PD *pd,VADDR address,ULON
     LONG error=E_OK;
     if(!copy || copy->active || copy->process || copy->space || copy->lease ||
        !bytes || address>=USER_VA_LIMIT || bytes>USER_VA_LIMIT-address)return EIMBA;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_begin(&copy->cleanup);
 #endif
     copy->active=TRUE;copy->pd=pd;copy->address=address;copy->bytes=bytes;copy->write=write;
@@ -6470,11 +6465,11 @@ void kproc_user_copy_end(KPROC_USER_COPY *copy)
     KPROC *process;
     KASPACE *space;
     KASPACE_LEASE *lease;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE retirement={0};
 #endif
     if(!copy || !copy->active)return;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* Validate/consume the original scope BEFORE dereferencing moved owners.
      * No callback/handoff/checkpoint lies between these two metadata calls. */
     ksched_cleanup_end(&copy->cleanup);
@@ -6490,7 +6485,7 @@ void kproc_user_copy_end(KPROC_USER_COPY *copy)
         kowner_leave(&guard);
         kproc_release(process);
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&retirement);
 #endif
 }
@@ -6516,7 +6511,7 @@ static BOOL ordinary_copy_error(LONG error)
 #if CONF_WITH_USER_PAGE_FAULTS
     if(error==EREADF) {
         kcprintf("process: file mapping I/O error\n");
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_fault(run,10);
 #endif
         xterm((UWORD)-1);
@@ -6564,7 +6559,7 @@ BOOL kproc_copy_to_user_resident(VADDR address, const void *src, ULONG size)
     return kproc_copy_to_user(address, src, size);
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 static UWORD shared_fail_after,shared_steps;
 static UWORD shared_dependency_after,shared_dependency_steps;
@@ -6583,8 +6578,10 @@ static BOOL shared_failure_point(void)
     shared_steps++;
     return shared_fail_after && !--shared_fail_after;
 }
-#elif CONF_WITH_SHARED_VM_PEXEC
+#else
+#if CONF_WITH_SHARED_VM_PEXEC
 static BOOL shared_failure_point(void) {return FALSE;}
+#endif
 #define shared_dependency_point() FALSE
 #endif
 #include "kproc_shared_exec.h"

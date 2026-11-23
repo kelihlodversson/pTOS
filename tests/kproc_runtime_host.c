@@ -6,7 +6,7 @@
 #undef main
 #include "../bdos/kproc.c"
 WORD bootdev=2;
-#if KPROC_LEGACY_PRG && CONF_WITH_IMAGE_POLICY
+#if KPROC_LEGACY_PRG && CONF_WITH_IMAGE_POLICY_TEST
 static void legacy_image_policy(void)
 {
     KPROC source={0};
@@ -189,7 +189,7 @@ int main(void)
 {
     KPROC source={0};PD source_pd={0};
     window_phys=(PADDR)(uintptr_t)window;free_pages=WINDOW_PAGES;
-#if KPROC_LEGACY_PRG && CONF_WITH_IMAGE_POLICY
+#if KPROC_LEGACY_PRG && CONF_WITH_IMAGE_POLICY_TEST
     legacy_image_policy();
 #endif
     retiring_construction_borrows();

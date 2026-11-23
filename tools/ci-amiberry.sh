@@ -65,7 +65,7 @@ assert k.syms['CONF_WITH_USER_ASPACE'].str_value == 'y'
 # scheduler-disabled 256-KB lanes above remain part of the default matrix.
 k.syms['CONF_AMIGA_ROM_512K'].set_value(2)
 assert k.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'
-for name in ('CONF_WITH_NATIVE_SCHED','CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP','CONF_WITH_EXIT_HANDOFF_TEST'):
+for name in ('CONF_WITH_MULTITHREADING','CONF_WITH_EXIT_HANDOFF_TEST'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name
 if os.environ.get('IRQ_COPY_PROOF') == '1':
@@ -77,33 +77,33 @@ if os.environ.get('IRQ_COPY_PROOF') == '1':
     k.syms['CONF_WITH_MFASTCALL'].set_value(0)
     assert k.syms['CONF_WITH_MFASTCALL'].str_value == 'n'
     if os.environ.get('NATIVE_PREEMPT') != '1' and os.environ.get('IRQ_RESTART_TEST') != '1':
+        k.syms['CONF_WITH_PREEMPTION'].set_value(0)
         k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
         assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y'
         assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
 if os.environ.get('NATIVE_PREEMPT') == '1':
-    for name in ('CONF_WITH_ELF_LOADER', 'CONF_WITH_MMAP', 'CONF_WITH_PRIVATE_CLONE',
-                 'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PROCESS_FILES',
-                 'CONF_WITH_PROCESS_FILES_TEST',
-                 'CONF_WITH_NATIVE_PREEMPT'):
+    for name in ('CONF_WITH_ELF_LOADER', 'CONF_WITH_MMAP',
+                 'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PROCESS_FILES_TEST'):
         k.syms[name].set_value(2)
         assert k.syms[name].str_value == 'y', name
-if os.environ.get('NATIVE_PREEMPT') == '1':
+    assert k.syms['CONF_WITH_PREEMPTION'].str_value == 'y'
     # Existing ROM-window backend refuses private cloning. Test independent
     # loader roots instead, without exposing an unsupported public Pfork.
-    k.syms['CONF_WITH_PFORK'].set_value(0)
+    k.syms['CONF_WITH_FORK'].set_value(0)
     k.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(0)
     assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == 'y'
 if os.environ.get('IRQ_RESTART_TEST') == '1':
+    k.syms['CONF_WITH_PREEMPTION'].set_value(0)
     fastcall = os.environ.get('IRQ_RESTART_FASTCALL') == '1'
     k.syms['CONF_WITH_MFASTCALL'].set_value(2 if fastcall else 0)
     assert k.syms['CONF_WITH_MFASTCALL'].str_value == ('y' if fastcall else 'n')
-    for name in ('CONF_WITH_ELF_LOADER', 'CONF_WITH_MMAP', 'CONF_WITH_PRIVATE_CLONE',
+    for name in ('CONF_WITH_ELF_LOADER', 'CONF_WITH_MMAP',
                  'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_IRQ_RESTART_TEST'):
         k.syms[name].set_value(2)
         assert k.syms[name].str_value == 'y', name
-    assert k.syms['CONF_WITH_NATIVE_PREEMPT'].str_value == 'n'
-    k.syms['CONF_WITH_PFORK'].set_value(0)
-    assert k.syms['CONF_WITH_PFORK'].str_value == 'n'
+    assert k.syms['CONF_WITH_PREEMPTION'].str_value == 'n'
+    k.syms['CONF_WITH_FORK'].set_value(0)
+    assert k.syms['CONF_WITH_FORK'].str_value == 'n'
     assert k.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'n'
     assert k.syms['CONF_WITH_SAVED_RETURN'].str_value == ('n' if fastcall else 'y')
 k.write_config()

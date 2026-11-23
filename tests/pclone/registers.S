@@ -2,7 +2,7 @@
 #define CAT_(a,b) a##b
 #define CAT(a,b) CAT_(a,b)
 #define C_SYM(name) CAT(__USER_LABEL_PREFIX__,name)
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE)
+#if defined(TEST_WITH_MULTITHREADING)
 #if defined(__x86_64__)
         .text
         .globl C_SYM(clone_abi_entry)

@@ -36,7 +36,7 @@ static void read_log(void)
 static void write_log(void)
 {
     long fd,n;
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
     /* Existing fixed-size state must remain readable between USER syscalls.
      * Truncation followed by a separate write exposed an empty file if a
      * timer selected a reader between those two operations. */
@@ -67,7 +67,7 @@ int main(void)
         data[4]=(long)(uintptr_t)_base; write_log();
         pid=Pexec(100,"C:\\GLOBALCH.TOS",tail,0); REQUIRE(pid>0 && pid!=data[1],6);
         read_log(); REQUIRE(data[3]==1,7); data[2]=pid; write_log();
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
         (void)Cconws("global scheduler launcher: RETURNING with independently owned child\r\n");
 #else
         (void)Cconws("global scheduler launcher: RETURNING with unexecuted child\r\n");
@@ -75,7 +75,7 @@ int main(void)
         return 0; /* child may not require this launcher or its PD/stack */
     }
     if(role==2) {
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
         /* A bounded detached pump can stop on a timer IRQ before the child
          * reaches its explicit wait. Drive the same existing scheduler until
          * that child publishes its phase, without assuming one quantum of
@@ -106,7 +106,7 @@ int main(void)
         (void)Cconws("native public global launcher-return/later-entry/PD-reuse: PASS\r\n");
         return 0;
     }
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
     /* Publication permits timer dispatch before the creator's next USER
      * instruction. Its death, not an assumed lack of dispatch, fences the
      * orphan check and the creator's PID/file stores. Preserve the original

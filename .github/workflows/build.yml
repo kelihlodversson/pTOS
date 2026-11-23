@@ -194,8 +194,8 @@ jobs:
           config = kconfiglib.Kconfig()
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
-          config.syms["CONF_WITH_PCLONE"].set_value(2)
-          assert config.syms["CONF_WITH_PCLONE"].str_value == "y"
+          config.syms["CONF_WITH_MULTITHREADING"].set_value(2)
+          assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "y"
           config.write_config()
           PY
           make obj/ldso/libldso.a
@@ -235,9 +235,7 @@ jobs:
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
-          for name in ("CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP"):
-              config.syms[name].set_value(2)
-              assert config.syms[name].str_value == "y"
+          assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "y"
           config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].set_value(2)
           assert config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].str_value == "y"
           config.write_config()
@@ -266,9 +264,7 @@ jobs:
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
-          for name in ("CONF_WITH_NATIVE_SCHED", "CONF_WITH_PCLONE", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP",
-                       "CONF_WITH_PRIVATE_CLONE", "CONF_WITH_PRIVATE_CLONE_TEST",
-                       "CONF_WITH_IMAGE_POLICY"):
+          for name in ("CONF_WITH_PRIVATE_CLONE_TEST", "CONF_WITH_IMAGE_POLICY_TEST"):
               config.syms[name].set_value(2)
               assert config.syms[name].str_value == "y", name
           config.write_config()
@@ -288,7 +284,7 @@ jobs:
           import kconfiglib
           config = kconfiglib.Kconfig()
           config.load_config()
-          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_NATIVE_PREEMPT"):
+          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_PREEMPTION"):
               config.syms[name].set_value(2)
               assert config.syms[name].str_value == "y"
           assert config.syms["CONF_WITH_DEMAND_PAGING"].str_value == "n"
@@ -518,7 +514,7 @@ jobs:
           retention-days: 14
 
   exec-replacement-native:
-    name: private ELF staging ${{ matrix.machine }} ${{ matrix.fs }}
+    name: Pexec(200) ${{ matrix.machine }} ${{ matrix.fs }} ${{ matrix.loader || 'standard' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -529,6 +525,8 @@ jobs:
           - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
           - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
           - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, loader: prg-only, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, loader: prg-only, qemu: qemu-system-misc}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -541,14 +539,17 @@ jobs:
           packages: ${{ matrix.qemu }} ovmf dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
       - name: Install fontTools
         run: python3 -m pip install fonttools
-      - name: Stage ELF images and exercise same-image NORETURN transport
+      - name: Exercise executable replacement and rollback
         env:
           EXEC_REPLACEMENT_TEST: '1'
           EXEC_HANDOFF_TEST: '1'
-          EXEC_STAGING_PROFILE: '1'
+          EXEC_STAGING_PROFILE: ${{ matrix.loader != 'prg-only' && '1' || '0' }}
+          PRG_ONLY_EXEC: ${{ matrix.loader == 'prg-only' && '1' || '0' }}
           # 68k MMU only (#1018): ARM/x32 have no shared-VM Pexec.
-          SHARED_VM_PEXEC: ${{ matrix.arch == 'm68k' && '1' || '0' }}
+          SHARED_VM_PEXEC: ${{ matrix.arch == 'm68k' && matrix.loader != 'prg-only' && '1' || '0' }}
           SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
         run: tools/ci-regression.sh "${{ matrix.machine }}"
 
   process-files:
@@ -719,7 +720,6 @@ jobs:
         run: python3 -m pip install fonttools
       - name: Exercise production timer policy and retained USER returns
         env:
-          NATIVE_PREEMPT: '1'
           EXEC_REPLACEMENT_TEST: '1'
           EXEC_HANDOFF_TEST: '1'
           PROCESS_FILES_TEST: '1'
@@ -748,7 +748,7 @@ jobs:
                        'CONF_WITH_X86_64_MEMTEST'):
               config.syms[name].set_value(0)
               assert config.syms[name].str_value == 'n', name
-          for name in ('CONF_WITH_NATIVE_PREEMPT', 'CONF_WITH_SAVED_RETURN', 'CONF_WITH_PFORK'):
+          for name in ('CONF_WITH_PREEMPTION', 'CONF_WITH_SAVED_RETURN', 'CONF_WITH_FORK'):
               assert config.syms[name].str_value == 'y', name
           for name in ('CONF_WITH_MMAP', 'CONF_WITH_IRQ_RESTART_TEST',
                        'CONF_WITH_CUIS', 'CONF_WITH_CUIS_WAIT_TEST'):
@@ -1170,6 +1170,9 @@ jobs:
       # or when two configurations make the same .config (#989).
       - name: Check that every configuration is built
         run: PATH=/tmp/kconfig-venv/bin:$PATH tools/check-ci-configs.sh
+
+      - name: Check default native process policies
+        run: /tmp/kconfig-venv/bin/python tools/test-native-process-config.py
 
       - name: Check the results
         if: ${{ !cancelled() }}

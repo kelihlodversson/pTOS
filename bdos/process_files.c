@@ -9,7 +9,7 @@
 #include "string.h"
 #include "biosext.h"
 #include "bdosstub.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
 
@@ -34,7 +34,7 @@ static BOOL next_id(UQUAD *out)
 }
 static UQUAD execution_id(void)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     return ksched_context_id();
 #else
     return 0;

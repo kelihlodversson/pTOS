@@ -1,10 +1,10 @@
-/* The ELF replacement image of the Pexec(200) acceptance test (#970). It runs
+/* The ELF or PRG replacement image of the Pexec(200) acceptance test (#970). It runs
  * in the subject's PROCESS (exec200_check.h lists what it verifies).
  * Generation 1 replaces itself once more: after the runner has observed the
  * commit when the subject is an anchor (a nested subject's runner is blocked
  * in its Pexec(0)), and leaving a directory search open. Generation 2 checks
- * that search did not survive and replaces itself with EXEC200.TOS, a
- * classic PRG on m68k, which completes the PROCESS. */
+ * that search did not survive and replaces itself with EXEC200.TOS, which
+ * completes the PROCESS. */
 #include "exec200_check.h"
 #include <mint/mintbind.h>
 #if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
@@ -30,11 +30,25 @@ static void verify_irq_replacement(void)
 }
 #endif
 
+#ifndef EXEC200_IMAGE_NAME
+#define EXEC200_IMAGE_NAME "EXEC200B.TOS"
+#endif
+
 int main(void)
 {
     EXEC200_TAIL t;
     long result;
     exec200_verify("image", &t);
+#ifdef __mc68000__
+#if defined(TEST_IS_PRG) && defined(EXEC200_PRG)
+    if (t.generation == 1) (void)Cconws("native Pexec(200) PRG to PRG: PASS\r\n");
+#else
+#ifdef TEST_IS_PRG
+    if (t.generation == 1) (void)Cconws("native Pexec(200) PRG to ELF: PASS\r\n");
+#endif
+    if (t.generation == 2) (void)Cconws("native Pexec(200) ELF to ELF: PASS\r\n");
+#endif
+#endif
     if (t.generation == 1) {
 #if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
         if (t.nested == 2) {
@@ -48,7 +62,7 @@ int main(void)
         while (!t.nested && Fsfirst("GO970.TMP", 0)) (void)Syield();
         /* Leave a multi-match search open on the default DTA. */
         if (Fsfirst("*.TOS", 0)) exec200_fail("image", "open search", 0);
-        result = exec200_next("EXEC200B.TOS", 0, &t, 0);   /* inherits this environment */
+        result = exec200_next(EXEC200_IMAGE_NAME, 0, &t, 0);   /* inherits this environment */
         exec200_fail("image", "second Pexec(200) returned", result);
     }
     if (t.generation != 2) exec200_fail("image", "unexpected generation", (long)t.generation);

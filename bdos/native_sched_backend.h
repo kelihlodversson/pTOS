@@ -99,7 +99,7 @@ static inline void native_sched_root_context(NATIVE_SCHED_CONTEXT *c,PD *pd,uint
 {
     UWORD i;
     c->pd=pd; c->launch=NULL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     c->native_task=0;
 #endif
     c->flags=native_sched_masked(c->flags);

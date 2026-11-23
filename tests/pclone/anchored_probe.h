@@ -20,7 +20,7 @@ static void anchored_process_entry(void *argument)
     (void)argument;
     Pterm(46);
 }
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
 static void anchored_sibling_entry(void *argument)
 {
     (void)argument;
@@ -51,7 +51,7 @@ static long anchored_probe(void)
         result = Pwaitpid(pid, 0, 0);
         if ((result >> 16) != pid || (result & 65535) != 46) bad |= 4;
     }
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
     /* A sibling THREAD of this PROCESS, joined here. */
     {
         int32_t status = -1;
@@ -66,7 +66,7 @@ static long anchored_probe(void)
                  !anchored_sibling_ran) bad |= 16;
     }
 #endif
-#if defined(TEST_WITH_PFORK)
+#if defined(TEST_WITH_FORK)
     child = Pfork();
     if (child == 0) Pterm(48);
 #if defined(__mc68000__)

@@ -90,7 +90,7 @@ typedef struct {
 BOOL procmem_hold_acquire(const void *base, UQUAD allocation,
         const void *expected_owner, VADDR offset, VADDR bytes, UWORD rights,
         UQUAD owner_number, void *owner_identity, PROCMEM_HOLD *result);
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
 BOOL procmem_hold_lifetime(const void *base,UQUAD allocation,const void *expected_owner,
         UQUAD owner_number,void *owner_identity,PROCMEM_HOLD *result);
 #endif
@@ -420,7 +420,7 @@ BOOL aspace_unmap_private(ASPACE *as, VADDR va, VADDR bytes);
 /* Resident privately owned non-file-cache pages only, for execution holds.
  * Borrowed/procmem pages require another owner and are deliberately excluded. */
 BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes);
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 /* Resident leaves or exact live procmem pins already owned by this ASPACE,
  * including file-cache references. IRQ lifetime authority does not transfer
  * allocation/cleanup rights, move cache pages or bless bare PD/device aliases. */

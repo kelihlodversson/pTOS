@@ -82,7 +82,7 @@ THREAD_STARTUP_STATE thread_startup_state(const THREAD_STARTUP_DRAFT *draft);
  * sole-THREAD PROCESS exit only. This identity-only check cannot authorize the
  * private NEW_PROCESS runner; no arbitrary return PC input. */
 LONG thread_startup_publication_check(const THREAD_STARTUP_DRAFT *draft);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Internal NEW_PROCESS runner only. Preflight caches sealed-write aliases;
  * commit/publish have no allocations, callbacks, yields or failure return. */
 LONG thread_startup_run_preflight(THREAD_STARTUP_DRAFT *draft);

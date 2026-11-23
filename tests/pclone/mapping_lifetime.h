@@ -4,7 +4,7 @@
 #include "../../include/mapping_lifetime_test.h"
 static long mlt_snapshot(MAPPING_LIFETIME_SNAPSHOT *snapshot)
 { return pclone_trap(snapshot,MLT_SNAPSHOT); }
-#if defined(TEST_WITH_PRIVATE_CLONE_TEST) || defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) || defined(TEST_WITH_MULTITHREADING)
 static void mlt_print(const char *name,const MAPPING_LIFETIME_SNAPSHOT *snapshot)
 {
     unsigned i;
@@ -124,7 +124,7 @@ static void mlt_child(void *argument)
     if(mlt.mode==3) *(volatile unsigned long *)0=1; /* supported fault, no fini */
     if(mlt.mode==4) { Pterm0();return; }
     if(mlt.mode==5 || mlt.mode==6) { Pterm(37);return; }
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     if(mlt.mode==7) { (void)term_group(61);mlt.error=15; }
 #endif
 }
@@ -221,7 +221,7 @@ static struct {
     volatile int ready,go,entered,returned,owner_done,error,cancel;
 } mlt_contention;
 static MAPPING_LIFETIME_SNAPSHOT mlt_wait_before,mlt_wait_after;
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
 static void mlt_cancel_waiter(void *argument)
 {
     (void)argument;
@@ -233,7 +233,7 @@ static void mlt_waiter(void *argument)
 {
     long allocation;
     (void)argument;
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     if(mlt_contention.cancel) {
         int32_t pid=-1,tid=-1;
         long stack=Malloc(32768);
@@ -274,7 +274,7 @@ static void mlt_test_contention(void)
     memset(&mlt_wait_before,0,sizeof(mlt_wait_before));memset(&mlt_wait_after,0,sizeof(mlt_wait_after));
     for(round=0;round<4;round++) {
         memset(&mlt_contention,0,sizeof(mlt_contention));
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
         mlt_contention.cancel=round&1;
 #endif
         waits=pclone_trap(0,MLT_WAIT_COUNT);
@@ -299,7 +299,7 @@ static void mlt_test_contention(void)
     ptest_assert_msg(Mfree(waiter_stack)==0,"release idle contention fixture stack");
     if(!ptest_failures()) {
         conws("native shared-root guarded peer contention: PASS\r\n");
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
         conws("native shared-root guarded waiter cancellation: PASS\r\n");
 #endif
     }
@@ -328,7 +328,7 @@ static void test_mapping_lifetime(void)
     /* Record initial and primed root metadata separately. Do not reset any
      * counters; subsequent exact comparisons include every live resource. */
     for(i=0;i<=8;i++) {
-#if !defined(TEST_WITH_PTERMGRP)
+#if !defined(TEST_WITH_MULTITHREADING)
         if(i==7) continue;
 #endif
         mlt_run(i,0);
@@ -357,7 +357,7 @@ static void test_mapping_lifetime(void)
     ptest_assert_msg(stage<128,"ownership fail sweep reaches successful complete construction");
     for(i=0;i<128;i++) {
         int mode=(int)(i%9);
-#if !defined(TEST_WITH_PTERMGRP)
+#if !defined(TEST_WITH_MULTITHREADING)
         if(mode==7) mode=0;
 #endif
         mlt_run(mode,1);

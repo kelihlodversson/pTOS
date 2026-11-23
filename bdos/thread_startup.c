@@ -5,7 +5,7 @@
 #include "procmem.h"
 #include "thread_startup.h"
 #include "syscall_return.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "thread_startup_backend.h"
 #include "ksched.h"
 #include "biosext.h"
@@ -35,7 +35,7 @@ static LONG startup_prepare(KASPACE *space, const THREAD_STARTUP_ARGS *args,
 {
     (void)source;
     if (!result || *result || !space || !args) return EINVAL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         THREAD_STARTUP_DRAFT *draft;
         LONG error;
@@ -152,7 +152,7 @@ LONG thread_startup_prepare_cloned(KASPACE *source, KASPACE *space, const THREAD
 LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
 {
     if (!draft) return EINVAL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         UWORD i;
         for (i = 0; i < 5; i++)
@@ -172,7 +172,7 @@ LONG thread_startup_validate(const THREAD_STARTUP_DRAFT *draft)
 void thread_startup_abort(THREAD_STARTUP_DRAFT **result)
 {
     if (!result || !*result) return;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         THREAD_STARTUP_DRAFT *draft = *result;
         UWORD i;
@@ -192,7 +192,7 @@ void thread_startup_abort(THREAD_STARTUP_DRAFT **result)
 
 const void *thread_startup_image(const THREAD_STARTUP_DRAFT *draft)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     return draft ? draft->image : NULL;
 #else
     (void)draft;
@@ -202,7 +202,7 @@ const void *thread_startup_image(const THREAD_STARTUP_DRAFT *draft)
 
 THREAD_STARTUP_STATE thread_startup_state(const THREAD_STARTUP_DRAFT *draft)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     return draft ? draft->state : THREAD_STARTUP_CONSTRUCTED;
 #else
     (void)draft; return THREAD_STARTUP_CONSTRUCTED;
@@ -212,7 +212,7 @@ THREAD_STARTUP_STATE thread_startup_state(const THREAD_STARTUP_DRAFT *draft)
 LONG thread_startup_prepare_outputs(THREAD_STARTUP_DRAFT *draft, VADDR pid, VADDR tid)
 {
     if (!draft) return EINVAL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         VADDR addresses[2];
         KASPACE_LEASE *leases[2] = { NULL, NULL };
@@ -259,7 +259,7 @@ LONG thread_startup_observe(THREAD_STARTUP_DRAFT *draft,
                             const THREAD_STARTUP_OBSERVER *observer, void *context)
 {
     if (!draft || !observer || !observer->acquire || !observer->release) return EINVAL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         LONG error;
         if (draft->state != THREAD_STARTUP_PREPARED) return EINVAL;
@@ -282,7 +282,7 @@ LONG thread_startup_observe(THREAD_STARTUP_DRAFT *draft,
 LONG thread_startup_seal(THREAD_STARTUP_DRAFT *draft)
 {
     if (!draft) return EINVAL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         KASPACE_LEASE *leases[5];
         UWORD i, count = 0;
@@ -309,7 +309,7 @@ LONG thread_startup_publication_check(const THREAD_STARTUP_DRAFT *draft)
 LONG thread_startup_retain_stack(THREAD_STARTUP_DRAFT *draft, KASPACE_LEASE **hold)
 {
     if (!draft || !hold || *hold) return EINVAL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         LONG error;
         if (draft->state != THREAD_STARTUP_PREPARED && draft->state != THREAD_STARTUP_OBSERVED) return EINVAL;
@@ -326,7 +326,7 @@ LONG thread_startup_retain_stack(THREAD_STARTUP_DRAFT *draft, KASPACE_LEASE **ho
 #endif
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 LONG thread_startup_run_preflight(THREAD_STARTUP_DRAFT *draft)
 {
     UWORD i;
@@ -386,7 +386,7 @@ BOOL thread_startup_take_stacks(THREAD_STARTUP_DRAFT *draft, THREAD_STARTUP_STAC
 }
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 void thread_startup_reclaim(THREAD_STARTUP_DRAFT **handle)
 {
     FS_ERROR_STATE saved_error;

@@ -15,10 +15,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     config=kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/pc-x86_64_defconfig')
     config.syms['CONF_WITH_ELF_SHARED'].set_value(0)
-    config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
-    config.syms['CONF_WITH_PCLONE'].set_value(2)
-    config.syms['CONF_WITH_PTHJOIN'].set_value(2)
-    config.syms['CONF_WITH_PTERMGRP'].set_value(2)
+    config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)

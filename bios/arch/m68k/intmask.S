@@ -28,7 +28,7 @@
 
         .text
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 C_SYM(disable_interrupts):
         jmp C_SYM(ksched_legacy_irq_disable)
 C_SYM(enable_interrupts):
@@ -66,4 +66,4 @@ C_SYM(enable_interrupts):
 savesr:
         .ds.w   1
 
-#endif /* CONF_WITH_NATIVE_SCHED */
+#endif /* CONF_WITH_MULTITHREADING */

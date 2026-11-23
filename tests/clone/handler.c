@@ -6,7 +6,7 @@
 #include "clone.h"
 #include "clone_args.h"
 #include "gemerror.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "proc_clone.h"
 #include "ksched.h"
 #endif
@@ -24,7 +24,7 @@ LONG kproc_copy_from_user_checked(void *dst, VADDR address, ULONG size)
 {
     uint64_t offset;
     copies++;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     assert(scope_depth == 1);
 #endif
     if (copy_error) return copy_error;
@@ -100,7 +100,7 @@ int main(void)
     return 0;
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
 { assert(!scope->active && !scope_depth); scope->active = TRUE; scope_depth++; }
 void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)

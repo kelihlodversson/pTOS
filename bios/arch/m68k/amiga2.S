@@ -11,7 +11,7 @@
  */
 
 #include "asmdefs.h"
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 #include "arch/m68k/irqframe.h"
 #endif
 #include "amiga_io.h"
@@ -133,7 +133,7 @@ is_pal:
 
         .globl  C_SYM(amiga_int_2)
 C_SYM(amiga_int_2):
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
         M68K_IRQ_CAPTURE
 #endif
         //move.w  #0x0f00,0xdff180        // Background color = red

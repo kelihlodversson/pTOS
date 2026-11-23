@@ -139,7 +139,7 @@
 #if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #include "kaspace.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
 #endif
@@ -341,7 +341,7 @@ static LONG admitted_search(char *name,WORD attr,DTAINFO *dta,BOOL first,BOOL he
     DTAINFO staged,*output=dta;
     KASPACE_LEASE *lease=NULL;
     LONG result;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE scope={0};
     ksched_cleanup_begin(&scope);
 #endif
@@ -366,7 +366,7 @@ static LONG admitted_search(char *name,WORD attr,DTAINFO *dta,BOOL first,BOOL he
     }
     kaspace_lease_release(&lease);
     process_files_operation_end(&operation);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&scope);
 #endif
     DISK_RETHROW(disk);
@@ -778,7 +778,7 @@ long xrename(WORD n, char *p1, char *p2)
  *              EPTHNF
  *              ckdrv()
  */
-#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
 LONG fs_set_process_directory(char *path, PD *process)
 {
 #if CONF_WITH_PLUGGABLE_FS

@@ -101,7 +101,7 @@ C_SYM(bdos_trap2):
 C_SYM(arm_enter_user):
         mov     r7, #0                  // ordinary program has no return bridge
         b       arm_user_entry_common
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         .globl C_SYM(arm_enter_prepared_user)
 C_SYM(arm_enter_prepared_user):
         /* Immutable, kernel-owned THREAD_STARTUP32: entry, SP, argument, LR. */

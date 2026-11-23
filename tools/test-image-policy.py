@@ -21,14 +21,15 @@ with tempfile.TemporaryDirectory(prefix="ptos-image-policy-") as directory:
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/pc-x86_64_defconfig")
     config.load_config("tools/hosted-legacy-profile.config", replace=False)
-    assert config.syms["CONF_WITH_IMAGE_POLICY"].str_value == "n"
+    assert config.syms["CONF_WITH_IMAGE_POLICY_TEST"].str_value == "n"
     for name in ("CONF_WITH_ELF_SHARED", "CONF_WITH_CUIS", "CONF_WITH_X32_VDI",
-                 "CONF_WITH_USER_CALLBACKS", "CONF_WITH_PTHJOIN", "CONF_WITH_PTERMGRP"):
+                 "CONF_WITH_USER_CALLBACKS", "CONF_WITH_MULTITHREADING"):
         config.syms[name].set_value(0)
     if args.shared:
         config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
         assert config.syms["CONF_WITH_ELF_SHARED"].str_value == "y"
-    for name in ("CONF_WITH_MMAP", "CONF_WITH_X86_64_MEMTEST", "CONF_WITH_NATIVE_SCHED", "CONF_WITH_IMAGE_POLICY"):
+    config.syms["CONF_WITH_FORK"].set_value(0)
+    for name in ("CONF_WITH_MMAP", "CONF_WITH_X86_64_MEMTEST", "CONF_WITH_MULTITHREADING", "CONF_WITH_IMAGE_POLICY_TEST"):
         config.syms[name].set_value(2)
         assert config.syms[name].str_value == "y", name
     config.write_config(str(work / "config"))

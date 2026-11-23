@@ -93,7 +93,7 @@ void kproc_release(KPROC *process);
 /* Duplicate an already owned live or retired identity; caller keeps its own
  * reference across this serialized acquisition. No numeric lookup/authority. */
 KPROC *kproc_retain_identity(KPROC *process);
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 struct process_exec_handle;
 struct process_exec_handle **kproc_exec_handles(KPROC *owner);
 /* Read from a retained PROCESS. Publish when CLOSE consumes a right, before
@@ -201,7 +201,7 @@ void kproc_finish_discard_allocations(KPROC *process);
 struct kthread;
 struct kaspace;
 /* Borrowed execution policy; terminal processes cannot publish new work. */
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
 /* Serialized membership latch; existing execution remains valid until handoff.
  * First accepted status wins. Retained identity, never reusable PD identity. */
 BOOL kproc_request_group_exit(KPROC *process, UWORD status);
@@ -261,7 +261,7 @@ LONG kproc_test_mapping_claim(ULONG operation,MAPPING_LIFETIME_CLAIM *claim);
 VADDR kproc_test_contended_allocation(void);
 ULONG kproc_test_mapping_wait_count(void);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "thread_startup.h"
 #if CONF_WITH_SHARED_VM_PEXEC
 /* m68k test kernels: a staged PRG (68k PE_LOAD) as a distinct PROCESS
@@ -270,12 +270,12 @@ LONG kproc_shared_exec_prepare(KPROC *,KPROC *,THREAD_STARTUP_ARGS *,KASPACE_PER
 void kproc_shared_exec_finish(KPROC *);
 #endif
 LONG kproc_shared_exec_take_mapping_owners(KPROC *,KASPACE_MEMBER **);
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
 LONG kproc_shared_dependencies_prepare(KPROC *,KPROC *);
-#if CONF_WITH_PRIVATE_CLONE_TEST
+#endif
+#if CONF_WITH_SHARED_VM_PEXEC && CONF_WITH_PRIVATE_CLONE_TEST
 void kproc_shared_dependency_test_fail_after(UWORD);
 UWORD kproc_shared_dependency_test_steps(void);
-#endif
 #endif
 void kproc_shared_exec_abort(KPROC *);
 BOOL kproc_shared_exec_ready(const KPROC *,struct kthread *);
@@ -362,7 +362,7 @@ void kproc_test_fail_thread_space(BOOL armed);
 void kproc_test_fail_kernel_stack(BOOL armed);
 ULONG kproc_test_identities(BOOL references); /* live and retained retired */
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 void kproc_add_child_usage(PD *pd, ULONG milliseconds);
 void kproc_commit_async(PD *pd);
 BOOL kproc_prepare_async(PD *pd, PD *parent, PD *controller);
@@ -487,7 +487,7 @@ BOOL kproc_validate_user_dta(VADDR address);
 /* valid user memory of the current process: mapped, user-accessible and (for
  * _write) writable in its own address space */
 BOOL kproc_validate_user_range(VADDR address, ULONG size);
-#if CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
 /* Validate that a user entry point is mapped and executable. */
 BOOL kproc_validate_user_exec(VADDR address);
 #endif
@@ -516,7 +516,7 @@ LONG kproc_allocation_duplicate(const KPROC_ALLOCATION_HOLD *source,
 BOOL kproc_validate_user_write(VADDR address, ULONG size);
 BOOL kproc_copy_from_user(void *dst, VADDR address, ULONG size);
 #if CONF_WITH_USER_ASPACE
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched_cleanup.h"
 #endif
 /* Move-only, zero-initialized kernel operation. Prepare may fault/allocate;
@@ -531,7 +531,7 @@ typedef struct {
     ULONG bytes;
     UQUAD number;
     BOOL write,active,backing_failed;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE cleanup;
 #endif
 } KPROC_USER_COPY;

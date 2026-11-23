@@ -1172,14 +1172,14 @@ LONG fat_chdir_path(char *path)
 {
     return pfs_do_chdir(path); /* Dsetpath never selects the named drive. */
 }
-#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
 LONG fat_set_process_directory(char *path, PD *process)
 {
     return pfs_set_process_directory(path, process);
 }
 #endif
 #else
-#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
 static LONG fat_chdir_process(char *p, PD *process)
 #else
 LONG fat_chdir_path(char *p)
@@ -1197,7 +1197,7 @@ LONG fat_chdir_path(char *p)
     else
         dlog = run->p_curdrv;
 
-#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
     if (dlog < 0 || dlog >= BLKDEVNUM) return EDRIVE;
     olddir = PD_CURDIR(process)[dlog];
 #else
@@ -1213,7 +1213,7 @@ LONG fat_chdir_path(char *p)
     newdir = incr_curdir_usage(dnd);
     if (newdir < 0)
         return EPTHNF;
-#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
     PD_CURDIR(process)[dlog] = newdir;
 #else
     PD_CURDIR(run)[dlog] = newdir;
@@ -1225,7 +1225,7 @@ LONG fat_chdir_path(char *p)
     return E_OK;
 }
 
-#if CONF_WITH_CUIS || CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
 LONG fat_chdir_path(char *p)
 {
     return fat_chdir_process(p, run);

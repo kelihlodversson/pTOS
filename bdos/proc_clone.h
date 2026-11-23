@@ -82,7 +82,7 @@ typedef struct {
  * or user code. Teardown callbacks obey the existing no-unwind/bounded-close
  * contract. Commit revalidates live state. */
 LONG proc_clone(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **transaction);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Authenticated loader target only: NEW_PROCESS+SHARE_VM without a duplicate
  * PID/basepage factory. Abort preserves caller's staged PROCESS; no user ABI. */
 LONG proc_clone_loaded_shared(struct kproc *,struct kproc *,PROC_CLONE_TRANSACTION **);
@@ -124,13 +124,13 @@ LONG proc_clone_retain_startup_stack(PROC_CLONE_TRANSACTION *transaction);
 /* Instead of retaining it: the prepared stack is the child's TPA top. */
 LONG proc_clone_tpa_startup_stack(PROC_CLONE_TRANSACTION *transaction);
 #endif
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
 /* Value-only policy for an empty NEW_PROCESS target. Requires prepared startup
  * and its retained initial user stack. Existing no-fail activation installs it;
  * this never adopts a live executable or conveys image ownership. */
 LONG proc_clone_prepare_image_policy(PROC_CLONE_TRANSACTION *,const struct kproc_image_policy *);
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Kernel-only first execution: NEW_PROCESS/SHARE_VM, root group only. Failure
  * before publication preserves transaction and outputs; success consumes it
  * and waits using the existing cooperative scheduler, returning value ids. */

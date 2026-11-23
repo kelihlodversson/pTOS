@@ -17,7 +17,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-files-') as directory:
     for name in ('CONF_WITH_PLUGGABLE_FS','CONF_WITH_PROCESS_FILES_TEST'):
         config.syms[name].set_value(2)
         assert config.syms[name].str_value=='y'
-    config.syms['CONF_WITH_NATIVE_SCHED'].set_value(0)
+    for name in ('CONF_WITH_EXEC_REPLACE', 'CONF_WITH_PREEMPTION'):
+        config.syms[name].set_value(0)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
@@ -27,20 +28,20 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-files-') as directory:
         '-ffunction-sections','-fdata-sections','-iquote',str(work),'-iquote','include',
         '-Iinclude/arch/x86_64','-iquote','bdos','-iquote','fs']
     subprocess.run(flags+['tests/process_files.c','bdos/process_files.c','bdos/fsclose.c','bdos/fsopnclo.c',
-        'bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'files')],check=True)
+        'bdos/fshand.c','bdos/fsmain.c','bdos/kowner.c','tests/kowner_model.c','-Wl,--gc-sections','-o',str(work/'files')],check=True)
     subprocess.run([str(work/'files')],check=True)
 
     # Actual registry destruction: a finalizer reenters the same PD and destroys
     # the predecessor that originally owned the outer live-list cursor.
     for name in ('CONF_WITH_ELF_SHARED','CONF_WITH_CUIS','CONF_WITH_X32_VDI',
-                 'CONF_WITH_USER_CALLBACKS','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP'):
+                 'CONF_WITH_USER_CALLBACKS'):
         config.syms[name].set_value(0)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
     subprocess.run(flags+['tests/process_files_retirement.c','bdos/process_files.c','bdos/process_observer.c',
         'bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c',
-        '-Wl,--gc-sections','-o',str(work/'retirement')],check=True)
+        'bdos/kowner.c','tests/kowner_model.c','-Wl,--gc-sections','-o',str(work/'retirement')],check=True)
     subprocess.run([str(work/'retirement')],check=True)
 
     # The existing FAT host provider uses the non-PFS split pointer cookie.
@@ -49,5 +50,5 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-files-') as directory:
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
     subprocess.run(flags+['tests/fat_reclaim/process_files_admission.c','bdos/process_files.c',
-        '-Wl,--gc-sections','-o',str(work/'driver-admission')],check=True)
+        'bdos/kowner.c','tests/kowner_model.c','-Wl,--gc-sections','-o',str(work/'driver-admission')],check=True)
     subprocess.run([str(work/'driver-admission')],check=True)

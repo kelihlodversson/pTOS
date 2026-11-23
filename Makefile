@@ -1869,7 +1869,7 @@ endif
 # nested_exec launches chains of NESTCH.TOS (built below) by synchronous
 # Pexec from a managed THREAD (#713): without the native scheduler there is no
 # such THREAD, and nothing to associate a nested execution with.
-ifndef CONF_WITH_NATIVE_SCHED
+ifndef CONF_WITH_MULTITHREADING
 TEST_SUITES := $(filter-out nested_exec,$(TEST_SUITES))
 endif
 
@@ -1950,39 +1950,36 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
               $(if $(CONF_WITH_USER_COPY),-DTEST_WITH_USER_COPY) \
               $(if $(CONF_WITH_USER_ASPACE),-DTEST_WITH_USER_ASPACE) \
+              $(if $(CONF_WITH_MULTITHREADING),-DTEST_WITH_MULTITHREADING) \
               $(if $(CONF_WITH_MFASTCALL),-DTEST_WITH_KERNEL_MFASTCALL) \
               $(if $(CONF_WITH_ELF_LOADER),-DTEST_WITH_ELF_LOADER) \
               $(if $(CONF_WITH_PLUGGABLE_FS),-DTEST_WITH_PLUGGABLE_FS) \
-              $(if $(filter y,$(CONF_WITH_PCLONE)),-DTEST_WITH_PCLONE) \
               $(if $(filter y,$(CONF_WITH_SHARED_VM_PEXEC)),$(if $(BUILD_TOOLCHAIN_ELF),,-DTEST_WITH_SHARED_VM_PEXEC)) \
               $(if $(filter y,$(CONF_WITH_LEGACY_PEXEC)),-DTEST_WITH_LEGACY_PEXEC) \
               $(if $(filter y,$(CONF_WITH_STAGED_PEXEC)),-DTEST_WITH_STAGED_PEXEC) \
               $(if $(filter y,$(CONF_WITH_FORK_RETURN_TEST)),-DTEST_WITH_FORK_RETURN_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_REPLACEMENT_TEST)),-DTEST_WITH_EXEC_REPLACEMENT_TEST) \
               $(if $(filter y,$(CONF_WITH_EXEC_HANDOFF_TEST)),-DTEST_WITH_EXEC_HANDOFF_TEST) \
-              $(if $(filter y,$(CONF_WITH_PEXEC200)),-DTEST_WITH_PEXEC200) \
-              $(if $(filter y,$(CONF_WITH_PFORK)),-DTEST_WITH_PFORK) \
+              $(if $(filter y,$(CONF_WITH_EXEC_REPLACE)),-DTEST_WITH_EXEC_REPLACE) \
+              $(if $(filter y,$(CONF_WITH_FORK)),-DTEST_WITH_FORK) \
               $(if $(filter y,$(CONF_WITH_DEMAND_PAGING)),-DTEST_WITH_DEMAND_PAGING) \
-              $(if $(filter y,$(CONF_WITH_PRIVATE_CLONE_TEST)),$(if $(and $(filter y,$(CONF_WITH_NATIVE_PREEMPT) $(CONF_WITH_IRQ_RESTART_TEST)),$(CONF_M68K_ROM_WINDOW)),,-DTEST_WITH_PRIVATE_CLONE_TEST)) \
-              $(if $(and $(CONF_WITH_NATIVE_PREEMPT),$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_NATIVE_PREEMPT_PROBES) \
+              $(if $(and $(CONF_WITH_PRIVATE_CLONE_TEST),$(CONF_WITH_PRIVATE_CLONE)),-DTEST_WITH_PRIVATE_CLONE_TEST) \
+              $(if $(and $(CONF_WITH_PREEMPTION),$(CONF_WITH_PRIVATE_CLONE_TEST)),-DTEST_WITH_NATIVE_PREEMPT_PROBES) \
               $(if $(filter y,$(CONF_WITH_IRQ_RESTART_TEST)),-DTEST_WITH_IRQ_RESTART) \
-              $(if $(filter y,$(CONF_WITH_NATIVE_PREEMPT)),-DTEST_WITH_NATIVE_PREEMPT) \
-              $(if $(filter y,$(CONF_WITH_IMAGE_POLICY_TEST)),-DTEST_WITH_IMAGE_POLICY_TEST) \
+              $(if $(filter y,$(CONF_WITH_PREEMPTION)),-DTEST_WITH_PREEMPTION) \
+              $(if $(and $(CONF_WITH_IMAGE_POLICY_TEST),$(CONF_WITH_PRIVATE_CLONE_TEST),$(CONF_WITH_PRIVATE_CLONE)),-DTEST_WITH_IMAGE_POLICY_TEST) \
               $(if $(filter y,$(CONF_WITH_PRIVATE_SNAPSHOT_TEST)),-DTEST_WITH_PRIVATE_SNAPSHOT) \
               $(if $(filter y,$(CONF_WITH_PROCESS_FILES_TEST)),-DTEST_WITH_PROCESS_FILES) \
-              $(if $(filter y,$(CONF_WITH_NATIVE_SCHED)),-DTEST_WITH_NATIVE_SCHED) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC)),-DTEST_WITH_PROCESS_EXEC) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_TEST)),-DTEST_WITH_PROCESS_EXEC_TEST) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_DISPATCH)),-DTEST_WITH_PROCESS_EXEC_DISPATCH) \
-              $(if $(filter y,$(CONF_WITH_PTHJOIN)),-DTEST_WITH_PTHJOIN) \
-              $(if $(filter y,$(CONF_WITH_PTERMGRP)),-DTEST_WITH_PTERMGRP) \
               $(if $(filter y,$(CONF_WITH_CUIS)),-DTEST_WITH_CUIS) \
               $(if $(filter y,$(CONF_WITH_CUIS_WAIT_TEST)),-DTEST_WITH_CUIS_WAIT_TEST) \
               $(if $(filter y,$(CONF_WITH_MMAP)),-DTEST_WITH_MMAP) \
               $(if $(CONF_M68K_ROM_WINDOW),-DTEST_NO_RMW_FAULTS -DTEST_NO_CROSSING) \
               $(if $(CONF_M68K_ROM_WINDOW),-DTEST_M68K_ROM_WINDOW) \
               $(if $(CONF_WITH_MMU_PROBE),-DTEST_WITH_MMU_PROBE) \
-              $(if $(or $(MACHINE_AMIGA),$(and $(filter y,$(CONF_WITH_NATIVE_PREEMPT) $(CONF_WITH_IRQ_RESTART_TEST)),$(CONF_ATARI_HIGHER_HALF))),-DTEST_LOG_FILE) \
+              $(if $(or $(MACHINE_AMIGA),$(and $(filter y,$(CONF_WITH_PREEMPTION) $(CONF_WITH_IRQ_RESTART_TEST)),$(CONF_ATARI_HIGHER_HALF))),-DTEST_LOG_FILE) \
               $(if $(CONF_ATARI_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xffff8240UL -DTEST_MMU_IO_CACHE) \
               $(if $(CONF_AMIGA_HIGHER_HALF),-DTEST_MMU_IO_ADDR=0xf0dff180UL -DTEST_MMU_IO_CACHE) \
               $(if $(filter y,$(CONF_WITH_ELF_SHARED)),$(if $(or $(ARCH_ARM),$(ARCH_M68K),$(ARCH_X86_64)),-DTEST_WITH_ELF_SHARED)) \
@@ -2026,7 +2023,7 @@ $(foreach s,$(TEST_SUITES),$(eval $(call test-suite-rule,$(s))))
 TEST_SUITE_OBJ = $(addprefix obj/,$(addsuffix .o,$(TEST_SUITES)))
 ifneq ($(filter pclone,$(TEST_SUITES)),)
 TEST_SUITE_OBJ += obj/clone_registers.o obj/clone_irq_registers.o
-ifeq ($(CONF_WITH_NATIVE_PREEMPT),y)
+ifeq ($(CONF_WITH_PREEMPTION),y)
 TEST_SUITE_OBJ += obj/preempt_file_loop.o obj/preempt_registers.o obj/preempt_registers_alt.o
 obj/preempt_file_loop.o: tests/pclone/preempt_loop.S $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -c -o $@ $<
@@ -2088,7 +2085,7 @@ FORKPAR.TOS: $(TEST_STARTUP) obj/fork_parent_native.o obj/testlib.o $(LIBCMINI_L
 endif
 TOCLEAN += FORKPAR.TOS
 
-ifeq ($(CONF_WITH_NATIVE_PREEMPT),y)
+ifeq ($(CONF_WITH_PREEMPTION),y)
 TEST_PREEMPT_FILES = PREEMPT.TOS
 obj/preempt_image.o: tests/pclone/preempt_image.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
@@ -2097,7 +2094,7 @@ PREEMPT.TOS: $(TEST_STARTUP) obj/preempt_image.o obj/preempt_registers.o obj/pre
 endif
 TOCLEAN += PREEMPT.TOS
 
-ifeq ($(CONF_WITH_IMAGE_POLICY_TEST),y)
+ifeq ($(and $(CONF_WITH_IMAGE_POLICY_TEST),$(CONF_WITH_PRIVATE_CLONE_TEST),$(CONF_WITH_PRIVATE_CLONE)),y)
 TEST_IMAGE_POLICY_FILES = IMAGEPOL.TOS
 obj/image_policy_native.o: tests/pclone/image_policy_native.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
@@ -2119,9 +2116,9 @@ TOCLEAN += EXECHAND.TOS
 
 # EXEC200.TOS replaces itself with EXEC200B.TOS through public Pexec(200)
 # (tests/pclone/exec200_*.c). The subject links like every other test
-# program (a classic PRG on m68k); the replacement image is always ELF.
+# program (PRG with the MiNT-capable m68k toolchains). Those builds also
+# link a PRG replacement target.
 ifeq ($(CONF_WITH_EXEC_REPLACEMENT_TEST),y)
-ifeq ($(CONF_WITH_PCLONE),y)
 TEST_EXEC200_FILES = EXEC200.TOS EXEC200B.TOS
 TEST_EXEC200_IRQ = $(if $(CONF_WITH_IRQ_RESTART_TEST),obj/clone_irq_registers.o)
 obj/exec200_native.o: tests/pclone/exec200_native.c tests/pclone/exec200_probe.h tests/pclone/exec200_check.h $(AUTOCONF_H) | obj
@@ -2132,25 +2129,35 @@ obj/exec200_image.o: tests/pclone/exec200_image.c tests/pclone/exec200_probe.h t
 EXEC200.TOS: $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 ifdef ARCH_M68K
+ifndef BUILD_TOOLCHAIN_ELF
+TEST_EXEC200_FILES += EXEC200P.TOS
+EXEC200P.TOS: $(TEST_STARTUP) obj/exec200_prg.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_prg.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+obj/exec200_prg.o: tests/pclone/exec200_image.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) -DEXEC200_PRG -DEXEC200_IMAGE_NAME='"EXEC200P.TOS"' $(DEPFLAGS) -c $< -o $@
+endif
+ifdef CONF_WITH_ELF_LOADER
 TEST_EXEC200_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
 EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
 	  $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
 	  -L$(TEST_EXEC200_LIBGCC_DIR) -lgcc -o $@
 else
+TEST_EXEC200_FILES := $(filter-out EXEC200B.TOS,$(TEST_EXEC200_FILES))
+endif
+else
 EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 endif
 endif
-endif
-TOCLEAN += EXEC200.TOS EXEC200B.TOS
+TOCLEAN += EXEC200.TOS EXEC200B.TOS EXEC200P.TOS
 
 # Test both loader formats: m68k normally links a classic TOS PRG. Link the
 # same native objects as ELF too, with independent segment pages and holes.
 # The PRG loader snapshots its text extent; neither test relies on CPU NX.
 ifdef ARCH_M68K
 ifdef CONF_WITH_USER_ASPACE
-ifdef CONF_WITH_PCLONE
+ifdef CONF_WITH_MULTITHREADING
 ifdef CONF_WITH_ELF_LOADER
 TEST_CLONE_ABI_FILES = CLNABI.TOS
 TEST_CLONE_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
@@ -2388,7 +2395,7 @@ endif
 # Build the raw HD image: MBR + FAT16 partition, total size power of two.
 # tools/mkhdisk.sh writes the MBR (printf+dd, no sfdisk), creates the
 # FAT16 partition with mkfs.fat + mcopy, and embeds it in the image.
-ifdef CONF_WITH_PTERMGRP
+ifdef CONF_WITH_MULTITHREADING
 obj/group_child.o: tests/pclone/group_child.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 GROUPCH.TOS: $(TEST_STARTUP) obj/group_child.o $(LIBCMINI_LIB)
@@ -2406,7 +2413,7 @@ NESTCH.TOS: $(TEST_STARTUP) obj/nested_child.o $(LIBCMINI_LIB)
 TEST_NESTED_FILES = NESTCH.TOS
 endif
 
-ifdef CONF_WITH_NATIVE_SCHED
+ifdef CONF_WITH_MULTITHREADING
 define global-prog
 obj/global_$(1).o: tests/global_scheduler/boot.c $$(AUTOCONF_H) | obj
 	$$(TEST_CC) $$(TEST_CFLAGS) -DGLOBAL_ROLE=$(2) $$(DEPFLAGS) -c $$< -o $$@
@@ -2425,7 +2432,7 @@ obj/global-stage/.stamp: GLBSRC.TOS GLBCHK.TOS obj/global_async.tos
 	@touch $@
 TEST_GLOBAL_FILES = GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS
 TEST_GLOBAL_BUILD = GLOBALCH.TOS obj/global-stage/.stamp
-ifneq ($(filter y,$(and $(CONF_WITH_PCLONE),$(CONF_WITH_PTHJOIN)) $(CONF_WITH_EXIT_HANDOFF_TEST)),)
+ifneq ($(filter y,$(CONF_WITH_MULTITHREADING) $(CONF_WITH_EXIT_HANDOFF_TEST)),)
 obj/first_anchor.o: tests/first_anchor/first.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 FIRST.TOS: $(TEST_STARTUP) obj/first_anchor.o $(LIBCMINI_LIB)

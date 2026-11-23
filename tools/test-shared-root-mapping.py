@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-root-') as directory:
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/pc-x86_64_defconfig')
     config.load_config('tools/hosted-legacy-profile.config', replace=False)
-    for name in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_ELF_SHARED',
+    for name in ('CONF_WITH_MULTITHREADING', 'CONF_WITH_ELF_SHARED',
                  'CONF_WITH_CUIS', 'CONF_WITH_X32_VDI', 'CONF_WITH_USER_CALLBACKS'):
         config.syms[name].set_value(0)
     config.syms['CONF_WITH_MMAP'].set_value(2)
@@ -37,11 +37,9 @@ with tempfile.TemporaryDirectory(prefix='ptos-shared-root-') as directory:
         '-Wl,--gc-sections', '-o', str(work / fixture)], check=True)
         subprocess.run([str(work / fixture)], check=True)
 
-    config.syms['CONF_WITH_NATIVE_SCHED'].set_value(2)
-    assert config.syms['CONF_WITH_NATIVE_SCHED'].str_value=='y'
-    for name in ('CONF_WITH_PCLONE','CONF_WITH_PTHJOIN','CONF_WITH_PTERMGRP'):
-        config.syms[name].set_value(2)
-        assert config.syms[name].str_value=='y',name
+    config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
+    config.syms['CONF_WITH_FORK'].set_value(0)
+    assert config.syms['CONF_WITH_MULTITHREADING'].str_value=='y'
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig',
         '--config',str(work/'config'),'--header',str(work/'autoconf.h'),

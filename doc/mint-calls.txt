@@ -192,7 +192,7 @@ Groups and their PRs
 
 Native PROCESS waits (#711, #909)
 ---------------------------------
-CONF_WITH_NATIVE_SCHED uses the same PROCESS wait implementation on x32,
+CONF_WITH_MULTITHREADING uses the same PROCESS wait implementation on x32,
 ARM MMU and m68k MMU. CUIS and external libaes are optional. Pwait (0x109)
 uses Pwaitpid(-1, 2, NULL) and Pwait3 (0x11c) uses Pwaitpid(-1, flags, usage).
 Pwaitpid (0x13a) accepts a positive direct-child PID or -1 for any direct
@@ -277,7 +277,7 @@ child writes to private/anonymous memory and its private user stack are not
 visible in parent private memory. Explicitly shared mappings retain their
 semantics; public MAP_SHARED currently remains unsupported. This difference is
 intentional, not full FreeMiNT Pvfork memory compatibility. Non-MMU shadow fork
-is outside this policy. Public Pfork/Pvfork are enabled by CONF_WITH_PFORK
+is outside this policy. Public Pfork/Pvfork are enabled by CONF_WITH_FORK
 (built in by default on MMU kernels with demand paging: x32, ARMv7, m68k
 without fastcall; on m68k they run only on a 68040) and otherwise return EINVFN;
 see

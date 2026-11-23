@@ -3,7 +3,7 @@
 #define PROCESS_EXEC_INTERNAL_H
 #include "process_observer.h"
 #include "process_exec.h"
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 struct process_exec_handle;
 /* Only the current live PROCESS may create/use rights. Owner retirement uses
  * its existing finalizer, never a GUI session, PID lookup, THREAD exit or reaper.

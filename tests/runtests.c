@@ -11,7 +11,7 @@
 #include <mint/osbind.h>
 #include <string.h>
 #include <mint/basepage.h>
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+#if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 void pclone_run_managed_tests(void);
 void pclone_run_unmanaged_tests(void);
 void pclone_run_staged_tests(void);
@@ -21,7 +21,7 @@ long pclone_run_irq_image(int role);
 #endif
 #endif
 
-#if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_MULTITHREADING)
 void shared_vm_run_managed_tests(void);
 #endif
 
@@ -42,14 +42,14 @@ long _stksize = 32L * 1024;
 int main(void)
 {
     int failures;
-#if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_PCLONE) && defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_MULTITHREADING)
     if ((unsigned char)_base->p_cmdlin[0]==11 && !memcmp(_base->p_cmdlin+1,"--shared-vm",11)) {
         ptest_log_append();
         shared_vm_run_managed_tests();
         failures=ptest_failures();ptest_log_flush();Pterm(failures);return failures;
     }
 #endif
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+#if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     int worker = (unsigned char)_base->p_cmdlin[0] == 7 &&
                  !memcmp(_base->p_cmdlin + 1, "--clone", 7);
     int unmanaged = (unsigned char)_base->p_cmdlin[0] == 15 &&
@@ -76,7 +76,7 @@ int main(void)
 
     conws("pTOS regression tests\r\n\r\n");
 
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+#if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     if (worker || unmanaged || staged) {
         if (unmanaged) pclone_run_unmanaged_tests();
         else if (staged) pclone_run_staged_tests();

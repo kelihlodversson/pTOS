@@ -1295,7 +1295,7 @@ static BOOL cancelable_wait(BOOL (*ready)(void *), void *argument)
 static LONG cancel_after_unlock(UQUAD flags)
 {
     cuis_input_unlock(flags);
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     ksched_cancel_point();
 #endif
     return EACCDN; /* defensive fallback; managed cancellation does not return */
@@ -2792,7 +2792,7 @@ static LONG finish_session_wait(CUIS_SESSION_WAIT_STATE *wait, UQUAD flags, LONG
     if (client) client_put(client);
     if (wait->owner) kproc_release(wait->owner);
     ksched_cleanup_end(&wait->cleanup);
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (cancel) ksched_cancel_point();
 #else
     (void)cancel;

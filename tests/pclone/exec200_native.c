@@ -4,10 +4,13 @@
  * Pexec(0) and the tail "N", which takes the launcher relaunch path.
  * Every injected or genuine preparation failure must leave this program
  * running unchanged, with every counter conserved; the genuine call replaces
- * it with the ELF image EXEC200B.TOS in the same PROCESS and never returns.
- * That image finally replaces itself with this program again (tail "F"):
- * on m68k, where this is a classic PRG, that is an ELF-to-PRG replacement.
+ * it with the ELF image EXEC200B.TOS or the PRG image EXEC200P.TOS in the
+ * same PROCESS and never returns. That image finally replaces itself with
+ * this program again (tail "F"), which is a PRG in MiNT-toolchain builds.
  * The final program completes the PROCESS with status 70. */
+#ifdef __mc68000__
+#define EXEC200_PRG
+#endif
 #include "exec200_check.h"
 #include "../../include/mapping_lifetime_test.h"
 #include <mint/mintbind.h>
@@ -91,10 +94,9 @@ static void injected_target(const char *path, unsigned kind, unsigned stage, lon
 }
 static void injected(unsigned kind, unsigned stage, long expected)
 {
-    injected_target("EXEC200B.TOS", kind, stage, expected);
+    injected_target(EXEC200_TARGET, kind, stage, expected);
 }
-/* The last program of the chain, after an ELF image replaced itself with
- * this one again. */
+/* The last program of the chain, after the companion execs the subject. */
 static void final_program(void)
 {
     EXEC200_TAIL t;
@@ -102,7 +104,14 @@ static void final_program(void)
     if (t.generation != 3) exec200_fail("final", "generation", (long)t.generation);
     if (Fsnext() == 0) exec200_fail("final", "search survived the exec", 0);
     if (Fclose((short)t.descriptor)) exec200_fail("final", "descriptor close", t.descriptor);
-    Cconws(t.nested == 3 ? "native Pexec(200) from an anchored Pexec(0) child: PASS\r\n" :
+#if defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
+    if (t.nested != 4)
+        (void)Cconws("native Pexec(200) ELF to PRG: PASS\r\n");
+#endif
+    if (t.nested == 4) {
+        Pterm(70);
+    }
+    (void)Cconws(t.nested == 3 ? "native Pexec(200) from an anchored Pexec(0) child: PASS\r\n" :
            t.nested == 2 ? "native Pexec(200) from a private-VM clone: PASS\r\n" :
            t.nested ? "native nested Pexec(200) launcher relaunch: PASS\r\n"
                     : "native Pexec(200) same-PROCESS executable/root replacement: PASS\r\n");
@@ -120,14 +129,14 @@ static void failures(void)
     unchanged("load failure");
     for (stage = 1; stage <= 4; stage++) injected(3, stage, -39L);
     for (stage = 1; stage <= 8; stage++) injected(1, stage, -39L);
-#if defined(__mc68000__)
+#ifdef TEST_IS_PRG
     /* The same bundle stages with a classic PRG target. */
     for (stage = 1; stage <= 8; stage++) injected_target("EXEC200.TOS", 1, stage, -39L);
 #endif
     for (stage = 1; stage <= 10; stage++)
         injected(2, stage, stage == 6 || stage == 7 ? -36L : stage == 9 ? -326L : -39L);
 }
-static void replace(int nested)
+static void replace(int nested, const char *target)
 {
     EXEC200_TAIL t;
     long result;
@@ -139,7 +148,7 @@ static void replace(int nested)
     t.process0 = original.process[0]; t.process1 = original.process[1];
     t.root0 = original.root[0]; t.root1 = original.root[1];
     t.parent = Pgetppid(); t.nested = nested;
-    result = exec200_next("EXEC200B.TOS", 0, &t, environment);
+    result = exec200_next(target, 0, &t, environment);
     fail("successful Pexec(200) returned to the old program", result);
 }
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
@@ -167,7 +176,7 @@ static void clone_entry(void *argument)
     snapshot(&before);
     baseline = 1;
     failures();
-    replace(2);
+    replace(2, EXEC200_TARGET);
 }
 static void clone_run(int exec)
 {
@@ -223,6 +232,10 @@ int main(void)
     /* 'N': a nested carrier execution; 'A': an anchored Pexec(0) child (#1015). */
     int nested = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'N' ? 1 :
                  (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'A' ? 3 : 0;
+    int prg = 0;
+#ifdef TEST_IS_PRG
+    prg = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'P';
+#endif
     if ((unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'F') final_program();
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("initial query", 0);
     if (original.generation[0] || original.generation[1]) fail("initial generation", 1);
@@ -232,7 +245,7 @@ int main(void)
     /* Warm every allocation cache a successful preparation touches, then
      * take the baseline every later failure is compared against. */
     injected(2, 10, -39L);
-#if defined(__mc68000__)
+#ifdef TEST_IS_PRG
     injected_target("EXEC200.TOS", 2, 10, -39L);
 #endif
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
@@ -247,8 +260,8 @@ int main(void)
 #endif
     failures();
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
-    if (!nested) clone_case();
+    if (!nested && !prg) clone_case();
 #endif
-    replace(nested);
+    replace(prg ? 4 : nested, prg ? "EXEC200P.TOS" : EXEC200_TARGET);
     return 84;
 }

@@ -29,10 +29,10 @@
 #endif
 #include "../vdi/vdistub.h"
 #include "bdosbind.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && ((CONF_WITH_PCLONE && CONF_WITH_PTHJOIN) || CONF_WITH_EXIT_HANDOFF_TEST)
+#if CONF_WITH_MULTITHREADING && CONF_WITH_REGRESSION_TESTS
 #include "../tests/first_anchor/contract.h"
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
 #include "../bdos/kaspace.h"
@@ -1010,7 +1010,7 @@ static void run_reset_resident(void)
 #include "procmem.h"
 #endif
 
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS && ((CONF_WITH_PCLONE && CONF_WITH_PTHJOIN) || CONF_WITH_EXIT_HANDOFF_TEST)
+#if CONF_WITH_MULTITHREADING && CONF_WITH_REGRESSION_TESTS
 static void fail_first_anchor(const char *launch, LONG status)
 {
     kcprintf("native first managed launch: %s failed with status %ld\n", launch, (long)status);
@@ -1037,7 +1037,7 @@ static void first_anchor_counts(ULONG counts[8])
 static void test_first_anchor(void)
 {
     LONG status;
-#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     LONG pid;
 #endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST || CONF_WITH_PRIVATE_CLONE_TEST
@@ -1046,7 +1046,7 @@ static void test_first_anchor(void)
     first_anchor_counts(before);
 #endif
 
-#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     /* The first disk executable on the regression image starts with the
      * ordinary mode 0 call from AUTO's still-unmanaged boot controller. */
     status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
@@ -1080,7 +1080,7 @@ static void test_first_anchor(void)
     first_anchor_counts(after);
     if (memcmp(before, after, sizeof(before)))
         fail_first_anchor("launch ownership accounting", 0);
-#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     kproc_test_fail_kernel_stack(TRUE);
     status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
     kproc_test_fail_kernel_stack(FALSE);
@@ -1101,7 +1101,7 @@ static void test_first_anchor(void)
     kcprintf("native first managed launch ownership and rollback: PASS\n");
 #endif
 #endif
-#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     kcprintf("native first managed launch and both Pexec controls: PASS\n");
 #endif
 }
@@ -1115,10 +1115,10 @@ static void run_auto_program(const char* filename)
     strcat(path, filename);
 
     KDEBUG(("Loading %s ...\n", path));
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_REGRESSION_TESTS
+#if CONF_WITH_MULTITHREADING && CONF_WITH_REGRESSION_TESTS
     if(!strcmp(filename,"GLBTEST.PRG")) {
         LONG pid, result;
-#if (CONF_WITH_PCLONE && CONF_WITH_PTHJOIN) || CONF_WITH_EXIT_HANDOFF_TEST
+#if (CONF_WITH_MULTITHREADING) || CONF_WITH_EXIT_HANDOFF_TEST
         test_first_anchor();
 #endif
         pid=Pexec(PE_ASYNC_LOADGO,path,"",NULL);
@@ -1136,7 +1136,7 @@ static void run_auto_program(const char* filename)
     } else
 #endif
     Pexec(PE_LOADGO, path, "", NULL);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* AUTO launches are synchronous, but independently admitted children are
      * not their lifetime dependents. One bounded cooperative opportunity. */
     ksched_yield();

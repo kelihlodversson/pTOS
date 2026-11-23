@@ -45,7 +45,7 @@ mapping copyout/lease synchronization requirements remain.
 Public ABI and gates
 --------------------
 
-CONF_WITH_PTERMGRP is opt-in and requires PCLONE and NATIVE_SCHED. GEMDOS 0x192
+Group termination is included in CONF_WITH_MULTITHREADING. GEMDOS 0x192
 is Ptermgrp(WORD status), after Pclone 0x190 and Pthjoin 0x191. The FreeMiNT
 sys/syscalls.master audit at 68be4e529ad82ea9ec2b1c215b53303f91e78d52 and the
 TOS.HYP extension catalogue have no 0x192 assignment. Native x32/ARM argument

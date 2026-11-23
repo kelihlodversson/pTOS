@@ -14,10 +14,11 @@ k = kconfiglib.Kconfig(warn_to_stderr=False)
 k.load_config('configs/pc-x86_64_defconfig')
 k.load_config('tools/hosted-legacy-profile.config', replace=False)
 k.syms['CONF_WITH_ELF_SHARED'].set_value(2)
-k.syms['CONF_WITH_PCLONE'].set_value(2)
+k.syms['CONF_WITH_MULTITHREADING'].set_value(2)
 assert k.syms['CONF_WITH_ELF_SHARED'].str_value == 'y'
-assert k.syms['CONF_WITH_PCLONE'].str_value == 'y'
-assert k.syms['CONF_WITH_NATIVE_SCHED'].str_value == 'n'
+assert k.syms['CONF_WITH_MULTITHREADING'].str_value == 'y'
+for name in ('CONF_WITH_EXEC_REPLACE', 'CONF_WITH_FORK', 'CONF_WITH_PREEMPTION'):
+    k.syms[name].set_value(0)
 assert k.syms['CONF_WITH_PROCESS_FILES_TEST'].str_value == 'n'
 k.write_config(sys.argv[1])
 PY
@@ -40,13 +41,13 @@ for demand in 0 1; do
         -ffunction-sections -fdata-sections -fno-pie -no-pie \
         -iquote include -I"$work" -I"$work/base" -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
         -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
-        tests/clone/exec_permissions.c -Wl,--gc-sections -o "$work/exec-permissions"
+        tests/clone/exec_permissions.c bdos/kowner.c tests/kowner_model.c -Wl,--gc-sections -o "$work/exec-permissions"
     "$work/exec-permissions"
     ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
         -ffunction-sections -fdata-sections -fno-pie -no-pie \
         -iquote include -I"$work" -I"$work/base" -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
         -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
-        tests/clone/reservation_permissions.c -Wl,--gc-sections -o "$work/reservation-permissions"
+        tests/clone/reservation_permissions.c bdos/kowner.c tests/kowner_model.c -Wl,--gc-sections -o "$work/reservation-permissions"
     "$work/reservation-permissions"
 done
 echo 'Production KPROC staged-image/heap entry permissions (host page-table model): PASS'
@@ -56,6 +57,6 @@ ${HOSTCC:-cc} -std=gnu90 -Wall -Wextra -Werror -fno-builtin \
     -ffunction-sections -fdata-sections -fno-pie -no-pie \
     -iquote include -I"$work/base" -Iobj -Iinclude/arch/x86_64 -Iinclude/machine/pc-x86_64 \
     -idirafter include -iquote bdos -iquote fs -iquote bios -iquote util \
-    tests/clone/procmem_text.c -Wl,--gc-sections -o "$work/procmem-text"
+    tests/clone/procmem_text.c bdos/kowner.c tests/kowner_model.c -Wl,--gc-sections -o "$work/procmem-text"
 "$work/procmem-text"
 echo 'Production PRG borrowed-text preflight/rights publication (host MMU model): PASS'

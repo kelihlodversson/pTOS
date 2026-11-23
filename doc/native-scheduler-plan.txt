@@ -3,7 +3,7 @@ Native scheduler migration and interruption contract (#713)
 
 Phase C capability
 ------------------
-The independent default-off CONF_WITH_NATIVE_PREEMPT gate now drives the
+The independently configurable CONF_WITH_PREEMPTION gate drives the
 existing B1/B2 owners, dispatcher and authentic IRQ-return transaction from
 the 200 Hz timer. See native-timer-preemption.txt for the 20 ms quantum,
 automatic preallocated lease slots, deferred kernel/callback behavior and
@@ -66,15 +66,15 @@ Native process profile
 ----------------------
 
 The x32, ARMv7 and m68k user-address-space presets default to
-CONF_WITH_NATIVE_SCHED.
-Pclone and PROCESS descriptors follow native scheduling, with descriptors
-requiring extended file lifetimes. Pthjoin and Ptermgrp follow Pclone and
-native scheduling. Pexec(200) still requires an ELF-capable replacement
-backend. The normal MMU presets need no diagnostic transports for these APIs.
+CONF_WITH_MULTITHREADING.
+Runnable Pclone, Pthjoin, Ptermgrp and PROCESS-local file and search state
+follow this option. The headless native profile has the same process APIs.
+With a compatible loader enabled, CONF_WITH_EXEC_REPLACE builds and exposes
+Pexec(200), including classic PRG and ELF replacement on m68k.
 
 The old BUILD_FORK_PROFILE combined process scheduling with demand paging,
 the ELF loader and fork restrictions. The scheduler now supplies the common
-profile default. PFORK still requires private COW, PROCESS descriptors and
+profile default. CONF_WITH_FORK requires private COW, PROCESS descriptors and
 exec replacement, and enables saved-return support. The 32-bit x86-64 ABI, ARMv7 and
 the supported 68040 stack-ABI profile qualify for default-on COW in both
 eager and demand-paged configurations. Classic ROM-window m68k, fastcall,
@@ -84,7 +84,12 @@ CONF_WITH_USER_PAGE_FAULTS installs COW or demand-fault recovery. Eager
 allocation backs the initial mappings up front and can still split a COW
 page on a user write or kernel copyout. CONF_WITH_MMAP retains its own
 demand-paging prerequisite. Legacy non-MMU and scheduler-disabled kernels
-keep the reduced process ABI. Timer preemption remains separately opt-in.
+keep the reduced process ABI. CONF_WITH_PREEMPTION defaults to y on eligible
+x32, ARMv7 and 68040 stack-ABI profiles and can be turned off independently.
+Actual CPU, register and frame eligibility is checked at the IRQ boundary.
+CONF_WITH_IRQ_RESTART builds that return backend for preemption or the B2
+standalone test. CONF_WITH_SAVED_RETURN builds the complementary syscall
+return support. The latter is also used by fork and saved-return probes.
 The ownership and ABI audit is tracked in #1016. The boot-CPU owner protocol
 does not implement inter-CPU acquisition or SMP dispatch (#1019).
 

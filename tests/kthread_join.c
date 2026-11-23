@@ -1,7 +1,7 @@
 /* Production KTHREAD joins; PROCESS/ASPACE allocation and backend are models. */
 #include "emutos.h"
-#undef CONF_WITH_PTHJOIN
-#define CONF_WITH_PTHJOIN 1
+#undef CONF_WITH_MULTITHREADING
+#define CONF_WITH_MULTITHREADING 1
 #include "../bdos/kthread.c"
 #include <assert.h>
 #include <stdlib.h>

@@ -23,13 +23,9 @@ for preset, admitted in [('rpi1', False), ('rpi2-aspace', True),
     config.load_config(str(ROOT / 'configs' / (preset + '_defconfig')))
     config.syms['CONF_WITH_AES'].set_value(0)
     config.syms['CONF_WITH_PROCESS_ASPACES'].set_value(2)
-    for name in ('CONF_WITH_NATIVE_SCHED',
-                 'CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN'):
-        config.syms[name].set_value(2)
-    # Ensure an unrelated unmet prerequisite cannot make the rejection pass.
-    assert all(config.syms[n].str_value == 'y' for n in
-               ('CONF_WITH_USER_ASPACE', 'CONF_WITH_NATIVE_SCHED',
-                'CONF_WITH_PCLONE', 'CONF_WITH_PTHJOIN'))
+    config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
+    assert config.syms['CONF_WITH_USER_ASPACE'].str_value == 'y'
+    assert (config.syms['CONF_WITH_MULTITHREADING'].str_value == 'y') == admitted
     config.syms['CONF_WITH_FORK_RETURN_TEST'].set_value(2)
     assert (config.syms['CONF_WITH_FORK_RETURN_TEST'].str_value == 'y') == admitted
     print(preset + ': saved-return admission ' + ('accepted' if admitted else 'rejected'))

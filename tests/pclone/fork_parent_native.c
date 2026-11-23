@@ -112,7 +112,7 @@ static void test_cow_vfork_continuation(void)
             local=0x24681357UL;private_probe.cell=0x66778899UL;private_probe.heap[17]=0x71;
             /* A failed exec never releases the parent: public Pexec(200)
              * admits this private-VM child and fails to find the file. */
-#if defined(TEST_WITH_PEXEC200)
+#if defined(TEST_WITH_EXEC_REPLACE)
             if(Pexec(200,"MISSING.TOS","",0)!=-33L || pclone_trap(0,0x895ffffdUL)!=1)bad=1;
 #else
             if(Pexec(200,"MISSING.TOS","",0)!=-32L || pclone_trap(0,0x895ffffdUL)!=1)bad=1;
@@ -133,7 +133,7 @@ static void test_cow_vfork_continuation(void)
                 args.stack_base=(void *)Malloc(32768);args.stack_size=32768;
                 if(!args.stack_base || pclone_trap(&args,sizeof(args))<=0)bad=1;
             }
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
             if(!bad && cycle==3) (void)trap_1_ww(GEMDOS_PTERMGRP,79);
 #endif
             if(!bad && cycle==4) *(volatile long *)0=1;
@@ -146,7 +146,7 @@ static void test_cow_vfork_continuation(void)
              * not run user code while this exact child still used its image. */
             status=Pwaitpid(pid,1,0);
             ptest_assert_msg((status>>16)==pid && (status&65535)==(
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
                              cycle==3?79:
 #endif
                              cycle==4?0x0b00:73),
@@ -158,7 +158,7 @@ static void test_cow_vfork_continuation(void)
                              "COW parent dependency releases exactly once before continuation");
         }
     }
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     {
         long survived=pclone_trap(0,0x895ffff9UL);
         long before[7],after[7];
@@ -201,7 +201,7 @@ static void test_cow_vfork_continuation(void)
 #endif
 }
 
-#if defined(TEST_WITH_PEXEC200)
+#if defined(TEST_WITH_EXEC_REPLACE)
 /* A Pvfork child that replaces itself with Pexec(200) releases its parent
  * at the commit, while it still runs its new image (this program, tail "W",
  * which waits for C:\FORKGO.TMP). The child has no inherited directory. */
@@ -233,7 +233,7 @@ static void test_cow_vfork_exec_release(void)
 }
 #endif
 #endif /* private COW instrumentation */
-#if defined(TEST_WITH_PFORK) && !defined(__mc68000__)
+#if defined(TEST_WITH_FORK) && !defined(__mc68000__)
 /* Pfork with untouched, demand-paged stack pages just below its SP: an
  * alloca()'d gap is never written, and its size sweeps SP across a page. */
 static long __attribute__((noinline)) fork_below_gap(void)
@@ -253,8 +253,8 @@ static int __attribute__((noinline)) fork_at_depth(unsigned long depth)
     return (status>>16)==pid && (status&65535)==73 && Pwaitpid(pid,1,0)<0;
 }
 #endif
-#if defined(TEST_WITH_PFORK)
-/* Public MiNT Pfork()/Pvfork() (CONF_WITH_PFORK). The child inherits every
+#if defined(TEST_WITH_FORK)
+/* Public MiNT Pfork()/Pvfork() (CONF_WITH_FORK). The child inherits every
  * descriptor with its shared file position, the current directory, the DTA
  * address and its parent; its private writes stay its own. */
 static void test_public_fork(void)
@@ -335,7 +335,7 @@ static void test_public_fork(void)
 int main(void)
 {
     int failures;
-#if defined(TEST_WITH_PEXEC200)
+#if defined(TEST_WITH_EXEC_REPLACE)
     if((unsigned char)_base->p_cmdlin[0]>=1 && _base->p_cmdlin[1]=='W') {
         /* The image a Pvfork child replaced itself with. */
         while(Fsfirst("C:\\FORKGO.TMP",0)) (void)Syield();
@@ -349,24 +349,24 @@ int main(void)
     ptest_assert_msg(private_probe.heap!=NULL,"COW parent-policy private heap reservation");
     if(private_probe.heap) {
         test_cow_vfork_continuation();
-#if defined(TEST_WITH_PEXEC200)
+#if defined(TEST_WITH_EXEC_REPLACE)
         test_cow_vfork_exec_release();
 #endif
         ptest_assert_msg(Mfree(private_probe.heap)==0,"COW parent-policy heap released after final child reap");
     }
 #endif
-#if defined(TEST_WITH_PFORK)
+#if defined(TEST_WITH_FORK)
     test_public_fork();
 #endif
     ptest_pass();
     failures=ptest_failures();
 #if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     if(!failures)conws("native COW Pvfork parent dependency (test-only, no exec commit): PASS\r\n");
-#if defined(TEST_WITH_PEXEC200)
+#if defined(TEST_WITH_EXEC_REPLACE)
     if(!failures)conws("native COW Pvfork parent released at committed Pexec(200): PASS\r\n");
 #endif
 #endif
-#if defined(TEST_WITH_PFORK)
+#if defined(TEST_WITH_FORK)
     if(!failures)conws("native public Pfork/Pvfork with inherited descriptors: PASS\r\n");
 #endif
     ptest_log_flush();

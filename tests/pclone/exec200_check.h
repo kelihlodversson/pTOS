@@ -13,6 +13,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__mc68000__) && !defined(TEST_WITH_ELF_LOADER)
+#define EXEC200_TARGET "EXEC200P.TOS"
+#else
+#define EXEC200_TARGET "EXEC200B.TOS"
+#endif
+
 typedef struct {
     unsigned long generation, pid, tid, root0, root1, base;
     unsigned long process0, process1;
@@ -31,10 +37,25 @@ static void exec200_fail(const char *who, const char *reason, long value)
  * command tail, default DTA, root and basepage, and the next generation. */
 static __attribute__((unused)) void exec200_verify(const char *who, EXEC200_TAIL *t)
 {
-    EXEC_REPLACE_TEST_STATE state;
     char line[128];
     unsigned length;
     const char *value = getenv("EXEC");
+    EXEC_REPLACE_TEST_STATE state;
+#if defined(__mc68000__)
+    unsigned long stack = (unsigned long)&state;
+    unsigned long low = (unsigned long)_base->p_lowtpa;
+    unsigned long high = (unsigned long)_base->p_hitpa;
+    unsigned long text = (unsigned long)_base->p_tbase;
+    /* EXEC200B is linked as ELF even when the default tests are PRGs. */
+#if defined(TEST_IS_PRG) && defined(EXEC200_PRG)
+    if (low != (unsigned long)_base || text != low + 256 || stack < text || stack >= high)
+        exec200_fail(who, "classic PRG TPA/text/stack", (long)stack);
+#else
+    if (low != (unsigned long)_base || (text >= low && text < high) ||
+        (stack >= low && stack < high))
+        exec200_fail(who, "ELF text and private stack", (long)stack);
+#endif
+#endif
     if ((void *)Fgetdta() != (void *)_base->p_cmdlin) exec200_fail(who, "default DTA", (long)Fgetdta());
     length = (unsigned char)_base->p_cmdlin[0];
     if (!length || length > 125) exec200_fail(who, "command tail length", (long)length);

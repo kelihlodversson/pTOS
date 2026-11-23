@@ -11,7 +11,7 @@
 #include "bdosstub.h"
 #include "string.h"
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static FS_ERROR_STATE fixture_error;
 FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #else

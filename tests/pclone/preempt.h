@@ -1,7 +1,7 @@
 /* Production timer policy: no private BEGIN selector, syscall or voluntary
  * yield in either worker's progress loop. Serial execution cannot complete
  * the alternating handshake. Both PROCESS and THREAD ownership are exercised. */
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
 #include <stddef.h>
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES) && \
     (!defined(TEST_WITH_PRIVATE_CLONE_TEST) || !defined(TEST_WITH_MMAP))
@@ -174,7 +174,7 @@ static void preempt_image_patterns(void)
                "native timer independent-image/root GPR/FPU patterns: FAIL\r\n");
 }
 #endif
-#if defined(TEST_WITH_PFORK) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_FORK) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static void preempt_private_patterns(void)
 {
     unsigned i;
@@ -317,7 +317,7 @@ static void preempt_mapping_owner_progress(void)
     if(okay)conws("native timer busy USER and mapping-owner progress/conservation: PASS\r\n");
 }
 #endif
-#if defined(TEST_WITH_PTERMGRP) && defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
+#if defined(TEST_WITH_MULTITHREADING) && defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
 static volatile unsigned long preempt_cancel_started,preempt_cancel_seen,preempt_cancel_after;
 static void preempt_cancel_spinner(void *unused)
 {
@@ -430,7 +430,7 @@ static void test_preempt(void)
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
     preempt_image_patterns();
 #endif
-#if defined(TEST_WITH_PFORK) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_FORK) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     preempt_private_patterns();
 #endif
     okay=preempt_run(preempt_entry);
@@ -466,7 +466,7 @@ static void test_preempt(void)
 #if defined(TEST_WITH_NATIVE_PREEMPT_PROBES)
     preempt_blocked_wakeup();
     preempt_mapping_owner_progress();
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     preempt_cancel_retirement();
 #endif
 #endif

@@ -63,7 +63,7 @@ bounds and copy result
 before publishing decoded arguments. It takes a caller-supplied copy
 function connected to the caller's address-space copy operation.
 
-The optional CONF_WITH_PCLONE configuration routes GEMDOS 0x190 through
+The optional CONF_WITH_MULTITHREADING configuration routes GEMDOS 0x190 through
 mintproc_call() to xclone(). Native ARM and x32 trap frames have one slot per
 argument; m68k trap frames contain two big-endian words per argument. Native
 slots retain their full width so validation can reject out-of-range values.
@@ -144,7 +144,7 @@ runtime failure behavior. The pclone regression suite invokes the real ARM
 svc and m68k packed trap interfaces. Run it with the existing regression flow:
   bash tools/ci-regression.sh virt-arm-aspace
   bash tools/ci-regression.sh virt-m68k-aspace
-These two regression configurations explicitly enable CONF_WITH_PCLONE. The
+These two regression configurations explicitly enable CONF_WITH_MULTITHREADING. The
 test checks valid-but-unsupported and malformed requests, unchanged TID output,
 and that the supplied entry never executes. In restricted workspaces the runner
 supports REGRESSION_RAW_DISK=1 and QEMU_DATA_DIR for a local QEMU installation.

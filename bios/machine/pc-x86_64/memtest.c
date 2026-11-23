@@ -64,7 +64,7 @@
 #if CONF_WITH_PROCESS_EXEC_DISPATCH
 #include "../../../bdos/ssystem.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "../../../bdos/arch/x86_64/thread_startup_x32.h"
 #include "../../../bdos/arch/x86_64/thread_return_x32.h"
@@ -237,7 +237,7 @@ void x86_64_memtest_exit_handoff(KPROC *process, PD *pd, UQUAD stack_phys,
     exit_handoff_stages[stage]++;
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static ULONG task_thread_stages[8];
 static ULONG live_process_thread_reaps;
 void x86_64_memtest_task_thread(KTHREAD *thread, UQUAD stack_phys, UWORD stage)
@@ -299,7 +299,7 @@ static ULONG dir_refs(void)
  * before asserting final resource baselines or releasing those contexts. */
 static void settle_scheduler(void)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     ULONG start=(ULONG)hz_200;
     if(ksched_dispatching()) return;
     while(ksched_active() && (ULONG)((ULONG)hz_200-start)<1000) ksched_yield();
@@ -1515,7 +1515,7 @@ static void test_process_validation(void)
 static PD *disposal_test_pd;
 static KPROC *disposal_test_observer;
 static unsigned disposal_test_commits;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 struct test_thread_execution {
     KTHREAD_STACK stack;
     PADDR syscall_stack;
@@ -1534,7 +1534,7 @@ static void test_thread_reclaim(void *resource)
 }
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static struct {
     BOOL enabled, seen;
     KPROC *owner;
@@ -1551,7 +1551,7 @@ static struct {
 #endif
 void x86_64_memtest_disposal_committed(PD *pd)
 {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     static char command[]={2,'O','n',0}, environment[]={0,0}, nested_command[]={2,'O','y',0};
     PROCESS_OBSERVER *late=NULL;
     PROCESS_COMPLETION completion;
@@ -1560,7 +1560,7 @@ void x86_64_memtest_disposal_committed(PD *pd)
         ULONG root_passes=ksched_test_retiring_root_passes();
         retiring_probe.enabled=FALSE;
         retiring_probe.seen=TRUE;
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
         if (retiring_probe.request_cancel) {
             KSCHED_CLEANUP_SCOPE nested_scope={0};
             UWORD group_status;
@@ -1847,7 +1847,7 @@ static void test_kthread_live_disposal(void)
     WORD pid;
     UWORD status;
     char bytes[4];
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     struct test_thread_execution execution;
     BOOL attached;
     uintptr_t syscall_top;
@@ -1878,7 +1878,7 @@ static void test_kthread_live_disposal(void)
         same(&s, "failed deferred-disposal setup");
         return;
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     bzero(&execution, sizeof(execution));
     attached = kthread_stack_allocate(&execution.stack);
     CHECK(attached, "allocate execution stack for safe-context handoff");
@@ -1916,7 +1916,7 @@ static void test_kthread_live_disposal(void)
               "process-owned file remains open while threads remain");
     CHECK(!kthread_start(a), "disposal-pending process cannot start a prepared execution");
     CHECK(kthread_stop(a) && !kthread_stop(a), "thread stop is once-only");
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (attached)
         CHECK(execution.stack.physical && execution.syscall_stack && !execution.reclaims,
               "stopping thread retains scheduler and syscall stacks");
@@ -1924,7 +1924,7 @@ static void test_kthread_live_disposal(void)
           "stopped thread rejects new execution resources");
 #endif
     CHECK(kthread_reap(a), "reclaim stopped thread from safe context");
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (attached)
         CHECK(!execution.stack.physical && !execution.syscall_stack && execution.reclaims == 1,
               "safe-context reap frees both stacks once");
@@ -2015,11 +2015,11 @@ static void test_kthread_completion(void)
     CHECK(kthread_stop(a), "stop first thread before completion preflight");
     CHECK(!kthread_complete(a, 37),
           "unstarted process cannot publish an exit status");
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     CHECK(!kproc_request_group_exit(observer, 37), "unstarted group rejects exit request");
 #endif
     kproc_mark_started(pd); /* simulate a process that has executed */
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     {
         PROC_CLONE_ARGS args;
         PROC_CLONE_TRANSACTION *tx = NULL, *saved;
@@ -2624,7 +2624,7 @@ static void test_proc_clone_factory(void)
 }
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* These identity-only startup drafts never enter user code or backend stacks.
  * The bridge is exercised separately through the existing PROCESS launcher. */
 static void forbidden_startup_reclaim(void *resource)
@@ -3013,7 +3013,7 @@ static void native_observer_wait_hook(void)
     } else
 #endif
     if (native_observer_wait.action==3) {
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
         CHECK(kproc_request_group_exit(native_observer_wait.owner,0x2468),
               "group cancellation latches while observed wait owns protected cleanup");
 #else
@@ -3123,7 +3123,7 @@ static void test_native_observer_wait(KPROC *owner,BOOL cancel)
 #if CONF_WITH_CUIS_RECEIPT_TEST
 #include "../../../aes/cuis_receipt_test.h"
 static BOOL native_receipt_active;
-#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
 static struct {
     BOOL active,leader_verified;
     UQUAD owner_number;
@@ -3511,7 +3511,7 @@ static void ordinary_observation_yield(void)
               "prepared ordinary child remains non-runnable and not wait-visible across native yield");
         if (ordinary_observation.scenario==4 || ordinary_observation.scenario>=12) {
             retiring_probe.request_cancel=ordinary_observation.scenario>=12;
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
             if (retiring_probe.request_cancel) {
                 CHECK(proc_exec_observe("C:\\X32HELLO.TOS",command,environment,NULL,&retiring_probe.peer)>0,
                       "prepare an independent peer before group cancellation");
@@ -3634,7 +3634,7 @@ static void test_ordinary_observation(void)
     int before=failures;
     static const char command[]={2,'O','p',0}, environment[]={0,0};
     test_discarded_observation();
-    for (mode=0;mode<(CONF_WITH_PTERMGRP ? (CONF_WITH_CUIS_OBSERVER_TEST ? 15:14):12);mode++) {
+    for (mode=0;mode<(CONF_WITH_MULTITHREADING ? (CONF_WITH_CUIS_OBSERVER_TEST ? 15:14):12);mode++) {
         SNAP baseline;
         LONG loaded, status;
         PD *program;
@@ -3711,7 +3711,7 @@ void x86_64_memtest_clone_yield(void)
     }
 #endif
 #if CONF_WITH_CUIS_RECEIPT_TEST
-#if CONF_WITH_PCLONE && CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
     if (receipt_fault.active) { native_receipt_fault_yield(); return; }
 #endif
     if (native_receipt_active) return;
@@ -5105,7 +5105,7 @@ static long run_probe(char mode)
         fault_observer = kproc_retain(pd);
         CHECK(fault_observer != NULL, "fault probe observer attaches before execution");
     }
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
     if (mode == '=' || mode == '<' || mode == '(' || mode == ')' || mode == '"' ||
         mode == '.' || mode == '>' || mode == ',' || mode == '_' || mode == ';' || mode == '/' || mode == '-' || mode == '*') {
         PD *programs[1]; LONG results[1];
@@ -6059,7 +6059,7 @@ static void test_ring3(void)
     SNAP s;
     long rc;
     int k, refused = 0, ran = 0;
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
     int public_before = failures;
     ULONG live_reaps_before = live_process_thread_reaps;
 #endif
@@ -6072,7 +6072,7 @@ static void test_ring3(void)
     }
 #endif
 
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
     probe_expect(',', 0, "public SAME_PROCESS dispatch, private stacks/registers, Pterm/fault isolation, TSR refusal and scheduler growth");
     probe_expect('_',0x66,"initial Pterm retains PROCESS files until final sibling exit");
     probe_expect(';',0x66,"initial fault retains PROCESS resources and final sibling status");
@@ -6288,7 +6288,7 @@ static void test_ring3(void)
         CHECK(aspace_file_cross_shares() != shares, "nested CUIS clients reuse DSO pages");
         kcprintf("x86-64 CUIS sessions: %s\n", failures == before ? "PASS" : "FAIL");
     }
-#if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_PCLONE && CONF_WITH_PTHJOIN && CONF_WITH_MMAP
+#if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_MULTITHREADING && CONF_WITH_MMAP
     {
         int receipt_before=failures;
         ULONG stage;
@@ -6415,7 +6415,7 @@ static void test_ring3(void)
     probe_expect('e', 0, "a process runs normally after the faults");
     snap(&s);
     x86_64_memtest_fail_next_exit_handoff();
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* The refusal needs a child without a THREAD: keep this one nested
      * launch on the untracked carrier contract (#713). */
     (void)ksched_test_nested(0x20);
@@ -6425,7 +6425,7 @@ static void test_ring3(void)
 #endif
     same(&s, "failed exit handoff rollback");
     observe_probe_fault = TRUE;
-#if !CONF_WITH_NATIVE_SCHED
+#if !CONF_WITH_MULTITHREADING
     /* A managed THREAD must never fall back while still attached. The
      * nested probe above covers its untracked child's refusal path. */
     x86_64_memtest_fail_next_exit_handoff();
@@ -6433,7 +6433,7 @@ static void test_ring3(void)
     CHECK(run_probe('\001') == 0xffff, "fault exit preserves full result and independent observation");
     observe_probe_fault = FALSE;
     same(&s, "failed fault handoff observer rollback");
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     CHECK(fallback_observer_stages == 2, "nested refused exit publishes observer after stack reclamation");
 #else
     CHECK(fallback_observer_stages == 4, "refused normal/fault exits publish observers after stack reclamation");
@@ -6480,7 +6480,7 @@ static void test_ring3(void)
         same(&s, "nested Pexec from ring 3");
     }
 
-#if CONF_WITH_PCLONE
+#if CONF_WITH_MULTITHREADING
     probe_expect('^', 0, "Pclone validates ring-3 arguments before rejecting the unavailable backend");
 #endif
     /* BIOS and XBIOS pointer arguments are checked per call (#352) */
@@ -6979,7 +6979,7 @@ void x86_64_memtest_run(void)
 #if !CONF_WITH_PROCESS_FILES
     test_proc_clone_factory();
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     test_proc_clone_startup();
     test_return_bridge();
 #if CONF_WITH_MMAP
@@ -7005,14 +7005,14 @@ void x86_64_memtest_run(void)
     test_move_private();
     test_backing_media_change();
     test_unlinked_backing();
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     /* The ring-3 probes test the nested carrier (#713) the kernel still uses
      * for its own launches: keep their own Pexec(0) children on it rather
      * than anchoring them (#1015, tested by the regression suite). */
     (void)ksched_test_nested(0x22);
 #endif
     test_ring3();
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     (void)ksched_test_nested(0x23);
 #endif
 

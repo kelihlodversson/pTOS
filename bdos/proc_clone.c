@@ -17,7 +17,7 @@
 #if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "ksched_lifetime.h"
 extern PD *run;
@@ -50,7 +50,7 @@ struct proc_clone_transaction {
 #if CONF_WITH_FORK_CORE
     FORK_PARENT_DEPENDENCY *parent_dependency; /* borrowed from calling THREAD */
 #endif
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     KPROC_IMAGE_PREPARATION *image_policy;
 #endif
 #if CONF_WITH_PROCESS_FILES
@@ -78,17 +78,17 @@ static void release_transaction(PROC_CLONE_TRANSACTION *tx)
 #if CONF_WITH_FORK_CORE
     if (tx->parent_dependency) fork_parent_cancel(tx->parent_dependency,FORK_PARENT_ABORT);
 #endif
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_X86_64_MEMTEST
+#if CONF_WITH_MULTITHREADING && CONF_WITH_X86_64_MEMTEST
     if (ksched_test_clone_masked()) panic("clone teardown in publication exclusion");
 #endif
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     kproc_image_policy_release(&tx->image_policy);
 #endif
 #if CONF_WITH_PROCESS_FILES
     kproc_files_snapshot_end(&tx->files);
 #endif
     thread_startup_abort(&tx->startup);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (tx->owns_compat) kproc_clone_drop_compat(tx->process);
     if(tx->owns_shared_exec) {
         kthread_destroy(tx->thread);tx->thread=NULL;
@@ -151,7 +151,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
             return EINVAL;
 #endif
         target = loaded_shared ? args->prepared_process : NULL;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if(loaded_shared && (!target || !kproc_shared_exec_constructible(target))) return EACCDN;
 #else
         if(loaded_shared) return EINVFN;
@@ -169,7 +169,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         return EINVFN;
 #endif
     }
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (kproc_group_status(args->source, NULL)) return EACCDN;
 #endif
     space = args->process_policy == PROC_CLONE_LOADED_PROCESS ? args->prepared_space :
@@ -186,7 +186,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
     tx->mapping_members = NULL;
     tx->thread = NULL;
     tx->startup = NULL;
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     tx->image_policy=NULL;
 #endif
     tx->observer = NULL; tx->asynchronous = FALSE;
@@ -244,7 +244,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
 #endif
     if (!tx->space || (args->process_policy != PROC_CLONE_LOADED_PROCESS && injected(3))) goto failed;
     if (args->process_policy!=PROC_CLONE_SAME_PROCESS && args->process_policy!=PROC_CLONE_LOADED_PROCESS) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if(loaded_shared) error=kproc_shared_exec_take_mapping_owners(tx->process,&tx->mapping_members);
         else
 #endif
@@ -257,7 +257,7 @@ static LONG clone_prepare(const PROC_CLONE_ARGS *args, PROC_CLONE_TRANSACTION **
         if(loaded_shared) tx->owns_shared_exec=TRUE;
         error=ENSMEM;
     }
-#if CONF_WITH_SHARED_VM_PEXEC
+#if CONF_WITH_SHARED_VM_PEXEC || CONF_WITH_PRIVATE_CLONE
     if(!loaded_shared && args->process_policy==PROC_CLONE_NEW_PROCESS &&
         args->vm_policy!=PROC_CLONE_PRIVATE_VM) {
         error=kproc_shared_dependencies_prepare(tx->process,tx->source);
@@ -278,7 +278,7 @@ failed:
 
 LONG proc_clone(const PROC_CLONE_ARGS *args,PROC_CLONE_TRANSACTION **transaction)
 { return clone_prepare(args,transaction,FALSE); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 LONG proc_clone_loaded_shared(KPROC *source,KPROC *target,PROC_CLONE_TRANSACTION **transaction)
 {
     PROC_CLONE_ARGS args={0};
@@ -295,7 +295,7 @@ LONG proc_clone_commit(PROC_CLONE_TRANSACTION **transaction, PROC_CLONE_RESULT *
     if (!transaction || !*transaction || !result || result->thread ||
         result->owned_process || result->pid || result->tid) return EINVAL;
     tx = *transaction;
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (kproc_group_status(tx->source, NULL) || kproc_group_status(tx->process, NULL))
         return EACCDN;
 #endif
@@ -447,7 +447,7 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
 {
     if (!tx || !args || tx->startup) return EINVAL;
     if (
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
         kproc_group_status(tx->source, NULL) || kproc_group_status(tx->process, NULL) ||
 #endif
         kproc_active_space(tx->source) != tx->source_space ||
@@ -464,13 +464,13 @@ LONG proc_clone_prepare_startup(PROC_CLONE_TRANSACTION *tx, const THREAD_STARTUP
 static BOOL startup_target_live(const PROC_CLONE_TRANSACTION *tx)
 {
     return tx && tx->startup &&
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
         (!tx->image_policy || kproc_image_policy_validate(tx->image_policy)==E_OK) &&
 #endif
 #if CONF_WITH_PROCESS_FILES
         (!tx->files || kproc_files_snapshot_validate(tx->files)) &&
 #endif
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
         !kproc_group_status(tx->source, NULL) && !kproc_group_status(tx->process, NULL) &&
 #endif
 #if CONF_WITH_PRIVATE_CLONE
@@ -521,7 +521,7 @@ LONG proc_clone_tpa_startup_stack(PROC_CLONE_TRANSACTION *tx)
 }
 #endif
 
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
 LONG proc_clone_prepare_image_policy(PROC_CLONE_TRANSACTION *tx,const KPROC_IMAGE_POLICY *policy)
 {
     if (!tx || tx->policy!=PROC_CLONE_NEW_PROCESS || !tx->owns_process ||
@@ -561,7 +561,7 @@ void proc_clone_release(PROC_CLONE_RESULT *result)
     kproc_release(process);
 }
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Public ABI wrapper receives normalized kernel arguments, never the user
  * structure. The observer caller reference is dropped before returning; the
  * startup registration owns the asynchronous lifetime through root reclaim. */
@@ -608,7 +608,7 @@ LONG proc_clone_prepare_saved_return(PROC_CLONE_TRANSACTION *tx, const SYSCALL_R
 #endif
     return thread_startup_prepare_saved_return(tx->space, saved, &tx->startup);
 }
-#if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_PFORK
+#if CONF_WITH_FORK_RETURN_TEST || CONF_WITH_FORK
 /* Timer return capture also selects SAVED_RETURN. It does not use the
  * syscall-return child construction helpers or enable either fork entry. */
 static LONG return_back_continuation(KASPACE *space, const SYSCALL_RETURN *saved)
@@ -737,7 +737,7 @@ done:
     kproc_release(source);
 #if CONF_WITH_FORK_CORE
     ksched_cleanup_end(&scope);
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
     if (cancelled || ksched_cancellation_pending()) ksched_cancel_point();
 #endif
 #endif
@@ -749,7 +749,7 @@ LONG proc_clone_return_probe(SYSCALL_RETURN *saved, UWORD fail_stage)
     return return_clone(saved, fail_stage, 0);
 }
 #endif
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
 LONG proc_clone_fork(SYSCALL_RETURN *saved, BOOL vfork)
 {
     return return_clone(saved, FORK_RETURN_PRIVATE | (vfork ? FORK_RETURN_VFORK : 0),
@@ -769,7 +769,7 @@ static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_
     PD *controller;
     ULONG identity;
     LONG error;
-#if !CONF_WITH_IMAGE_POLICY
+#if !CONF_WITH_IMAGE_POLICY_TEST
     if (image_policy) return EINVFN;
 #endif
     if (!args || !startup || (args->process_policy != PROC_CLONE_NEW_PROCESS &&
@@ -793,7 +793,7 @@ static LONG clone_start_entry(const PROC_CLONE_ARGS *args, const THREAD_STARTUP_
 #endif
         thread_startup_prepare_public(tx->space,startup,&tx->startup);
     if (!error) error = proc_clone_retain_startup_stack(tx);
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
     if (!error && image_policy) error=proc_clone_prepare_image_policy(tx,image_policy);
 #endif
     if (!error) error = proc_clone_prepare_outputs(tx,pid,tid);
@@ -951,7 +951,7 @@ failed:
 }
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Invoked by scheduler root or the serialized active creator, never an observer
  * or user callback. All fallible preparation precedes this no-fail transfer. */
 void proc_clone_commit_prepared(PROC_CLONE_TRANSACTION *tx, void *slot)

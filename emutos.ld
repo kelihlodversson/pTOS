@@ -19,7 +19,7 @@
 #define C_SYM0(prefix, name) C_SYM1(prefix, name)
 #define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
 
-#if CONF_WITH_NATIVE_SCHED && defined(PTOS_LTO_RUN_ALIAS)
+#if CONF_WITH_MULTITHREADING && defined(PTOS_LTO_RUN_ALIAS)
 /* A top-level assembler .set cannot alias storage in a different LTRANS
  * object. Resolve the frozen TOS run ABI after LTO, without a C pointer-sized
  * alias (which would register overlapping ASan globals). */
@@ -236,7 +236,7 @@ SECTIONS
     .stack : LMA_LOW(.stack)
     {
         C_SYM(stkbot) = .;
-#if CONF_WITH_NATIVE_SCHED && CONF_WITH_USER_ASPACE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
         /* The boot CPU still loads its first managed program on this stack,
          * before entering the permanent scheduler root. Native loader/error
          * contexts (especially under LTO) exceed the legacy 2-KiB budget and

@@ -18,7 +18,7 @@
 #include "sound.h"
 #include "floppy.h"
 #include "mfp.h"
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 #include "ksched.h"
 #endif
 #if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
@@ -92,7 +92,7 @@ void (*timer_vbl_hook)(void) = int_vbl;
  */
 void int_timerc(void)
 {
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
     ksched_preempt_tick();
 #endif
     hz_200++;

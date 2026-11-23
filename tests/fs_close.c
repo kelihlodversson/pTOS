@@ -15,7 +15,7 @@ BCB *bufl[2];
 PD owner;
 PD *run=&owner;
 #ifdef FS_ERROR_H
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static FS_ERROR_STATE fixture_error;
 FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #else
@@ -99,6 +99,20 @@ static void open_file(void)
     memset(&buffer,0,sizeof(buffer)); buffer.b_bufdrv=0; buffer.b_dirty=TRUE;
     bufl[0]=&buffer;
 }
+#if CONF_WITH_PROCESS_FILES && !defined(OBSERVER_WITH_CLOSE_FIXTURE)
+#include "process_files.h"
+
+/* These backend fixtures operate on legacy SFT aliases. */
+void __attribute__((weak)) kproc_files_shutdown(void) { }
+BOOL __attribute__((weak)) process_files_managed(PD *pd) { (void)pd; return FALSE; }
+LONG __attribute__((weak)) process_files_duplicate(PD *source,WORD handle,PD *target,WORD destination)
+{ (void)source; (void)handle; (void)target; (void)destination; CHECK(0); return EINVFN; }
+LONG __attribute__((weak)) process_files_force_bios(PD *pd,WORD descriptor,WORD bios)
+{ (void)pd; (void)descriptor; (void)bios; CHECK(0); return EINVFN; }
+LONG __attribute__((weak)) process_files_resolve(PD *pd,WORD descriptor,WORD *backend,UQUAD *incarnation)
+{ (void)pd; (void)descriptor; (void)backend; (void)incarnation; CHECK(0); return EINVFN; }
+#endif
+
 int main(void)
 {
     FS_CLOSE_REPORT result;

@@ -17,15 +17,13 @@ with tempfile.TemporaryDirectory(prefix='ptos-exec-replacement-') as directory:
     config.load_config('configs/pc-x86_64_defconfig')
     assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == 'n'
     for name in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_CUIS', 'CONF_WITH_X32_VDI',
-                 'CONF_WITH_USER_CALLBACKS', 'CONF_WITH_PTHJOIN', 'CONF_WITH_PTERMGRP'):
+                 'CONF_WITH_USER_CALLBACKS', 'CONF_WITH_MULTITHREADING'):
         config.syms[name].set_value(0)
-    for name in ('CONF_WITH_MMAP', 'CONF_WITH_X86_64_MEMTEST', 'CONF_WITH_NATIVE_SCHED',
+    for name in ('CONF_WITH_MMAP', 'CONF_WITH_X86_64_MEMTEST', 'CONF_WITH_MULTITHREADING',
                  'CONF_WITH_EXEC_REPLACEMENT_TEST'):
         config.syms[name].set_value(2)
         assert config.syms[name].str_value == 'y', name
-    # Execute the production runner's guard with generated headers, including
-    # the legal test=y/Pclone=n configuration. Only the Pclone fixture can
-    # produce this marker; enabled transport must still reject missing proof.
+    # Exercise requested instrumentation with and without runnable Pclone.
     script = (ROOT/'tools/run-regression-tests.sh').read_text()
     start = script.index("if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1'")
     end = script.index('\nfi', start) + 3
@@ -35,9 +33,9 @@ with tempfile.TemporaryDirectory(prefix='ptos-exec-replacement-') as directory:
     for staging in (0, 2):
         for clone in (0, 2):
             config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(staging)
-            config.syms['CONF_WITH_PCLONE'].set_value(clone)
-            assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == ('y' if staging else 'n')
-            assert config.syms['CONF_WITH_PCLONE'].str_value == ('y' if clone else 'n')
+            config.syms['CONF_WITH_MULTITHREADING'].set_value(clone)
+            assert config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].str_value == ('y' if staging and clone else 'n')
+            assert config.syms['CONF_WITH_MULTITHREADING'].str_value == ('y' if clone else 'n')
             config.write_config(str(work/'marker.config'))
             subprocess.run([sys.executable, 'tools/genconfig.py', '--kconfig', 'Kconfig',
                             '--config', str(work/'marker.config'),
@@ -55,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-exec-replacement-') as directory:
     print('Native staging marker: 8 actual runner/Kconfig cases, missing enabled evidence rejected: PASS')
     start = script.index("if grep -q '^#define CONF_WITH_EXEC_HANDOFF_TEST 1'")
     block = script[start:script.index('\nfi', start) + 3]
-    config.syms['CONF_WITH_PCLONE'].set_value(2)
+    config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
     for enabled in (0, 2):
         config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
         config.syms['CONF_WITH_EXEC_HANDOFF_TEST'].set_value(enabled)
@@ -76,7 +74,8 @@ with tempfile.TemporaryDirectory(prefix='ptos-exec-replacement-') as directory:
     print('Native handoff marker: 4 actual runner/Kconfig cases; no modeled exec event: PASS')
     config.syms['CONF_WITH_EXEC_HANDOFF_TEST'].set_value(0)
     config.syms['CONF_WITH_EXEC_REPLACEMENT_TEST'].set_value(2)
-    config.syms['CONF_WITH_PCLONE'].set_value(0)
+    config.syms['CONF_WITH_FORK'].set_value(0)
+    config.syms['CONF_WITH_PREEMPTION'].set_value(0)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable, 'tools/genconfig.py', '--kconfig', 'Kconfig',
                     '--config', str(work/'config'), '--header', str(work/'autoconf.h'),

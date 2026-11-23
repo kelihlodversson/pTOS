@@ -783,7 +783,7 @@ BOOL aspace_private_range_ok(const ASPACE *as, VADDR va, VADDR bytes)
     }
     return TRUE;
 }
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 BOOL aspace_irq_range_owned(const ASPACE *as,VADDR va,VADDR bytes)
 {
     VADDR page,last;

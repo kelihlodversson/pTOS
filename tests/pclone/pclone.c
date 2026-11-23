@@ -21,7 +21,7 @@
 
 #if defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)
 #include "trap.h"
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE)
+#if defined(TEST_WITH_MULTITHREADING) && defined(TEST_WITH_USER_ASPACE)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST) || defined(TEST_WITH_MMAP)
 static long clone_test_sys6(long fn, long a1, long a2, long a3, long a4, long a5, long a6)
 {
@@ -133,7 +133,7 @@ static void test_private_continuation(void)
         }
         ptest_assert_msg(pid>0 && pid!=parent,"private saved-return parent receives distinct PID");
         if(pid>0) {
-#if !defined(TEST_WITH_NATIVE_PREEMPT)
+#if !defined(TEST_WITH_PREEMPTION)
             /* Cooperative publication returns before child dispatch. Phase C
              * instead proves nonblocking Pfork with its child/parent file gate;
              * this observation could consume an already completed child. */
@@ -335,7 +335,7 @@ static void private_entry(void *argument)
     volatile unsigned long local=0x5a5aa5a5UL;
     int bad=0;
     (void)argument;
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
     if(private_probe.mode==-1) {
         int attempt;
         for(attempt=0;attempt<2000 && Pgetppid()==private_probe.parent;attempt++)(void)Syield();
@@ -532,7 +532,7 @@ static void child_entry(void *argument) { (void)argument; entry_ran = 1; }
 #endif
 #endif
 
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+#if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 /* These are actual user continuations; Pclone cannot pass by just constructing
  * kernel identities. A blocked PROCESS wait must dispatch the child. */
 long clone_registers(unsigned long seed);
@@ -628,7 +628,7 @@ static volatile struct clone_probe {
 } probe __attribute__((aligned(4)));
 static void probe_increment(volatile long *counter)
 {
-#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(__mc68000__)
+#if defined(TEST_WITH_PREEMPTION) && defined(__mc68000__)
     long observed,next;
     /* Phase C is 040-only here. CAS is indivisible, requires no USER lock
      * across an IRQ/cancellation, and these prewarmed cells are aligned/RW. */
@@ -640,7 +640,7 @@ static void probe_increment(volatile long *counter)
         "cas.l %0,%1,(%3)\n\t"
         "bne 1b"
         : "=&d"(observed),"=&d"(next),"+m"(*counter) : "a"(counter) : "cc","memory");
-#elif defined(TEST_WITH_NATIVE_PREEMPT)
+#elif defined(TEST_WITH_PREEMPTION)
     (void)__sync_fetch_and_add(counter,1);
 #else
     (*counter)++;
@@ -752,7 +752,7 @@ static struct {
     unsigned char *stack[SCHEDULE_PEERS];
     int32_t pid[SCHEDULE_PEERS], tid[SCHEDULE_PEERS];
     volatile int trace[SCHEDULE_PEERS*SCHEDULE_ROUNDS], used, error;
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
     volatile int gate, progress[SCHEDULE_PEERS];
 #endif
 } schedule_probe;
@@ -765,13 +765,13 @@ static void schedule_entry(void *argument)
         if ((unsigned long)&local >= (unsigned long)schedule_probe.stack[index] &&
             (unsigned long)&local < (unsigned long)(schedule_probe.stack[index]+RUNNABLE_STACK_SIZE)) break;
     if (index==SCHEDULE_PEERS) { schedule_probe.error=1; return; }
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
     while (!schedule_probe.gate) (void)Syield();
 #endif
     for (round=0; round<SCHEDULE_ROUNDS; round++) {
         if (Pgetpid()!=schedule_probe.pid[index] || local!=0x13572468UL ||
             schedule_probe.used>=SCHEDULE_PEERS*SCHEDULE_ROUNDS) { schedule_probe.error=1; return; }
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
         /* A timer can interrupt between observing the selected execution and
          * its first USER store. Each worker owns its own progress cell. The
          * feature-off test below retains the strict cooperative FIFO trace. */
@@ -793,7 +793,7 @@ static void test_scheduler_growth(void)
     }
     for (cycle=0;cycle<2;cycle++) {
         schedule_probe.used=schedule_probe.error=0;
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
         schedule_probe.gate=0;
         for(i=0;i<SCHEDULE_PEERS;i++)schedule_probe.progress[i]=0;
 #endif
@@ -804,14 +804,14 @@ static void test_scheduler_growth(void)
             if (result<=0) return;
             ptest_assert_msg((schedule_probe.pid[i]==Pgetpid())==(i&1),"scheduler preserves shared/distinct PID policy");
             for (j=0;j<i;j++) ptest_assert_msg(schedule_probe.tid[i]!=schedule_probe.tid[j],"unique live scheduler TIDs");
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
             for(j=0;j<=i;j++)
                 ptest_assert_msg(!schedule_probe.progress[j],"no worker advances before admission gate opens");
 #else
             ptest_assert_msg(!schedule_probe.used,"no dispatch before publication returns");
 #endif
         }
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
         schedule_probe.gate=1;
 #endif
         /* Block the parent; all twelve peers must progress in FIFO RR order
@@ -821,8 +821,8 @@ static void test_scheduler_growth(void)
             ptest_assert_msg((result>>16)==schedule_probe.pid[i] && !(result&65535),"independent PROCESS completion after fair dispatch");
         }
         (void)Syield(); (void)Syield();
-#if defined(TEST_WITH_NATIVE_PREEMPT)
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_PREEMPTION)
+#if defined(TEST_WITH_MULTITHREADING)
         for (i=1;i<SCHEDULE_PEERS;i+=2)
             ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,schedule_probe.tid[i],0)==0,"timer-dispatched sibling retires after arena growth");
 #endif
@@ -833,7 +833,7 @@ static void test_scheduler_growth(void)
         ptest_assert_msg(!schedule_probe.error && schedule_probe.used==SCHEDULE_PEERS*SCHEDULE_ROUNDS,"all independent and sibling continuations progress");
         for (i=0;i<SCHEDULE_PEERS*SCHEDULE_ROUNDS;i++)
             ptest_assert_msg(schedule_probe.trace[i]==i%SCHEDULE_PEERS,"one circular round-robin across arena growth");
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
         for (i=1;i<SCHEDULE_PEERS;i+=2)
             ptest_assert_msg(trap_1_wll(GEMDOS_PTHJOIN,schedule_probe.tid[i],0)==0,"late sibling join after safe root reclaim");
 #endif
@@ -913,7 +913,7 @@ static void test_lifecycle(void)
     for (i = 0; i < made; i++)
         ptest_assert_msg(Mfree(stacks[i]) == 0,"root reap releases each stack once");
 }
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
 static struct {
     int32_t target, a, b, leader, survivor;
     volatile long gate, done, entered, result_a, result_b, status_a, error, spawned;
@@ -1088,7 +1088,7 @@ static void test_joins(void)
     conws("native Pthjoin execution: tested\r\n");
 }
 #endif
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
 static const char group_env[2]={0,0};
 static struct {
     volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done, atexit_calls;
@@ -1099,7 +1099,7 @@ static struct {
 } group;
 static void group_ready_bit(long bit)
 {
-#if defined(TEST_WITH_NATIVE_PREEMPT) && (defined(__arm__) || defined(__x86_64__))
+#if defined(TEST_WITH_PREEMPTION) && (defined(__arm__) || defined(__x86_64__))
     (void)__sync_fetch_and_or(&group.ready,bit);
 #else
     group.ready|=bit; /* cooperative, or one memory-OR on the single-CPU m68k */
@@ -1113,7 +1113,7 @@ static long wait_admission(long tid)
     return pclone_trap((void *)(uintptr_t)tid,WAIT_ADMISSION_TEST);
 }
 #endif
-#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_CUIS_WAIT_TEST)
+#if defined(TEST_WITH_PREEMPTION) && defined(TEST_WITH_CUIS_WAIT_TEST)
 static int group_wait_admitted(void)
 {
     unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
@@ -1167,7 +1167,7 @@ static long native_cuis5(unsigned fn, long a, long b, long c, long d, long e)
  * legally schedule this fixture inside that lease; EAGAIN is retryable. */
 static long group_window(unsigned fn,long a,long b,long c,long d,long e)
 {
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
     unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
     long result;
     do {
@@ -1181,7 +1181,7 @@ static long group_window(unsigned fn,long a,long b,long c,long d,long e)
 #endif
 }
 
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
 static long native_cuis6(unsigned fn, unsigned long long a, unsigned long long b,
                          unsigned long long c, unsigned long long d,
                          unsigned long long e, unsigned long long f)
@@ -1801,14 +1801,14 @@ static void group_joiner(void *arg)
     (void)arg; group_ready_bit(2);
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
     if (group.mode==12) {
-#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_CUIS_WAIT_TEST)
+#if defined(TEST_WITH_PREEMPTION) && defined(TEST_WITH_CUIS_WAIT_TEST)
         if(!group_wait_admitted())group.error=2;
 #endif
         *(volatile long *)0=1; /* sibling fault cannot abandon the active sampler */
         group.error=1;
     }
 #endif
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
     if (join_tid(group.target,0)==0) group.error=1;
     group.returned=1;
 #else
@@ -1836,7 +1836,7 @@ static void group_killer(void *arg)
     while ((group.ready&3)!=3 || ((group.mode==1 || group.mode==2) && !group_exists("GDEEP.ON"))) (void)Syield();
     if (!group.mode) { for (;;) (void)Syield(); }
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
-#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_CUIS_WAIT_TEST)
+#if defined(TEST_WITH_PREEMPTION) && defined(TEST_WITH_CUIS_WAIT_TEST)
     if(group.mode>=5 && !group_wait_admitted())group.error=2;
     if(group.mode==12) {
         int32_t fault_status=0;
@@ -1892,7 +1892,7 @@ static void group_compete(void *arg)
 static void group_leader(void *arg)
 {
     int32_t pid;
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
     int32_t tid;
 #endif
     (void)arg;
@@ -1911,7 +1911,7 @@ static void group_leader(void *arg)
         (void)term_group(60);
     } else {
         if (group.mode==3) (void)Pwaitpid(group.wait_child,0,0);
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
         else (void)join_tid(group.killer,&tid); /* cancellation-safe blocked join */
 #else
         else for (;;) (void)Syield();
@@ -1952,7 +1952,7 @@ static void test_group_exit(void)
         group.mode=mode; group.ready=group.requested=group.error=group.returned=group.peer_done=group.peer_go=group.child_go=group.child_done=group.atexit_calls=0;
         ptest_assert_msg(launch_entry(group_peer,CLONE_VM,group.stack[5],&peer_pid,&peer_tid)>0,"independent shared-ASPACE peer created");
         ptest_assert_msg(launch_entry(group_leader,CLONE_VM|CLONE_COPY_STANDARD_HANDLES|CLONE_COPY_CWD,group.stack[0],&pid,&tid)>0,"group PROCESS created");
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
         {
             unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
             while(!group.requested && (unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start<1000UL)(void)Syield();
@@ -2052,7 +2052,7 @@ static void test_runnable(void)
             runnable_stacks[cycle][page] = 0;
     }
     test_process_wait();
-#if defined(TEST_WITH_NATIVE_PREEMPT)
+#if defined(TEST_WITH_PREEMPTION)
     test_preempt();
 #endif
 #if defined(__arm__) || defined(__mc68000__)
@@ -2066,7 +2066,7 @@ static void test_runnable(void)
 #if defined(__mc68000__)
         expected_sp -= 8; /* native return PC and argument; ARM has an empty SP */
 #endif
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
         policies = 2;
 #endif
         for (policy = 0; policy < policies; policy++) {
@@ -2117,7 +2117,7 @@ static void test_runnable(void)
         }
         ptest_assert_msg(result > 0 && result == tid && pid > 0 && pid != probe.parent,
                          "native NEW_PROCESS must publish distinct PID and positive TID");
-#if !defined(TEST_WITH_NATIVE_PREEMPT)
+#if !defined(TEST_WITH_PREEMPTION)
         ptest_assert_msg(probe.steps == 0,"child dispatched before Pclone returned");
 #endif
         waited = Pwaitpid(pid,0,0);
@@ -2146,7 +2146,7 @@ static void test_runnable(void)
     result = launch_probe(CLONE_VM|CLONE_SAME_PROCESS,2,&pid,&other_tid);
     ptest_assert_msg(result == other_tid && other_tid > 0 && other_tid != tid,
                      "native siblings must have independent TIDs");
-#if defined(TEST_WITH_NATIVE_PREEMPT) && defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_PREEMPTION) && defined(TEST_WITH_MULTITHREADING)
     ptest_assert_msg(join_tid(tid,0)==0 && join_tid(other_tid,0)==0,
                      "timer-dispatched siblings complete through exact TID joins");
 #else
@@ -2182,12 +2182,12 @@ static void test_runnable(void)
             }
         }
     }
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
     test_joins();
 #endif
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     test_group_exit();
-#if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_PTHJOIN)
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_MULTITHREADING)
     test_native_streams();
 #if defined(TEST_WITH_CUIS_WAIT_TEST)
     test_native_receipt_close();
@@ -2249,7 +2249,7 @@ void pclone_run_managed_tests(void)
         ptest_assert_msg(Pexec(200,"C:\\NO970.TOS","",0)==-33L,
                          "public mode200 fails before commit and keeps the caller");
         ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,"warm executable staging owners");
-        ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,"warm real private ELF staging and disposal");
+        ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,"warm real executable staging and disposal");
         for(stage=0x103;stage<=0x105;stage++)
             ptest_assert_msg(pclone_trap(0,0xc9700000UL+stage)==-36L,
                              "warm canonical foreign construction rejection and cleanup");
@@ -2263,7 +2263,7 @@ void pclone_run_managed_tests(void)
             ptest_assert_msg(pclone_trap(0,0xc9700000UL)==0,
                              "private staging receipt validates across cooperative yield and abort");
             ptest_assert_msg(pclone_trap(0,0xc9700100UL)==0,
-                             "existing loader stages ELF in selected private root and aborts");
+                             "existing loader stages an executable and aborts");
             ptest_assert_msg(pclone_trap(0,0xc9700101UL)==-33L,
                              "missing executable leaves old execution runnable");
             ptest_assert_msg(pclone_trap(0,0xc9700102UL)<0,
@@ -2314,10 +2314,10 @@ void pclone_run_managed_tests(void)
 #endif
         conws("pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS\r\n");
         conws("native public PROCESS wait ABI and reaping: PASS\r\n");
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
         conws("native Pthjoin: PASS\r\n");
 #endif
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
         conws("native Ptermgrp: PASS\r\n");
         conws("native libc exit: PASS\r\n");
 #if defined(__x86_64__) && defined(TEST_WITH_CUIS)
@@ -2335,14 +2335,14 @@ void test_pclone(void);
 void test_pclone(void)
 {
     ptest_begin("pclone");
-#if (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)) && (!defined(TEST_WITH_PCLONE) || !defined(TEST_WITH_USER_ASPACE))
+#if (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)) && (!defined(TEST_WITH_MULTITHREADING) || !defined(TEST_WITH_USER_ASPACE))
     ptest_assert_msg(pclone_trap((void *)0x80001000UL,32) == -32L,
                      "disabled/non-MMU Pclone fails before reading invalid user input");
 #endif
     /* These no-argument calls must fail before creating a child or blocking
      * the parent until saved-context/private-VM/exec-detach support exists.
      * Exercise the actual native trap and signed error result repeatedly. */
-#if !defined(TEST_WITH_PFORK)
+#if !defined(TEST_WITH_FORK)
     {
         long pid = Pgetpid();
         int fork_cycle;
@@ -2356,7 +2356,7 @@ void test_pclone(void)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     ptest_assert_msg(private_query(1)==0 && private_query(2)==0,"initial COW frame/reference baseline");
 #endif
-#if defined(TEST_WITH_PCLONE) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+#if defined(TEST_WITH_MULTITHREADING) && defined(TEST_WITH_USER_ASPACE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     {
         static unsigned char stack[256] __attribute__((aligned(16)));
         int32_t tid = 0x12345678;
@@ -2371,7 +2371,7 @@ void test_pclone(void)
         ptest_assert_msg(pclone_trap(&args,PTOS_CLONE_ARGS_MIN_SIZE-1) == -25L,"short structure must fail");
         ptest_assert_msg(pclone_trap((void *)0x80001000UL,sizeof(args)) == -40L,"high-bit pointer must not be truncated");
         ptest_assert_msg(pclone_trap(&args,0xffffffffUL) == -40L,"negative-looking size must not wrap");
-#ifndef TEST_WITH_NATIVE_SCHED
+#ifndef TEST_WITH_MULTITHREADING
         args.flags = CLONE_VM;
         ptest_assert_msg(pclone_trap(&args,28) == -32L,"unmanaged context cannot publish shared-VM clone");
         args.flags = CLONE_VM | CLONE_SAME_PROCESS;
@@ -2387,7 +2387,7 @@ void test_pclone(void)
         ptest_assert_msg(entry_ran == 0,"no child entry may run");
     }
 #endif
-#if defined(TEST_WITH_NATIVE_SCHED) && defined(TEST_WITH_PCLONE) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+#if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
     {
         long child, status;
         /* The shell may itself own the group. A nested synchronous Pexec is
@@ -2402,12 +2402,12 @@ void test_pclone(void)
             status = Pwaitpid(child,0,0);
             ptest_assert_msg((status >> 16) == child && !(status & 65535),
                              "managed clone execution worker must pass");
-#if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_PTERMGRP) && defined(TEST_WITH_PTHJOIN)
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS) && defined(TEST_WITH_MULTITHREADING)
             if ((status>>16)==child && !(status&65535))
                 conws("native CUIS retained stream ownership: PASS (parent verified)\r\n");
 #endif
         }
-#if defined(TEST_WITH_PFORK) || (defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST))
+#if defined(TEST_WITH_FORK) || (defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST))
         /* Keep the new fixture out of this self-reloading image: three
          * classic PRG copies must fit the unchanged procmem window. */
         ptest_log_flush();
@@ -2466,6 +2466,12 @@ void test_pclone(void)
             ptest_assert_msg(Fdelete("GO970.TMP") == 0 && Fdelete("EXEC200.TMP") == 0,
                              "Pexec(200) test files");
         }
+#if defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
+        ptest_log_flush();
+        ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001P",0) == 70,
+                         "dual-loader PRG-to-PRG replacement chain completes");
+        ptest_assert_msg(Fdelete("EXEC200.TMP") == 0,"PRG-to-PRG test file");
+#endif
         /* The same subject as an anchored Pexec(0) child (#1015): replaced
          * in its own PROCESS while this THREAD waits for exactly it. */
         ptest_log_flush();

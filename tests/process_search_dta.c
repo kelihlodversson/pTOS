@@ -14,7 +14,16 @@ static ASPACE backend;
 static KASPACE *space;
 static PD pd;
 PD *run=&pd;
+#if CONF_WITH_MULTITHREADING
+static FS_ERROR_STATE search_error;
+FS_ERROR_STATE *fs_error_current(void) { return &search_error; }
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(!scope->active); scope->active=TRUE; }
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{ CHECK(scope->active); scope->active=FALSE; }
+#else
 FS_ERROR_STATE fs_legacy_error;
+#endif
 static UBYTE user_bytes[3*USER_PAGE_SIZE] __attribute__((aligned(USER_PAGE_SIZE)));
 static DTAINFO *logical;
 static UBYTE trusted[offsetof(DTAINFO,dt_fattr)];

@@ -21,18 +21,18 @@ for preset, available in (("pc-x86_64", True), ("virt-arm", False),
     config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
     config.syms["CONF_WITH_LIBAES"].set_value(2)
     assert (config.syms["CONF_WITH_CUIS"].str_value == "y") == available
-    assert (config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y") == available
+    assert (config.syms["CONF_WITH_MULTITHREADING"].str_value == "y") == available
     config.syms["CONF_WITH_ELF_SHARED"].set_value(0)
     assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     # The native process profile of the MMU presets does not depend on CUIS.
-    assert (config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y") == available
+    assert (config.syms["CONF_WITH_MULTITHREADING"].str_value == "y") == available
 
 # Native scheduling defaults on without either AES on all MMU targets.
 for preset in ("pc-x86_64", "pc-x86_64-eager", "virt-arm-aspace", "virt-m68k-aspace"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/" + preset + "_defconfig")
-    assert config.syms["CONF_WITH_NATIVE_SCHED"].str_value == "y"
+    assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "y"
     assert config.syms["CONF_WITH_CUIS"].str_value == "n"
     assert config.syms["CONF_WITH_LIBAES"].str_value == "n"
 
@@ -71,36 +71,14 @@ for name in ("CONF_WITH_CUIS", "CONF_EXTERNAL_DESK", "CONF_WITH_LIBAES_DESK",
 for name in ("CONF_WITH_AES", "CONF_WITH_X86_64_MEMTEST"):
     assert config.syms[name].str_value == "n", name
 
-# Pclone dispatch is on by default in the native process profile of the
-# address-space presets, and still independently switchable.
+# Headless address-space presets expose the same native process profile.
 for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config("configs/" + preset + "_defconfig")
-    assert config.syms["CONF_WITH_PCLONE"].str_value == "y", preset
-    config.syms["CONF_WITH_PCLONE"].set_value(0)
-    assert config.syms["CONF_WITH_PCLONE"].str_value == "n", preset
-
-# Joining depends on managed native execution, not either GUI implementation.
-# It is on in the default native process profile; start from that profile
-# off to check its dependencies.
-for preset in ("pc-x86_64", "virt-arm-aspace", "virt-m68k-aspace"):
-    config = kconfiglib.Kconfig(warn_to_stderr=False)
-    config.load_config("configs/" + preset + "_defconfig")
-    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "y"
-    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "y"
-    config.load_config("tools/hosted-legacy-profile.config", replace=False)
-    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
-    config.syms["CONF_WITH_PTERMGRP"].set_value(2)
-    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "n"
-    config.syms["CONF_WITH_PTHJOIN"].set_value(2)
-    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
-    config.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
-    config.syms["CONF_WITH_PCLONE"].set_value(2)
-    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "y"
-    assert config.syms["CONF_WITH_PTERMGRP"].str_value == "y"
-    assert config.syms["CONF_WITH_CUIS"].str_value == "n"
-    config.syms["CONF_WITH_PCLONE"].set_value(0)
-    assert config.syms["CONF_WITH_PTHJOIN"].str_value == "n"
+    assert config.syms["CONF_WITH_CUIS"].str_value == "n", preset
+    assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "y", preset
+    config.syms["CONF_WITH_MULTITHREADING"].set_value(0)
+    assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "n", preset
 
 # Master's 32-bit address-space presets must not enable kernel AES; they
 # retain the external CLI until libaes is ported to those architectures.
@@ -229,7 +207,7 @@ with tempfile.TemporaryDirectory(prefix="ptos-cuis-") as temp:
     unwind_command = [arg for arg in command if arg not in ("bdos/proc.c", "bdos/kfile.c", "tests/cuis/close_model.c")]
     subprocess.run(unwind_command + ["bdos/sched_lifetime.c", "tests/cuis/scheduler_publication.c", "tests/cuis/scheduler_context.S", "-o", str(rollback / "scheduler-publication")], check=True)
     subprocess.run([str(rollback / "scheduler-publication")], check=True)
-    subprocess.run(unwind_command + ["tests/cuis/exit_unwind.c", "-o", str(rollback / "exit-unwind")], check=True)
+    subprocess.run(unwind_command + ["tests/cuis/close_model.c", "tests/cuis/exit_unwind.c", "-o", str(rollback / "exit-unwind")], check=True)
     subprocess.run([str(rollback / "exit-unwind")], check=True)
     subprocess.run(unwind_command + ["tests/cuis/startup_unwind.c", "-o", str(rollback / "startup-unwind")], check=True)
     subprocess.run([str(rollback / "startup-unwind")], check=True)

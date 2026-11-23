@@ -5,6 +5,7 @@
 #include "emutos.h"
 #include "string.h"
 #include "../bdos/kproc.c"
+
 #include "process_observer.h"
 #undef assert
 #include <assert.h>
@@ -74,7 +75,7 @@ BOOL aspace_release_lazy(ASPACE *as, VADDR address, VADDR bytes)
 { (void)as; (void)address; (void)bytes; abort(); }
 BOOL aspace_move_private(ASPACE *from, ASPACE *to, VADDR address, VADDR bytes, UWORD prot)
 { (void)from; (void)to; (void)address; (void)bytes; (void)prot; abort(); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 FTAB sft[OPNFILES];
 static OFD callback_file;
 static unsigned child_finalizers;
@@ -82,8 +83,15 @@ BOOL ksched_pid_reserved(WORD pid) { (void)pid; return FALSE; }
 ASPACE *kaspace_backend(const KASPACE *space) { assert(!space); return NULL; }
 void procmem_pin(VADDR va,VADDR bytes,int delta) { (void)va;(void)bytes;(void)delta; abort(); }
 void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes; abort(); }
-BOOL fs_sft_busy(int index) { assert(index>=0 && index<OPNFILES); return FALSE; }
-OFD *getofd(int handle) { assert(handle==NUMSTD); return &callback_file; }
+BOOL __attribute__((weak)) fs_sft_busy(int index) { assert(index>=0 && index<OPNFILES); return FALSE; }
+OFD *__attribute__((weak)) getofd(int handle) { assert(handle==NUMSTD); return &callback_file; }
+#ifndef OBSERVER_WITH_CLOSE_FIXTURE
+static FS_ERROR_STATE observer_error;
+FS_ERROR_STATE *fs_error_current(void) { return &observer_error; }
+long fs_close_backend(WORD handle, volatile BOOL *consumed)
+{ (void)handle; (void)consumed; abort(); }
+void mark_bcbs_invalid(int drive) { (void)drive; abort(); }
+#endif
 void proc_exec_owner_exit(KPROC *owner)
 {
     if (owner!=during_retirement) return;
@@ -100,6 +108,40 @@ void proc_exec_owner_exit(KPROC *owner)
     memset(&sft[0],0,sizeof(sft[0])); /* End the fixture's synthetic file. */
 }
 #endif
+static void check_standard_invalidation(void)
+{
+    KPROC *parent=kproc_find(&caller),*process=kproc_find(&child);
+#if CONF_WITH_PROCESS_FILES
+    PROCESS_FILE_BINDING *bindings[] = {
+        &parent->files.binding[0], &process->files.binding[1], &process->files.binding[2]
+    };
+    PROCESS_FILE_BINDING original[ARRAY_SIZE(bindings)];
+    unsigned i;
+    assert(process_files_bind_bios(&caller,0,-1)==E_OK);
+    assert(process_files_bind_bios(&child,1,-1)==E_OK);
+    assert(process_files_bind_bios(&child,2,-1)==E_OK);
+    for (i=0; i<ARRAY_SIZE(bindings); i++) {
+        original[i]=*bindings[i];
+        /* Model existing aliases without opening or closing a file. */
+        bindings[i]->handle=i==2 ? NUMSTD+1 : NUMSTD;
+        bindings[i]->incarnation=i==2 ? 2 : 1;
+    }
+    sft[0].f_incarnation=1;
+#endif
+    parent->uft[0]=NUMSTD;
+    process->uft[1]=NUMSTD;
+    process->uft[2]=NUMSTD+1;
+    kproc_standard_file_invalidate(NUMSTD);
+    assert(parent->uft[0]<0 && process->uft[1]<0 && process->uft[2]==NUMSTD+1);
+#if CONF_WITH_PROCESS_FILES
+    for (i=0; i<ARRAY_SIZE(bindings); i++) *bindings[i]=original[i];
+    sft[0].f_incarnation=0;
+    parent->uft[0]=original[0].handle;
+    process->uft[1]=original[1].handle;
+    process->uft[2]=original[2].handle;
+#endif
+}
+
 int main(void)
 {
     PROCESS_OBSERVER *a=NULL,*b=NULL,*replacement=NULL;
@@ -109,12 +151,7 @@ int main(void)
     ULONG references;
     ULONG first_order;
     assert(kproc_create(&caller) && kproc_create(&child));
-    kproc_find(&caller)->uft[0]=NUMSTD;
-    kproc_find(&child)->uft[1]=NUMSTD;
-    kproc_find(&child)->uft[2]=NUMSTD+1;
-    kproc_standard_file_invalidate(NUMSTD);
-    assert(kproc_find(&caller)->uft[0]<0 && kproc_find(&child)->uft[1]<0 &&
-           kproc_find(&child)->uft[2]==NUMSTD+1);
+    check_standard_invalidation();
     p=kproc_retain(&child); assert(p);
     assert(process_observer_attach(p,&a)==0 && process_observer_attach(p,&b)==0);
     assert(process_observer_attach(p,&a)==EINVAL && p->references==4);
@@ -137,7 +174,7 @@ int main(void)
     assert(kproc_begin_exit(&child)); kproc_destroy(&child); during_retirement=NULL;
     assert(!kproc_ref_has_basepage(p) && p->retired && p->references==3);
     assert(post_unlink_checks>=3 && !p->destroying_pd);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     assert(child_finalizers==1);
     puts("Post-unlink prepared-child finalizer rejects real ixforce into retiring parent: PASS (host CPU model)");
 #endif

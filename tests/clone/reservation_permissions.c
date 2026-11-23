@@ -24,7 +24,7 @@ BOOL kaspace_mutation_busy(const KASPACE *space) { assert(space==(KASPACE *)1);r
 BOOL kaspace_mutation_reentrant(const KASPACE *space) { assert(space==(KASPACE *)1);return FALSE; }
 BOOL kaspace_mutation_begin(KASPACE *space) { assert(space==(KASPACE *)1);return TRUE; }
 void kaspace_mutation_end(KASPACE *space) { assert(space==(KASPACE *)1); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 BOOL ksched_wait_ready(BOOL (*ready)(void *),void *context)
 { (void)ready;(void)context;abort();return FALSE; }
 void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope) { (void)scope; }

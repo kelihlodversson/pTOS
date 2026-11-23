@@ -194,7 +194,7 @@ void kproc_exec_replacement_retire(KPROC_EXEC_REPLACEMENT **handle)
     kfree(replacement);
 }
 
-#if CONF_WITH_PEXEC200
+#if CONF_WITH_EXEC_REPLACE
 LONG proc_exec_replace(char *path, char *tail, char *env)
 {
     KPROC *source = kproc_retain(run);
@@ -324,7 +324,13 @@ LONG kproc_exec_replacement_probe(UWORD fail_after)
             panic("exec replacement: staging lost executing owner across yield");
         if (fail_after>=0x100 && fail_after<=0x102) {
             char environment[]="STAGE=970\0";
-            char *path=fail_after==0x100 ? "C:\\PIEPROBE.TOS" :
+            char *valid_program =
+#if CONF_WITH_ELF_LOADER
+                "C:\\PIEPROBE.TOS";
+#else
+                "C:\\EXEC200P.TOS";
+#endif
+            char *path=fail_after==0x100 ? valid_program :
                        fail_after==0x101 ? "C:\\NO970.TOS" : "C:\\LOADFAIL.TOS";
             error=proc_exec_replacement_stage(replacement,path,"",environment);
             if ((fail_after==0x100 && error==E_OK &&

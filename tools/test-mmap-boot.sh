@@ -177,16 +177,16 @@ if grep -q '^CONF_WITH_CUIS=y' .config; then
 fi
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
 if grep -q '^CONF_WITH_CUIS_RECEIPT_TEST=y' .config &&
-   grep -q '^CONF_WITH_PCLONE=y' .config && grep -q '^CONF_WITH_PTHJOIN=y' .config &&
+   grep -q '^CONF_WITH_MULTITHREADING=y' .config &&
    grep -q '^CONF_WITH_MMAP=y' .config; then
     grep -q 'x86-64 receipt publisher fault/recovery: PASS' "$log"
 fi
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi
-if [ "$expected" = PASS ] && grep -q '^CONF_WITH_NATIVE_SCHED=y' .config; then
+if [ "$expected" = PASS ] && grep -q '^CONF_WITH_MULTITHREADING=y' .config; then
     grep -q 'x86-64 executable clone: PASS' "$log"
     grep -q 'x86-64 active-group clone: PASS' "$log"
-    if grep -q '^CONF_WITH_PCLONE=y' .config; then
+    if grep -q '^CONF_WITH_MULTITHREADING=y' .config; then
         grep -q 'x86-64 public Pclone: PASS' "$log"
         grep -q 'x86-64 SAME_PROCESS threads: PASS' "$log"
     fi
@@ -261,11 +261,8 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 libaes/CUIS sessions: PASS' "$log"
     grep -q 'x86-64 CUIS sessions: PASS' "$log"
 fi
-# These probes need the managed/asynchronous continuations supplied by the
-# MMAP, public Pclone or libaes fixtures. A scheduler-enabled eager baseline
-# without any of those fixtures cannot emit their markers.
-if grep -q '^CONF_WITH_NATIVE_SCHED *= *y' obj/auto.conf &&
-   grep -Eq '^CONF_WITH_(MMAP|PCLONE|LIBAES) *= *y' obj/auto.conf; then
+# Runnable Pclone provides the managed/asynchronous continuations.
+if grep -q '^CONF_WITH_MULTITHREADING *= *y' obj/auto.conf; then
     grep -q 'native owner generation wake with false predicate: PASS' "$log"
     grep -q 'native IRQ wake/idle admission and blocked-owner resume: PASS' "$log"
     grep -q 'native scheduler durable controller/completion abandonment: PASS' "$log"
@@ -280,8 +277,7 @@ if sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'; then
     exit 1
 fi
 # The register-pattern IRQ probe executes in the public managed Pclone worker.
-if [ "$expected" = PASS ] && grep -q '^#define CONF_WITH_NATIVE_SCHED 1' obj/autoconf.h &&
-   grep -q '^#define CONF_WITH_PCLONE 1' obj/autoconf.h; then
+if [ "$expected" = PASS ] && grep -q '^#define CONF_WITH_MULTITHREADING 1' obj/autoconf.h; then
     grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$log" || {
         echo "Missing actual ring-3 interrupted-user capture evidence" >&2; exit 1;
     }

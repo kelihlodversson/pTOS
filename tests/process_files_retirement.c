@@ -1,6 +1,7 @@
 /* Actual KPROC registry/destroy plus canonical descriptor and FS owners.
  * Reuse only the existing hosted absent-MMU and disk/FAT/PFS providers. */
 #define main observer_fixture_main
+#define OBSERVER_WITH_CLOSE_FIXTURE
 #include "process_observer.c"
 #undef main
 #ifndef PROCESS_SEARCH_FIXTURE

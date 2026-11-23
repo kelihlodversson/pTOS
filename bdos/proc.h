@@ -27,7 +27,7 @@ long xexec(WORD, char *, char *, char *);
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 long xexec_selftest(WORD, char *, char *, char *);
 #endif
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
  * Kernel-owned empty output handle; acquired before scheduler publication.
@@ -143,7 +143,7 @@ void proc_launch_prepare(PD *p, void *super_sp);
 #define PROG_IMAGE_ALIGN 1UL
 #endif
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 LONG proc_shared_vm_exec(PD *staged,BOOL asynchronous);
 #endif
 #endif /* PROC_H */

@@ -1,7 +1,7 @@
 /* Production scheduler queries/hook guard; CPU switching and identities modeled. */
 #include "emutos.h"
-#undef CONF_WITH_PTERMGRP
-#define CONF_WITH_PTERMGRP 1
+#undef CONF_WITH_MULTITHREADING
+#define CONF_WITH_MULTITHREADING 1
 #include "cuis/scheduler_irq_model.h"
 #include "../bdos/native_sched.c"
 #include <assert.h>

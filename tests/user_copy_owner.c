@@ -32,7 +32,7 @@ BOOL aspace_copy_from_user(const ASPACE *as,void *destination,VADDR address,ULON
 }
 int kcprintf(const char *message,...) { (void)message;abort();return 0; }
 void xterm(UWORD status) { (void)status;abort(); }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Only CPU/continuation endpoints are modeled, never PROCESS/mapping owners. */
 static UQUAD scope_clock,scope_top,actor=1;
 UQUAD ksched_context_id(void) { return actor; }
@@ -54,6 +54,10 @@ BOOL ksched_wait_ready(BOOL (*ready)(void *),void *argument)
 { return ready(argument); }
 void proc_exec_owner_exit(KPROC *p) { (void)p; }
 void proc_dispose_process(KPROC *p) { (void)p;abort(); }
+/* This MMU fixture never opens a descriptor. */
+BOOL process_files_init(PROCESS_FILES *files,KPROC *owner,SBYTE *standard)
+{ (void)files; (void)owner; (void)standard; return TRUE; }
+void process_files_retire(PROCESS_FILES *files) { (void)files; }
 static unsigned executions_reaped;
 static void copy_execution_reap(void *resource)
 { CHECK(resource && !kowner_locked());executions_reaped++; }
@@ -94,7 +98,7 @@ int main(void)
     CHECK(kproc_copy_to_user_checked(address,&input,sizeof(input))==EIMBA);
     fail_copy=FALSE;
     CHECK(!process->user_copies && allocations-frees==baseline);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     CHECK(kproc_user_copy_begin(&copy,address,sizeof(input),TRUE)==E_OK);
     actor=2;
     CHECK(!kaspace_copy_valid(copy.lease) && !kproc_user_copy_write(&copy,&input));
@@ -137,7 +141,7 @@ int main(void)
         CHECK(backend.releases==released+1 && !aspace_translate(&backend,address,NULL,NULL));
         CHECK(!kaspace_mmap(space)->regions && !process->user_copies);
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     {
         int execution[3];
         UWORD status;

@@ -26,10 +26,10 @@ with tempfile.TemporaryDirectory(prefix="ptos-kproc-runtime-") as directory:
         import kconfiglib
         k = kconfiglib.Kconfig(warn_to_stderr=False)
         k.load_config(f"configs/{preset}_defconfig")
-        k.syms["CONF_WITH_NATIVE_SCHED"].set_value(2)
+        k.syms["CONF_WITH_MULTITHREADING"].set_value(2)
         if args.image_policy:
-            k.syms["CONF_WITH_IMAGE_POLICY"].set_value(2)
-            assert k.syms["CONF_WITH_IMAGE_POLICY"].str_value == "y"
+            k.syms["CONF_WITH_IMAGE_POLICY_TEST"].set_value(2)
+            assert k.syms["CONF_WITH_IMAGE_POLICY_TEST"].str_value == "y"
         if arch == "m68k":
             assert k.syms["CONF_WITH_SHARED_VM_PEXEC"].str_value == "y"
         else:
@@ -37,9 +37,9 @@ with tempfile.TemporaryDirectory(prefix="ptos-kproc-runtime-") as directory:
         k.syms["CONF_WITH_ELF_SHARED"].set_value(2)
         k.syms["CONF_WITH_PRIVATE_CLONE_TEST"].set_value(0)
         k.syms["CONF_WITH_MMAP"].set_value(2)
-        k.syms["CONF_WITH_PRIVATE_CLONE"].set_value(0)
+        k.syms["CONF_WITH_FORK"].set_value(0)
         assert k.syms["CONF_WITH_PRIVATE_CLONE"].str_value == "n"
-        for name in ["CONF_WITH_NATIVE_SCHED", "CONF_WITH_ELF_SHARED"]:
+        for name in ["CONF_WITH_MULTITHREADING", "CONF_WITH_ELF_SHARED"]:
             assert k.syms[name].str_value == "y", name
         k.write_config(str(work / "config"))
         subprocess.run([sys.executable, "tools/genconfig.py", "--kconfig", "Kconfig", "--config", str(work / "config"), "--header", str(work / "autoconf.h"), "--makefile", str(work / "auto.conf")], env={**os.environ, "CONFIG_": ""}, check=True)

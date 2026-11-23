@@ -3,12 +3,12 @@
 #include "bdosdefs.h"
 /* CUIS selects native scheduling in production. The broad hosted runner uses
  * a non-CUIS preset but includes this source explicitly. Match that dependency. */
-#undef CONF_WITH_NATIVE_SCHED
-#define CONF_WITH_NATIVE_SCHED 1
+#undef CONF_WITH_MULTITHREADING
+#define CONF_WITH_MULTITHREADING 1
 /* Exercise the production cleanup-to-checkpoint call, with scheduler/THREAD
  * termination mocked below so the host can inspect the post-cleanup state. */
-#undef CONF_WITH_PTERMGRP
-#define CONF_WITH_PTERMGRP 1
+#undef CONF_WITH_MULTITHREADING
+#define CONF_WITH_MULTITHREADING 1
 #include "../../aes/cuis_session.c"
 
 static MFORM displayed_pointer;

@@ -5,7 +5,7 @@
 #include "portab.h"
 #include "progimage.h"
 
-#if CONF_WITH_IMAGE_POLICY
+#if CONF_WITH_IMAGE_POLICY_TEST
 struct kproc;
 struct kthread;
 typedef struct {

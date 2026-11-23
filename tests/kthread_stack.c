@@ -2,8 +2,8 @@
 #include "emutos.h"
 /* Scheduler headers must resolve native address widths before any other
  * address header, including in files with a different include order. */
-#undef CONF_WITH_NATIVE_SCHED
-#define CONF_WITH_NATIVE_SCHED 1
+#undef CONF_WITH_MULTITHREADING
+#define CONF_WITH_MULTITHREADING 1
 #include "ksched.h"
 #include "procmem.h"
 typedef char native_address_width[(sizeof(VADDR) == 8 && sizeof(PADDR) == 8) ? 1 : -1];

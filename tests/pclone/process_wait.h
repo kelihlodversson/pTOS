@@ -107,7 +107,7 @@ static void test_process_wait_copy_oom(long *usage)
 }
 #endif
 
-#if defined(TEST_WITH_PTHJOIN) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_MULTITHREADING) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
 static void process_wait_contend(unsigned index)
 {
     process_wait_probe.result[index]=Pwaitpid(process_wait_probe.child,0,0);
@@ -260,7 +260,7 @@ static void test_process_wait(void)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST)
     test_process_wait_zombie_orphan();
 #endif
-#if defined(TEST_WITH_PTHJOIN) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#if defined(TEST_WITH_MULTITHREADING) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
     test_process_wait_contention();
 #endif
 }

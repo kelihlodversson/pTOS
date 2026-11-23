@@ -175,7 +175,7 @@ done:
     w->done=1;
     Pterm(w->error?87:0);
 }
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
 enum irq_restart_exit { ARMED_EXIT, ACKED_EXIT, SUSPENDED_CANCEL, ARMED_FAULT, ACKED_FAULT };
 static volatile int irq_restart_exit_mode,irq_restart_cancel_ready;
 static volatile int irq_restart_cancel_seen,irq_restart_cancel_user;
@@ -301,7 +301,7 @@ static int irq_restart_peers(int mode, int cycles, int refuse)
         for(i=0;i<2;i++) {
             if(!pid[i]) {good=0;continue;}
             if(mode==1) {
-#if defined(TEST_WITH_PTHJOIN)
+#if defined(TEST_WITH_MULTITHREADING)
                 long joined;
                 status=-99;
                 joined=join_tid(tid[i],&status);
@@ -339,14 +339,14 @@ static void irq_restart_driver(void *unused)
 #if defined(__arm__)
     if(!irq_restart_exclusive_ownership())good=0;
 #endif
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     if(!irq_restart_test_retirement())good=0;
 #endif
     Pterm(good && !ptest_failures()?0:87);
 }
 #endif
 
-#if defined(TEST_WITH_PTERMGRP) && !defined(TEST_M68K_ROM_WINDOW)
+#if defined(TEST_WITH_MULTITHREADING) && !defined(TEST_M68K_ROM_WINDOW)
 #define IRQ_ORPHAN_READY "IRQWAIT.ON"
 #define IRQ_ORPHAN_DONE "IRQDONE.OUT"
 
@@ -454,7 +454,7 @@ long pclone_run_irq_image(int role)
 #if defined(__mc68000__)
     if(Ssystem(S_GETCOOKIE,0x5f465055L,(long)&has_fpu)!=0)has_fpu=0;
 #endif
-#if defined(TEST_WITH_PTERMGRP) && !defined(TEST_M68K_ROM_WINDOW)
+#if defined(TEST_WITH_MULTITHREADING) && !defined(TEST_M68K_ROM_WINDOW)
     if(role=='O')return irq_restart_orphan_image();
 #endif
     for(i=0;i<2;i++) {
@@ -463,7 +463,7 @@ long pclone_run_irq_image(int role)
         runnable_stacks[i]=(void *)memory;
     }
     if(ok)ok=irq_restart_peers(role=='R'?0:1,1,role=='N');
-#if defined(TEST_M68K_ROM_WINDOW) && defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_M68K_ROM_WINDOW) && defined(TEST_WITH_MULTITHREADING)
     if(ok && role=='R')ok=irq_restart_test_retirement();
 #endif
     while(i)if(Mfree(runnable_stacks[--i]))ok=0;
@@ -517,7 +517,7 @@ static void test_irq_restart(void)
     struct ptos_clone_args args={0};
     long child,status;
     irq_restart_test_exact_child();
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     irq_restart_test_orphan();
 #endif
     /* In particular, legacy m68k PRG text is borrowed procmem, not private
@@ -543,7 +543,7 @@ static void test_irq_restart(void)
 #elif defined(__arm__)
     conws("native retained IRQ ARM Thumb refusal and exclusive monitor ownership: PASS\r\n");
 #endif
-#if defined(TEST_WITH_PTERMGRP)
+#if defined(TEST_WITH_MULTITHREADING)
     conws("native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS\r\n");
     conws("native retained IRQ armed and acknowledged user faults: PASS\r\n");
 #endif

@@ -13,10 +13,10 @@
 #include "procmem.h"
 #include "process.h"
 
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 PD *run; /* modeled CPU slot: this fixture does not link the dispatcher */
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static FS_ERROR_STATE fixture_error;
 FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
 #else
@@ -31,7 +31,7 @@ static UBYTE image_area[sizeof(PD)+16] __attribute__((aligned(16)));
 static char environment[128];
 static const void *owners[2];
 static char cleanup_owner;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static ULONG model_cleanup_depth;
 void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
 { CHECK(!scope->active);scope->active=TRUE;scope->depth=++model_cleanup_depth; }
@@ -371,7 +371,7 @@ int main(void)
             CHECK(references[0]==2 && references[1]==1 && dirtbl[3].use==1 && dirtbl[4].use==1);
         }
     }
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     CHECK(!model_cleanup_depth);
 #endif
     puts("Ordinary Pexec observer: prepared before publication, unchanged outputs, load/CWD/admission rollback: PASS");

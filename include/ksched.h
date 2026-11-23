@@ -1,7 +1,7 @@
 /* Generic cooperative native scheduling, independent of GUI policy. */
 #ifndef KSCHED_H
 #define KSCHED_H
-#if CONF_WITH_NATIVE_PREEMPT
+#if CONF_WITH_PREEMPTION
 /* Existing 200 Hz architecture timer only. Bounded CPU-local accounting;
  * IRQ acknowledgment and the authenticated USER-return handoff stay separate. */
 void ksched_preempt_tick(void);
@@ -32,7 +32,7 @@ BOOL ksched_async_allowed(void);
  * destroyed here; callers must never resume dispatch after shutting files down. */
 void ksched_shutdown_begin(void);
 PD *ksched_launch_controller(PD *pd); /* current task only, never a nested execution */
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* IRQ entry/owner publication only: no callback, allocation or dispatch.
  * The owner publishes durable readiness before ending its masked IRQ/owner
  * section. A registered wait retains the source; notification retains no
@@ -104,7 +104,7 @@ struct kproc;
  * Finish is called off the child syscall stack, before the common PROCESS
  * finalizer; task-stack reclamation remains root-only. */
 struct kthread *ksched_exit_thread(PD *pd);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Synchronous nested PROCESS execution on the calling THREAD's carrier
  * (doc/native-scheduler-plan.txt, "Nested continuation ownership").
  * prepare: fallible and private; constructs the nested PROCESS's address
@@ -127,7 +127,7 @@ BOOL ksched_test_nested_injected(UWORD stage);
 void ksched_test_nested_published(struct kproc *process);
 #endif
 #endif
-#if CONF_WITH_PTERMGRP
+#if CONF_WITH_MULTITHREADING
 /* Only terminates at an owned syscall continuation; nested children defer it. */
 void ksched_cancel_point(void);
 void ksched_enter_exit(PD *pd); /* suppress recursive delivery through termination hooks */
@@ -153,7 +153,7 @@ BOOL ksched_block(BOOL (*ready)(void *), void *argument);
 typedef enum { KSCHED_WAIT_UNMANAGED, KSCHED_WAIT_READY, KSCHED_WAIT_CANCELLED } KSCHED_WAIT_RESULT;
 BOOL ksched_cancellation_pending(void); /* query only; never exits or consumes events */
 KSCHED_WAIT_RESULT ksched_wait_cancelable(BOOL (*ready)(void *), void *argument);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 struct ksched_wait_observation;
 /* Owner exclusion must span observe/check/admit; retain source and argument
  * through return. A generation change is a wake hint even if a competing
@@ -204,7 +204,7 @@ struct kproc;
 void proc_dispose_process(struct kproc *process);
 #endif
 LONG ksched_yield(void);
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
 LONG ksched_join(ULONG tid, UQUAD status);
 #endif
 LONG ksched_wait(WORD pid, WORD options, UQUAD usage);

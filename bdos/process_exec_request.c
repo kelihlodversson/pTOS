@@ -7,7 +7,7 @@
 #include "string.h"
 #include "process_exec_internal.h"
 extern PD *run;
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 #define EXEC_PATH_MAX 1024UL
 #define EXEC_ENV_MAX 32766UL /* Existing loader envsize() counts in a WORD. */
 

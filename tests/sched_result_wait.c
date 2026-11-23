@@ -6,8 +6,8 @@
  * Do not depend on compiler deduplication of quote/system include paths. */
 #define SETJMP_H
 #include "emutos.h"
-#undef CONF_WITH_PTERMGRP
-#define CONF_WITH_PTERMGRP 1
+#undef CONF_WITH_MULTITHREADING
+#define CONF_WITH_MULTITHREADING 1
 #include "process.h"
 #define NATIVE_SCHED_BACKEND_H
 #define NATIVE_SCHED_CONTEXT X86_64_PROCESS_CONTEXT

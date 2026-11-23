@@ -6,10 +6,10 @@
 #include "string.h"
 #include "kproc.h"
 
-BOOL kproc_begin_file_cleanup(PD *pd) { (void)pd; return TRUE; }
-SBYTE get_default_handle(int index) { (void)index; return -1; }
+BOOL __attribute__((weak)) kproc_begin_file_cleanup(PD *pd) { (void)pd; return TRUE; }
+SBYTE __attribute__((weak)) get_default_handle(int index) { (void)index; return -1; }
 
-LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
+LONG __attribute__((weak)) fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
 {
     UWORD attempt;
     volatile BOOL returned;
@@ -25,5 +25,23 @@ LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
     out->disposition=returned ? FS_CLOSE_CONSUMED : dispose ? FS_CLOSE_TRANSFERRED : FS_CLOSE_RETAINED;
     return first;
 }
-void kproc_note_file_cleanup(PD *p,LONG error,BOOL transferred)
+void __attribute__((weak)) kproc_note_file_cleanup(PD *p,LONG error,BOOL transferred)
 { (void)p;(void)error;(void)transferred; }
+
+#if CONF_WITH_PROCESS_FILES
+#include "process_files.h"
+#include "gemerror.h"
+#include "biosext.h"
+
+/* These launcher fixtures supply legacy SFTs and no PROCESS file table. */
+BOOL process_files_managed(PD *pd) { (void)pd; return FALSE; }
+PROCESS_FILES *kproc_files(PD *pd) { (void)pd; return NULL; }
+LONG process_files_inherit(PD *child, PD *parent, UWORD policy)
+{
+    (void)child; (void)parent; (void)policy;
+    panic("unexpected managed descriptor inheritance in launcher fixture");
+    return EINVFN;
+}
+void process_files_retire(PROCESS_FILES *files)
+{ if (files) panic("unexpected managed descriptor retirement in launcher fixture"); }
+#endif

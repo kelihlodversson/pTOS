@@ -82,7 +82,7 @@ for user input.
 First native MMU program (#1039)
 --------------------------------
 Routing audited at epic/889-process-scheduling commit cb868b1f9. When
-CONF_WITH_NATIVE_SCHED is enabled, the boot controller can call ordinary
+CONF_WITH_MULTITHREADING is enabled, the boot controller can call ordinary
 Pexec(0) even with a parked root and existing independent tasks.
 bdos/proc.c routes the loaded image to ksched_exec(). The dispatcher
 prepares a PROCESS, initial THREAD, address space and execution stacks

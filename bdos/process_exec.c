@@ -7,7 +7,7 @@
 #include "proc.h"
 #include "process_exec_internal.h"
 
-#if CONF_WITH_USER_ASPACE && CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 struct process_exec_handle {
     struct process_exec_handle *next;
     ULONG number;

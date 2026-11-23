@@ -33,7 +33,7 @@
 #include "biosext.h"
 #include "procmem.h"
 #include "aspace32.h"
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #include "native_sched_backend.h"
 #include "arch/arm/irqframe.h"
@@ -56,7 +56,7 @@ extern long osif(long *pw);                     /* bdos/bdosmain.c */
 void gouser(void);
 void termuser(void) NORETURN;
 extern void arm_enter_user(ULONG entry, ULONG user_sp, ULONG basepage, ULONG kstack_top) NORETURN;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 extern void arm_enter_prepared_user(const THREAD_STARTUP32 *image, ULONG kstack_top) NORETURN;
 #endif
 
@@ -96,7 +96,7 @@ void arm_gemdos_dispatch(struct uframe *f)
 #if CONF_WITH_FORK_RETURN_TEST
         (pw[0] == 0x190 && !pw[1] && ((ULONG)pw[2] & 0xffff0000UL) == FORK_RETURN_PROBE) ||
 #endif
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
         pw[0] == GEMDOS_PFORK || pw[0] == GEMDOS_PVFORK ||
 #endif
         FALSE) {
@@ -125,7 +125,7 @@ void arm_gemdos_dispatch(struct uframe *f)
         if (f->usp<16 || f->usp>USER_VA_LIMIT) { f->r[0]=EINVFN; return; }
         saved.mappings.stack_base = ((f->usp + 15) & ~15UL) - 16;
         saved.mappings.stack_size = 16;
-#if CONF_WITH_PFORK
+#if CONF_WITH_FORK
         if (pw[0] != 0x190) {
             f->r[0] = proc_clone_fork(&saved, pw[0] == GEMDOS_PVFORK);
             return;
@@ -193,7 +193,7 @@ struct uspace_launch {
     volatile BOOL relaunch; /* Pexec(200): enter the committed image again */
 #endif
 };
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 static struct uspace_launch *get_uspace_launch(void) { return ksched_loaded_launcher(); }
 static void set_uspace_launch(struct uspace_launch *launch) { ksched_set_loaded_launcher(launch); }
 #else
@@ -201,7 +201,7 @@ static struct uspace_launch *legacy_launch;
 static struct uspace_launch *get_uspace_launch(void) { return legacy_launch; }
 static void set_uspace_launch(struct uspace_launch *launch) { legacy_launch=launch; }
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 /* Borrowed only during IRQ capture on this CPU. The launcher retains the
  * transferred syscall stack; no ownership is moved into the captured image. */
 BOOL arm_process_irq_stack(PD *pd, uintptr_t *base, uintptr_t *top)
@@ -309,7 +309,7 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         return FALSE;
 #if CONF_WITH_EXIT_HANDOFF_TEST
     if (!injected_exit_failure
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         && !ksched_exit_thread(pd)
 #endif
     ) {
@@ -319,7 +319,7 @@ BOOL proc_defer_exit(PD *pd, UWORD status, BOOL resident, ULONG resident_len)
         return FALSE;
     }
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     thread = ksched_exit_thread(pd);
 #endif
     if (!kproc_prepare_thread_exit_handoff(process, thread, &final)) {
@@ -344,7 +344,7 @@ void gouser(void)
     ULONG launcher_status;
     uintptr_t kstack_top;
     PADDR kstack_phys;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     THREAD_STARTUP_DRAFT *startup = ksched_thread_startup(p);
     const THREAD_STARTUP32 *prepared = startup ? thread_startup_image(startup) : NULL;
 #if CONF_WITH_EXEC_REPLACE
@@ -361,7 +361,7 @@ void gouser(void)
     /* Pexec(200): fresh stacks from the draft, ordinary entry from the record */
     if (program) prepared = NULL;
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     if (prepared) { entry = prepared->entry; user_sp = prepared->sp; }
 #endif
 
@@ -397,7 +397,7 @@ relaunch:
         /* the code of an ELF image was written through the data side (the loader reads the
          * file into the pages of the new space): publish it before the first fetch */
         aspace_hw_code_changed();
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (prepared) {
             thread_startup_entering(startup);
 #if CONF_WITH_SAVED_RETURN
@@ -463,7 +463,7 @@ relaunch:
     }
     if (launch.exit_process) {
         KPROC *process = launch.exit_process;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         ksched_finish_exit(process, launch.pd, launch.exit_status, launch.exit_final);
 #endif
         if (launch.exit_final)

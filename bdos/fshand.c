@@ -55,6 +55,9 @@ long ixforce(int std, int h, PD *p)
 
     if ((std < 0) || (std >= NUMSTD))   /* validate standard handle */
         return EIHNDL;
+#if CONF_WITH_USER_ASPACE
+    if (!kproc_file_references_allowed(p)) return EACCDN;
+#endif
 #if CONF_WITH_PROCESS_FILES
     if (process_files_managed(p)) {
         LONG result;
@@ -68,7 +71,6 @@ long ixforce(int std, int h, PD *p)
 #endif
 
 #if CONF_WITH_USER_ASPACE
-    if (!kproc_file_references_allowed(p)) return EACCDN;
     if (PD_UFT(p)[std]>=NUMSTD && fs_sft_busy(PD_UFT(p)[std]-NUMSTD))
         return EACCDN;
 #endif

@@ -557,7 +557,7 @@ kernel provenance. Public GEM messages remain libaes policy.
 
 Kernel-managed native task scheduling
 -------------------------------------
-CONF_WITH_CUIS selects the hidden CONF_WITH_NATIVE_SCHED option. Generic
+CONF_WITH_CUIS selects the hidden CONF_WITH_MULTITHREADING option. Generic
 process scheduling and MiNT process calls use that option, while GUI
 services retain CONF_WITH_CUIS guards. Initially Kconfig limits the native
 scheduler backend to x32 with separate address spaces. It reuses the
@@ -614,7 +614,7 @@ there is no kernel bootstrap transport or additional application API.
 
 Standard asynchronous process calls in managed groups
 ---------------------------------------------------
-With CONF_WITH_NATIVE_SCHED, managed x32 clients use ordinary MiNT GEMDOS calls:
+With CONF_WITH_MULTITHREADING, managed x32 clients use ordinary MiNT GEMDOS calls:
 
  Pexec(100, path, tail, env)  load and asynchronously launch; return child PID
  Pexec(106, name, bp, env)    asynchronously launch/free a caller-owned loaded
@@ -2945,7 +2945,7 @@ trailing incomplete console escape. Actual process teardown releases the lease,
 restores cursor policy, invalidates the active menu/background/windows and
 queues ordinary redraw work. Closing an AES session does not release it.
 
-BIOS console reads use the generic CONF_WITH_NATIVE_SCHED wait helper to let
+BIOS console reads use the generic CONF_WITH_MULTITHREADING wait helper to let
 other managed tasks run while input is unavailable. Legacy configurations keep
 their previous input loop. This does not add preemption or Pfork (#713).
 

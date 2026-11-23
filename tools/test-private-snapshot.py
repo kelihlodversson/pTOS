@@ -14,10 +14,10 @@ with tempfile.TemporaryDirectory(prefix='ptos-private-snapshot-') as directory:
     work = Path(directory)
     config = kconfiglib.Kconfig(warn_to_stderr=False)
     config.load_config('configs/pc-x86_64_defconfig')
-    for name in ('CONF_WITH_NATIVE_SCHED', 'CONF_WITH_ELF_SHARED', 'CONF_WITH_CUIS',
+    for name in ('CONF_WITH_ELF_SHARED', 'CONF_WITH_FORK', 'CONF_WITH_PREEMPTION',
                  'CONF_WITH_X32_VDI', 'CONF_WITH_USER_CALLBACKS'):
         config.syms[name].set_value(0)
-    config.syms['CONF_WITH_PRIVATE_CLONE'].set_value(2)
+    config.syms['CONF_WITH_PRIVATE_CLONE_TEST'].set_value(2)
     config.syms['CONF_WITH_MMAP'].set_value(2)
     assert config.syms['CONF_WITH_PRIVATE_CLONE'].str_value == 'y'
     assert config.syms['CONF_WITH_MMAP'].str_value == 'y'
@@ -30,5 +30,5 @@ with tempfile.TemporaryDirectory(prefix='ptos-private-snapshot-') as directory:
         '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections',
         '-iquote', 'include', '-I' + str(work), '-Iinclude/arch/x86_64',
         '-idirafter', 'include', '-iquote', 'bdos', '-iquote', 'fs',
-        'tests/private_snapshot.c', '-Wl,--gc-sections', '-o', str(work / 'snapshot')], check=True)
+        'tests/private_snapshot.c', 'bdos/kowner.c', 'tests/kowner_model.c', '-Wl,--gc-sections', '-o', str(work / 'snapshot')], check=True)
     subprocess.run([str(work / 'snapshot')], check=True)

@@ -4,7 +4,7 @@ Native managed clone execution on MMU kernels (#892 / #713 / #893)
 One dispatcher, three CPU backends
 ----------------------------------
 
-CONF_WITH_NATIVE_SCHED is selectable on USER_ASPACE kernels independently of
+CONF_WITH_MULTITHREADING is selectable on USER_ASPACE kernels independently of
 CUIS/libaes. bdos/native_sched.c is the existing persistent global cooperative dispatcher,
 not a new scheduler. KTHREAD_CONTEXT and scheduler-stack helpers now live in
 bdos/. Queue states, root-only reap, observer lifetime, PROCESS anchors, child
@@ -74,7 +74,7 @@ managed worker with the standard async Pexec path, preserving this boundary.
 Native regression evidence and limits
 --------------------------------------
 
-The CI ARM/m68k user-ASPACE jobs select PCLONE and NATIVE_SCHED without CUIS or
+The CI ARM/m68k user-ASPACE jobs use CONF_WITH_MULTITHREADING without CUIS or
 libaes. The runner requires the managed clone worker verdict as well as the
 full regression verdict. The worker uses actual SVC #1 / packed trap #1 calls:
 NEW_PROCESS and SAME_PROCESS, shared PID versus distinct PID/TID, independent

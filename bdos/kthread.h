@@ -35,7 +35,7 @@ BOOL kthread_set_execution(KTHREAD *thread, void *resource, void (*reclaim)(void
  * separate from this execution lifetime. A started thread cannot be destroyed
  * until its backend stops its continuation. */
 BOOL kthread_start(KTHREAD *thread);
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 BOOL kthread_clone_run_ready(const KTHREAD *thread);
 /* Only the validated clone publication transaction may call this. */
 void kthread_clone_commit(KTHREAD *thread, void *resource, void (*reclaim)(void *));
@@ -79,7 +79,7 @@ ULONG kthread_tid(const KTHREAD *thread);
 struct kproc *kthread_process(const KTHREAD *thread); /* borrowed */
 struct kaspace *kthread_aspace(const KTHREAD *thread); /* borrowed */
 
-#if CONF_WITH_PTHJOIN
+#if CONF_WITH_MULTITHREADING
 /* One claim per TID; cancellation preserves the target for another joiner.
  * Caller owns an execution reference. Ready means backend/root reap finished.
  * A live caller/process retains resources; these records retain no heavy state. */
