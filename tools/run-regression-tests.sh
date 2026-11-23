@@ -1017,11 +1017,14 @@ fi
 
 if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define ARCH_M68K 1' "$top/obj/autoconf.h"; then
-    for formats in 'PRG to PRG' 'PRG to ELF' 'ELF to ELF' 'ELF to PRG'; do
-        if [ "$formats" != 'PRG to PRG' ] &&
-           ! grep -q '^#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h"; then
-            continue
-        fi
+    if grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config"; then
+        set -- 'ELF to ELF'
+    elif grep -q '^#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h"; then
+        set -- 'PRG to PRG' 'PRG to ELF' 'ELF to ELF' 'ELF to PRG'
+    else
+        set -- 'PRG to PRG'
+    fi
+    for formats do
         if ! grep -aqF "native Pexec(200) $formats: PASS" "$suite_log"; then
             record "native Pexec(200) $formats" FAIL "missing native replacement and startup ABI evidence"
         fi

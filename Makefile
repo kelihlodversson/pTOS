@@ -2116,7 +2116,8 @@ TOCLEAN += EXECHAND.TOS
 
 # EXEC200.TOS replaces itself with EXEC200B.TOS through public Pexec(200)
 # (tests/pclone/exec200_*.c). The subject links like every other test
-# program (a classic PRG on m68k). The m68k fixture also links a PRG target.
+# program (PRG with the MiNT-capable m68k toolchains). Those builds also
+# link a PRG replacement target.
 ifeq ($(CONF_WITH_EXEC_REPLACEMENT_TEST),y)
 TEST_EXEC200_FILES = EXEC200.TOS EXEC200B.TOS
 TEST_EXEC200_IRQ = $(if $(CONF_WITH_IRQ_RESTART_TEST),obj/clone_irq_registers.o)
@@ -2128,11 +2129,13 @@ obj/exec200_image.o: tests/pclone/exec200_image.c tests/pclone/exec200_probe.h t
 EXEC200.TOS: $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_native.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 ifdef ARCH_M68K
+ifndef BUILD_TOOLCHAIN_ELF
 TEST_EXEC200_FILES += EXEC200P.TOS
 EXEC200P.TOS: $(TEST_STARTUP) obj/exec200_prg.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/exec200_prg.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 obj/exec200_prg.o: tests/pclone/exec200_image.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) -DEXEC200_PRG -DEXEC200_IMAGE_NAME='"EXEC200P.TOS"' $(DEPFLAGS) -c $< -o $@
+endif
 ifdef CONF_WITH_ELF_LOADER
 TEST_EXEC200_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
 EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)

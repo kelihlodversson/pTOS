@@ -1,10 +1,10 @@
-/* The ELF replacement image of the Pexec(200) acceptance test (#970). It runs
+/* The ELF or PRG replacement image of the Pexec(200) acceptance test (#970). It runs
  * in the subject's PROCESS (exec200_check.h lists what it verifies).
  * Generation 1 replaces itself once more: after the runner has observed the
  * commit when the subject is an anchor (a nested subject's runner is blocked
  * in its Pexec(0)), and leaving a directory search open. Generation 2 checks
- * that search did not survive and replaces itself with EXEC200.TOS, a
- * classic PRG on m68k, which completes the PROCESS. */
+ * that search did not survive and replaces itself with EXEC200.TOS, which
+ * completes the PROCESS. */
 #include "exec200_check.h"
 #include <mint/mintbind.h>
 #if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
@@ -40,10 +40,12 @@ int main(void)
     long result;
     exec200_verify("image", &t);
 #ifdef __mc68000__
-#ifdef EXEC200_PRG
+#if defined(TEST_IS_PRG) && defined(EXEC200_PRG)
     if (t.generation == 1) (void)Cconws("native Pexec(200) PRG to PRG: PASS\r\n");
 #else
+#ifdef TEST_IS_PRG
     if (t.generation == 1) (void)Cconws("native Pexec(200) PRG to ELF: PASS\r\n");
+#endif
     if (t.generation == 2) (void)Cconws("native Pexec(200) ELF to ELF: PASS\r\n");
 #endif
 #endif

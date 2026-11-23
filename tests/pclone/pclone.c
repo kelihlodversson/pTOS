@@ -2466,7 +2466,7 @@ void test_pclone(void)
             ptest_assert_msg(Fdelete("GO970.TMP") == 0 && Fdelete("EXEC200.TMP") == 0,
                              "Pexec(200) test files");
         }
-#if defined(__mc68000__) && defined(TEST_WITH_ELF_LOADER)
+#if defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
         ptest_log_flush();
         ptest_assert_msg(Pexec(0,"EXEC200.TOS","\001P",0) == 70,
                          "dual-loader PRG-to-PRG replacement chain completes");

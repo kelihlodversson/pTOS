@@ -46,7 +46,8 @@ static __attribute__((unused)) void exec200_verify(const char *who, EXEC200_TAIL
     unsigned long low = (unsigned long)_base->p_lowtpa;
     unsigned long high = (unsigned long)_base->p_hitpa;
     unsigned long text = (unsigned long)_base->p_tbase;
-#ifdef EXEC200_PRG
+    /* EXEC200B is linked as ELF even when the default tests are PRGs. */
+#if defined(TEST_IS_PRG) && defined(EXEC200_PRG)
     if (low != (unsigned long)_base || text != low + 256 || stack < text || stack >= high)
         exec200_fail(who, "classic PRG TPA/text/stack", (long)stack);
 #else
