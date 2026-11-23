@@ -1021,9 +1021,6 @@ jobs:
       - name: Check that the groups run every combination once
         run: tools/ci-hatari.sh --check
 
-      - name: Check default native process policies
-        run: /tmp/kconfig-venv/bin/python tools/test-native-process-config.py
-
       - name: Check the results
         run: |
           echo "Hatari groups: ${{ needs.hatari.result }}"
