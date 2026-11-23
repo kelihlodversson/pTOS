@@ -156,16 +156,15 @@ timeout "$boot_timeout" "$@" -machine pc -m 256 \
     -serial file:"$log" -display none > "$log.qemu" 2>&1
 rc=$?
 set -e
+capture_rc=0
 if [ -n "$capture" ]; then
-    if ! wait "$capture"; then
-        cat "$log.capture"
-        exit 1
-    fi
+    wait "$capture" || capture_rc=$?
     cat "$log.capture"
     capture=
 fi
 cat "$log.qemu"
 if [ -f "$log" ]; then cat "$log"; fi
+[ "$capture_rc" -eq 0 ] || exit "$capture_rc"
 [ "$rc" -eq 124 ] || { echo "QEMU exited unexpectedly: $rc"; exit 1; }
 [ "$(grep -c 'EFI entry reached' "$log" || true)" -eq 1 ]
 if grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"; then

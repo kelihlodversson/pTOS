@@ -2,6 +2,7 @@
 """Drive opt-in GEM forms and popups through QEMU keyboard/mouse devices."""
 import json
 from pathlib import Path
+import re
 import socket
 import sys
 import time
@@ -51,13 +52,28 @@ def mouse_event(events):
     command("input-send-event", {"events": events})
 
 
+def control_step(dx, dy):
+    x, y = max(-127, min(127, dx)), max(-127, min(127, dy))
+    mouse_event([{"type": "rel", "data": {"axis": "x", "value": x}},
+                 {"type": "rel", "data": {"axis": "y", "value": y}}])
+    return x, y
+
+
 def control_move(dx, dy):
     while dx or dy:
-        x, y = max(-127, min(127, dx)), max(-127, min(127, dy))
-        mouse_event([{"type": "rel", "data": {"axis": "x", "value": x}},
-                     {"type": "rel", "data": {"axis": "y", "value": y}}])
+        x, y = control_step(dx, dy)
         dx, dy = dx-x, dy-y
         time.sleep(0.03)
+
+
+def graphics_pointer(offset):
+    pattern = re.compile(rb"x32 GEM graphics pointer: (\d+) (\d+)\r?\n")
+    while time.monotonic() < deadline:
+        match = pattern.search(Path(serial).read_bytes(), offset)
+        if match:
+            return int(match[1]), int(match[2]), match.end()
+        time.sleep(0.03)
+    raise SystemExit("Missing guest PS/2 pointer position")
 
 
 def button(down):
@@ -67,9 +83,12 @@ def button(down):
 
 command("qmp_capabilities")
 marker("x32 GEM graphics: READY")
-for _ in range(16):
-    control_move(-127, -127)
-control_move(300, 250)
+# QMP acknowledges injection before GEM observes the relative PS/2 motion.
+# Send one bounded step at a time and use the guest's sampled position.
+x, y, offset = graphics_pointer(0)
+while (x, y) != (300, 250):
+    control_step(300-x, 250-y)
+    x, y, offset = graphics_pointer(offset)
 marker("x32 GEM graphics setup/cursors: PASS")
 for stage in range(4):
     marker("x32 GEM graphics tracking %d: READY" % stage)
