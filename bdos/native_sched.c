@@ -380,27 +380,43 @@ void ksched_preempt_probe_return(UWORD pattern)
 #endif
 #if CONF_WITH_CUIS_WAIT_TEST
 static BOOL always_ready(void *argument);
-LONG ksched_test_wait_admission(ULONG tid)
+LONG ksched_test_wait_admission(ULONG tid, BOOL raw)
 {
     KTHREAD *caller=ksched_exit_thread(run);
+    KPROC *actor, *target=NULL;
+    PD *program=NULL;
     KERNEL_TASK *task;
     LONG result=ESRCH;
+    KOWNER_GUARD process_guard;
     RUNQUEUE_GUARD guard;
 
     if (!caller) return ESRCH;
     if (!tid) return kthread_tid(caller);
 
+    actor=kthread_process(caller);
+    kowner_enter(&process_guard,KOWNER_PROCESS);
     runqueue_enter(&guard);
     for (task=scheduler.tasks; task; task=task->next_task) {
-        if (task->process!=kthread_process(caller) || task->nested ||
-            !task->thread || kthread_tid(task->thread)!=tid) continue;
+        if (task->nested || !task->thread || kthread_tid(task->thread)!=tid ||
+            (!raw && task->process!=actor)) continue;
         /* Syield parks on an always-ready predicate. It does not admit
-         * the input operation that the observer is waiting for. */
-        result=task->state==TASK_BLOCKED && task->cancel_boundary &&
+         * the operation that the observer is waiting for. */
+        result=task->state==TASK_BLOCKED && task->cancel_boundary!=raw &&
             task->ready && task->ready!=always_ready;
+        target=task->process;
+        program=task->program;
         break;
     }
     runqueue_leave(&guard);
+    if (raw && target) {
+        /* The independent reader may inspect its exact child while the
+         * writer is blocked. Check PROCESS ownership outside the queue leaf. */
+        if (target!=actor && (!program || kproc_notification_parent(program)!=run))
+            result=ESRCH;
+        else if (result==1 && kproc_group_status(target,NULL))
+            result=2;
+    }
+    kowner_leave(&process_guard);
     return result;
 }
 #endif
