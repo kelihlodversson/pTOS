@@ -37,12 +37,14 @@ static long pclone_trap(const void *args, unsigned long size)
 #endif
 }
 static volatile long image_policy_digest,image_policy_pid,image_policy_tid,image_policy_error;
+static volatile int image_policy_release;
 static void image_policy_entry(void *argument)
 {
     (void)argument;
     image_policy_pid=Pgetpid();image_policy_tid=pclone_trap(0,0xc8920103UL);
     if (pclone_trap(0,IMAGE_POLICY_QUERY_DIGEST)!=image_policy_digest || pclone_trap(0,IMAGE_POLICY_QUERY_INSTALLED)!=1)
         image_policy_error=1;
+    while (!image_policy_release) (void)Syield();
     (void)Pterm(71);
 }
 static int image_policy_snapshot(MAPPING_LIFETIME_SNAPSHOT *snapshot)
@@ -84,12 +86,14 @@ static void test_image_policy(void)
             if(!image_policy_snapshot(&after) || !image_policy_same(&before,&after) ||
                image_policy_pid || image_policy_tid || image_policy_error) ok=0;
         }
+        image_policy_release=0;
         tid=pclone_trap(&args,IMAGE_POLICY_CLONE|sizeof(args));
-        if(tid<=0) {ok=0;break;}
+        if(tid<=0) {image_policy_release=1;ok=0;break;}
         if(!image_policy_snapshot(&during) || during.value[MLT_PROCESSES]!=before.value[MLT_PROCESSES]+1 ||
             during.value[MLT_THREADS]!=before.value[MLT_THREADS]+1 || during.value[MLT_ROOTS]!=before.value[MLT_ROOTS] ||
             during.value[MLT_SPACE_REFS]<=before.value[MLT_SPACE_REFS] ||
             during.value[MLT_PROCESS_REFS]<=before.value[MLT_PROCESS_REFS]) ok=0;
+        image_policy_release=1;
         result=Pwaitpid(-1,0,0);
         if ((result>>16)!=image_policy_pid || (result&65535)!=71 || image_policy_pid==parent ||
             image_policy_tid!=tid || image_policy_error) ok=0;
