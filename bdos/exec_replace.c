@@ -265,6 +265,18 @@ LONG kproc_exec_replace_test(VADDR address, ULONG tag)
         copied = kproc_copy_to_user_resident(address, &state, sizeof(state));
         return copied ? E_OK : EIMBA;
     }
+    if (tag == EXEC_REPLACE_PEEK) {
+        KPROC *child;
+        PD *pd;
+        LONG result=EINVAL;
+        if (!address || address>32767UL) return EINVAL;
+        child=kproc_test_retain_pid((WORD)address);
+        pd=kproc_live_pd(child);
+        if (pd && kproc_notification_parent(pd)==run && !kproc_ref_terminal(child))
+            result=(LONG)(kproc_ref_exec_generation(child)&0xff);
+        kproc_release(child);
+        return result;
+    }
     if (tag >= EXEC_REPLACE_WAIT && tag <= EXEC_REPLACE_WAIT + 0xff) {
         KPROC *child = kproc_test_retain_pid((WORD)address);
         UQUAD generation;

@@ -13,11 +13,14 @@ typedef struct {
  * ARM + (kind << 8) + stage arms one injected failure for the next
  * Pexec(200): kind 1 image bundle (1..8), 2 commit (1..10), 3 receipt (1..4);
  * ARM alone disarms all. QUERY fills EXEC_REPLACE_TEST_STATE for the caller.
+ * PEEK takes a direct child PID and reads the low byte of the live
+ * child's generation without waiting or dispatching.
  * WAIT + baseline, with the child PID as the address, blocks until that
  * PROCESS's committed-exec generation differs from baseline or it is
  * terminal; returns generation | terminal << 8 | ready evaluations << 16. */
 #define EXEC_REPLACE_ARM   0xc9700400UL
 #define EXEC_REPLACE_QUERY 0xc9700800UL
+#define EXEC_REPLACE_PEEK  0xc9700801UL
 #define EXEC_REPLACE_WAIT  0xc9700900UL
 typedef struct {
     uint32_t process[2], root[2], generation[2];

@@ -6,7 +6,74 @@
  * that search did not survive and replaces itself with EXEC200.TOS, which
  * completes the PROCESS. */
 #include "exec200_check.h"
+#include "exec200_vfork.h"
 #include <mint/mintbind.h>
+#if defined(__mc68000__) && defined(TEST_WITH_SHARED_VM_PEXEC) && !defined(EXEC200_PRG)
+#include "../shared_vm/loaded_prg.h"
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+#include "../../include/mapping_lifetime_test.h"
+#endif
+
+/* An ELF process stages the same position-independent code as the PRG
+ * loader fixture. Modes 4/104 borrow the TPA; 6/106 transfer ownership. */
+static void exec200_elf_legacy(void)
+{
+    static const short stages[]={5,7}, modes[]={4,6,104,106};
+    const char *who="legacy ELF caller";
+    unsigned i,j;
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+    MAPPING_LIFETIME_SNAPSHOT before={ {0} },after={ {0} };
+#endif
+
+    exec200_verify_startup(who);
+    for (i=0;i<sizeof(stages)/sizeof(stages[0]);i++) {
+        for (j=0;j<sizeof(modes)/sizeof(modes[0]);j++) {
+            short mode=modes[j];
+            int transfer=mode==6 || mode==106;
+            BASEPAGE *bp;
+            char *env;
+            long result, status, free_bp, free_env;
+
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+            if (exec200_probe(&before,MLT_SNAPSHOT)) exec200_fail(who,"snapshot before staging",mode);
+#endif
+            bp=(BASEPAGE *)Pexec(stages[i],0,"","LEGACY=ELF\0");
+            if ((long)bp<=0) exec200_fail(who,"stage basepage",stages[i]);
+            env=bp->p_env;
+            if (!loaded_prg_stage(bp)) exec200_fail(who,"stage TPA cannot hold probe",stages[i]);
+            result=Pexec(mode,0,bp,0);
+            status=result;
+            if (mode>=100) {
+                if (result<=0 || result==Pgetpid())
+                    exec200_fail(who,"async launch PID",result);
+                status=Pwaitpid(result,0,0);
+                if ((status>>16)!=result || Pwaitpid(result,1,0)!=-33L)
+                    exec200_fail(who,"exactly one async child completion",status);
+                status&=65535;
+            }
+            if (status!=0x2b) {
+                printf("ELF staged modes %d/%d\r\n",stages[i],mode);
+                exec200_fail(who,"classic PRG entry",status);
+            }
+            if (!transfer && !loaded_prg_shared_witness(bp))
+                exec200_fail(who,"shared-VM entry witness in caller's TPA",mode);
+            free_bp=Mfree(bp);free_env=Mfree(env);
+            if (free_bp!=(transfer?-36L:0) || free_env!=(transfer?-36L:0)) {
+                printf("ELF staged modes %d/%d: Mfree TPA=%ld env=%ld\r\n",
+                       stages[i],mode,free_bp,free_env);
+                exec200_fail(who,"TPA and environment ownership",mode);
+            }
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST)
+            if (exec200_probe(&after,MLT_SNAPSHOT) ||
+                before.value[MLT_ALLOCS]!=after.value[MLT_ALLOCS] ||
+                before.value[MLT_FREE_PAGES]!=after.value[MLT_FREE_PAGES] ||
+                before.value[MLT_BAD_FREES]!=after.value[MLT_BAD_FREES])
+                exec200_fail(who,"staged allocations retire before caller exit",mode);
+#endif
+        }
+    }
+}
+#endif
 #if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
 #include "exec200_irq.h"
 
@@ -38,7 +105,31 @@ int main(void)
 {
     EXEC200_TAIL t;
     long result;
+#if defined(__mc68000__) && defined(TEST_WITH_SHARED_VM_PEXEC) && !defined(EXEC200_PRG)
+    if (_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='L') {
+        exec200_elf_legacy();
+        return 0;
+    }
+#endif
+#if defined(EXEC200_VFORK_CASE) && !defined(EXEC200_PRG)
+    if (_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='V') {
+        exec200_vfork_source("EXEC200P.TOS");
+        return 0;
+    }
+#endif
     exec200_verify("image", &t);
+#ifdef EXEC200_VFORK_CASE
+    if (t.nested==EXEC200_VFORK_CASE) {
+        unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);
+        if (t.generation!=1) exec200_fail("Pvfork image","first committed generation",t.generation);
+        while (Fsfirst(EXEC200_VFORK_GATE,0)) {
+            if ((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start>=2000UL)
+                exec200_fail("Pvfork image","parent did not resume at commit",0);
+            (void)Syield();
+        }
+        Pterm(76);
+    }
+#endif
 #ifdef __mc68000__
 #if defined(TEST_IS_PRG) && defined(EXEC200_PRG)
     if (t.generation == 1) (void)Cconws("native Pexec(200) PRG to PRG: PASS\r\n");
