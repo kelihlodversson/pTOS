@@ -168,8 +168,10 @@ struct mem_info {
  * ownership transfer, completion consumption or wait/reap authority. */
 #define S_PROCIDENT     ((WORD)0xfff8)
 
-/* Unpublished/test-gated PROCESS_EXEC_REQUEST transport. Native arg1 pointer,
- * native arg2 size exactly72; S_INQUIRE deliberately never advertises it. */
+/* PROCESS launch and observation through PROCESS_EXEC_REQUEST. arg1 is a
+ * native pointer and arg2 must equal 72 bytes. S_INQUIRE advertises the
+ * service with CONF_WITH_PROCESS_EXEC. CONF_WITH_PROCESS_EXEC_DISPATCH
+ * also enables calls in test builds with discovery suppressed. */
 #define S_PROCEXEC      ((WORD)0xfff7)
 
 /* items of S_DESKSET */
