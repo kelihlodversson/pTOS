@@ -911,7 +911,10 @@ static void shared_vm_loaded_prg(void)
             ptest_assert_msg(result==0x2b,loaded_prg_failure(modes[i],result,
                 modes[i]==6?0:*(long *)((char *)bp+0x100+0x64)));
         }
-        if(modes[i]!=6) ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"loaded PRG: caller still owns basepage and environment");
+        if(modes[i]!=6) {
+            ptest_assert_msg(loaded_prg_shared_witness(bp),"loaded PRG: original caller sees the child's PRG entry witness");
+            ptest_assert_msg(Mfree(bp)==0 && Mfree(env)==0,"loaded PRG: caller still owns basepage and environment");
+        }
     }
     conws("native shared-VM loaded mode-5/7 PRG via 4/104/6: tested\r\n");
 }

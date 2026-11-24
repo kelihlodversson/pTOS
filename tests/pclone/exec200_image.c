@@ -55,6 +55,8 @@ static void exec200_elf_legacy(void)
                 printf("ELF staged modes %d/%d\r\n",stages[i],mode);
                 exec200_fail(who,"classic PRG entry",status);
             }
+            if (!transfer && !loaded_prg_shared_witness(bp))
+                exec200_fail(who,"shared-VM entry witness in caller's TPA",mode);
             free_bp=Mfree(bp);free_env=Mfree(env);
             if (free_bp!=(transfer?-36L:0) || free_env!=(transfer?-36L:0)) {
                 printf("ELF staged modes %d/%d: Mfree TPA=%ld env=%ld\r\n",

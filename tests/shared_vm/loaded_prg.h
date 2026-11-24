@@ -51,4 +51,11 @@ static int loaded_prg_stage(BASEPAGE *bp)
     *(long *)(text+0x64)=0;
     return 1;
 }
+
+static int loaded_prg_shared_witness(const BASEPAGE *bp)
+{
+    const char *text=(const char *)bp+256;
+    return *(const long *)(text+0x60)==(long)bp &&
+           *(const long *)(text+0x64)==(long)bp->p_hitpa-0x28;
+}
 #endif
