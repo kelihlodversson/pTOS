@@ -3,10 +3,16 @@ PROCESS launch request transport (#907 / #931)
 
 Discovery and activation
 ------------------------
-Ssystem(S_INQUIRE, S_PROCEXEC) advertises PROCESS launch and observation on
-MULTITHREADING and SSYSTEM kernels. S_PROCEXEC is signed -9.
-CONF_WITH_PROCESS_EXEC_TEST keeps dispatch callable and suppresses discovery
-for validation. Unsupported kernels return EINVFN for both operations.
+S_PROCEXEC is signed -9 (0xfff7). Ssystem(S_INQUIRE, S_PROCEXEC) returns E_OK
+when CONF_WITH_PROCESS_EXEC is enabled. The production gate requires
+CONF_WITH_USER_ASPACE, CONF_WITH_MULTITHREADING and CONF_WITH_SSYSTEM.
+PROCESS launch and observation require no GUI registration.
+
+CONF_WITH_PROCESS_EXEC_DISPATCH enables Ssystem(S_PROCEXEC, request, 72).
+Either CONF_WITH_PROCESS_EXEC or CONF_WITH_PROCESS_EXEC_TEST enables
+dispatch. When only the test gate is enabled, dispatch is available and
+S_INQUIRE returns EINVFN. Builds with neither gate return EINVFN for both
+discovery and dispatch.
 
 PROCESS_EXEC_DEFER is operation 5. It accepts path, tail, environment and
 directory using the PREPARE argument layout. Policy, handle and reserved
