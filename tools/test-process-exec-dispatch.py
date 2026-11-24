@@ -35,8 +35,11 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
     cc=shlex.split(os.environ.get('HOSTCC','cc'))
-    subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
+    flags=['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
         '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
-        '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
-        'tests/process_exec_dispatch.c','-Wl,--gc-sections','-o',str(work/'observer')],check=True)
-    subprocess.run([str(work/'observer')],check=True)
+        '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs']
+    for name in ('process_exec_dispatch','pexecve_args'):
+        executable=work/name
+        subprocess.run(cc+flags+[f'tests/{name}.c','bdos/launch_args.c',
+                        '-Wl,--gc-sections','-o',str(executable)],check=True)
+        subprocess.run([str(executable)],check=True)

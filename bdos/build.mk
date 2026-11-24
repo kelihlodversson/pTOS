@@ -27,7 +27,7 @@ endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
 obj-$(CONF_WITH_MULTITHREADING) += clone.o clone_args.o
 obj-$(CONF_WITH_FORK_CORE) += fork_parent.o
-obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o proc_clone.o process_observer.o thread_startup.o
+obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o launch_args.o proc_clone.o process_observer.o thread_startup.o
 obj-$(CONF_WITH_PROCESS_FILES) += process_files.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
