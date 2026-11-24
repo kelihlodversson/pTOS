@@ -623,7 +623,8 @@ void set_owner(void *addr, PD *p)
 
 #if CONF_WITH_PROCMEM
     if (procmem_contains(addr)) {
-        procmem_set_owner(addr, p);
+        if (!procmem_set_owner(addr, p) && procmem_size(addr))
+            panic("allocation ownership change without preflight");
         return;
     }
 #endif

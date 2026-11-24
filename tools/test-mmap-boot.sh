@@ -156,25 +156,40 @@ timeout "$boot_timeout" "$@" -machine pc -m 256 \
     -serial file:"$log" -display none > "$log.qemu" 2>&1
 rc=$?
 set -e
+capture_rc=0
 if [ -n "$capture" ]; then
-    if ! wait "$capture"; then
-        cat "$log.capture"
-        exit 1
-    fi
+    wait "$capture" || capture_rc=$?
     cat "$log.capture"
     capture=
 fi
 cat "$log.qemu"
 if [ -f "$log" ]; then cat "$log"; fi
+[ "$capture_rc" -eq 0 ] || exit "$capture_rc"
 [ "$rc" -eq 124 ] || { echo "QEMU exited unexpectedly: $rc"; exit 1; }
 [ "$(grep -c 'EFI entry reached' "$log" || true)" -eq 1 ]
 if grep -qE 'panic:|memtest: FAIL|mmap syscalls: FAIL' "$log"; then
     echo 'Boot log contains a panic or failed test' >&2
     exit 1
 fi
+if grep -q '^CONF_WITH_CUIS=y' .config; then
+    grep -q 'x86-64 CUIS input history: PASS' "$log"
+fi
 grep -q 'x86-64 unlinked file backing: PASS' "$log"
+if grep -q '^CONF_WITH_CUIS_RECEIPT_TEST=y' .config &&
+   grep -q '^CONF_WITH_MULTITHREADING=y' .config &&
+   grep -q '^CONF_WITH_MMAP=y' .config; then
+    grep -q 'x86-64 receipt publisher fault/recovery: PASS' "$log"
+fi
 grep -q "x86-64 mmap syscalls: $expected" "$log"
 if [ "$expected" = PASS ]; then grep -q 'x86-64 file mappings/COW: PASS' "$log"; fi
+if [ "$expected" = PASS ] && grep -q '^CONF_WITH_MULTITHREADING=y' .config; then
+    grep -q 'x86-64 executable clone: PASS' "$log"
+    grep -q 'x86-64 active-group clone: PASS' "$log"
+    if grep -q '^CONF_WITH_MULTITHREADING=y' .config; then
+        grep -q 'x86-64 public Pclone: PASS' "$log"
+        grep -q 'x86-64 SAME_PROCESS threads: PASS' "$log"
+    fi
+fi
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     grep -q 'x86-64 ldso relocations: PASS' "$log"
     [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]
@@ -231,6 +246,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM update/regions: PASS' "$log"
     grep -q 'x32 GEM window lifecycle: PASS' "$log"
     grep -q 'x32 GEM combined events: PASS' "$log"
+    grep -q 'x32 GEM reverse completion order and independent reaping: PASS' "$log"
     test "$(grep -c 'x32 async orphan: PASS' "$log")" -ge 4
     grep -q 'x86-64 async process calls: PASS' "$log"
     grep -q 'x86-64 CUIS scheduler: PASS' "$log"
@@ -244,10 +260,28 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 libaes/CUIS sessions: PASS' "$log"
     grep -q 'x86-64 CUIS sessions: PASS' "$log"
 fi
+# Runnable Pclone provides the managed/asynchronous continuations.
+if grep -q '^CONF_WITH_MULTITHREADING *= *y' obj/auto.conf; then
+    grep -q 'native owner generation wake with false predicate: PASS' "$log"
+    grep -q 'native IRQ wake/idle admission and blocked-owner resume: PASS' "$log"
+    grep -q 'native scheduler durable controller/completion abandonment: PASS' "$log"
+    grep -q 'native managed TID admission wait/resume: PASS' "$log"
+    grep -q 'native quiescent waiter retirement: PASS' "$log"
+    grep -q 'native allocation/reservation ownership and orphan reclamation: PASS' "$log"
+fi
 grep -q 'x86-64 memtest: PASS' "$log"
 grep -q 'Welcome to EmuCON2' "$log"
 if sed -n '/x86-64 memtest: PASS/,$p' "$log" | grep -q 'process fault:'; then
     echo 'Process fault after memory tests completed' >&2
     exit 1
+fi
+# The register-pattern IRQ probe executes in the public managed Pclone worker.
+if [ "$expected" = PASS ] && grep -q '^#define CONF_WITH_MULTITHREADING 1' obj/autoconf.h; then
+    grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$log" || {
+        echo "Missing actual ring-3 interrupted-user capture evidence" >&2; exit 1;
+    }
+    grep -aq "native x32 fresh owned IRQ image round trip: PASS" "$log" || {
+        echo "Missing native fresh owned IRQ image round-trip evidence" >&2; exit 1;
+    }
 fi
 echo "Private Mmap/Munmap/Mprot boot tests passed ($expected)."

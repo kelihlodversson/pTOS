@@ -97,12 +97,12 @@ static BOOL flush(LONG session, BOOL block, AESGLOBAL *global)
     LONG result;
     if (!retained->pending) return TRUE;
     result = cuis_call6(CUIS_STREAM_WRITE,retained->message[0] == AC_OPEN ? retained->recipient : session,
-                        (uintptr_t)retained->message,16,retained->message[0] == AC_OPEN && retained->recipient != session && block,0,0);
+                        (uintptr_t)retained->message,16,retained->message[0] == AC_OPEN && retained->recipient != session && block,(UQUAD)session+1,0);
     if (result == 16) { retained->pending = FALSE; return TRUE; }
     /* A selected accessory may exit while its queue is full. Its session
      * handle is never recycled; discard instead of opening a replacement. */
     if (retained->message[0] == AC_OPEN && result == EACCDN &&
-        cuis_call6(CUIS_PEER_PID,retained->recipient,0,0,0,0,0) < 0) { retained->pending = FALSE; return TRUE; }
+        cuis_call6(CUIS_PEER_QUERY,session,retained->recipient,CUIS_PEER_STATE,0,0,0) < 0) { retained->pending = FALSE; return TRUE; }
     return result == EAGAIN;
 }
 static BOOL refresh(AESGLOBAL *global)

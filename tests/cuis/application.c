@@ -1,5 +1,8 @@
+#include "cuis_receipt.h"
+#include "process_exec.h"
 /* Exercise the public GEM bindings against a failing/private transport. */
 #include "gem.h"
+#include "process_identity.h"
 #include "../../lib/aes/native_bindings.h"
 #include "gemerror.h"
 #include "../../lib/aes/transport.h"
@@ -35,18 +38,26 @@ void *aes_temporary_alloc(LONG bytes, AESGLOBAL *global)
 WORD aes_resource_discard(void *memory) { if (memory) region_releases++; free(memory); return 0; }
 static LONG pid = 7, handle = 2147483600L, failure, yield_result, close_result, label_result;
 static ULONG published_tag;
+static ULONG client_id = 7;
+static BOOL shared_process_peer;
+static LONG last_message_peer;
+static ULONG peer_queries, peer_enumerations;
+#define SIBLING_HANDLE 2147483601L
 static char published_label[8];
 static const char *executable_name = "GemTest.Prg";
 static LONG active_peer = EFILNF;
 static ULONG peer_state_flags;
 static BOOL live;
 static LONG child_status, child_on_wait, child_publish_error;
+static ULONG child_receipt_state;
+static WORD child_packet[8];
 static ULONG starts, closes, yields, delays;
 static ULONG graphics_resets;
 void aes_graphics_reset(AESGLOBAL *global) { (void)global; graphics_resets++; }
 void aes_graphics_wind_new(AESGLOBAL *global) { (void)global; }
 static UQUAD interval;
 static UBYTE pipe_data[64];
+static UBYTE pipe_receipt_start[sizeof(pipe_data)];
 static ULONG pipe_count, pipe_block;
 static LONG wait_error, state_error, read_error;
 static LONG state_values[4] = { 17, 23, 2, 5 };
@@ -136,6 +147,44 @@ LONG aes_menu_dispatch(AESGLOBAL *global)
 void aes_menu_reset(AESGLOBAL *global) { (void)global; }
 void aes_shell_reset(AESGLOBAL *global) { (void)global; }
 void aes_shell_init(AES_APP_CONTEXT *context) { (void)context; }
+UQUAD aes_gemdos_call(ULONG fn, UQUAD a, UQUAD b, UQUAD c)
+{
+    if (fn==0x154 && (QUAD)a==PROCESS_EXEC_SSYSTEM) {
+        PROCESS_EXEC_REQUEST *request=(PROCESS_EXEC_REQUEST *)(uintptr_t)b;
+        if (c!=sizeof(*request) || request->handle!=17) return (QUAD)EINVAL;
+        if (request->operation==PROCESS_EXEC_CLOSE) return E_OK;
+        if (request->operation!=PROCESS_EXEC_SNAPSHOT || !child_status) return (QUAD)EIHNDL;
+        request->completion.pid=(ULONG)child_status>>16;
+        request->completion.state=PROCESS_COMPLETED;
+        request->completion.kind=PROCESS_COMPLETION_NORMAL;
+        request->completion.status=(UWORD)child_status;
+        request->completion.order_low=1;
+        return E_OK;
+    }
+    if (fn == 0x154 && a == 0xfff8) {
+        PROCESS_IDENTITY *identity = (PROCESS_IDENTITY *)(uintptr_t)b;
+        if (c != sizeof(*identity)) return EINVAL;
+        if (identity->selector == PROCESS_IDENTITY_PID && identity->pid != pid) return (UQUAD)(QUAD)ESRCH;
+        if (identity->selector == PROCESS_IDENTITY_NUMBER &&
+            (identity->number_low != 123 || identity->number_high != 5)) return (UQUAD)(QUAD)ESRCH;
+        identity->number_low = 123; identity->number_high = 5; identity->pid = pid; identity->selector = 0;
+        return E_OK;
+    }
+    if (fn == 0x154 && a == 0xfff9) {
+        ULONG length = __builtin_strlen(executable_name);
+        if (c <= length) return (UQUAD)(QUAD)ERANGE;
+        __builtin_memcpy((void *)(uintptr_t)b,executable_name,length+1);
+        return length;
+    }
+    if (fn == 0x154 && a == 0x000a && b == 0x4ba && !c) return menu_ticks;
+    return (UQUAD)(QUAD)EINVFN;
+}
+/* Launch policy is exercised by the separate production shell harness. */
+UQUAD aes_gemdos_call4(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
+{
+    (void)fn; (void)a; (void)b; (void)c; (void)d;
+    return (UQUAD)(QUAD)EINVFN;
+}
 LONG aes_process_call(ULONG fn)
 {
     if (fn == 0x10b) return pid;
@@ -167,36 +216,58 @@ static ULONG lifecycle_unread;
 static short lifecycle_packet[16] = { AC_CLOSE,0,0,0,0,0,0,0, AC_CLOSE,0,0,1,0,0,0,0 };
 LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
-    if (fn == CUIS_COHORT_QUERY) {
+    ULONG batch=~(ULONG)0;
+    if (fn==CUIS_STREAM_BATCH) {
+        batch=(ULONG)(b>>32);
+        b=(ULONG)b;
+    }
+    if (batch == CUIS_BATCH_QUERY) {
         if (!lifecycle_test) return EFILNF;
-        if (b == CUIS_COHORT_ID) return 900;
-        if (b == CUIS_COHORT_WORK) return lifecycle_work;
-        if (b == CUIS_COHORT_READ_OFFSET) return lifecycle_offset;
-        if (b == CUIS_COHORT_READ_BYTES) return lifecycle_read_bytes;
+        if (b == CUIS_BATCH_ID) return 900;
+        if (b == CUIS_BATCH_WORK) return lifecycle_work;
+        if (b == CUIS_BATCH_READ_OFFSET) return lifecycle_offset;
+        if (b == CUIS_BATCH_READ_BYTES) return lifecycle_read_bytes;
         return EFILNF;
     }
-    if (lifecycle_test && fn == CUIS_COHORT_READ) {
+    if (lifecycle_test && batch == CUIS_BATCH_READ) {
         __builtin_memcpy((void *)(uintptr_t)c,lifecycle_packet,32); return 32;
     }
-    if (lifecycle_test && fn == CUIS_COHORT_PUBLISH) {
+    if (lifecycle_test && batch == CUIS_BATCH_PUBLISH) {
         __builtin_memcpy(pipe_data+pipe_count,lifecycle_packet,32);
+        __builtin_memset(pipe_receipt_start+pipe_count,0,32);
         pipe_count += 32; lifecycle_unread = pipe_count; lifecycle_work = 0; return E_OK;
     }
     if (fn == CUIS_ENTRY_OWNER) return b < 6 && (registered_items & (1U << b)) ? handle : EFILNF;
     if (fn == CUIS_PEER_RAISE) {
-        if (a != (UQUAD)handle || b != (UQUAD)handle) return EACCDN;
-        active_peer = handle; return E_OK;
+        if (a != (UQUAD)handle || (b != (UQUAD)handle && !(shared_process_peer && b == SIBLING_HANDLE))) return EACCDN;
+        active_peer = (LONG)b; return E_OK;
     }
     if (fn == CUIS_SESSION_TAG) { published_tag = (ULONG)b; return E_OK; }
-    if (fn == CUIS_PEER_NEXT) return b == ~0ULL || b < (UQUAD)handle ? handle : EFILNF;
+    if (fn == CUIS_PEER_NEXT) {
+        peer_enumerations++;
+        if (b == ~0ULL || b < (UQUAD)handle) return handle;
+        return shared_process_peer && b < SIBLING_HANDLE ? SIBLING_HANDLE : EFILNF;
+    }
     if (fn == CUIS_PEER_QUERY) {
+        peer_queries++;
+        if (c == CUIS_PEER_HANDLE) {
+            if (b == client_id) return handle;
+            return shared_process_peer && b == 41 ? SIBLING_HANDLE : EFILNF;
+        }
         if (c == CUIS_PEER_BACKGROUND) return EFILNF;
         if (c == CUIS_PEER_ACTIVE) return active_peer;
-        if (b != (UQUAD)handle) return EFILNF;
+        if (b != (UQUAD)handle && !(shared_process_peer && b == SIBLING_HANDLE)) return EFILNF;
+        if (c == CUIS_PEER_IDENTITY) {
+            CUIS_PEER_IDENTITY_DATA identity;
+            identity.client_id = b == SIBLING_HANDLE ? 41 : client_id;
+            identity.process_low = 123; identity.process_high = 5; identity.reserved = 0;
+            if (e != sizeof(identity)) return EINVAL;
+            __builtin_memcpy((void *)(uintptr_t)d,&identity,sizeof(identity)); return sizeof(identity);
+        }
         if (c == CUIS_PEER_TAG) return published_tag;
         if (c == CUIS_PEER_LABEL) {
             if (e < 8) return ERANGE;
-            __builtin_memcpy((void *)(uintptr_t)d,published_label,8); return 8;
+            __builtin_memcpy((void *)(uintptr_t)d,b == SIBLING_HANDLE ? "SIBLING " : published_label,8); return 8;
         }
         return (LONG)peer_state_flags;
     }
@@ -207,13 +278,34 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         __builtin_memcpy(registered_text,(void *)(uintptr_t)d,e);
         return (LONG)b;
     }
-    if (fn == CUIS_CHILD_RESULT) return child_status;
-    if (fn == CUIS_CHILD_PUBLISH) {
-        if (child_publish_error) return child_publish_error;
-        if (!child_status || b != (ULONG)child_status || d != 16) return EACCDN;
-        if (pipe_count+d > sizeof(pipe_data)) return EAGAIN;
-        __builtin_memcpy(pipe_data+pipe_count,(void *)(uintptr_t)c,d);
-        pipe_count += d; child_status = 0; return E_OK;
+    if (fn==CUIS_STREAM_RECEIPT) {
+        CUIS_RECEIPT_RECORD *receipt=(CUIS_RECEIPT_RECORD *)(uintptr_t)c;
+        if (d!=sizeof(*receipt)) return EINVAL;
+        if (b==CUIS_RECEIPT_QUERY) {
+            if (!receipt->slot && (child_status || child_receipt_state)) {
+                receipt->state=child_receipt_state ? child_receipt_state : CUIS_RECEIPT_BOUND;
+                receipt->tag=17;
+            }
+            return E_OK;
+        }
+        if (b==CUIS_RECEIPT_PREPARE) {
+            uintptr_t high=(uintptr_t)receipt & ~(uintptr_t)0xffffffffUL;
+            __builtin_memcpy(child_packet,(void *)(high | receipt->packet),16);
+            child_receipt_state=CUIS_RECEIPT_PREPARED;
+        } else if (b==CUIS_RECEIPT_COMMIT) {
+            if (child_publish_error) return child_publish_error;
+            if (pipe_count+16>sizeof(pipe_data)) return EAGAIN;
+            __builtin_memcpy(pipe_data+pipe_count,child_packet,16);
+            __builtin_memset(pipe_receipt_start+pipe_count,0,16);
+            pipe_receipt_start[pipe_count] = 16;
+            pipe_count+=16;
+            child_status=0;
+            child_receipt_state=CUIS_RECEIPT_COMMITTED;
+            return 16;
+        } else if (b==CUIS_RECEIPT_ACK) child_receipt_state=CUIS_RECEIPT_ACKNOWLEDGED;
+        else if (b==CUIS_RECEIPT_RECLAIM) child_receipt_state=0;
+        else return EINVFN;
+        return E_OK;
     }
     if (fn == CUIS_SETTING) {
         if (a >= 38) return EINVAL;
@@ -291,6 +383,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (b != (UQUAD)notice_native || c != (UQUAD)notice_kind) return EACCDN;
         if (pipe_count + e > sizeof(pipe_data)) return EAGAIN;
         __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)d, e);
+        __builtin_memset(pipe_receipt_start+pipe_count,0,e);
         pipe_count += e; notice_kind = 0; return E_OK;
     }
     if (fn == CUIS_CONTROL_READ) {
@@ -329,20 +422,13 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (!display_nesting && colour_peer_pending) publish_peer_colours();
         return E_OK;
     }
-    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_FOCUS_RELEASE) || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
+    if ((fn >= CUIS_WINDOW_CREATE && fn <= CUIS_WINDOW_LOWER) || fn == CUIS_FOCUS_QUERY || (fn == CUIS_WINDOW_IDENTIFY || fn == CUIS_WINDOW_OUTSET || fn == CUIS_WINDOW_POLICY || fn == CUIS_WINDOW_CONTENT || fn == CUIS_WINDOW_CORNER))
         return window_transport(fn, a);
-    if (fn == CUIS_SESSION_NAME) {
-        ULONG length = __builtin_strlen(executable_name);
-        __builtin_memcpy((void *)(uintptr_t)b,executable_name,length+1); return length;
-    }
     if (fn == CUIS_SESSION_LABEL) {
         if (!label_result) __builtin_memcpy(published_label,(void *)(uintptr_t)b,8);
         return label_result;
     }
     if (fn == CUIS_LABEL_FIND) return __builtin_memcmp((void *)(uintptr_t)a,published_label,8) ? EFILNF : handle;
-    if (fn == CUIS_PEER_BY_PID) return a == (UQUAD)pid ? handle : EFILNF;
-    if (fn == CUIS_PEER_PID) return a == (UQUAD)handle ? pid : EFILNF;
-    if (fn == CUIS_CLOCK) return menu_ticks & 0x7fffffffUL;
     if (fn == CUIS_SESSION_WAIT) {
         LONG ready = input_ready & c;
         wait_calls++; waited_mask = c; waited_interval = d;
@@ -403,11 +489,15 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_STREAM_PENDING) return pipe_count;
     if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK) {
         if (failure) return failure;
-        pipe_block = (ULONG)d;
+        pipe_block = d == 1;
+        if (shared_process_peer && fn == CUIS_STREAM_WRITE && a == SIBLING_HANDLE) {
+            last_message_peer = (LONG)a; return (LONG)c;
+        }
         if (a != (UQUAD)handle) return EACCDN;
         if (fn == CUIS_STREAM_WRITE) {
             if (pipe_count + c > sizeof(pipe_data)) return EAGAIN;
             if (c) __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)b, (ULONG)c);
+            __builtin_memset(pipe_receipt_start+pipe_count,0,c);
             pipe_count += (ULONG)c;
         } else {
             if (read_error) return read_error;
@@ -419,8 +509,11 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
                 if (fn == CUIS_STREAM_READ) lifecycle_unread = c >= lifecycle_unread ? 0 : lifecycle_unread-c;
             }
             if (fn == CUIS_STREAM_PEEK) return (LONG)c;
+            if (d == CUIS_STREAM_READ_ORIGIN && e)
+                *(LONG *)(uintptr_t)e = c && c == pipe_receipt_start[0];
             pipe_count -= (ULONG)c;
             __builtin_memmove(pipe_data, pipe_data + c, pipe_count);
+            __builtin_memmove(pipe_receipt_start,pipe_receipt_start+c,pipe_count);
         }
         return (LONG)c;
     }
@@ -439,12 +532,13 @@ static int child_message_checks(void)
     {
         short forged[8] = { AP_TERM,-1,0,0,0,AP_TERM,0,0 };
         short refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
+        short ordinary[8] = { 1234,0,0,0,0,0,0,0 };
         CHECK(appl_write(7,16,refusal) == 1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
-        CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,expected) == 1);
-        CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,expected,16) && !pipe_count);
+        CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,ordinary) == 1);
+        CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,ordinary,16) && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1);
         stream_only_wakes = 1;
         /* Filtering an internal message must preserve the original timer. */
@@ -557,7 +651,7 @@ static int input_api_checks(void)
     input_ready = CUIS_READY_INPUT;
     CHECK(appl_write(7, 16, message) == 1);
     before = wait_calls;
-    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_COHORT)));
+    CHECK(MULTI(63, 9, message) == 63 && wait_calls == before + 1 && waited_mask == (CUIS_READY_ALL & ~(CUIS_READY_SURFACE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE|CUIS_READY_BATCH)));
     /* Absolute deadlines are expressed in the native five-millisecond ticks. */
     CHECK(!pipe_count && waited_interval == 10 && key == 0x1e61 && clicks == 2);
     CHECK(x == 17 && y == 23 && buttons == 2 && mods == 5);
@@ -1288,7 +1382,7 @@ static int lifecycle_poll_checks(void)
     CHECK(appl_init() == 7 && menu_register(7,"One") == 0 && menu_register(7,"Two") == 1);
     window = wind_create(0,10,10,100,100);
     CHECK(window > 0 && wind_open(window,10,10,100,100));
-    lifecycle_test = TRUE; lifecycle_work = CUIS_COHORT_REQUEST;
+    lifecycle_test = TRUE; lifecycle_work = CUIS_BATCH_REQUEST;
     CHECK(aes_lifecycle_messages(&aes_global) == E_OK && pipe_count == 32);
     display_error = EAGAIN;
     CHECK(appl_read(APR_NOWAIT,16,message) == 0 && pipe_count == 32 && !display_nesting);
@@ -1409,6 +1503,12 @@ int main(void)
     short message[8] = { 123, 7, 0, 4, 5, 6, 7, 8 }, result[8];
     ULONG count;
     short held;
+    /* Generic time remains usable before any GUI endpoint is registered. */
+    menu_ticks = 0x80000001UL;
+    CHECK(aes_clock_ticks() == 1 && !starts && !live);
+    menu_ticks = 0xffffffffUL;
+    CHECK(aes_clock_ticks() == 0x7fffffffL && !starts && !live);
+    menu_ticks = 0;
     CHECK(gl_apid == -1 && aes_global.ap_id == -1);
     CHECK(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1 && !window_at_calls);
     CHECK(wind_create(0, 0, 0, 100, 100) == -1 && !window_calls);
@@ -1506,14 +1606,15 @@ int main(void)
     CHECK(appl_yield() == 0 && evnt_timer(0) == 0);
     live = TRUE; /* Restore the same live session after the injected query failure. */
     CHECK(appl_exit() == 1 && closes == 2);
-    pid = 32767;
+    pid = 32767; client_id = 32767;
     CHECK(appl_init() == 32767 && gl_apid == 32767 && appl_exit() == 1 && closes == 3);
     label_result = EACCDN;
     CHECK(mt_appl_init(&other) == -1 && !live && gl_apid == -1 && other.ap_id == -1 && closes == 4);
     {
-        char name[9] = "sentinel";
+        char name[9] = { 'u', 'n', 't', 'o', 'u', 'c', 'h', 'e', 'd' };
         short type = -7, found = -7;
-        label_result = 0; pid = 7;
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 0 && type == -7 && found == -7);
+        label_result = 0; pid = 7; client_id = 7;
         CHECK(appl_init() == 7);
         CHECK(appl_control(7,APC_INFO,&type) == 1 && type == 0);
         CHECK(appl_control(7,APC_TOP,NULL) == 1);
@@ -1541,6 +1642,31 @@ int main(void)
         executable_name = "GemTest.Prg";
     }
     CHECK(lifecycle_poll_checks() == 0);
+    /* Two GUI clients share one PROCESS/PID; normal routes use AES IDs. */
+    {
+        char name[9];
+        short type, found;
+        client_id = 42; shared_process_peer = TRUE; pid = 7;
+        CHECK(appl_init() == 42 && aes_global.ap_id == 42 && appl_find(NULL) == 42);
+        CHECK(appl_find("GEMTEST ") == 42);
+        CHECK(appl_find((const char *)(uintptr_t)0xffff0007UL) == 41);
+        CHECK(appl_find((const char *)(uintptr_t)0xfffe002aUL) == 7);
+        CHECK(appl_find((const char *)(uintptr_t)0xfffe0029UL) == 7);
+        CHECK(appl_find((const char *)(uintptr_t)0xffff002aUL) == -1);
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && found == 42);
+        CHECK(appl_search(APP_NEXT,name,&type,&found) == 1 && found == 41 &&
+              !__builtin_memcmp(name,"SIBLING ",8));
+        peer_queries=peer_enumerations=0;
+        CHECK(appl_control(41,APC_TOP,NULL) == 1 && active_peer == SIBLING_HANDLE);
+        CHECK(peer_queries==1 && peer_enumerations==0);
+        peer_queries=peer_enumerations=0;
+        last_message_peer = 0;
+        CHECK(appl_write(41,16,message) == 1 && last_message_peer == SIBLING_HANDLE);
+        CHECK(peer_queries==1 && peer_enumerations==0);
+        CHECK(appl_write(7,16,message) == 0 && appl_control(7,APC_TOP,NULL) == 0);
+        CHECK(appl_exit() == 1);
+        shared_process_peer = FALSE; client_id = 7;
+    }
     CHECK(window_context_checks() == 0);
     return 0;
 }

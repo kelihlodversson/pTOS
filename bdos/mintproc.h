@@ -12,6 +12,8 @@
 
 #define GEMDOS_SYIELD       0x0ff
 #define GEMDOS_PWAIT        0x109
+#define GEMDOS_PVFORK       0x113
+#define GEMDOS_PFORK        0x11b
 #define GEMDOS_PWAIT3       0x11c
 #define GEMDOS_PWAITPID     0x13a
 #define GEMDOS_PGETPID      0x10b

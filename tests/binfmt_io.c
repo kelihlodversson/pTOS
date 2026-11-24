@@ -7,12 +7,17 @@
 #include "proc.h"
 #include "bdosstub.h"
 #include "gemerror.h"
+#include "fs_close.h"
 #undef assert
 #include <assert.h>
 
-jmp_buf errbuf;
-long errcode, rwerr;
-int errdrv;
+/* The disk-error continuation is per-CPU state behind fs_error.h's macros. */
+#if CONF_WITH_MULTITHREADING
+static FS_ERROR_STATE fixture_error;
+FS_ERROR_STATE *fs_error_current(void) { return &fixture_error; }
+#else
+FS_ERROR_STATE fs_legacy_error;
+#endif
 WORD bootdev = 2;
 static PD parent;
 PD *run = &parent;
@@ -53,7 +58,6 @@ int kcprintf(const char *format, ...)
     return 0;
 }
 
-void elf_set_load_into_caller(BOOL enabled) { (void)enabled; }
 
 LONG elf_pgmhdrld(FH handle, PGMHDR01 *header, BOOL *foreign_format)
 {
@@ -98,6 +102,42 @@ long xread(WORD handle, long size, void *buffer)
     files[handle].at += n;
     return n;
 }
+
+#if CONF_WITH_USER_ASPACE
+/* Model of the bounded close in bdos/fsclose.c, which tests/fs_close.c
+ * exercises in production: up to BLKDEVNUM+1 attempts while a hard error
+ * interrupts the close before the handle is released. The first result and
+ * the first hard error are reported, as kdos_fclose_error() relies on. */
+LONG fs_close_bounded(WORD handle, BOOL dispose, FS_CLOSE_REPORT *out)
+{
+    LONG first = 0;
+    UWORD tries;
+    (void)dispose;
+    memset(out, 0, sizeof(*out));
+    for (tries = 0; tries <= BLKDEVNUM; tries++) {
+        FS_ERROR_SCOPE saved;
+        volatile BOOL returned = FALSE;
+        LONG result;
+        fs_error_scope_save(saved);
+        if (setjmp(errbuf)) {
+            result = errcode;
+            out->disk_error = TRUE; out->drive = errdrv; out->rw = rwerr;
+            if (!tries) {
+                out->first_disk_error = TRUE; out->first_drive = errdrv; out->first_rw = rwerr;
+            }
+            mark_bcbs_invalid(errdrv);
+        } else {
+            result = xclose(handle);
+            returned = TRUE;
+        }
+        fs_error_scope_restore(saved);
+        if (!tries) first = result;
+        if (returned) { out->disposition = FS_CLOSE_CONSUMED; break; }
+    }
+    out->error = first;
+    return first;
+}
+#endif
 
 long xclose(WORD handle)
 {

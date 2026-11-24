@@ -46,7 +46,7 @@
 #define PE_BASEPAGE   5
 #define PE_GOTHENFREE 6
 #define PE_BASEPAGEFLAGS 7
-#define PE_RELOCATE   50    /* required for NatFeats support only, not in Atari TOS */
+#define PE_KERNEL     0x4000    /* the kernel's own requests: include/bdosdefs.h */
 
 /* OS entry points implemented in util/miscasm.S (kernel code with address
  * spaces calls GEMDOS directly instead: include/bdosbind.h) */

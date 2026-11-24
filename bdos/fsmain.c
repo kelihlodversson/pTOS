@@ -17,6 +17,9 @@
 #include "gemerror.h"
 #include "biosbind.h"
 #include "bdosstub.h"
+#if CONF_WITH_PROCESS_FILES
+#include "process_files.h"
+#endif
 
 /*
 **
@@ -457,6 +460,13 @@ long xgetdrv(void)
  */
 static int syshnd(int h)
 {
+#if CONF_WITH_PROCESS_FILES
+    if (process_files_managed(run)) {
+        WORD backend;
+        if (process_files_resolve(run,(WORD)h,&backend,NULL)!=E_OK) return -1;
+        return backend>=NUMSTD?backend-NUMSTD:backend;
+    }
+#endif
     if (h >= NUMSTD)
         return(h-NUMSTD);
 
@@ -482,6 +492,9 @@ OFD *getofd(int h)
     n = syshnd(h);
     if (n < 0)
         return NULL;
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_accessible(n)) return NULL;
+#endif
 
     return sft[n].f_ofd;
 }
@@ -507,6 +520,9 @@ FTAB *getpfsslot(int h)
     n = syshnd(h);
     if (n < 0)
         return NULL;
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_accessible(n)) return NULL;
+#endif
 
     if (!sft[n].f_pfs.fs)
         return NULL;

@@ -49,6 +49,7 @@ tools=$(cd "$(dirname "$0")" && pwd)
 top=$(dirname "$tools")
 work=$(mktemp -d "${TMPDIR:-/tmp}/ptos-regression.XXXXXX")
 qemu_pid=
+cuis_input_pid=
 qemu_status=0
 log=
 disk=
@@ -64,6 +65,11 @@ fi
 : >"$logs"
 
 stop_vm() {
+    if [ -n "$cuis_input_pid" ]; then
+        kill "$cuis_input_pid" 2>/dev/null
+        wait "$cuis_input_pid" 2>/dev/null
+        cuis_input_pid=
+    fi
     if [ -n "$qemu_pid" ]; then
         kill "$qemu_pid" 2>/dev/null
         wait "$qemu_pid" 2>/dev/null
@@ -78,6 +84,17 @@ cleanup() {
 trap cleanup EXIT
 
 [ -d "$top/test-dir" ] || { echo "$0: no test-dir/: run 'make test-dir' first" >&2; exit 2; }
+if [ "${SHARED_VM_PEXEC:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested shared-VM Pexec but the kernel does not have it" >&2
+    exit 2
+fi
+
+if [ "${PROCESS_FILES_TEST:-0}" = 1 ] &&
+   ! grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h"; then
+    echo "$0: requested PROCESS descriptor ownership but the effective gate is disabled" >&2
+    exit 2
+fi
 
 # record <name> <PASS|FAIL> [detail]
 record() {
@@ -188,11 +205,16 @@ start_vm() {
     disk=$work/disk-$label
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
+    if [ "$label" = cuis ]; then
+        cp "$disk/runtests.tos" "$disk/RUNTESTS.PRG"
+        : > "$disk/HISTGUI.ON"
+    fi
     if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
         # Keep the same desktop autorun path for the suite and all shutdown
         # probes. No monitor keystrokes or early kernel test hook starts them.
         case $label in
         suite | sysfont) program=RUNTESTS.TOS ;;
+        cuis) program=RUNTESTS.PRG ;;
         poweroff | reboot | coldboot | halt) program=$(printf '%s.TOS' "$label" | tr '[:lower:]' '[:upper:]') ;;
         *) die "unknown autorun label $label" "never started" ;;
         esac
@@ -202,7 +224,8 @@ import sys
 p = Path(sys.argv[1])
 lines = p.read_text().splitlines()
 assert sum(line.startswith("#Z ") for line in lines) == 1
-p.write_bytes(("\r\n".join("#Z 00 C:\\" + sys.argv[2] + "@" if line.startswith("#Z ") else line
+kind = "01" if sys.argv[2] == "RUNTESTS.PRG" else "00"
+p.write_bytes(("\r\n".join("#Z " + kind + " C:\\" + sys.argv[2] + "@" if line.startswith("#Z ") else line
                           for line in lines) + "\r\n").encode("ascii"))
 PY
     fi
@@ -249,6 +272,18 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
     if [ -n "${system_font:-}" ] && [ -f "$disk/GEMSYS/FONTS/$system_font" ]; then
         printf 'SYSTEMFONT=%s\r\n' "$system_font" >"$disk/GEMSYS/PTOS.INF"
     fi
+    # PROCESS-local descriptors and searches drive directory updates that
+    # QEMU's vvfat writer cannot model (it asserts in
+    # check_directory_consistency): use real sectors there, as the x86 boot
+    # does. REGRESSION_RAW_DISK=0/1 overrides.
+    raw_disk=${REGRESSION_RAW_DISK:-}
+    if [ -z "$raw_disk" ]; then
+        if grep -q '^#define CONF_WITH_PROCESS_FILES 1' "$top/obj/autoconf.h"; then
+            raw_disk=1
+        else
+            raw_disk=0
+        fi
+    fi
     case $machine in
     virt-arm | virt-m68k | virt-m68k-mmu | virt-m68k-aspace)
         if [ "$machine" = virt-arm ]; then
@@ -261,6 +296,9 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
             set -- qemu-system-m68k -M virt -cpu m68020 -m 128 \
                 -kernel "$top/virt-m68k.elf"
         fi
+        if [ -n "${QEMU_DATA_DIR:-}" ]; then
+            set -- "$@" -L "$QEMU_DATA_DIR"
+        fi
         # a host directory over virtio-9p as well (Q:), for the suites
         # that test the pluggable file system (pfs_seek)
         host=$work/host-$label
@@ -270,9 +308,18 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         rm -f "$work/in"
         mkfifo "$work/in"
         exec 3<>"$work/in"
+        # Raw sectors are useful where vvfat's /var/tmp backing is unavailable,
+        # and wherever PROCESS-local files are on (raw_disk, above).
+        if [ "$raw_disk" = 1 ]; then
+            disk_image=$work/disk-$label.img
+            "$tools/mkhdisk.sh" "$disk_image" 33554432 "$disk"/* >"$work/image-$label.log" 2>&1 ||
+                die "cannot create regression disk" "disk creation failed"
+            set -- "$@" -drive "if=none,id=hd0,format=raw,file=$disk_image"
+        else
+            set -- "$@" -drive "if=none,id=hd0,format=raw,file.driver=vvfat,file.dir=$disk,file.rw=on"
+        fi
         # shellcheck disable=SC2086
         "$@" -global virtio-mmio.force-legacy=false \
-            -drive if=none,id=hd0,format=raw,file.driver=vvfat,file.dir="$disk",file.rw=on \
             -device virtio-blk-device,drive=hd0 \
             -fsdev local,id=host0,path="$host",security_model=none \
             -device virtio-9p-device,fsdev=host0,mount_tag=host \
@@ -291,8 +338,17 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
         rm -f "$work/in"
         mkfifo "$work/in"
         exec 3<>"$work/in"
+        if [ "$raw_disk" = 1 ]; then
+            # 32 MiB: an SD card has to be a power of two in size
+            disk_image=$work/disk-$label.img
+            "$tools/mkhdisk.sh" "$disk_image" 33554432 "$disk"/* >"$work/image-$label.log" 2>&1 ||
+                die "cannot create regression disk" "disk creation failed"
+            sd="if=sd,format=raw,file=$disk_image"
+        else
+            sd="if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir=$disk,file.rw=on"
+        fi
         qemu-system-arm -M raspi2b -bios "$top/kernel7.img" \
-            -drive if=sd,driver=raw,size=256M,file.driver=vvfat,file.dir="$disk",file.rw=on \
+            -drive "$sd" \
             -d guest_errors -serial stdio -display none -monitor none \
             <"$work/in" >"$log" 2>"${log%.log}.qemu" &
         qemu_pid=$!
@@ -332,6 +388,15 @@ c.save(sys.argv[1])' "$disk/GEMSYS/FONTS/LIBSANS.TTC" \
             -serial file:"$log" -monitor unix:"$work/mon.sock",server,nowait \
             -display none >"${log%.log}.qemu" 2>&1 &
         qemu_pid=$!
+        case $label in
+        cuis)
+            if grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+               grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h"; then
+                python3 "$tools/exercise-cuis-resume.py" "$work/mon.sock" "$log" "$limit" >"$work/cuis-$label.log" 2>&1 &
+                cuis_input_pid=$!
+            fi
+            ;;
+        esac
         if [ "$autorun" != true ]; then
             wait_for 'C:\>' 120 || die "EmuCON never showed its prompt ($label)" "never started"
             sleep 1
@@ -432,6 +497,16 @@ reboot_run() {
     fi
 }
 
+finish_cuis_input() {
+    if [ -n "$cuis_input_pid" ]; then
+        if wait "$cuis_input_pid"; then echo "native CUIS hardware resume: PASS"
+        else record "native CUIS hardware resume" FAIL "hardware input or native worker failed"
+        fi
+        cuis_input_pid=
+        cat "$work/cuis-$label.log"
+    fi
+}
+
 # -- machine 1: the suite, then the power off ---------------------------------
 
 start_vm suite
@@ -445,6 +520,7 @@ while [ "$n" -lt "$limit" ]; do
     n=$((n + 1))
 done
 suite_log=$log
+finish_cuis_input
 
 if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'All tests passed\.' "$suite_log" && ! grep -aq 'FAIL' "$suite_log"; then
     if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
@@ -486,6 +562,36 @@ fi
 # with that font, and the log must say that it was made.
 
 # (and only for a build that has scalable fonts: the kernel of the tree in $top)
+# A console-owned TOS launch deliberately suppresses GUI button input. Keep
+# that compatibility run, and exercise the public GUI wait in a separate PRG
+# launch without a console lease. Never bypass ownership in the kernel.
+if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ] &&
+   grep -aq 'All tests passed\.' "$suite_log" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h"; then
+    start_vm cuis
+    type_line 'runtests.tos'
+    n=0
+    while [ "$n" -lt "$limit" ]; do
+        grep -aqE 'All tests passed\.|Some tests FAILED\.' "$log" && break
+        sleep 1
+        n=$((n+1))
+    done
+    finish_cuis_input
+    if grep -aq 'All tests passed\.' "$log" && ! grep -aq 'FAIL' "$log" &&
+       grep -aq 'native CUIS resume/live commit: PASS' "$log" &&
+       grep -aq 'native CUIS history cancellation: PASS' "$log"; then
+        echo "native GUI resume worker: PASS"
+    else
+        record "native GUI resume worker" FAIL "public GUI worker did not pass"
+    fi
+    if grep -q '^#define CONF_WITH_CUIS_WAIT_TEST 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native CUIS input after observed wait admission: PASS' "$log"; then
+        record "native GUI wait admission" FAIL "physical presses did not complete the admitted waits"
+    fi
+    stop_vm
+fi
+
 if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'All tests passed\.' "$suite_log" && [ -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ] \
    && grep -q '^#define CONF_WITH_VDI_SCALABLE_FONTS 1' "$top/obj/autoconf.h" 2>/dev/null; then
     system_font=DJVUMONO.TTF
@@ -505,10 +611,520 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     else
         record "scalable system font" FAIL "the suite did not pass with it"
     fi
+    finish_cuis_input
     stop_vm
 fi
 
+# A positive shared-Pexec build must execute every configured consumer fixture.
+# The ordinary gate-off jobs remain independent compatibility evidence.
+if grep -q '^#define CONF_WITH_IMAGE_POLICY_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native immutable image policy capture/activation/rollback and exact resource conservation: PASS' "$suite_log"; then
+    record "native immutable image policy" FAIL "configured capture/activation/rollback assertions did not execute"
+fi
+# m68k MMU (#1018): Pexec 4/104 of a staged PRG or a caller-made basepage,
+# run by the shared_vm suite, which the legacy m68k-elf toolchain cannot
+# build (its probe is a PRG; Makefile).
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
+   ! grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config"; then
+    for marker in \
+        'native shared-VM Pexec4/104 execution and canonical reap: tested' \
+        'native shared-VM tfork mode-5 basepage at p_tbase: tested' \
+        'native shared-VM loaded mode-5/7 PRG via 4/104/6: tested' \
+        'native shared-VM full-status/fault and canonical wait: tested' \
+        'native shared-VM unstarted-child source retirement: tested' \
+        'native shared-VM running orphan and nested unstarted cleanup: tested' \
+        'native shared-VM orphan grandchild execution after source retirement: tested' \
+        'native shared-VM inherited limits and exact stack authority: tested' \
+        'native shared-VM live-target and self-relaunch ownership rejection: tested' \
+        'native shared-VM PRG Pexec4/104 entry, status and shared data: tested'; do
+        if ! grep -aqF "$marker" "$suite_log"; then
+            record "native shared-Pexec execution" FAIL "missing consumer assertion: $marker"
+        fi
+    done
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM PROCESS-local group cancellation and orphan survival: tested' "$suite_log"; then
+        record "native shared-Pexec group exit" FAIL "PROCESS-local group assertion did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM final-THREAD completion and competing waiter: tested' "$suite_log"; then
+        record "native shared-Pexec final THREAD" FAIL "managed lifetime assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        for marker in \
+            'native shared-VM constructor/observer/prepublication rollback and retry: tested' \
+            'native shared-VM production kernel memmove overlap: tested' \
+            'native shared-VM four-boundary resource conservation and multiple surviving orphans: tested' \
+            'native shared-VM exhaustive preparation prefixes and exact rollback conservation: tested'; do
+            if ! grep -aqF "$marker" "$suite_log"; then
+                record "native shared-Pexec ownership/cancellation" FAIL "missing consumer assertion: $marker"
+            fi
+        done
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+       grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM Pclone and nested source convergence, wait ABIs and protected cancellation: tested' "$suite_log"; then
+        record "native shared-Pexec protected wait" FAIL "logical-owner and cancellation assertions did not execute"
+    fi
+    if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native shared-VM absent file backing and resident file-COW: tested' "$suite_log"; then
+        record "native shared-Pexec file mappings" FAIL "file backing/COW assertions did not execute"
+    fi
+fi
+
+# Native revoked-result marker.
+if grep -q '^#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
+   ! grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native shared-VM private result Mprot/Munmap during wait and exact conservation: tested' "$suite_log"; then
+    record "native shared-Pexec result revocation" FAIL "configured blocked-copyout assertions did not execute"
+fi
+# End native revoked-result marker.
+
+# A managed THREAD's Pexec(0) children are anchors (#1015).
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_USER_ASPACE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native anchored Pexec(0) chains, exit modes and peers: PASS' "$suite_log"; then
+    record "native anchored Pexec(0) chains" FAIL "anchored synchronous chains did not pass"
+fi
+
+# Configured nested ownership checks must execute as managed THREADs.
+if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h"; then
+    for marker in \
+        'native nested Pexec identity/exit modes/restoration: PASS' \
+        'native nested Pexec construction rollback: PASS' \
+        'native nested Pexec resource conservation: PASS'; do
+        if ! grep -aq "$marker" "$suite_log"; then
+            record "native nested continuation ownership" FAIL "missing $marker"
+        fi
+    done
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native nested Pexec cancellation during reclamation: PASS' "$suite_log"; then
+        record "native nested continuation cancellation" FAIL "configured reclamation checkpoint did not pass"
+    fi
+fi
+
+# Configured shared-root lifetime probes must execute on the real launcher.
+if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h"; then
+    for marker in \
+        'native shared-root common/scoped/late mapping lifetime: PASS' \
+        'native shared-root peer/last-THREAD/orphan safety: PASS' \
+        'native shared-root guarded peer contention: PASS' \
+        'native shared-root exact mapping resource conservation: PASS'; do
+        if ! grep -aq "$marker" "$suite_log"; then
+            record "native shared-root mapping ownership" FAIL "missing $marker"
+        fi
+    done
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native shared-root guarded waiter cancellation: PASS' "$suite_log"; then
+        record "native shared-root waiter cancellation" FAIL "configured guarded wait cancellation did not pass"
+    fi
+fi
+
+# The experimental VM test must execute, not merely compile.
+if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   { ! grep -aq 'native independent KASPACE/COW entry probe (not Pfork): PASS' "$suite_log" ||
+     ! grep -aq 'native private orphan COW: PASS' "$suite_log"; }; then
+    record "native independent VM/COW" FAIL "configured private clone probe did not pass"
+fi
+
+# A configured snapshot must fault its genuinely absent inherited stack.
+if grep -q '^#define CONF_WITH_PRIVATE_SNAPSHOT_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native captured ancestor-stack private snapshot after source exit, both write orders: PASS' "$suite_log"; then
+    record "native captured private snapshot" FAIL "configured captured snapshot did not execute"
+fi
+
+# A configured rollback injection must actually have reached a user exit.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'exit handoff: injected preparation rollback' "$suite_log"; then
+    record "exit handoff rollback" FAIL "configured injection was not exercised"
+fi
+
+# The configured ownership probe must execute actual allocator/MMU operations.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native allocation/reservation ownership and orphan reclamation: PASS' "$suite_log"; then
+    record "native region ownership" FAIL "configured allocator/reservation probe did not execute"
+fi
+
+# Generation publication in the check-to-block window must reject sleeping.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native completion sequence check/block retry: PASS' "$suite_log"; then
+    record "native completion sequence" FAIL "check/block sequence assertion did not execute"
+fi
+
+# A generation change after BLOCKED must wake even if readiness is now false.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native owner generation wake with false predicate: PASS' "$suite_log"; then
+    record "native owner generation wake" FAIL "blocked owner-generation assertion did not execute"
+fi
+
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native IRQ wake/idle admission and blocked-owner resume: PASS' "$suite_log"; then
+    record "native IRQ wake/idle" FAIL "real IRQ idle/owner wake assertion did not execute"
+fi
+
+# Test-only assertions cross a real user PROCESS retirement and root reap.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native scheduler durable controller/completion abandonment: PASS' "$suite_log"; then
+    record "native scheduler lifetime" FAIL "retained-result retirement assertions did not execute"
+fi
+
+# Internal TID result waits execute through native root suspension/resume;
+# these are kernel assertions, not global background-admission evidence.
+if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native managed TID admission wait/resume: PASS' "$suite_log" ||
+       ! grep -aq 'native quiescent waiter retirement: PASS' "$suite_log"; then
+        record "native TID admission waiter" FAIL "suspend/resume and quiescent retirement assertions did not execute"
+    fi
+fi
+
+# The same executable must own a live anchor from both boot launch modes and
+# from the already-managed mode 0 path, before the regression shell runs.
+if grep -q '^#define CONF_WITH_MULTITHREADING 1$' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1$' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native first managed launch and both Pexec controls: PASS' "$suite_log"; then
+    record "native first managed launch" FAIL "boot or managed parent launch failed"
+fi
+if grep -q '^#define CONF_WITH_MULTITHREADING 1$' "$top/obj/autoconf.h" &&
+   grep -Eq '^#define CONF_WITH_(EXIT_HANDOFF_TEST|PRIVATE_CLONE_TEST|X86_64_MEMTEST) 1$' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native first managed launch ownership and rollback: PASS' "$suite_log"; then
+    record "native first managed launch ownership" FAIL "owner conservation or rollback did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_MULTITHREADING 1$' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native public PROCESS wait ABI and reaping: PASS' "$suite_log"; then
+    record "native PROCESS wait ABI" FAIL "public status, copyout or reaping checks did not pass"
+fi
+
+# Compilation and legacy compatibility are insufficient evidence of native
+# startup. Require managed startup and scheduler evidence on all three MMUs.
+case "$machine" in
+    virt-arm|virt-m68k-aspace|pc-x86_64)
+        if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h"; then
+            if ! grep -aq 'pclone native runnable NEW_PROCESS/SAME_PROCESS: PASS' "$suite_log"; then
+                record "native managed clone execution" FAIL "native clone worker did not execute"
+            fi
+            if ! grep -aq 'native Pclone ABI prefix/flags/pointers/atomic outputs: PASS' "$suite_log"; then
+                record "native Pclone ABI contract" FAIL "public trap matrix did not execute successfully"
+            fi
+            if grep -q '^#define CONF_WITH_USER_ASPACE 1' "$top/obj/autoconf.h" &&
+               ! grep -aqF 'native anchored Pexec(0) child owns dependents: PASS' "$suite_log"; then
+                record "native anchored Pexec(0)" FAIL "a Pexec(0) child did not run as an anchor (#1015)"
+            fi
+            if ! grep -aq 'native shared image execute policy nested/orphan: PASS' "$suite_log"; then
+                record "native shared image execute policy" FAIL "nested/orphan public clone policy did not pass"
+            fi
+            if ! grep -aq 'native scheduler growth and mixed PROCESS/THREAD round-robin: tested' "$suite_log"; then
+                record "native scheduler growth/fairness" FAIL "mixed twelve-peer runtime assertions did not execute"
+            fi
+        fi
+        ;;
+esac
+
+if grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native PROCESS descriptor inheritance/ownership: PASS' "$suite_log"; then
+    record "native PROCESS descriptor inheritance" FAIL "real local-descriptor/rollback/ownership cases did not pass"
+fi
+
+# Native initial-entry marker: independent of the older machine-case matrix.
+case $machine in
+virt-arm|virt-m68k-aspace|virt-m68k-mmu|raspi2b-aspace)
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h"; then
+        if ! grep -aq 'native clone first-instruction state: PASS' "$suite_log"; then
+            record "native clone initial register state" FAIL "first-instruction probe did not pass"
+        fi
+    fi
+    ;;
+esac
+# End native initial-entry marker.
+
+
+if grep -q '^#define CONF_WITH_PREEMPTION 1' "$top/obj/autoconf.h"; then
+    case $machine in
+    virt-arm|raspi2b-aspace)
+        if ! grep -aq 'native timer ARM exclusive monitor ownership: PASS' "$suite_log"; then
+            record "native timer ARM exclusives" FAIL "a THREAD consumed a peer exclusive reservation or failed to progress"
+        fi
+        if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+           ! grep -aq 'native timer ARM stack boundary ownership: PASS' "$suite_log"; then
+            record "native timer ARM stack boundaries" FAIL "guarded stack-bottom and exclusive-top handoffs were not proved"
+        fi
+        ;;
+    esac
+    if ! grep -aq 'native timer CPU-bound PROCESS/THREAD progress without Syield: PASS' "$suite_log"; then
+        record "native timer preemption" FAIL "CPU-bound PROCESS/THREAD progress without voluntary yield was not proved"
+    fi
+    if grep -q '^#define CONF_WITH_MMAP 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native timer file-backed executable progress without Syield: PASS' "$suite_log"; then
+        record "native file-backed timer preemption" FAIL "CPU-bound file-cache execution was not proved"
+    fi
+    if grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+        if ! grep -aq 'native timer busy USER and mapping-owner progress/conservation: PASS' "$suite_log"; then
+            record "native timer mapping owner" FAIL "busy USER starved a mapping owner or changed resource counts"
+        fi
+        if ! grep -aq 'native timer busy USER and blocked sleeper wake: PASS' "$suite_log"; then
+            record "native timer blocked wake" FAIL "blocked sleeper did not wake alongside CPU-bound USER"
+        fi
+        if ! grep -aq 'native timer independent-image/root GPR/FPU patterns: PASS' "$suite_log"; then
+            record "native timer independent roots" FAIL "distinct loaded roots did not preserve GPR/FPU patterns"
+        fi
+        if grep -q '^#define CONF_WITH_FORK 1' "$top/obj/autoconf.h"; then
+            for marker in 'native timer public-Pfork private-root GPR/FPU patterns: PASS' \
+                          'native timer original/alternate GPR/FPU delayed restoration: PASS'; do
+                if ! grep -aq "$marker" "$suite_log"; then
+                    record "native timer private FPU restoration" FAIL "$marker missing"
+                fi
+            done
+        fi
+        if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+           ! grep -aq 'native timer suspended-group cancellation and exact retirement: PASS' "$suite_log"; then
+            record "native timer cancellation" FAIL "suspended USER cancellation and exact conservation were not proved"
+        fi
+    fi
+fi
+if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native interrupted USER A IRQ / B USER execution / saved A restart: PASS' "$suite_log"; then
+        record "native delayed IRQ restart" FAIL "hardware A IRQ / actual B USER / saved A return was not proved"
+    fi
+    if ! grep -aqF 'native retained IRQ capture-only and uncredited root return: PASS' "$suite_log"; then
+        record "native IRQ proof classification" FAIL "capture-only and uncredited root return were not proved"
+    fi
+    if ! grep -aqF 'native retained IRQ with managed exact-child wait: PASS' "$suite_log"; then
+        record "native IRQ exact-child wait" FAIL "exclusive full-status Pexec(0) wait did not coexist with retained IRQ"
+    fi
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aq 'native retained IRQ armed/acknowledged exit and suspended group cancellation: PASS' "$suite_log"; then
+        record "native retained IRQ retirement" FAIL "acknowledged cancellation and exact retirement conservation were not proved"
+    fi
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native retained IRQ armed and acknowledged user faults: PASS' "$suite_log"; then
+        record "native retained IRQ fault retirement" FAIL "faults with attached IRQ owners were not reaped exactly once"
+    fi
+    if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native retained IRQ exact-wait cancellation and orphan continuation: PASS' "$suite_log"; then
+        record "native retained IRQ orphan continuation" FAIL "an orphan did not complete its retained IRQ after exact-wait cancellation"
+    fi
+fi
+if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native retained IRQ Pexec(200) old-owner retirement and fresh-image restart: PASS' "$suite_log"; then
+    record "native retained IRQ replacement" FAIL "old IRQ owners or new replacement restart were not proved"
+fi
+if grep -q '^#define CONF_WITH_IRQ_RESTART_TEST 1' "$top/obj/autoconf.h"; then
+    case $machine in
+        pc-x86_64) irq_profile_marker='native retained IRQ x32 foreign FS selector returns normally: PASS' ;;
+        virt-arm) irq_profile_marker='native retained IRQ ARM Thumb refusal and exclusive monitor ownership: PASS' ;;
+        *) irq_profile_marker= ;;
+    esac
+    if [ -n "$irq_profile_marker" ] && ! grep -aqF "$irq_profile_marker" "$suite_log"; then
+        record "native retained IRQ architecture" FAIL "missing $irq_profile_marker"
+    fi
+fi
+
+if [ "$machine" = pc-x86_64 ] &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -Eq '^#define CONF_WITH_(EXIT_HANDOFF_TEST|X86_64_MEMTEST) 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native x32 interrupted-user GPR/FXSAVE/iret capture: PASS' "$suite_log"; then
+        record "native user IRQ capture" FAIL "real ring-3 register pattern was not captured"
+    fi
+fi
+
+if [ "$machine" = virt-arm ] &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native ARM interrupted-user integer/VFP/banked capture: PASS' "$suite_log"; then
+        record "native ARM user IRQ capture" FAIL "real user integer/VFP/banked pattern was not captured"
+    fi
+    if ! grep -aq 'native ARM fresh owned IRQ image round trip: PASS' "$suite_log"; then
+        record "native ARM owned IRQ return" FAIL "fresh copied integer/VFP/user-bank image was not restored"
+    fi
+fi
+
+if [ "$machine" = virt-m68k-aspace ] &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h"; then
+    if ! grep -aq 'native m68k interrupted-user GPR/USP/FPU format-0 capture: PASS' "$suite_log"; then
+        record "native m68k user IRQ capture" FAIL "real user GPR/USP/FPU pattern was not captured"
+    fi
+    if ! grep -aq 'native m68k fresh owned format-0 IRQ image round trip: PASS' "$suite_log"; then
+        record "native m68k owned IRQ return" FAIL "fresh copied format-0/FPU/USP image was not restored"
+    fi
+fi
+
+if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native shared-VM syscall-return probe (not Pfork): PASS' "$suite_log"; then
+    record "native saved syscall return" FAIL "configured shared-VM return probe did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_FORK_CORE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native COW Pvfork parent dependency (test-only, no exec commit): PASS' "$suite_log"; then
+    record "native COW parent dependency" FAIL "configured suspended-parent probe did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_FORK_CORE 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_EXEC_REPLACE 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native COW Pvfork parent released at committed Pexec(200): PASS' "$suite_log"; then
+    record "native Pvfork exec release" FAIL "a Pvfork child's committed Pexec(200) did not release its parent"
+fi
+
+if grep -q '^#define CONF_WITH_FORK 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native public Pfork/Pvfork with inherited descriptors: PASS' "$suite_log"; then
+    record "native public Pfork/Pvfork" FAIL "configured public Pfork/Pvfork did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_FORK_RETURN_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h"; then
+    for marker in 'native private-VM syscall-return registers (not Pfork): PASS' \
+                  'native private-VM original-stack syscall-return COW (not Pfork): PASS'; do
+        if ! grep -aqF "$marker" "$suite_log"; then
+            record "native private saved syscall return" FAIL "missing $marker"
+        fi
+    done
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native same-PROCESS/TID NORETURN fresh-stack transport (not Pexec200): PASS' "$suite_log"; then
+    record "native executable handoff transport" FAIL "configured same-image transport did not execute"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native reversible executable staging ownership (not Pexec200): PASS' "$suite_log"; then
+    record "native executable staging ownership" FAIL "configured replacement preparation did not execute"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) same-PROCESS executable/root replacement: PASS' "$suite_log"; then
+    record "native Pexec(200)" FAIL "configured public Pexec(200) did not replace the subject"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define ARCH_M68K 1' "$top/obj/autoconf.h"; then
+    if grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config"; then
+        set -- 'ELF to ELF'
+    elif grep -q '^#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h"; then
+        set -- 'PRG to PRG' 'PRG to ELF' 'ELF to ELF' 'ELF to PRG'
+    else
+        set -- 'PRG to PRG'
+    fi
+    for formats do
+        if ! grep -aqF "native Pexec(200) $formats: PASS" "$suite_log"; then
+            record "native Pexec(200) $formats" FAIL "missing native replacement and startup ABI evidence"
+        fi
+    done
+    if ! grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config" &&
+       grep -qx '#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h"; then
+        if grep -qx '#define CONF_WITH_FORK 1' "$top/obj/autoconf.h"; then
+            for formats in 'PRG to ELF' 'ELF to PRG'; do
+                if ! grep -aqF "native Pvfork Pexec(200) $formats: PASS" "$suite_log"; then
+                    record "native Pvfork Pexec(200) $formats" FAIL "missing exact-child release at committed replacement"
+                fi
+            done
+        fi
+        if grep -qx '#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
+           ! grep -aqF 'native ELF caller Pexec(5/7, 4/6/104/106) PRG startup and ownership: PASS' "$suite_log"; then
+            record "native ELF caller legacy Pexec" FAIL "missing staged PRG entry and ownership evidence"
+        fi
+    fi
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) from an anchored Pexec(0) child: PASS' "$suite_log"; then
+    record "native anchored Pexec(200)" FAIL "an anchored Pexec(0) child was not replaced"
+fi
+
+# Only the regression kernels' nested carrier switch reaches the old path.
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native nested Pexec(200) launcher relaunch: PASS' "$suite_log"; then
+    record "native nested Pexec(200)" FAIL "a synchronously nested child was not replaced"
+fi
+
+if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_PRIVATE_CLONE_TEST 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aqF 'native Pexec(200) from a private-VM clone: PASS' "$suite_log"; then
+    record "native Pexec(200) from a clone" FAIL "a private-VM (fork) clone was not replaced"
+fi
+
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native Pthjoin: PASS' "$suite_log"; then
+    record "native TID joining" FAIL "configured Pthjoin worker did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native Ptermgrp: PASS' "$suite_log"; then
+    record "native PROCESS group exit" FAIL "configured Ptermgrp worker did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native libc exit: PASS' "$suite_log"; then
+    record "native libc group exit" FAIL "libc exit worker did not pass"
+fi
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS delay cancellation: PASS' "$suite_log"; then
+    record "native CUIS delay cancellation" FAIL "CUIS adapter worker did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS retained event cancellation: PASS' "$suite_log"; then
+    record "native CUIS retained event cancellation" FAIL "retained event worker did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS window/session retirement: PASS' "$suite_log"; then
+    record "native CUIS window/session retirement" FAIL "retirement worker did not pass"
+fi
+
+if grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS exclusive combined wait lifetime: PASS' "$suite_log"; then
+    record "native CUIS exclusive combined wait lifetime" FAIL "combined wait lifetime worker did not pass"
+fi
+
+# Ownership evidence comes from the parent after the complete worker verdict,
+# including its final mapped-page baseline, never an early worker print.
+if [ "$machine" = pc-x86_64 ] &&
+   grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
+   grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native CUIS retained stream ownership: PASS (parent verified)' "$suite_log"; then
+    record "native CUIS stream ownership" FAIL "parent did not verify the complete stream worker"
+fi
+
 # -- the verdict ----------------------------------------------------------------
+
+# Final kernel panic guard: every console and QEMU diagnostic log, including
+# later GUI/font and shutdown machines whose continuations may have resumed.
+while IFS= read -r vm_log; do
+    for panic_log in "$vm_log" "${vm_log%.log}.qemu"; do
+        if [ -f "$panic_log" ] && grep -aq 'Panic:' "$panic_log"; then
+            record "kernel panic" FAIL "execution crossed a kernel panic in ${panic_log##*/}"
+        fi
+    done
+done <"$logs"
+# End final kernel panic guard.
 
 show_logs
 

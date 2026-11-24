@@ -15,24 +15,30 @@ static int visibility_checks(void)
     b = cuis_window_service(CUIS_WINDOW_CREATE, 10, 10, 50, 50, 0);
     wb = (*find_owner(run))->windows;
     CHECK(a >= 0 && b > a && !window_front);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 0);
+    CHECK(input_window(a)->redraw == 0);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_RAISE, a) == EINVAL);
     CHECK(WINDOW_CALL(CUIS_WINDOW_LOWER, a) == EINVAL);
     CHECK(WINDOW_CALL(CUIS_WINDOW_SHOW, a) == E_OK);
     CHECK(window_front == wa && !wa->znext && wa->visible);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 1);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 0);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(a)->redraw == 0);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_SHOW, a) == E_OK);
     CHECK(WINDOW_CALL(CUIS_WINDOW_RAISE, a) == E_OK);
     CHECK(WINDOW_CALL(CUIS_WINDOW_LOWER, a) == E_OK);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 0);
+    CHECK(input_window(a)->redraw == 0);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_SHOW, b) == E_OK);
     CHECK(window_front == wb && wb->znext == wa);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 1);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, b) == 1);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(b)->redraw == 1);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &second;
     CHECK(cuis_service(CUIS_SESSION_START, 0) >= 0);
-    for (fn = CUIS_WINDOW_SHOW; fn <= CUIS_WINDOW_REDRAW; fn++) {
+    for (fn = CUIS_WINDOW_SHOW; fn <= CUIS_WINDOW_LOWER; fn++) {
         CHECK(WINDOW_CALL(fn, a) == EACCDN);
         CHECK(WINDOW_CALL(fn, 0x100000000ULL) == EINVAL);
         CHECK(WINDOW_CALL(fn, ~0ULL) == EINVAL);
@@ -42,55 +48,74 @@ static int visibility_checks(void)
     CHECK(c > b && WINDOW_CALL(CUIS_WINDOW_SHOW, c) == E_OK);
     CHECK(window_front == wc && wc->znext == wb && wb->znext == wa && !wa->znext);
     CHECK(cuis_visible_window_count() == 3);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == EACCDN);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, c) == 1);
+    CHECK(input_window(c)->redraw == 1);
+    input_window(c)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &first;
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 1);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, b) == 1);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(b)->redraw == 1);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_RAISE, a) == E_OK);
     CHECK(window_front == wa && wa->znext == wc && wc->znext == wb && !wb->znext);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 1);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_LOWER, a) == E_OK);
     CHECK(window_front == wc && wc->znext == wb && wb->znext == wa && !wa->znext);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 1);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, b) == 1);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(b)->redraw == 1);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &second;
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, c) == 1);
+    CHECK(input_window(c)->redraw == 1);
+    input_window(c)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &first;
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, b, 10, 10, 50, 50) == E_OK);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 0);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, b) == 0);
+    CHECK(input_window(a)->redraw == 0);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(b)->redraw == 0);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &second;
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, c) == 0);
+    CHECK(input_window(c)->redraw == 0);
+    input_window(c)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &first;
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, b, 0, 0, 0, 1) == EINVAL);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, b) == 0);
+    CHECK(input_window(b)->redraw == 0);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, b, -20LL, 30, 40, 50) == E_OK);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 1);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, b) == 1);
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(b)->redraw == 1);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, b, -20LL, 30, 40, 50) == E_OK);
     run = &second;
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, c) == 1);
+    CHECK(input_window(c)->redraw == 1);
+    input_window(c)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &first;
     CHECK(WINDOW_CALL(CUIS_WINDOW_HIDE, b) == E_OK);
     CHECK(!wb->visible && !wb->redraw && !wb->znext && wc->znext == wa);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, b) == 0);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 1);
+    CHECK(input_window(b)->redraw == 0);
+    input_window(b)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(a)->redraw == 1);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_HIDE, b) == E_OK);
     CHECK(cuis_window_service(CUIS_WINDOW_CONFIGURE, b, 0, 0, 1, 1) == E_OK);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, a) == 0);
+    CHECK(input_window(a)->redraw == 0);
+    input_window(a)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_SHOW, b) == E_OK);
     CHECK(window_front == wb && wb->znext == wc && wc->znext == wa);
     /* Closing one owner removes non-adjacent entries and damages survivors. */
     run = &second;
     CHECK(window_front == wb && wb->znext == wc && wc->znext == wa);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, c) == 1);
+    CHECK(input_window(c)->redraw == 1);
+    input_window(c)->redraw = FALSE; /* Reset the observed damage fixture. */
     run = &first;
     CHECK(cuis_service(CUIS_SESSION_END, session) == E_OK);
     CHECK(window_front == wc && !wc->znext && cuis_visible_window_count() == 1);
     run = &second;
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, c) == 1);
-    CHECK(WINDOW_CALL(CUIS_WINDOW_REDRAW, c) == 0);
+    CHECK(input_window(c)->redraw == 1);
+    input_window(c)->redraw = FALSE; /* Reset the observed damage fixture. */
+    CHECK(input_window(c)->redraw == 0);
+    input_window(c)->redraw = FALSE; /* Reset the observed damage fixture. */
     CHECK(WINDOW_CALL(CUIS_WINDOW_HIDE, c) == E_OK && !window_front);
     CHECK(WINDOW_CALL(CUIS_WINDOW_SHOW, c) == E_OK && window_front == wc);
     CHECK(WINDOW_CALL(CUIS_WINDOW_DESTROY, c) == E_OK && !window_front);

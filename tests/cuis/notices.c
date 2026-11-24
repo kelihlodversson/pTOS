@@ -21,12 +21,12 @@ static int notice_checks(void)
     wb = (*find_owner(run))->windows;
     CHECK(focus_window == wb && window_front == wb);
     CHECK(cuis_stack_service(CUIS_STACK_QUERY, 0, 0x1000, 0x1004, 0x1008, 0) == E_OK);
-    CHECK(copied[0] == wb->identifier && copied[1] == 2 && copied[2] == wa->identifier);
+    CHECK(copied[0] == wb->identifier && copied[1] == find_handle(sb)->aes_id && copied[2] == wa->identifier);
     CHECK(cuis_stack_service(CUIS_WINDOW_INFO, wa->identifier, 0x1000, 0x1004, 0x1008, 0x100c) == E_OK);
-    CHECK(copied[0] == 1 && copied[1] == 1 && copied[2] == wb->identifier && copied[3] == 0);
+    CHECK(copied[0] == find_handle(sa)->aes_id && copied[1] == 1 && copied[2] == wb->identifier && copied[3] == 0);
     run = &first;
     yields = delay_yields;
-    CHECK(cuis_session_wait(sa, 16, CUIS_READY_NOTICE | CUIS_READY_TIMER, 0) ==
+    CHECK(cuis_session_wait(sa, 16, CUIS_READY_NOTICE | CUIS_READY_TIMER, 0,0,0) ==
           (CUIS_READY_NOTICE | CUIS_READY_TIMER) && delay_yields == yields);
     CHECK(NP(sa) == CUIS_NOTICE_REDRAW && copied[0] == a && copied[1] == wa->identifier);
     fail_copy = TRUE;

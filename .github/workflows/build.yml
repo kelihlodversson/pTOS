@@ -39,9 +39,10 @@ permissions:
   contents: read
 
 jobs:
+  # Temporary: pin the build matrix until Ubuntu 26.04 compatibility is validated.
   elf-shared-core:
     name: x32 ELF shared-library metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,8 +76,115 @@ jobs:
         env:
           HOSTCC: cc -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -no-pie
         run: /tmp/elf-shared-venv/bin/python tools/test-cuis.py
+      - name: Test bounded CUIS observer wait ownership (default off and gated)
+        run: /tmp/elf-shared-venv/bin/python tools/test-cuis-observers.py
+      - name: Test gated CUIS receipt runtime and canonical FIFO
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+          /tmp/elf-shared-venv/bin/python tests/cuis/publication_receipt.py
+          HOSTCC='gcc-13 -D_FORTIFY_SOURCE=3' /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+          HOSTCC='gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer' ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/elf-shared-venv/bin/python tools/test-cuis-receipts.py
+      - name: Test reversible executable replacement admission
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-exec-replacement.py
+          HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-exec-replacement.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-exec-replacement.py
+      - name: Test retained PROCESS completion ownership
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-observer.py
+      - name: Test exact SFT close ownership and bounded recovery
+        run: /tmp/elf-shared-venv/bin/python tools/test-fs-close.py
+      - name: Test coherent PROCESS descriptor snapshots and exact SFT ownership
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-process-files.py
+          HOSTCC='gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong' /tmp/elf-shared-venv/bin/python tools/test-process-files.py
+          HOSTCC='gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer' ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/elf-shared-venv/bin/python tools/test-process-files.py
+      - name: Test PROCESS-owned launch rights
+        run: /tmp/elf-shared-venv/bin/python tools/test-process-exec-handles.py
+      - name: Test PROCESS dispatch and native-width ownership
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-process-exec-dispatch.py
+      - name: Test production libaes CHILD adapter policy
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-child-adapter.py
+          HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-child-adapter.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-child-adapter.py
+      - name: Compile proposed GUI publication receipt layout
+        run: X32CC=gcc-13 sh tools/check-publication-receipt-layout.sh x32
+      - name: Execution cleanup guard ownership
+        run: /tmp/elf-shared-venv/bin/python tools/test-cleanup-guard.py
+      - name: Test PROCESS-owned PFS directory preparation and FAT cache lifetime
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-process-search.py
+          HOSTCC='gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong' /tmp/elf-shared-venv/bin/python tools/test-process-search.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/elf-shared-venv/bin/python tools/test-process-search.py --sanitize
+          /tmp/elf-shared-venv/bin/python tools/test-process-directory-pfs.py
+          HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-process-directory-pfs.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 /tmp/elf-shared-venv/bin/python tools/test-process-directory-pfs.py --sanitize
+      - name: Test regression worker log preservation
+        run: python3 tools/test-testlib-log.py
+      - name: Test clone ABI layout and pointer decoding
+        run: sh tools/test-clone-abi.sh
+      - name: Test transactional live-root procmem borrow rollback
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py
+      - name: Test shared-exec permission, RELRO and startup preparation
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          for mode in normal asan fortified; do
+            if [ "$mode" = fortified ]; then
+              export HOSTCC=gcc-13
+            else
+              export HOSTCC=gcc
+            fi
+            /tmp/elf-shared-venv/bin/python tools/test-procmem-borrow.py --permissions --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-elf-bootstrap.py --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-kproc-runtime.py --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-kproc-runtime.py --image-policy --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --mode "$mode"
+            /tmp/elf-shared-venv/bin/python tools/test-image-policy.py --shared --mode "$mode"
+          done
+      - name: Test address-space ownership
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-kaspace.sh
+      - name: Test independent VM COW ownership and rollback
+        run: |
+          PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/test-private-aspace.sh
+          PATH=/tmp/elf-shared-venv/bin:$PATH HOSTCC="gcc-13 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" sh tools/test-private-aspace.sh
+          PATH=/tmp/elf-shared-venv/bin:$PATH ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-private-aspace.sh
+      - name: Test private captured reservation ownership and final conservation
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-private-snapshot.py
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-private-snapshot.py
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-private-snapshot.py
+      - name: Reproduce Phase6 production prerequisite contracts
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          /tmp/elf-shared-venv/bin/python tools/test-phase6.py
+          /tmp/elf-shared-venv/bin/python tools/test-fork-parent.py
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-fork-parent.py
+          HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-fork-parent.py
+          PATH=/tmp/elf-shared-venv/bin:$PATH HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" sh tools/test-kaspace.sh
+          PATH=/tmp/elf-shared-venv/bin:$PATH HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-kaspace.sh
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" /tmp/elf-shared-venv/bin/python tools/test-phase6.py
+          HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" /tmp/elf-shared-venv/bin/python tools/test-phase6.py
+          for capability in fs; do
+            status=0
+            /tmp/elf-shared-venv/bin/python tools/test-phase6.py --require "$capability" || status=$?
+            test "$status" = 1 || { echo "expected verified prerequisite failure: $capability (got $status)"; exit 1; }
+          done
+          # Captured lazy authority in private clones is implemented (#971).
+          /tmp/elf-shared-venv/bin/python tools/test-phase6.py --require lazy
       - name: Test Atari higher-half DMA translation
         run: python3 tools/test-atari-window.py
+      - name: Build public Pfork/Pvfork without test transports
+        run: PATH=/tmp/elf-shared-venv/bin:$PATH sh tools/check-pfork-build.sh
       - name: Build the enabled freestanding x32 core
         run: |
           export PATH=/tmp/elf-shared-venv/bin:$PATH
@@ -86,9 +194,14 @@ jobs:
           config = kconfiglib.Kconfig()
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
+          config.syms["CONF_WITH_MULTITHREADING"].set_value(2)
+          assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "y"
           config.write_config()
           PY
           make obj/ldso/libldso.a
+          sh tools/test-clone-handler.sh
+          HOSTCC="gcc-13 -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong" sh tools/test-clone-handler.sh
+          ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 HOSTCC="gcc-13 -fsanitize=address,undefined -fno-omit-frame-pointer" sh tools/test-clone-handler.sh
           ld -m elf32_x86_64 -r obj/ldso/dynamic.o obj/ldso/relocate.o obj/ldso/backend.o obj/ldso/graph.o obj/ldso/image.o obj/ldso/image_abi.o obj/ldso/image_plan.o obj/ldso/startup.o -o /tmp/ldso-core.o
           test -z "$(nm -u /tmp/ldso-core.o)"
       - name: Build and boot-test enabled mapping syscalls
@@ -115,6 +228,72 @@ jobs:
           python3 tools/check-libaes-elf.py obj/libaes/libaes.so obj/gemlib/libgem.a obj/libaes/GEM.TOS
           MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
 
+      - name: Boot-test gated PROCESS observer leases in CUIS waits
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "y"
+          config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].set_value(2)
+          assert config.syms["CONF_WITH_CUIS_OBSERVER_TEST"].str_value == "y"
+          config.write_config()
+          PY
+          make -j2
+          MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
+
+      - name: Boot-test gated receipt runtime through real PROCESS and CUIS rings
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          config.syms["CONF_WITH_CUIS_RECEIPT_TEST"].set_value(2)
+          assert config.syms["CONF_WITH_CUIS_RECEIPT_TEST"].str_value == "y"
+          config.write_config()
+          PY
+          make -j2
+          MMAP_BOOT_TIMEOUT=90 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
+
+      - name: Boot-test private clone and independent CUIS observation
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          CONFIG_= python - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          for name in ("CONF_WITH_PRIVATE_CLONE_TEST", "CONF_WITH_IMAGE_POLICY_TEST"):
+              config.syms[name].set_value(2)
+              assert config.syms[name].str_value == "y", name
+          config.write_config()
+          PY
+          make -j2 all x32test x32-vdi-import-test
+          MMAP_BOOT_TIMEOUT=300 MMAP_BOOT_FORM_INPUT=1 sh tools/test-mmap-boot.sh
+
+      - name: Boot-test ownership with eager managed scheduling
+        run: |
+          export PATH=/tmp/elf-shared-venv/bin:$PATH
+          make pc-x86_64-eager_defconfig
+          # The regression disk contains native test programs, not MEMTEST fixtures.
+          sed -i 's/^CONF_WITH_X86_64_MEMTEST=y$/# CONF_WITH_X86_64_MEMTEST is not set/' .config
+          make -j2 all test-dir
+          tools/run-regression-tests.sh pc-x86_64
+          CONFIG_= python - <<'PYCONFIG'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          for name in ("CONF_WITH_X86_64_MEMTEST", "CONF_WITH_PREEMPTION"):
+              config.syms[name].set_value(2)
+              assert config.syms[name].str_value == "y"
+          assert config.syms["CONF_WITH_DEMAND_PAGING"].str_value == "n"
+          assert config.syms["CONF_WITH_MMAP"].str_value == "n"
+          config.write_config()
+          PYCONFIG
+          make -j2 all x32test
+          sh tools/test-mmap-boot.sh --disabled
+
       # (the shared desktop and console consumers, pc-x86_64-desktop-tests and
       # its built-in-cli variant, are built and run by the x86-desktop group:
       # tools/ci-x86_64.sh)
@@ -126,7 +305,7 @@ jobs:
   # in the annotations and in the job's summary.
   build:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -145,6 +324,10 @@ jobs:
       - uses: ./.github/actions/setup-toolchain
         with:
           arch: ${{ matrix.arch }}
+
+      - name: Check clone user ABI layout
+        if: matrix.group == 'arm-virt' || matrix.group == 'm68k-other'
+        run: sh tools/check-clone-layout.sh "${{ matrix.arch }}"
 
       - name: Build the configurations
         run: tools/ci-group.sh "${{ matrix.group }}" tools/ci-build.sh
@@ -202,7 +385,7 @@ jobs:
   # (tools/ci-x86_64.sh, tools/ci-regression.sh).
   x86_64:
     name: build ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -269,7 +452,7 @@ jobs:
   # x86_64 job above): the machines of an architecture to a job.
   regression:
     name: regression ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -278,7 +461,7 @@ jobs:
             machines: virt-arm virt-arm-traditional-fat raspi2b virt-arm-aspace raspi2b-aspace
             qemu: qemu-system-arm
           - arch: m68k
-            machines: virt-m68k virt-m68k-fastcall virt-m68k-mmu virt-m68k-aspace
+            machines: virt-m68k virt-m68k-fastcall virt-m68k-mmu virt-m68k-aspace virt-m68k-aspace-defconfig
             qemu: qemu-system-misc
     steps:
       - uses: actions/checkout@v4
@@ -303,6 +486,10 @@ jobs:
         with:
           packages: --no-install-recommends fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
 
+      - name: Test ARM saved-return routing and admission
+        if: matrix.arch == 'arm'
+        run: python3 tools/test-fork-return-arm.py
+
       # for the interpreter the test script runs (setup-toolchain selects its
       # own Python, which the system's packages are not for)
       - name: Install fontTools
@@ -326,9 +513,268 @@ jobs:
             obj/binfmt/${{ matrix.arch }}*/test.json
           retention-days: 14
 
+  exec-replacement-native:
+    name: Pexec(200) ${{ matrix.machine }} ${{ matrix.fs }} ${{ matrix.loader || 'standard' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86}
+          - {arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm}
+          - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, loader: prg-only, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, loader: prg-only, qemu: qemu-system-misc}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} ovmf dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Exercise executable replacement and rollback
+        env:
+          EXEC_REPLACEMENT_TEST: '1'
+          EXEC_HANDOFF_TEST: '1'
+          EXEC_STAGING_PROFILE: ${{ matrix.loader != 'prg-only' && '1' || '0' }}
+          PRG_ONLY_EXEC: ${{ matrix.loader == 'prg-only' && '1' || '0' }}
+          # 68k MMU only (#1018): ARM/x32 have no shared-VM Pexec.
+          SHARED_VM_PEXEC: ${{ matrix.arch == 'm68k' && matrix.loader != 'prg-only' && '1' || '0' }}
+          SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
+        run: tools/ci-regression.sh "${{ matrix.machine }}"
+
+  process-files:
+    name: PROCESS descriptors ${{ matrix.machine }} ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf}
+          - {arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm}
+          - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Run real-trap descriptor ownership and complete regression/shutdown checks
+        env:
+          EXEC_REPLACEMENT_TEST: '1'
+          EXEC_HANDOFF_TEST: '1'
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
+          REGRESSION_RAW_DISK: '1'
+        run: tools/ci-group.sh --names "${{ matrix.machine }}" tools/ci-regression.sh
+
+  native-irq-restart:
+    name: Native B2 IRQ restart ${{ matrix.machine }} ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf}
+          - {arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm}
+          - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Prove gated IRQ restart with timer policy disabled
+        env:
+          IRQ_RESTART_TEST: '1'
+          EXEC_REPLACEMENT_TEST: '1'
+          EXEC_HANDOFF_TEST: '1'
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
+          REGRESSION_RAW_DISK: '1'
+        run: |
+          set -o pipefail
+          git show -s --format='source %H%nparents %P' HEAD | tee native-irq-restart.log
+          tools/ci-regression.sh "${{ matrix.machine }}" 2>&1 | tee -a native-irq-restart.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-irq-restart-${{ matrix.machine }}-${{ matrix.fs }}
+          path: |
+            native-irq-restart.log
+            obj/auto.conf
+            obj/autoconf.h
+          retention-days: 14
+
+  hatari-irq-restart:
+    name: Native B2 IRQ on Hatari ${{ matrix.mode }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [f030a, f040a, tt040a]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+      - uses: ./.github/actions/setup-hatari
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: dosfstools mtools
+      - name: Exercise gated IRQ return on the actual MMU CPU
+        run: |
+          git show -s --format='source %H%nparents %P' HEAD
+          sh tools/ci-hatari-irq-restart.sh '${{ matrix.mode }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hatari-b2-${{ matrix.mode }}
+          path: |
+            logs/hatari-b2*
+            obj/auto.conf
+          retention-days: 14
+
+  hatari-preemption:
+    name: Native 68040 timer preemption on Hatari
+    runs-on: ubuntu-26.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: m68k
+      - uses: ./.github/actions/setup-hatari
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: dosfstools mtools
+      - name: Install TT screen reader
+        run: python3 -m pip install pillow
+      - name: Run production timer policy on Falcon and TT 040
+        run: |
+          git show -s --format='source %H%nparents %P' HEAD
+          tools/ci-hatari-preemption.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hatari-preemption-logs
+          path: |
+            logs/*
+            obj/auto.conf
+          retention-days: 14
+
+  native-preemption:
+    name: Native timer preemption ${{ matrix.machine }} ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf}
+          - {arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm}
+          - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
+          - {arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Exercise production timer policy and retained USER returns
+        env:
+          EXEC_REPLACEMENT_TEST: '1'
+          EXEC_HANDOFF_TEST: '1'
+          PROCESS_FILES_TEST: '1'
+          PROCESS_FILES_FS: ${{ matrix.fs }}
+          SHARED_VM_PEXEC: ${{ matrix.arch == 'm68k' && '1' || '0' }}
+          SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
+          REGRESSION_RAW_DISK: '1'
+        run: |
+          set -o pipefail
+          git show -s --format='source %H%nparents %P' HEAD | tee native-preemption.log
+          tools/ci-regression.sh "${{ matrix.machine }}" 2>&1 | tee -a native-preemption.log
+      - name: Exercise eager x32 timer progress without fork test transports
+        if: matrix.arch == 'x86_64'
+        env:
+          REGRESSION_RAW_DISK: '1'
+        run: |
+          set -o pipefail
+          cp obj/auto.conf native-preemption-standard.conf
+          CONFIG_= python3 - <<'PY'
+          import kconfiglib
+          config = kconfiglib.Kconfig()
+          config.load_config()
+          for name in ('CONF_WITH_DEMAND_PAGING', 'CONF_WITH_FORK_RETURN_TEST',
+                       'CONF_WITH_PRIVATE_CLONE_TEST', 'CONF_WITH_PROCESS_FILES_TEST',
+                       'CONF_WITH_EXEC_REPLACEMENT_TEST', 'CONF_WITH_EXEC_HANDOFF_TEST',
+                       'CONF_WITH_X86_64_MEMTEST'):
+              config.syms[name].set_value(0)
+              assert config.syms[name].str_value == 'n', name
+          for name in ('CONF_WITH_PREEMPTION', 'CONF_WITH_SAVED_RETURN', 'CONF_WITH_FORK'):
+              assert config.syms[name].str_value == 'y', name
+          for name in ('CONF_WITH_MMAP', 'CONF_WITH_IRQ_RESTART_TEST',
+                       'CONF_WITH_CUIS', 'CONF_WITH_CUIS_WAIT_TEST'):
+              assert config.syms[name].str_value == 'n', name
+          config.write_config()
+          PY
+          make -j2 all 2>&1 | tee native-preemption-eager.log
+          tools/check-build-warnings.sh native-preemption-eager.log
+          make test-dir 2>&1 | tee -a native-preemption-eager.log
+          tools/run-regression-tests.sh pc-x86_64 2>&1 | tee -a native-preemption-eager.log
+          cp obj/auto.conf native-preemption-eager.conf
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-preemption-${{ matrix.machine }}-${{ matrix.fs }}
+          path: |
+            native-preemption.log
+            native-preemption-eager.log
+            native-preemption-*.conf
+            obj/auto.conf
+            obj/autoconf.h
+          retention-days: 14
+
   release-archives:
     name: Release archives
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # release-emucon (part of "make release") builds against the
       # lib/libcmini submodule.
@@ -359,7 +805,7 @@ jobs:
   raspi-sdcard:
     name: Raspberry Pi SD card image
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -425,6 +871,50 @@ jobs:
         with:
           name: ptos-raspi-sdcard
           path: sdcard/
+          retention-days: 14
+
+  # Positive shared-Pexec evidence is separate from the gate-off compatibility
+  # jobs. The runner requires the configured user-trap assertion markers.
+  shared-pexec:
+    name: shared Pexec ${{ matrix.machine }} ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 68k compatibility only (#1018)
+          - { arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc }
+          - { arch: m68k, machine: virt-m68k-aspace, fs: pfs, qemu: qemu-system-misc }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          arch: ${{ matrix.arch }}
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.qemu }} dosfstools mtools fonts-dejavu-core fonts-inter fonts-tlwg-loma-otf fonts-liberation
+      - name: Install fontTools
+        run: python3 -m pip install fonttools
+      - name: Execute positive shared-VM traps and shutdown checks
+        run: |
+          set -o pipefail
+          sh tools/ci-shared-pexec.sh '${{ matrix.machine }}' '${{ matrix.fs }}' 2>&1 | tee shared-pexec.log
+      - name: Record exact source and effective configuration
+        if: always()
+        run: |
+          git rev-parse HEAD > shared-pexec-source.txt
+          cp .config shared-pexec.config
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-pexec-${{ matrix.machine }}-${{ matrix.fs }}
+          path: |
+            shared-pexec.log
+            shared-pexec-source.txt
+            shared-pexec.config
+            build.log
           retention-days: 14
 
   homebrew:
@@ -659,12 +1149,12 @@ jobs:
   # does not have to be edited every time a configuration is added.
   all-builds:
     name: All builds
-    needs: [build, build-atari, x86_64, regression, release-archives, raspi-sdcard, homebrew]
+    needs: [build, build-atari, x86_64, regression, shared-pexec, release-archives, raspi-sdcard, homebrew]
     # Runs even when a configuration failed, which is the whole point, but not
     # when the run was cancelled: superseding a pull request run is normal, and
     # reporting the leftover as a failed build is just misleading.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -681,6 +1171,9 @@ jobs:
       - name: Check that every configuration is built
         run: PATH=/tmp/kconfig-venv/bin:$PATH tools/check-ci-configs.sh
 
+      - name: Check default native process policies
+        run: /tmp/kconfig-venv/bin/python tools/test-native-process-config.py
+
       - name: Check the results
         if: ${{ !cancelled() }}
         run: |
@@ -688,6 +1181,7 @@ jobs:
           echo "Atari builds:          ${{ needs.build-atari.result }}"
           echo "x86_64 configurations: ${{ needs.x86_64.result }}"
           echo "regression suite:      ${{ needs.regression.result }}"
+          echo "positive shared Pexec: ${{ needs.shared-pexec.result }}"
           echo "release archives:      ${{ needs.release-archives.result }}"
           echo "raspi SD card image:   ${{ needs.raspi-sdcard.result }}"
           echo "Homebrew SDKs/builds:  ${{ needs.homebrew.result }}"
@@ -697,6 +1191,7 @@ jobs:
           [ '${{ needs.build-atari.result }}' = success ] || ok=false
           [ '${{ needs.x86_64.result }}' = success ] || ok=false
           [ '${{ needs.regression.result }}' = success ] || ok=false
+          [ '${{ needs.shared-pexec.result }}' = success ] || ok=false
           [ '${{ needs.release-archives.result }}' = success ] || ok=false
           [ '${{ needs.raspi-sdcard.result }}' = success ] || ok=false
           [ '${{ needs.homebrew.result }}' = success ] || ok=false

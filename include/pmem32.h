@@ -13,7 +13,7 @@
 #include "config.h"
 #include <aspace_types.h>
 
-#if CONF_WITH_USER_ASPACE && !defined(__x86_64__)
+#if CONF_WITH_USER_ASPACE && !ARCH_X86_64
 
 #define PMEM32_PAGE     4096UL
 #define PMEM32_NONE     ((PADDR)0xffffffffUL)

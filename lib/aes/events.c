@@ -77,7 +77,7 @@ static short event_once(short events, short clicks, short button_mask, short but
     }
     if (events & MU_TIMER) mask |= CUIS_READY_TIMER;
     wait_mask = mask | (aes_menu_listening(global) ? CUIS_READY_SURFACE : 0);
-    if (aes_lifecycle_listening(global) && !aes_frames_wait_display(global) && !aes_lifecycle_wait_display(global)) wait_mask |= CUIS_READY_COHORT;
+    if (aes_lifecycle_listening(global) && !aes_frames_wait_display(global) && !aes_lifecycle_wait_display(global)) wait_mask |= CUIS_READY_BATCH;
     /* A multi-click owns per-call accumulation until completion. Service
      * frame work afterward rather than interrupting that unfinished count. */
     if (aes_frames_listening(global) && (!(events & MU_BUTTON) || (clicks & 255) <= 1))
@@ -88,12 +88,12 @@ static short event_once(short events, short clicks, short button_mask, short but
         wait_mask &= ~(CUIS_READY_NOTICE|CUIS_READY_CONTROL); wait_mask |= CUIS_READY_DISPLAY;
     }
     if (aes_lifecycle_wait_display(global)) {
-        wait_mask &= ~(CUIS_READY_STREAM|CUIS_READY_NOTICE|CUIS_READY_CHILD|CUIS_READY_COHORT|
+        wait_mask &= ~(CUIS_READY_STREAM|CUIS_READY_NOTICE|CUIS_READY_CHILD|CUIS_READY_BATCH|
                        CUIS_READY_CONTROL|CUIS_READY_SURFACE|CUIS_READY_SERVICE);
         if (events & MU_MESAG) wait_mask |= CUIS_READY_DISPLAY;
     }
     if (clocked) {
-        now = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+        now = aes_clock_ticks();
         if (now < 0) return 0;
         elapsed = ((ULONG)now-(ULONG)start) & 0x7fffffffUL;
         ticks = elapsed >= duration ? 0 : duration-elapsed;
@@ -105,9 +105,9 @@ static short event_once(short events, short clicks, short button_mask, short but
     if (aes_controls_repeating(global)) wait_mask |= CUIS_READY_SERVICE;
     ready = cuis_call6(CUIS_SESSION_WAIT, session, 16, wait_mask, interval, 0, 0);
     if (ready <= 0 || ((ULONG)ready & ~wait_mask)) return 0;
-    if (ready & CUIS_READY_COHORT) {
+    if (ready & CUIS_READY_BATCH) {
         if (aes_lifecycle_messages(global) < 0) return 0;
-        ready &= ~CUIS_READY_COHORT;
+        ready &= ~CUIS_READY_BATCH;
         if (!ready) return -1;
     }
     if (!aes_lifecycle_wait_display(global) && (ready & (CUIS_READY_NOTICE|CUIS_READY_DISPLAY|CUIS_READY_CONTROL|CUIS_READY_SERVICE)) && messages(session, global) < 0) return 0;
@@ -166,19 +166,18 @@ short mt_evnt_multi(short events, short clicks, short button_mask, short button_
                     short message[], unsigned long interval, short *mx, short *my,
                     short *buttons, short *modifiers, short *key, short *click_count, AESGLOBAL *global)
 {
-    LONG start = 0, session;
+    LONG start = 0;
     ULONG duration;
     short result;
     BOOL clocked;
-    session = aes_application_session(global);
-    if (session < 0) return 0;
+    if (aes_application_session(global) < 0) return 0;
     clocked = (events & MU_TIMER) &&
         ((events & MU_MESAG) || aes_menu_registered(global) || aes_frames_registered(global) ||
          aes_controls_listening(global) || aes_frames_wait_display(global) || aes_lifecycle_listening(global));
     if ((events & MU_TIMER) && interval > 0xffffffffUL) return 0;
     duration = interval/5 + (interval%5 != 0) + (interval != 0);
     if (clocked) {
-        start = cuis_call6(CUIS_CLOCK,session,0,0,0,0,0);
+        start = aes_clock_ticks();
         if (start < 0) return 0;
     }
     for (;;) {

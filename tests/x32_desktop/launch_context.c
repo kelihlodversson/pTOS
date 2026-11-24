@@ -1,5 +1,6 @@
 /* TOS launch fixture: report its current directory and require console input. */
 #include "ptos.h"
+#include <string.h>
 
 static long call(unsigned function, unsigned long long a, unsigned long long b)
 {
@@ -11,11 +12,7 @@ static long call(unsigned function, unsigned long long a, unsigned long long b)
 
 static void record(const char *text)
 {
-    while (*text) {
-        register unsigned long long ax __asm__("rax") = (13ULL << 32) | 3;
-        __asm__ volatile ("syscall" : "+a"(ax) : "D"(1ULL), "S"((unsigned long long)*text++)
-                          : "rcx", "r11", "memory", "cc");
-    }
+    ptos_write(-2, text, strlen(text));  /* AUX: */
 }
 
 int main(void)

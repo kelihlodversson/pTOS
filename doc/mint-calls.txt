@@ -190,17 +190,96 @@ Groups and their PRs
 
   Sconfig() is EINVFN and needs no group.
 
-Managed x32 asynchronous process calls (#711)
---------------------------------------------
-With CONF_WITH_NATIVE_SCHED (initially selected by external libaes/CUIS),
-kernel-managed native task groups support
-Pexec(100/106), Syield (0xff), Pwait (0x109), Pwait3 (0x11c), and Pwaitpid
-(0x13a). Ordinary native Pexec(0/4/6) bootstraps a group when needed,
-retaining its synchronous return and ownership semantics. Async launch outside a
-managed group, Pexec(104)'s shared-address-space mode, process-group wait
-selectors, and signal/job-control APIs remain unsupported. See doc/cuis.txt
-for precise ownership, wait flags/status/usage, PID reservation, orphan
-cleanup and scheduling limits. References: FreeMiNT sys/k_exec.c,
-sys/k_exit.c and doc/programmer/man/man2/Pwait3.2. Raw MiNT wait status puts
-normal exit in the low byte and a terminating signal in the next byte;
-POSIX libc wrappers perform their normal conversion.
+Native PROCESS waits (#711, #909)
+---------------------------------
+CONF_WITH_MULTITHREADING uses the same PROCESS wait implementation on x32,
+ARM MMU and m68k MMU. CUIS and external libaes are optional. Pwait (0x109)
+uses Pwaitpid(-1, 2, NULL) and Pwait3 (0x11c) uses Pwaitpid(-1, flags, usage).
+Pwaitpid (0x13a) accepts a positive direct-child PID or -1 for any direct
+child. Process-group selectors return EINVFN. Flag bit 0 is WNOHANG and
+returns zero when an eligible child is still running. Bit 1 is accepted
+for ABI compatibility with stopped-child reporting. pTOS has no stopped
+child states. Other flag bits return EINVAL. No matching unreaped child
+returns EFILNF. An exact wait on a child claimed by another waiter returns
+EACCDN. A wait for any child can still deliver an unclaimed child.
+
+The final THREAD or a PROCESS group exit completes the PROCESS. The return
+value packs the PID in bits 16-31, normal exit status in bits 0-7 and fault
+signal in bits 8-15. Optional usage occupies two 32-bit LONGs in milliseconds
+using the scheduler's approximate child accounting. The second word is zero.
+An attempt that cannot deliver status leaves the usage buffer alone. Invalid
+output returns EIMBA, and backing preparation can report its own error.
+Failed output leaves the zombie and its status available for retry. Successful
+delivery charges usage and consumes the result once. Pexec(0)'s reserved
+exact-child path keeps the full 16-bit exit status.
+
+A zombie reserves the child's PID until it is reaped or orphan cleanup
+releases it. A PROCESS exit detaches its children, including zombies. A live
+orphan can continue and is reclaimed when it exits. CUIS CH_EXIT uses its
+own retained completion record, so an earlier public wait preserves the
+GUI notification. FreeMiNT references are sys/k_exit.c and
+doc/programmer/man/man2/Pwait3.2.
+
+Ssystem(S_PROCNAME = -7, buffer, capacity)
+  Generic current PROCESS loaded-image basename, available with KPROC. Returns
+  its byte length excluding NUL (at most 32); copies the complete terminated
+  name only when capacity is greater than that length. ERANGE leaves the
+  buffer untouched; an invalid destination returns EIMBA. Capacity is a full
+  native-width signed argument. No AES registration is involved. The kernel
+  snapshots retained identity metadata before user copyout; retired identities
+  keep their basename without retaining a basepage or live resources. GEM
+  labels and accessory classification remain libaes policy.
+
+Ssystem(S_PROCIDENT = -8, PROCESS_IDENTITY *, sizeof(PROCESS_IDENTITY))
+  Fixed 16-byte in/out snapshot defined in process_identity.h. Selector zero
+  queries the current PROCESS and requires zero number/PID. Selector NUMBER
+  requires a nonzero number and zero PID; selector PID requires a PID in
+  1..32767 and zero number. Output supplies number_low/high, PID and zero
+  selector. Unknown identity returns ESRCH; malformed requests/size return
+  EINVAL without modifying input. Copy faults return EIMBA. Numbers never
+  recycle, including PD/PID reuse; they are not pointers, TIDs or AES IDs.
+  Retained retired identities remain discoverable without retaining live
+  resources. Snapshot queries grant no owning reference or wait/reap rights.
+  This service is independent of CUIS and has no endpoint discovery policy.
+
+PROCESS number allocation and registry lookup/retain currently use the
+existing cooperative PROCESS-owner serialization. No local IRQ mask is an
+SMP lock; preemption/SMP enablement requires the owning synchronization
+contract first. Exhaustion refuses creation instead of wrapping through zero
+or reusing an identity. Endpoint-held identity references also reserve the
+PID until prompt endpoint final reclamation; they keep no live resources.
+
+PROCESS_IDENTITY uses four fixed-width 32-bit fields with explicit 4-byte
+alignment, 16-byte size and compile-time width/offset/alignment assertions on all
+three MMU ABIs. The numeric PROCESS number grants no reference, permission or
+completion right. Identity lookups acquire a transient registry reference and
+return copied values only. A CUIS endpoint's retained identity may reserve a PID
+until retirement; it does not retain PD, descriptors, ASPACE or execution state.
+Live/retired lookup plus retain, final unlink/release and counter allocation must
+share PROCESS-owner synchronization before preemption/SMP. Local IRQ exclusion
+alone is not that lock. GUI locks must not acquire a blocking PROCESS lock.
+
+
+MMU Pfork/Pvfork policy (#895, explicit FreeMiNT deviation)
+---------------------------------------------------------
+Pfork(): GEMDOS 0x11b, no arguments. Pvfork(): GEMDOS 0x113, no arguments.
+Both create a distinct PROCESS/PID and privately owned COW address space,
+resuming after the originating trap with child0 and parent positive child PID.
+Failures use signed negative GEMDOS errors; a TID is never returned as a PID.
+Pfork returns the parent immediately after publication. Pvfork blocks only the
+calling parent THREAD until the exact child finally completes or successfully
+commits same-PROCESS/PID Pexec(200) executable replacement (on ARM/x32, after
+#1008, the equivalent Pexecve(200) commit). Failed exec, another
+PROCESS's completion/launch or a THREAD-only exit cannot release that parent.
+
+Unlike FreeMiNT Pvfork, pTOS MMU Pvfork does NOT share ordinary private memory:
+child writes to private/anonymous memory and its private user stack are not
+visible in parent private memory. Explicitly shared mappings retain their
+semantics; public MAP_SHARED currently remains unsupported. This difference is
+intentional, not full FreeMiNT Pvfork memory compatibility. Non-MMU shadow fork
+is outside this policy. CONF_WITH_FORK defaults on for eligible native MMU
+builds with eager allocation or demand paging: x32, ARMv7 and the 68040
+stack-ABI profile outside classic ROM-window builds. Both calls return EINVFN
+when disabled or on unsupported CPU return images. See
+freemint-compatibility.txt for inherited state and return-image eligibility,
+and fork.txt and phase6-acceptance.txt for implementation evidence.

@@ -1,0 +1,159 @@
+Phase 5 whole-consumer acceptance contract (#894 / PR956)
+========================================================
+
+Accepted epic: 496ceba0eb260e3de2cef52f074699df6bf6f177.
+Its tree b3fbe23151ea26ee217779d99848098f532a2829 is identical to accepted
+#968 source69ccd179aa5e376505baa5ef8ed5a4a1e7750370. Normal merge96e408df6
+has parents8ece5bde and496ceba0, tree022bc903df756b269ccba4d569b5bcfe6849f4cf.
+Both authored histories remain; #966/#968 are imported once, with no preview
+or unrelated validation branch. #958 exact retained backing remains authority.
+Identical-tree prerequisite acceptance permits development without repeating
+its complete matrix. It is separate from combined-consumer acceptance.
+
+The mutable acceptance matrix and current exact SHA/tree verdict live on
+PR956 and issue894. This file indexes requirements and their actual fixtures;
+the presence of a fixture is not a passing result. Final acceptance requires
+fresh exact-candidate native/compatibility/CI evidence and independent complete
+kernel, memory and loader assessments of that same source. Earlier source,
+hosted MMU models and disposable previews must remain explicitly distinguished.
+
+Creation paths and compatibility decision
+-----------------------------------------
+Both4/104 authenticate PE_LOAD and reuse its distinct staged KPROC/PD/PID.
+The trusted NEW_PROCESS/SHARE_VM factory constructs the authentic initial
+KTHREAD with independent kernel stacks. Mode4 waits for final PROCESS completion
+and its full16-bit status;104 returns the PID. Both consume #909's canonical
+once-only reaper, never SAME_PROCESS or a second registry/scheduler/reaper.
+
+Managed ordinary0/100/6/106 and already-prepared creation use the loaded THREAD
+factory. KPROC/environment/TPA allocation and image policy remain in the loader.
+Direct nested launch already consumes #966 prepare/cancel/enter/leave; Phase5
+adds no duplicate calls. An enclosing carrier keeps its own identity while the
+nested logical execution owns its THREAD/cleanup tickets. Unmanaged ROM and
+accessory paths preserve their documented behavior. Sole-THREAD nested public
+clone/join/group restrictions remain; ordinary managed THREAD coverage does not
+claim those operations for nested continuations.
+
+Unannotated Malloc/Mmap uses common GENERAL membership, including existing and
+future allocations, so surviving peers keep a departed creator's allocations.
+(#1018 removed the test-gated MAP_PTOS_RUNTIME annotation and runtime scopes
+with shared-VM GO of ELF images: every mapping is in the PROCESS allocation
+scope.) A raw shared pointer alone never exports lifetime. Trusted exact
+birth/interval attachment must precede source release. Lifetime is neither
+memory access nor immutable permission authority. See shared-vm-pexec.txt for
+FreeMiNT primary-source references and the explicit public-activation boundary.
+
+Criterion / production owner / evidence index
+---------------------------------------------
+(#1018: the shared-VM fixtures this index names as pie_load are now the
+shared_vm suite, tests/shared_vm/; the interpreter, DSO and RELRO ones were
+removed with shared-VM GO of ELF images.)
+Distinct PROCESS/PID, THREAD/TID, common ASPACE,4 full16/104 PID:
+  shared_vm_exec.c/proc_clone.c; pie_load basic/status/source-origin fixtures.
+Parent-first, child-first, multiple living children, orphan grandchild,
+source PD retirement/reuse and nested owner restoration:
+  pie_load resources/orphans/source-origins; nested_exec and global_scheduler.
+Leader exit, worker-created/joined THREAD, final-THREAD PROCESS completion,
+PROCESS-local Ptermgrp and independent common-ASPACE survivors:
+  pie_load thread/group/competing-wait fixtures; pclone public managed fixtures.
+Basepage/env/main/interpreter/stack lifetime, overlapping R1/R2 holders,
+held mutation rejection, exact reservation birth and no cleanup-right expansion:
+  production R1-R4 native selftests; pie_load rejection/parent-first interpreter;
+  kaspace/procmem hosted production tests supplement actual MMU execution.
+Lazy heap, guarded execution stack, ordinary mmap, PROT_NONE, inaccessible
+retained metadata, inherited CORE/DATA/stack/priority and file-backed COW:
+  pie_load resources/limits/file/source-origin; pclone mapping_lifetime.
+Exact source dependencies, future GENERAL/runtime maps, generic DSO peer,
+loaded grandchild after both creators, all8 ancestor R1 receipts, unexported
+future runtime exclusion and fault-before-fini cleanup:
+  ldso_runtime/program.c/library.c and pie_load shared_vm_dso_retention.
+Repeated interpreted final reclamation with surviving parent KASPACE:
+  two original launches then128 actual PT_INTERP/LD.SO/DSO executions alternating
+  modes4/104 and normal/fault-before-fini completion; every steady launch restores
+  all45 common counters without root destruction, counter reset or fini unmap.
+Exact four-boundary resource accounting:
+  pie_load before/published/creator-exit/final-owner snapshots combine canonical
+  45-field mapping snapshots and43 Phase5 ownership fields. Reads never reap,
+  reset, fault pages, retain resources or yield. Live lazy-read/COW deltas are
+  measured at the actual accesses; peer-exit uses its actual pre-exit snapshot,
+  accounting independently for cold executable faults. Final equality is strict.
+PE_LOAD identity/grant, stale/recycled authority, live/self relaunch rejection:
+  pie_load auth/relaunch fixtures, production allocation and exact-ticket tests.
+Region-set/raw/reservation/pin/mapping/interpreter/relocation/permission/RELRO/
+startup/stack preparation failures:
+  pie_load static/interpreted prefix sweeps; production procmem borrow,
+  shared-interpreter, ELF startup/bootstrap and RELRO normal/ASan/UBSan models.
+THREAD/observer/scheduler/output/publication failures and cancellation:
+  six factory stages, source-origin protected cancellation, production clone
+  transaction/wait/cleanup fixtures; generic executable dependency prefixes and
+  loaded runtime mapping/full-preparation prefixes check all45 native counters
+  and retry the same staged image with the original surviving source intact.
+Pwait/Pwait3/Pwaitpid ABI, early/late/WNOHANG, competing claims, cancellation,
+failed copyout without consumption, normalffff versus real fault, orphan/PID
+identity and exactly-once results:
+  pie_load status/thread/wait-ABI; pclone/process_calls and canonical #909
+  production wait/result models. THREAD exit alone never completes PROCESS.
+Private protected-query diagnostic copyout after its blocking mode4 execution:
+  a native child Mprots/Munmaps a separate ordinary output reservation. Final
+  copy returns EIMBA, never panic; completed mode4 is consumed once, with43/45
+  final conservation. This is separate from public Pwait's failed-copyout
+  non-consumption contract, which remains unchanged. No output lease is implied
+  by preflight and no new pin, rollback or second reap is introduced.
+Independent CUIS CH_EXIT and GUI shell/controller/deferred completion:
+  gated tests/cuis/gem_exit.c plus required test-mmap-boot marker (its
+  staged-mode synchronous checks were removed with those modes in #1018); positive
+  full MEMTEST/GEM/form/input CI step is distinct from gate-off compatibility.
+Static/standard interpreted ELF, PRG/fastcall,0/3/6/100/106, nested/deferred/
+observed and ROM/non-MMU execution; missing/malformed interpreter/executable:
+  native load_fail/pie_load/ldso_dynamic/nested_exec, MEMTEST loader matrix,
+  ELF metadata/ABI probes, traditional gate-off and pinned emulator workflows.
+C-entry versus standard ELF stack/argv/environment/AUXV/relocation/RELRO/stack
+execution policy:
+  actual initial LD.SO instruction checks x32 GPRs/ARM r0/m68k d1; modeled
+  production startup tests assert C arguments remain and invalid SP is atomic.
+
+Regression diagnoses retained as evidence
+------------------------------------------
+8ece5bde leaked interpreter mappings in all five native configurations; that
+negative evidence and disposable preview results remain historical, not final.
+The m68k nested peer-chain98 and GLOBALCHffff were traced before role entry to
+_crtinit_noargs's insufficient-TPA termination. Actual TPAs77,824/61,440 bytes
+cannot fit default64KiB stacks plus image/MINFREE; bounded helper frames are
+below1KiB, and the helpers explicitly request16KiB. No arbitrary TPA increase,
+CRT admission bypass, libcmini modification or lifecycle assertion removal.
+
+The separate multiple-orphan lost-guard panic came from production m68k memmove
+copying low chunks first inside backward64/256-byte and odd16-byte overlap.
+The correction uses descending chunks/bytes for classic and ColdFire. An actual
+kernel-symbol native oracle covers1600 cases including the old failing overlap;
+runners reject a kernel panic even if a continuation resumes afterward.
+
+Positive full MEMTEST retains default-off rejection expectations and separately
+checks enabled-mode execution/authentication. Failed shared preparation permits
+isolated mode6 on the same staged image. Source-PD reuse is forbidden while an
+orphan's authentic R1 receipts remain, then required after final dependent THREAD
+retirement. The nested cleanup hook authenticates logical owner and depth;
+#966's protected destructor can legitimately yield on the restored carrier.
+Its observer driver cannot reenter its own in-flight nested/CLOSE scenario.
+All once-only completion, enclosing guard/cancellation and final snapshots stay.
+
+Final exact-source gates
+-------------------------
+Positive feature gates must be effective and required execution markers present.
+Minimum five suites: x32 FAT25/0; ARM FAT28/0/PFS29/0; m68k040 FAT27/0/PFS28/0.
+Each requires shutdown5/5; new assertions must actually execute. Native prefixes
+vary by authenticated image/backend and are recorded numerically in the ledger.
+Production models/sanitizers/leaks and fortified GCC13, ABI/layout, ELF metadata,
+gitready, full GUI/external EmuDesk/libaes/AES shutdown, eager/disabled/classic/
+legacy, pinned Falcon/TT030/040 and Amiberry060 cache-off/on strict nonzero FPIAR
+remain required. Build, Hatari, Amiberry and pBench must all succeed at the final
+exact source. Whole-consumer owner acceptance includes source and that evidence.
+
+Production4/104 remain default-off; no shipped preset selects the test gate.
+Unsupported/deferred: production dispatch,200/fork/vfork/public PRIVATE_VM/TLS,
+nested public clone/join/group extensions, timer preemption and SMP. Optional
+104 presentation name-hint parity remains separate from the #894 VM/PROCESS/
+result contract and must be resolved before public activation. No libcmini or
+unrelated topic is imported. Final candidate status authorizes no merge or issue
+closure: separately authorized #956 integration and actual epic-head validation
+are still required for formal Phase5 completion.

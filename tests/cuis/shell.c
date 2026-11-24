@@ -7,6 +7,7 @@
 #include "gemerror.h"
 #include "string.h"
 #include "runtime.h"
+#include "process_exec.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell failure: %d\n",__LINE__); return __LINE__; } } while (0)
 static PD basepage;
 static DL_LAUNCH launch;
@@ -30,11 +31,13 @@ static char tried[16][AES_SHELL_PATH];
 static const char *found;
 static LONG launch_result = 42;
 static LONG watch_result = 17, cancellations, observed_launches, deferred_calls;
-static LONG deferred_result;
+static LONG deferred_result, completion_error, reservations;
 static UQUAD launched_console;
 static int launches, native_calls;
 static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
 static char launched_environment[AES_SHELL_ENV];
+static void *last_allocation;
+static size_t last_allocation_size;
 static LONG allocation_balance;
 static ULONG allocation_attempts;
 static BOOL fail_allocation, fail_release;
@@ -46,10 +49,13 @@ UQUAD aes_memory_call(ULONG function, UQUAD argument)
         if (fail_allocation) return (QUAD)ENSMEM;
         memory = __builtin_malloc((size_t)argument);
         if (!memory) return (QUAD)ENSMEM;
+        last_allocation = memory;
+        last_allocation_size = (size_t)argument;
         allocation_balance++; return (uintptr_t)memory;
     }
     if (function == 0x49) {
         if (fail_release) return (QUAD)EACCDN;
+        if ((uintptr_t)last_allocation == argument) last_allocation = NULL;
         allocation_balance--; __builtin_free((void *)(uintptr_t)argument); return E_OK;
     }
     return (QUAD)EINVFN;
@@ -75,6 +81,29 @@ unsigned long __ptos_getauxval(unsigned long type)
 { return !aux_ready ? 0 : type == 6 ? 4096 : type == DL_AT_PTOS_LAUNCH ? (uintptr_t)active_launch : type == 0x5000 ? (uintptr_t)&basepage : type == 31 ? (uintptr_t)executable : 0; }
 UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
+    if (function == 0x154 && (QUAD)a == PROCESS_EXEC_SSYSTEM) {
+        const PROCESS_EXEC_REQUEST *request = (const PROCESS_EXEC_REQUEST *)(uintptr_t)b;
+        /* The path, tail and directory are in the calling host stack. */
+        uintptr_t high = (uintptr_t)b & ~(uintptr_t)0xffffffffUL;
+        ULONG environment_offset = request->environment - (ULONG)(uintptr_t)last_allocation;
+        if (c != sizeof(*request) ||
+            (request->operation != PROCESS_EXEC_DEFER && request->operation != PROCESS_EXEC_START) ||
+            request->policy || request->handle) return (QUAD)EINVAL;
+        if (request->environment && (!last_allocation ||
+            environment_offset >= last_allocation_size)) return (QUAD)EIMBA;
+        if (request->directory) strcpy(launched_directory,(const char *)(high | request->directory));
+        else launched_directory[0] = 0;
+        save_environment(request->environment ? (uintptr_t)last_allocation+environment_offset : 0);
+        strcpy(launched_path,(const char *)(high | request->path));
+        memcpy(launched_tail,(const char *)(high | request->tail),sizeof(launched_tail));
+        if (request->operation == PROCESS_EXEC_START) {
+            launched_console = FALSE;
+            launches++;
+            return (QUAD)launch_result;
+        }
+        deferred_calls++;
+        return (QUAD)deferred_result;
+    }
     (void)c;
     if (function == 0x19) { cwd_calls++; return drive; }
     if (function == 0x47) { cwd_calls++; strcpy((char *)(uintptr_t)a,cwd); return E_OK; }
@@ -115,34 +144,24 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     (void)e; (void)f;
     native_calls++;
     if (a != 9) return EACCDN;
-    if (fn == CUIS_CHILD_RESULT) return 0;
-    if (fn == CUIS_PROCESS_DEFER || fn == CUIS_PROCESS_DEFER_DIRECTORY) {
-        if (f) return EINVAL;
-        if (e) strcpy(launched_directory,(const char *)(uintptr_t)e); else launched_directory[0] = 0;
-        save_environment(d);
-        strcpy(launched_path,(const char *)(uintptr_t)b);
-        memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
-        deferred_calls++; return deferred_result;
-    }
-    if (fn == CUIS_CHILD_LAUNCH_DIRECTORY || fn == CUIS_CONSOLE_LAUNCH_DIRECTORY) {
-        strcpy(launched_directory,(const char *)(uintptr_t)f);
-        f = fn == CUIS_CONSOLE_LAUNCH_DIRECTORY;
-        fn = CUIS_CHILD_LAUNCH;
-    } else launched_directory[0] = 0;
-    if (fn == CUIS_CHILD_LAUNCH) {
-        if ((b != 17 && b != 0) || f > 1) return EINVAL;
+    if (fn == CUIS_STREAM_RECEIPT) return completion_error;
+    if (fn == CUIS_LAUNCH_ATTACH) {
+        BOOL observe=(b & CUIS_LAUNCH_OBSERVE)!=0;
+        launched_console=(b & CUIS_LAUNCH_CONSOLE)!=0;
+        if (b & ~(CUIS_LAUNCH_CONSOLE | CUIS_LAUNCH_OBSERVE)) return EINVAL;
+        if (observe) {
+            reservations++;
+            if (watch_result<0) return watch_result;
+        }
+        if (f) strcpy(launched_directory,(const char *)(uintptr_t)f);
+        else launched_directory[0] = 0;
         save_environment(e);
-        launched_console = f;
         strcpy(launched_path,(const char *)(uintptr_t)c);
         memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
         observed_launches++; launches++;
-        if (launch_result < 0 && b) cancellations++;
+        if (launch_result < 0 && observe) cancellations++;
         return launch_result;
     }
-    if (fn != CUIS_CHILD_WATCH) return EINVFN;
-    if (b == CUIS_CHILD_RESERVE) return watch_result;
-    if (c != 17) return EACCDN;
-    if (b == CUIS_CHILD_CANCEL) { cancellations++; return E_OK; }
     return EINVFN;
 }
 UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
@@ -343,6 +362,8 @@ static int argument_checks(void)
     SHELW extended = { name,0,0,NULL,custom,0,0 };
     static const char expected[] = "ONLY=child\0ARGV=NULL:2\0D:\\CHANGED\\GOOD\\NEXT.PRG\0one two\0 \0a'b\0C:\\test\0\0";
     int before;
+    LONG before_reservations;
+    ULONG before_allocations;
     found = "GOOD\\NEXT.PRG";
     strcpy(tail+1,"\"one two\" '' 'a''b' C:\\test"); tail[0] = strlen(tail+1);
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
@@ -368,6 +389,18 @@ static int argument_checks(void)
     fail_allocation = FALSE; launch_result = ENSMEM;
     VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) && !allocation_balance);
     launch_result = 42;
+    /* Prepared environment ownership must roll back even when admission
+     * cannot start because an earlier completion could not be serviced. */
+    before = launches; before_reservations = reservations;
+    before_allocations = allocation_attempts; completion_error = EIMBA;
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail));
+    VERIFY(launches == before && reservations == before_reservations && !allocation_balance);
+    VERIFY(allocation_attempts == before_allocations+1 &&
+           !memcmp(custom,"ONLY=child\0ARGV=\0old\0old-argument\0\0",sizeof(custom)));
+    completion_error = 0; watch_result = EAGAIN;
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail));
+    VERIFY(launches == before && reservations == before_reservations+1 && !allocation_balance);
+    watch_result = 17;
     extended.env = empty_environment;
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
     VERIFY(!memcmp(launched_environment,"ARGV=\0D:\\CHANGED\\GOOD\\NEXT.PRG\0\0",32) && !allocation_balance);

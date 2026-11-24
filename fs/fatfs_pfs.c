@@ -20,10 +20,14 @@
 #include "biosbind.h"
 #include "string.h"
 #include "kprint.h"
+#include "biosext.h"
 #include "mem.h"
 #include "endian.h"
 #include "time.h"
 #include "../bdos/bdosstub.h"
+#if CONF_WITH_PROCESS_FILES
+#include "../bdos/process_files.h"
+#endif
 
 #define ROOT_PSEUDO_CLUSTER 1
 
@@ -192,6 +196,9 @@ static LONG fat_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *
     char n[2], a[11];                       /*  M01.01.03   */
     int i, f2;                              /*  M01.01.03   */
     LONG pos, rc;
+#if CONF_WITH_PROCESS_FILES
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
 
     n[0] = (char)ERASE_MARKER; n[1] = 0;
 
@@ -440,6 +447,9 @@ static LONG fat_rmdir_dnd(DND *d)
 
     if (!d->d_parent)
         return EACCDN;
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES
+    if (d->d_cookie_refs) return EACCDN;
+#endif
 
     if (!(fd = d->d_ofd))
         fd = makofd(d);
@@ -537,6 +547,9 @@ static BOOL fat_open_descendants(const DND *dn)
 {
     const DND *child;
     if (dn->d_files) return TRUE;
+#if CONF_WITH_PLUGGABLE_FS || CONF_WITH_PROCESS_FILES
+    if (dn->d_cookie_refs) return TRUE;
+#endif
     for (child = dn->d_left; child; child = child->d_right)
         if (fat_open_descendants(child)) return TRUE;
     return FALSE;
@@ -561,6 +574,9 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
     LONG fileln, rc;
     PFSCOOKIE newfc;
     BOOL was_locked, destination_locked;
+#if CONF_WITH_PROCESS_FILES
+    rc=process_files_change_admission(run);if (rc<0) return rc;
+#endif
 
     posp = 0L;
     was_locked = dn1->d_flag & DND_LOCKED;
@@ -687,10 +703,23 @@ static LONG fat_rename(PFSCOOKIE *olddir, const char *oldname,
         }
         dfd->o_flag |= O_DIRTY;
         if (att&FA_SUBDIR) {
+#if CONF_WITH_PROCESS_FILES
+            WORD backend=(WORD)hnew;
+            if (process_files_managed(run) && process_files_resolve(run,(WORD)hnew,&backend,NULL)!=E_OK)
+                panic("directory temporary descriptor lost");
+#endif
             ixclose(fd2,CL_DIR|CL_FULL);
             xmfreblk(fd2);
+#if CONF_WITH_PROCESS_FILES
+            fs_sft_invalidated(backend-NUMSTD);
+            sft[backend-NUMSTD].f_own=0;sft[backend-NUMSTD].f_use=0;sft[backend-NUMSTD].f_ofd=0;
+#else
             sft[hnew-NUMSTD].f_own = 0;
+#if CONF_WITH_USER_ASPACE
+            sft[hnew-NUMSTD].f_use = 0;
+#endif
             sft[hnew-NUMSTD].f_ofd = 0;
+#endif
         } else xclose(hnew);
         ixclose(fdparent,CL_DIR);
     }
@@ -763,6 +792,19 @@ static LONG fat_abspath(PFSCOOKIE *dir, const char *tail, char *buf, int buflen)
     return E_OK;
 }
 
+/* Every durable directory cookie owns one cache hold. The cache cannot
+ * recycle its DND while a CWD/search/temporary lookup still references it.
+ * File cookies remain ordinary SFT handles (pos >= 0), not directory holds. */
+static LONG fat_directory_cookie(DND *dn, PFSCOOKIE *out)
+{
+    if (dn->d_cookie_refs == ~(ULONG)0) return ENSMEM;
+    dn->d_cookie_refs++;
+    out->fs = &fat_pfs_ops;
+    DND_TO_COOKIE(dn, out);
+    out->pos = -1;
+    return E_OK;
+}
+
 static LONG fat_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
 {
     char path[4];
@@ -782,11 +824,7 @@ static LONG fat_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
     if (!dn)
         return EPTHNF;
 
-    out->fs = &fat_pfs_ops;
-    DND_TO_COOKIE(dn, out);
-    out->pos = 0;
-
-    return E_OK;
+    return fat_directory_cookie(dn, out);
 }
 
 static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
@@ -806,11 +844,7 @@ static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
     if (!dn)
         return EPTHNF;
 
-    out->fs = &fat_pfs_ops;
-    DND_TO_COOKIE(dn, out);
-    out->pos = 0;
-
-    return E_OK;
+    return fat_directory_cookie(dn, out);
 }
 
 static LONG fat_close(PFSCOOKIE *fc)
@@ -929,16 +963,18 @@ static LONG fat_mediach(struct pfs_ops *fs, WORD drive)
     return Mediach(drive);
 }
 
-/* DND-based directory cookies and sft[]-backed file handles both
- * outlive a single call already (the DND tree is a cache, and file
- * handles are freed by close), so there is nothing to release for
- * those. The one thing that does need releasing is a directory
- * cookie's attached fat_readdir_pool[] slot, if fat_readdir() gave it
- * one (cookie->aux != 0) and the search was abandoned before running
- * to end-of-directory - see fat_readdir()'s comment.
- */
+/* Consume one independently acquired directory hold and any search cursor.
+ * Media invalidation releases durable cookies before freeing the DND tree. */
 static void fat_release(PFSCOOKIE *fc)
 {
+    if (fc->pos == -1)
+    {
+        DND *dn = COOKIE_TO_DND(fc);
+        if (!dn || !dn->d_cookie_refs) panic("FAT directory cookie underflow");
+        dn->d_cookie_refs--;
+        fc->pos = 0;
+        fc->index = 0;
+    }
     if (fc->aux > 0)
     {
         WORD slot = (WORD)(fc->aux - 1);
@@ -947,6 +983,37 @@ static void fat_release(PFSCOOKIE *fc)
             fat_readdir_pool[slot].used = FALSE;
         fc->aux = 0;
     }
+}
+
+static BOOL fat_iterator_valid(const PFSCOOKIE *directory,LONG position)
+{
+    WORD slot;
+    if(position<=0 || position>CONF_PFS_MAX_SEARCHES) return FALSE;
+    slot=(WORD)(position-1);
+    return directory && directory->fs==&fat_pfs_ops && directory->pos==-1 &&
+        directory->aux==position && position>0 && position<=CONF_PFS_MAX_SEARCHES &&
+        fat_readdir_pool[slot].used;
+}
+static LONG fat_iterator_clone(const PFSCOOKIE *source,LONG position,PFSCOOKIE *out,LONG *cursor)
+{
+    WORD slot;
+    LONG error;
+    DND *directory=COOKIE_TO_DND(source);
+    if (!fat_iterator_valid(source,position)) return E_CHNG;
+    for(slot=0;slot<CONF_PFS_MAX_SEARCHES;slot++) if(!fat_readdir_pool[slot].used) break;
+    if(slot==CONF_PFS_MAX_SEARCHES) return ENHNDL;
+    error=fat_directory_cookie(directory,out);
+    if(error) return error;
+    memset(&fat_readdir_pool[slot].dta,0,sizeof(DTAINFO));
+    /* Logical FAT continuation fields only, never the source slot's owner. */
+    memcpy(&fat_readdir_pool[slot].dta,&fat_readdir_pool[position-1].dta,offsetof(DTAINFO,dt_fattr));
+    fat_readdir_pool[slot].used=TRUE;
+    out->aux=slot+1;*cursor=slot+1;
+    return E_OK;
+}
+static LONG fat_iterator_close(PFSCOOKIE *directory,LONG position)
+{
+    (void)position;fat_release(directory);return E_OK;
 }
 
 struct pfs_ops fat_pfs_ops = {
@@ -969,7 +1036,8 @@ struct pfs_ops fat_pfs_ops = {
     TRUE            /* native_handles: fat_open()/fat_create() already
                      * allocate a real sft[] slot - see fat_open()/
                      * fat_create() and pfs_do_open()/pfs_do_create()
-                     * in fs/pfs.c. */
+                     * in fs/pfs.c. */,
+    NULL, NULL, fat_iterator_clone, fat_iterator_valid, fat_iterator_close
 };
 
 #endif /* CONF_WITH_PLUGGABLE_FS */
@@ -989,16 +1057,19 @@ static BOOL contains_wildcard_characters(const char *test)
     return FALSE;
 }
 
-LONG fat_sfirst_path_at(char *name, WORD att, DTAINFO *dt)
+LONG fat_sfirst_path_to(char *name,WORD att,DTAINFO *owner,DTAINFO *dt)
 {
     long result;
 
     dt->dt_offset_drive = -1L;
-    result = ixsfirst(name, att, dt);
+    result = ixsfirst_to(name,att,dt,owner);
     if ((result < 0) || !contains_wildcard_characters(name))
         return result;
     return E_OK;
 }
+
+LONG fat_sfirst_path_at(char *name,WORD att,DTAINFO *dt)
+{ return fat_sfirst_path_to(name,att,dt,dt); }
 
 LONG fat_snext_path_at(DTAINFO *dt)
 {
@@ -1096,7 +1167,19 @@ LONG fat_rmdir_path(char *p)
     return fat_rmdir_dnd(d);
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_PLUGGABLE_FS
+LONG fat_chdir_path(char *path)
+{
+    return pfs_do_chdir(path); /* Dsetpath never selects the named drive. */
+}
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
+LONG fat_set_process_directory(char *path, PD *process)
+{
+    return pfs_set_process_directory(path, process);
+}
+#endif
+#else
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
 static LONG fat_chdir_process(char *p, PD *process)
 #else
 LONG fat_chdir_path(char *p)
@@ -1114,7 +1197,7 @@ LONG fat_chdir_path(char *p)
     else
         dlog = run->p_curdrv;
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
     if (dlog < 0 || dlog >= BLKDEVNUM) return EDRIVE;
     olddir = PD_CURDIR(process)[dlog];
 #else
@@ -1130,7 +1213,7 @@ LONG fat_chdir_path(char *p)
     newdir = incr_curdir_usage(dnd);
     if (newdir < 0)
         return EPTHNF;
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
     PD_CURDIR(process)[dlog] = newdir;
 #else
     PD_CURDIR(run)[dlog] = newdir;
@@ -1142,7 +1225,7 @@ LONG fat_chdir_path(char *p)
     return E_OK;
 }
 
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
 LONG fat_chdir_path(char *p)
 {
     return fat_chdir_process(p, run);
@@ -1156,8 +1239,13 @@ LONG fat_set_process_directory(char *path, PD *process)
 }
 #endif
 
+#endif /* CONF_WITH_PLUGGABLE_FS */
+
 LONG fat_getdir_path(char *buf, int drv)
 {
+#if CONF_WITH_PLUGGABLE_FS
+    return pfs_do_getdir(buf, drv);
+#else
     DND *p;
     int n;
     int len;
@@ -1177,6 +1265,7 @@ LONG fat_getdir_path(char *buf, int drv)
     *--buf = 0;
 
     return E_OK;
+#endif
 }
 
 LONG fat_unlink_path(char *name)

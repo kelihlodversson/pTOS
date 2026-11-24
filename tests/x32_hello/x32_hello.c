@@ -148,8 +148,6 @@ static int walk_ancestors(u64 basepage)
 }
 
 u32 x32_reloc_target;
-/* initialised data a caller of Pexec(PE_LOAD) patches before launching (\001P) */
-u32 x32_patch = 0x11111111;
 #ifdef X32_BIG
 static volatile unsigned char big_bss[6u << 20];
 #endif
@@ -177,6 +175,16 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
     const volatile char *cmdline = (const volatile char *)(unsigned long)(basepage + 0x80);
     static u32 *volatile null_pointer;
 
+    if (cmdline[0] == 2 && cmdline[1] == 'O') {
+        int i;
+        if (cmdline[2]=='y') gemdos0(0xff); /* Nested cleanup-guard identity probe. */
+        if (cmdline[2]=='f') __asm__ volatile ("ud2");
+        if (cmdline[2]=='p') {
+            for (i=0;i<4;i++) gemdos0(0xff);
+            gemdos1(0x4c,0x1357);
+        }
+        gemdos1(0x4c,0xffff);
+    }
     if (cmdline[0] == 1 && cmdline[1] == 'f')
         *null_pointer = 1;              /* a page fault in ring 3 */
     if (cmdline[0] == 9 && cmdline[1] == 'F') {
@@ -499,8 +507,8 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
     }
 #ifdef X32_BIG
     if (cmdline[0] == 1 && cmdline[1] == 'B') {
-        /* a program with a 6 MiB bss (x32big.elf), loaded whole into the
-         * caller's heap by PE_LOAD: both ends of it are there and zero (#434) */
+        /* a program with a 6 MiB bss (x32big.elf), loaded whole: both ends
+         * of it are there and zero (#434) */
         if (big_bss[0] || big_bss[sizeof big_bss - 1])
             gemdos1(0x4c, 1);
         big_bss[0] = 1;
@@ -508,8 +516,6 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         gemdos1(0x4c, big_bss[0] == 1 && big_bss[sizeof big_bss - 1] == 2 ? 0 : 2);
     }
 #endif
-    if (cmdline[0] == 1 && cmdline[1] == 'P')
-        gemdos1(0x4c, x32_patch == 0x22222222 ? 0 : 1);
     if (cmdline[0] == 1 && cmdline[1] == 'T') {
         /* the text is read-only: writing to it faults, which ends this
          * process as Pterm(-1) (#434) */

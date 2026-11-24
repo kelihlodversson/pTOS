@@ -29,6 +29,7 @@
 #include "tosvars.h"
 #include "virtio.h"
 #include "virtio_9p.h"
+#include "virtio_9p_clunk.h"
 
 #if defined(MACHINE_VIRT_ARM)
 #include "virt_memmap.h"
@@ -624,14 +625,11 @@ LONG v9p_clunk(ULONG fid)
     v9p_put32(size_field, len);
 
     rc = v9p_transact(len);
-    /* Release our pool slot regardless of what the server says: a fid we
-     * can no longer account for on our side must never be reused. */
-    v9p_fid_release_slot(fid);
-
-    if (rc < 0)
-        return rc;
-    if ((ULONG)rc < 7)
-        return EINTRN;
+    /* A failed transport or malformed reply leaves this exact fid reserved
+     * in the driver's bounded pool until connection reset. Reusing it could
+     * redirect a later operation to an unacknowledged remote incarnation. */
+    if (!v9p_clunk_terminal(v9p_rbuf,rc,V9P_TAG))
+        return rc<0 ? rc : EINTRN;
 
     rp = v9p_rbuf + 4;
     rp = v9p_get8(rp, &rtype);
@@ -645,7 +643,10 @@ LONG v9p_clunk(ULONG fid)
     if (rtype == P9_RLERROR)
     {
         ULONG ecode;
+        if ((ULONG)rc<11) return EINTRN;
         v9p_get32(rp, &ecode);
+        /* 9P Tclunk invalidates the fid even when Rlerror is returned. */
+        v9p_fid_release_slot(fid);
         return v9p_errno_to_gemerror(ecode);
     }
     if (rtype != P9_RCLUNK)
@@ -654,6 +655,7 @@ LONG v9p_clunk(ULONG fid)
         return EINTRN;
     }
 
+    v9p_fid_release_slot(fid);
     return E_OK;
 }
 

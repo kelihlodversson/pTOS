@@ -1,7 +1,7 @@
 /*
  * load_fail.c - regression test for xexec() load failure cleanup
  *
- * LOADFAIL.TOS has a valid ELF header but no loadable segment.  Pexec()
+ * LOADFAIL.TOS has a valid ELF header but no loadable segment.  Pexec(0)
  * therefore creates a basepage and KPROC before kpgmld() fails.  Repeating
  * the failure must not consume KPROCs; a final normal launch confirms that
  * the fixed kernel pool remains usable.
@@ -27,7 +27,7 @@ void test_load_fail(void)
     ptest_begin("load_fail");
 
     for (i = 0; i < LOAD_FAILURES; i++) {
-        rc = Pexec(PE_LOAD, "C:\\LOADFAIL.TOS", "", 0);
+        rc = Pexec(PE_LOADGO, "C:\\LOADFAIL.TOS", "", 0);
         ptest_assert_msg(rc < 0, "truncated ELF unexpectedly loaded");
     }
 

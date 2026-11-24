@@ -19,6 +19,13 @@
 #define C_SYM0(prefix, name) C_SYM1(prefix, name)
 #define C_SYM(name) C_SYM0(__USER_LABEL_PREFIX__, name)
 
+#if CONF_WITH_MULTITHREADING && defined(PTOS_LTO_RUN_ALIAS)
+/* A top-level assembler .set cannot alias storage in a different LTRANS
+ * object. Resolve the frozen TOS run ABI after LTO, without a C pointer-sized
+ * alias (which would register overlapping ASan globals). */
+C_SYM(run) = C_SYM(boot_cpu);
+#endif
+
 #if !defined(MACHINE_RPI) && !defined(MACHINE_VIRT_ARM) && !defined(MACHINE_VIRT_M68K)
 /* Create a plain binary file, without any header (not possible on ARM).
  * MACHINE_VIRT_M68K is excluded for a different reason than the ARM
@@ -229,7 +236,16 @@ SECTIONS
     .stack : LMA_LOW(.stack)
     {
         C_SYM(stkbot) = .;
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+        /* The boot CPU still loads its first managed program on this stack,
+         * before entering the permanent scheduler root. Native loader/error
+         * contexts (especially under LTO) exceed the legacy 2-KiB budget and
+         * otherwise overwrite TOS low memory/vectors. Reuse this stack with
+         * the existing root's 16-KiB budget; no new execution owner. */
+        . += 16K;
+#else
         . += 2K;
+#endif
          C_SYM(stktop) = .;
 #if (CONF_WITH_HIGHER_HALF && defined(MACHINE_VIRT_M68K)) || CONF_M68K_ROM_WINDOW
     } >stram                    /* in the low memory, like the rest of it */

@@ -18,6 +18,9 @@
 #include "sound.h"
 #include "floppy.h"
 #include "mfp.h"
+#if CONF_WITH_PREEMPTION
+#include "ksched.h"
+#endif
 #if CONF_WITH_X32_VDI && CONF_WITH_USER_CALLBACKS
 #include "vdi_service.h"
 #endif
@@ -89,6 +92,9 @@ void (*timer_vbl_hook)(void) = int_vbl;
  */
 void int_timerc(void)
 {
+#if CONF_WITH_PREEMPTION
+    ksched_preempt_tick();
+#endif
     hz_200++;
     /* rotate left, as m68k's rol.w: unsigned, or the sign bit smears in
      * and the sieve ends up 0xffff, making every call the "4th" one */

@@ -283,10 +283,13 @@ static long env_ok(long v)
 
 /*
  * Pexec(mode, path, tail, env): which arguments are pointers depends on the
- * mode.  Modes 0 and 3 load a file (path is a string); 5 and 7 only create a
- * basepage (the path slot holds flags); 4 and 6 launch a basepage the caller
- * made, which is looked up in the kernel's own records and never dereferenced
- * here.  The tail is copied from the user and must end (with its NUL) within
+ * mode.  Modes 0, 100 and 200 load a file (path is a string). On m68k the
+ * historical staged modes remain (doc/pexec-legacy-modes.txt): 3 loads a PRG
+ * (path is a string); 5 and 7 only create a basepage (the path slot holds
+ * flags); 4/6/104/106 launch a basepage the caller made, which is looked up
+ * in the kernel's own records and never dereferenced here. ARM and x32 refuse
+ * those modes before any pointer is looked at.
+ * The tail is copied from the user and must end (with its NUL) within
  * PDCLSIZE bytes, as the kernel adds a terminator of its own after the copy;
  * the environment, if given, is a list of strings ending with a double NUL.
  */
@@ -295,28 +298,51 @@ static long pexec_ok(const long *pw)
     WORD mode = (WORD)pw[1];
     long rc;
 
-    if (mode == 4 || mode == 6
-#if CONF_WITH_NATIVE_SCHED
+    /* #1018: the kernel's own requests (PE_KERNEL) carry kernel pointers and
+     * never come from a process with a user address space. */
+#if CONF_WITH_USER_ASPACE
+    if (mode & PE_KERNEL)
+        return kproc_user_aspace(run) ? EINVFN : E_OK;
+#endif
+#if CONF_WITH_STAGED_PEXEC
+#if CONF_WITH_USER_ASPACE && !(CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC)
+    /* Production gate: no staged-image access before capability acceptance. */
+    if (mode == PE_GO && kproc_user_aspace(run)) return EINVFN;
+#endif
+    if (mode == PE_GO || mode == PE_GOTHENFREE
+#if CONF_WITH_MULTITHREADING && CONF_WITH_SHARED_VM_PEXEC
+        || mode == 104
+#endif
+#if CONF_WITH_MULTITHREADING
         || mode == PE_ASYNC_GO_FREE
 #endif
     ) {
         ULONG bp;
 
-        /* the basepage is found in the kernel's records (x86-64) and never
+        /* the basepage is found in the kernel's records and never
          * dereferenced here, but it cannot be null or beyond 32 bits */
         if (!uaddr(pw[3], &bp) || !bp)
             return EIMBA;
         return E_OK;
     }
-    if (mode == 0 || mode == 3
-#if CONF_WITH_NATIVE_SCHED
+#endif
+    if (mode == PE_LOADGO
+#if CONF_WITH_STAGED_PEXEC
+        || mode == PE_LOAD
+#endif
+#if CONF_WITH_MULTITHREADING
         || mode == PE_ASYNC_LOADGO
+#endif
+#if CONF_WITH_EXEC_REPLACE
+        || mode == PE_EXEC_REPLACE      /* path, tail and environment as mode 0 */
 #endif
     ) {
         rc = str_ok(pw[2], UA_PATH_MAX);
         if (rc)
             return rc;
-    } else if (mode != 5 && mode != 7) {
+    }
+#if CONF_WITH_STAGED_PEXEC
+    else if (mode != PE_BASEPAGE && mode != PE_BASEPAGEFLAGS) {
 #if CONF_WITH_USER_ASPACE
         /* the kernel's own modes (PE_RELOCATE) are not for the user */
         return EINVFN;
@@ -324,6 +350,10 @@ static long pexec_ok(const long *pw)
         return E_OK;                    /* not a mode: the call says EINVFN */
 #endif
     }
+#else
+    else
+        return EINVFN;                  /* not a mode of this platform */
+#endif
     rc = str_ok(pw[3], UA_TAIL_MAX);
     if (rc)
         return rc;
@@ -332,7 +362,11 @@ static long pexec_ok(const long *pw)
 #if CONF_WITH_USER_ASPACE
     /* no environment given: alloc_env() inherits the caller's own, through the
      * p_env field of its basepage, which the caller can have rewritten */
+#if CONF_WITH_PRIVATE_CLONE
+    return env_ok((long)kproc_private_environment(run));
+#else
     return env_ok((long)run->p_env);
+#endif
 #else
     /* ... and without an address space there is still a null to refuse */
     return run->p_env ? E_OK : EIMBA;

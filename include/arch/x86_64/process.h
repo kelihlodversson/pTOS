@@ -11,6 +11,7 @@
 #include "portab.h"
 #include "bdosdefs.h"
 #include "setjmp.h"
+#include "fs_error.h"
 
 #define ENTRY_PROGRAM   0
 #define ENTRY_ACCESSORY 1
@@ -23,10 +24,10 @@ typedef struct {
     PD *pd;
     UQUAD cr3, kernel_rsp, user_rsp, irq_rsp, flags;
     X86_64_PROCESS_LAUNCH *launch;
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
     UQUAD native_task;
 #endif
-    jmp_buf disk_error;
+    FS_ERROR_STATE disk_error;
     int in_syscall;
     UBYTE fpu[512] __attribute__((aligned(16)));
 } X86_64_PROCESS_CONTEXT;
@@ -44,5 +45,6 @@ void proc_dispose_detached(PD *pd);
 LONG proc_prepare_accessory(PD *pd);
 LONG proc_start_accessory(PD *pd);
 void proc_discard_accessory(PD *pd);
+void proc_discard_scheduled(PD *pd);
 
 #endif

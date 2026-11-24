@@ -1,0 +1,55 @@
+Bounded CUIS SESSION_WAIT PROCESS observation (#907 / #940)
+
+CUIS SESSION_WAIT takes the endpoint, stream minimum, readiness mask and
+milliseconds in arguments a-d. Argument e is a 32-bit user address and f is
+an element count (maximum 16). CUIS_READY_CHILD supports two sources:
+
+- With e=f=0, the wait follows the endpoint's publication receipts. Before
+  making an observed child runnable, LAUNCH_ATTACH binds a PROCESS-owned
+  scalar right to a receipt on that endpoint. The wait imports temporary
+  canonical observer leases from BOUND and PREPARED receipts. Completion,
+  abandonment, a new binding and pending publication cleanup can all report
+  CUIS_READY_CHILD. A right already closed at import or a consuming CLOSE
+  in the owning PROCESS during the import envelope also reports readiness
+  for a rescan. libaes uses this mode and reads PROCESS SNAPSHOT for CH_EXIT.
+- A nonempty explicit array requires CUIS_READY_CHILD. Each entry is a
+  ULONG PROCESS-owned launch right. The kernel copies and validates the
+  complete array before import. Zero and duplicate scalar handles are
+  invalid. Distinct rights that alias the same observer each acquire an
+  independent lease. The PROCESS transport rejects stale or foreign rights
+  before wait admission. The imported lease stays valid after CLOSE and
+  becomes ready on completion or abandonment of the target.
+
+The calling PROCESS and exact endpoint are retained across fallible preflight.
+Child readiness is combined with the existing input, message and timer sources.
+The wait detaches its predicate under input exclusion, restores IRQ state
+and releases its observer leases before clearing the endpoint's import fence.
+It then releases endpoint and PROCESS references before ending the cleanup
+scope and reaching the cancellation checkpoint. For an otherwise reclaimable
+receipt with a closed right, RECLAIM returns EAGAIN while an import or release
+envelope is active on the endpoint. An implicit wait can release that fence
+before the child exits. Public Pwaitpid retains its own consumption rights.
+
+Checked copies rely on the built-in single-CPU backing provider with
+non-yielding materialization and exclusion of mapping reentry.
+
+CONF_WITH_CUIS_OBSERVER_TEST enables only native diagnostic counts and
+rendezvous probes. Ordinary CUIS builds use the same lease implementation.
+
+Validation layers
+- tools/test-cuis-observers.py executes the production CUIS session source with
+  modeled PROCESS/scheduler services with diagnostics on and off; it checks aliases,
+  failed imports/copies, endpoint retirement, cancellation and combined readiness.
+- The gated x32 MEMTEST fixture uses real prepared PROCESS handles, independent
+  canonical observer references, mapped user arrays and scheduler handoffs.
+  It checks CLOSE during a retained wait, endpoint retirement, combined child/
+  stream/timer readiness, cancellation cleanup and exact resource baselines.
+  A separate pending-child case has no immediate timer/admission injection: the
+  parent blocks on the observer-aware scheduler predicate while another real
+  PROCESS executes and completes, then reaps independently through Pwait.
+- tools/test-cuis-receipts.py exercises implicit imports of closed rights
+  before and during import, and CLOSE after wait admission, through the
+  production receipt and wait code with modeled PROCESS and scheduler services.
+- The native x32 Pclone regression uses the public traps to close the exact
+  right from a sibling THREAD, wake the implicit wait and reclaim the receipt
+  while the observed child is still running. The caller then reaps it normally.

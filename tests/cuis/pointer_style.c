@@ -25,7 +25,8 @@ static int pointer_style_checks(void)
     CHECK(cuis_pointer_style(b,0x10000,0) == E_OK && displayed_pointer.mf_fg == 1 && displayed_hidden);
     wb = cuis_window_service(CUIS_WINDOW_CREATE,140,30,100,80,0);
     CHECK(wb >= 0 && cuis_window_service(CUIS_WINDOW_SHOW,wb,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wb,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,wb,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
     CHECK(displayed_pointer.mf_fg == 2 && !displayed_hidden);
     run = &first;
     CHECK(cuis_surface_service(CUIS_SURFACE_REGISTER,a,40) == E_OK);
@@ -45,13 +46,15 @@ static int pointer_style_checks(void)
     /* Content capture survives focus transfer, but hiding its window must
      * publish the focused owner's cursor without requiring another packet. */
     CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,wa,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
     pointer_suppressed = pointer_legacy_drag = FALSE;
     CHECK(point_at(60,60,1) && pointer_capture && pointer_capture->handle == (ULONG)wa);
     captured = pointer_capture;
     run = &second;
     CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wb,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,wb,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
     CHECK(displayed_pointer.mf_fg == 1 && displayed_hidden);
     run = &first;
     CHECK(cuis_window_service(CUIS_WINDOW_HIDE,wa,0,0,0,0) == E_OK);
@@ -59,12 +62,14 @@ static int pointer_style_checks(void)
     CHECK(point_at(60,60,0));
     CHECK(cuis_window_service(CUIS_WINDOW_SHOW,wa,0,0,0,0) == E_OK);
     CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wa,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,wa,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wa,0,0,0,0) == E_OK);
     pointer_capture = captured;
     pointer_control_drag = TRUE;
     run = &second;
     CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
-    CHECK(cuis_window_service(CUIS_FOCUS_REQUEST,wb,0,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_POLICY,wb,1,0,0,0) == E_OK);
+    CHECK(cuis_window_service(CUIS_WINDOW_RAISE,wb,0,0,0,0) == E_OK);
     /* Focus transfer may itself invalidate border capture. Force a stale
      * control capture to exercise cancellation independently of focus. */
     pointer_capture = captured;

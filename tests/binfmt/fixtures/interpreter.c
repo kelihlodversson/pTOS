@@ -21,6 +21,22 @@ int main(int argc, char **argv)
     int start, i;
     CHECK(kind && boot && fd && getenv("DEMO") && !strcmp(getenv("DEMO"), "present"));
     sprintf(native, "%c:\\BIN\\INTERP.TOS", *boot);
+#ifdef PROCESS_DIRECTORY_TEST
+    if (!strcmp(kind, "PROCESSDIR")) {
+        char script[64], header[4];
+        long handle;
+        sprintf(script, "%c:\\SUB\\DEMO.FMT", *boot);
+        CHECK(Dgetdrv() == *boot - 'A' && Dgetpath(cwd, 0) == 0);
+        relative = cwd;
+        while (*relative == '\\') relative++;
+        CHECK(!strcmp(relative, "BIN"));
+        CHECK(argc == 2 && !strcmp(argv[0], native) && !strcmp(argv[1], script));
+        handle = Fopen(argv[1], 0);
+        CHECK(handle >= 0 && Fread((short)handle, sizeof(header), header) == sizeof(header));
+        CHECK(!memcmp(header, "xxMF", sizeof(header)) && !Fclose((short)handle));
+        return 37;
+    }
+#endif
     CHECK(Dgetdrv() == 0 && Dgetpath(cwd, *boot - 'A' + 1) == 0);
     relative = cwd;
     while (*relative == '\\') relative++;

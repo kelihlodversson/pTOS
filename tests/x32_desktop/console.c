@@ -10,18 +10,14 @@ static void record(const char *event)
 {
     char text[100], digits[12];
     const char *prefix = "x32 console ";
-    unsigned used = 0, n = 0, pid = (unsigned)call(0x10b,0), i;
+    unsigned used = 0, n = 0, pid = (unsigned)call(0x10b,0);
     while (*prefix) text[used++] = *prefix++;
     while (*event) text[used++] = *event++;
     text[used++] = ' ';
     do { digits[n++] = '0' + pid%10; pid /= 10; } while (pid);
     while (n) text[used++] = digits[--n];
     text[used++] = '\r'; text[used++] = '\n';
-    for (i = 0; i < used; i++) {
-        register unsigned long long ax __asm__("rax") = (13ULL << 32) | 3;
-        __asm__ volatile ("syscall" : "+a"(ax) : "D"(1ULL),"S"((unsigned long long)text[i])
-                          : "rcx","r11","memory","cc");
-    }
+    ptos_write(-2, text, used);  /* AUX: */
 }
 int main(int argc, char **argv)
 {

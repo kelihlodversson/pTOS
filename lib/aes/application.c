@@ -10,6 +10,7 @@
 #include "desktop.h"
 #include "lifecycle.h"
 #include "string.h"
+#include "process_identity.h"
 
 static void clear_global(AESGLOBAL *global)
 {
@@ -50,7 +51,7 @@ static BOOL publish_label(LONG handle, BOOL *accessory)
 {
     char name[33], label[8];
     ULONG length, tag = APP_APPLICATION;
-    LONG result = cuis_call6(CUIS_SESSION_NAME, handle, (uintptr_t)name, sizeof(name), 0, 0, 0);
+    LONG result = (LONG)aes_gemdos_call(0x154, 0xfff9, (uintptr_t)name, sizeof(name));
     if (result < 0) return FALSE;
     length = (ULONG)result;
     if (length >= 4 && name[length-4] == '.' &&
@@ -64,16 +65,62 @@ static BOOL publish_label(LONG handle, BOOL *accessory)
     return TRUE;
 }
 
+/* AES IDs route to client endpoints; PROCESS lookup is used only by the
+ * explicit MiNT conversion selectors. Never key normal GUI routing by PID. */
+static LONG client_identity(LONG session, LONG peer, CUIS_PEER_IDENTITY_DATA *identity)
+{
+    LONG result = cuis_call6(CUIS_PEER_QUERY,session,peer,CUIS_PEER_IDENTITY,
+                            (uintptr_t)identity,sizeof(*identity),0);
+    if (result < 0) return result;
+    if (result != sizeof(*identity) || !identity->client_id || identity->client_id > 32767 ||
+        identity->reserved || !(identity->process_low || identity->process_high)) return EINVAL;
+    return E_OK;
+}
+
+static LONG client_by_id(LONG session, short id)
+{
+    if (id<=0) return EFILNF;
+    return cuis_call6(CUIS_PEER_QUERY,session,id,CUIS_PEER_HANDLE,0,0,0);
+}
+
+static LONG process_identity(PROCESS_IDENTITY *identity)
+{
+    return (LONG)aes_gemdos_call(0x154,0xfff8,(uintptr_t)identity,sizeof(*identity));
+}
+
+static short client_from_pid(LONG session, short pid)
+{
+    PROCESS_IDENTITY process;
+    CUIS_PEER_IDENTITY_DATA identity;
+    LONG peer, after = -1;
+    short selected = -1;
+    memset(&process,0,sizeof(process));
+    process.selector = PROCESS_IDENTITY_PID; process.pid = pid;
+    if (process_identity(&process) != E_OK) return -1;
+    for (;;) {
+        peer = cuis_call6(CUIS_PEER_NEXT,session,(QUAD)after,0,0,0,0);
+        if (peer == EFILNF) return selected;
+        if (peer < 0) return -1;
+        after = peer;
+        if (client_identity(session,peer,&identity) == E_OK &&
+            identity.process_low == process.number_low && identity.process_high == process.number_high &&
+            (selected < 0 || identity.client_id < (ULONG)selected)) selected = (short)identity.client_id;
+    }
+}
+
 short mt_appl_init(AESGLOBAL *global)
 {
     AES_APP_CONTEXT *context;
+    CUIS_PEER_IDENTITY_DATA identity;
+    PROCESS_IDENTITY process;
     UQUAD address;
-    LONG pid, handle;
+    LONG handle;
     if (!global) return -1;
     context = aes_app_context(global);
     if (!context) clear_global(global);
-    pid = aes_process_call(0x10b); /* Pgetpid: an existing bounded, trusted ID namespace. */
-    if (pid <= 0 || pid > 32767) { return -1; }
+    memset(&process,0,sizeof(process));
+    if (process_identity(&process) != E_OK || process.pid <= 0 || process.pid > 32767 ||
+        !(process.number_low || process.number_high)) return -1;
     if (!context) {
         address = aes_memory_call(0x48,sizeof(*context));
         if ((QUAD)address <= 0) return -1;
@@ -82,17 +129,22 @@ short mt_appl_init(AESGLOBAL *global)
         context->search_after = -1;
         aes_shell_init(context);
         handle = aes_session_open();
-        if (handle < 0 || !publish_label(handle,&context->lifecycle.accessory)) {
+        /* The new endpoint must belong to the calling PROCESS. */
+        if (handle < 0 || client_identity(handle,handle,&identity) != E_OK ||
+            identity.process_low != process.number_low || identity.process_high != process.number_high ||
+            !publish_label(handle,&context->lifecycle.accessory)) {
             if (handle >= 0) (void)aes_session_close(handle);
             (void)aes_memory_call(0x49,(uintptr_t)context);
             return -1;
         }
         context->session = handle;
         global->ap_3resv = context;
-    }
+    } else if (client_identity(context->session,context->session,&identity) != E_OK ||
+               identity.process_low != process.number_low || identity.process_high != process.number_high)
+        return -1;
     global->ap_version = 0x0400; /* AES global-array ABI, not a claim of complete AES coverage. */
     global->ap_count = -1; /* GEM multitasking sentinel. */
-    global->ap_id = (short)pid;
+    global->ap_id = (short)identity.client_id; /* the GUI client, never the PID */
     return global->ap_id;
 }
 
@@ -172,25 +224,32 @@ short mt_appl_getinfo(short type, short *a, short *b, short *c, short *d, AESGLO
 short mt_appl_find(const char *name, AESGLOBAL *global)
 {
     uintptr_t value = (uintptr_t)name;
-    LONG handle, pid;
+    LONG handle, session = aes_application_session(global);
+    CUIS_PEER_IDENTITY_DATA identity;
+    PROCESS_IDENTITY process;
     char label[8];
-    if (!registered(global)) return -1;
+    if (session < 0) return -1;
     if ((value >> 16) == 0) return global->ap_id;
-    if ((value >> 16) == 0xffff || (value >> 16) == 0xfffe)
-        handle = cuis_call6(CUIS_PEER_BY_PID, value & 0xffff, 0, 0, 0, 0, 0);
-    else {
-        application_label(name, label);
-        handle = cuis_call6(CUIS_LABEL_FIND, (uintptr_t)label, sizeof(label), 0, 0, 0, 0);
+    if ((value >> 16) == 0xffff) return client_from_pid(session,(short)(value & 0xffff));
+    if ((value >> 16) == 0xfffe) {
+        handle = client_by_id(session,(short)(value & 0xffff));
+        if (handle < 0 || client_identity(session,handle,&identity) != E_OK) return -1;
+        memset(&process,0,sizeof(process)); process.selector = PROCESS_IDENTITY_NUMBER;
+        process.number_low = identity.process_low; process.number_high = identity.process_high;
+        if (process_identity(&process) != E_OK || process.pid <= 0 || process.pid > 32767) return -1;
+        return (short)process.pid;
     }
-    if (handle < 0) return -1;
-    pid = cuis_call6(CUIS_PEER_PID, handle, 0, 0, 0, 0, 0);
-    return pid > 0 && pid <= 32767 ? (short)pid : -1;
+    application_label(name, label);
+    handle = cuis_call6(CUIS_LABEL_FIND,(uintptr_t)label,sizeof(label),0,0,0,0);
+    return handle >= 0 && client_identity(session,handle,&identity) == E_OK ?
+        (short)identity.client_id : -1;
 }
 
 
 short mt_appl_search(short mode, char *name, short *type, short *id, AESGLOBAL *global)
 {
-    LONG session = aes_application_session(global), peer, after, bytes, tag, pid, desktop;
+    LONG session = aes_application_session(global), peer, after, bytes, tag, desktop, identity_result;
+    CUIS_PEER_IDENTITY_DATA identity;
     char label[CUIS_LABEL_MAX];
     if (session < 0 || !name || mode < APP_FIRST || mode > APP_DESK) return 0;
     if (mode == APP_FIRST) aes_app_context(global)->search_after = -1;
@@ -202,18 +261,18 @@ short mt_appl_search(short mode, char *name, short *type, short *id, AESGLOBAL *
         after = peer;
         bytes = cuis_call6(CUIS_PEER_QUERY,session,peer,CUIS_PEER_LABEL,(uintptr_t)label,sizeof(label),0);
         tag = cuis_call6(CUIS_PEER_QUERY,session,peer,CUIS_PEER_TAG,0,0,0);
-        pid = cuis_call6(CUIS_PEER_PID,peer,0,0,0,0,0);
-        if (bytes == 8 && ((tag & 255) == APP_APPLICATION || (tag & 255) == APP_ACCESSORY) && pid > 0 && pid <= 32767) {
+        identity_result = client_identity(session,peer,&identity);
+        if (bytes == 8 && ((tag & 255) == APP_APPLICATION || (tag & 255) == APP_ACCESSORY) && identity_result == E_OK) {
             desktop = cuis_call6(CUIS_PEER_QUERY,session,0,CUIS_PEER_BACKGROUND,0,0,0);
             memcpy(name,label,8); name[8] = 0;
             if (type) *type = (short)(tag & 255) | (peer == desktop ? APP_SHELL : 0);
-            if (id) *id = (short)pid;
+            if (id) *id = (short)identity.client_id;
             if (mode != APP_DESK) aes_app_context(global)->search_after = after;
             return 1;
         }
         if (mode == APP_DESK) return 0;
         if (bytes < 0 && bytes != EFILNF) return 0;
-        if ((tag < 0 && tag != EFILNF) || (pid < 0 && pid != EFILNF)) return 0;
+        if ((tag < 0 && tag != EFILNF) || (identity_result < 0 && identity_result != EFILNF)) return 0;
         aes_app_context(global)->search_after = after;
     }
 }
@@ -225,7 +284,7 @@ short mt_appl_control(short id, short mode, void *output, AESGLOBAL *global)
     if (session < 0 || (mode != APC_TOP && mode != APC_INFO) || (mode == APC_INFO && !output)) return 0;
     if (id == -1 && mode == APC_INFO)
         peer = cuis_call6(CUIS_PEER_QUERY,session,0,CUIS_PEER_ACTIVE,0,0,0);
-    else if (id > 0) peer = cuis_call6(CUIS_PEER_BY_PID,id,0,0,0,0,0);
+    else if (id > 0) peer = client_by_id(session,id);
     else return 0;
     if (peer < 0) return 0;
     if (mode == APC_TOP) return cuis_call6(CUIS_PEER_RAISE,session,peer,0,0,0,0) == E_OK;
@@ -266,9 +325,10 @@ short mt_appl_write(short id, short length, void *buffer, AESGLOBAL *global)
 {
     LONG peer;
     if (!registered(global) || id <= 0 || length < 0 || (length && !buffer)) return 0;
-    peer = cuis_call6(CUIS_PEER_BY_PID, id, 0, 0, 0, 0, 0);
+    peer = client_by_id(aes_app_context(global)->session,id);
     if (peer < 0) return 0;
-    return cuis_call6(CUIS_STREAM_WRITE, peer, (uintptr_t)buffer, length, 1, 0, 0) == length ? 1 : 0;
+    return cuis_call6(CUIS_STREAM_WRITE, peer, (uintptr_t)buffer, length, 1,
+                      (UQUAD)aes_app_context(global)->session+1, 0) == length ? 1 : 0;
 }
 
 
@@ -294,7 +354,7 @@ short mt_appl_read(short id, short length, void *buffer, AESGLOBAL *global)
                            (aes_lifecycle_wait_display(global) ? CUIS_READY_DISPLAY : CUIS_READY_STREAM | CUIS_READY_CHILD) | (aes_frames_suspended(global) ? 0 : aes_frames_wait_display(global) ? CUIS_READY_DISPLAY : CUIS_READY_NOTICE) |
                            (aes_menu_listening(global) ? CUIS_READY_SURFACE : 0) | (aes_controls_listening(global) ? CUIS_READY_CONTROL : 0) |
                            (repeat ? CUIS_READY_SERVICE : 0) |
-                           (aes_lifecycle_listening(global) && !aes_lifecycle_wait_display(global) && !aes_frames_wait_display(global) ? CUIS_READY_COHORT : 0), 0, 0, 0) <= 0) return 0;
+                           (aes_lifecycle_listening(global) && !aes_lifecycle_wait_display(global) && !aes_frames_wait_display(global) ? CUIS_READY_BATCH : 0), 0, 0, 0) <= 0) return 0;
         }
     }
 }

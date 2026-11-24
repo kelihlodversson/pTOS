@@ -29,7 +29,7 @@
 #include "../aes/cuis.h"
 #include "gemerror.h"
 #endif
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 #endif
 #include "country.h"
@@ -278,7 +278,7 @@ LONG bconstat2(void)
     }
 }
 
-#if CONF_WITH_NATIVE_SCHED && !CONF_SERIAL_CONSOLE_POLLING_MODE
+#if CONF_WITH_MULTITHREADING && !CONF_SERIAL_CONSOLE_POLLING_MODE
 static BOOL console_key_ready(void *unused)
 {
     (void)unused;
@@ -296,7 +296,7 @@ LONG bconin2(void)
 #else
     /* Check the IKBD IOREC */
     while (!bconstat2()) {
-#if CONF_WITH_NATIVE_SCHED
+#if CONF_WITH_MULTITHREADING
         if (ksched_wait_ready(console_key_ready,NULL)) {
             continue;
         }

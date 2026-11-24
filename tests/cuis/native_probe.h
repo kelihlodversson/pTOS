@@ -57,69 +57,25 @@ static inline LONG probe_window_lower(LONG handle)
     return probe_call(CUIS_WINDOW_LOWER, handle);
 }
 
-static inline LONG probe_window_redraw(LONG handle)
+
+static inline LONG probe_display_lock(LONG session, LONG acquire, LONG block)
 {
-    return probe_call(CUIS_WINDOW_REDRAW, handle);
+    return probe_call6(CUIS_DISPLAY_LOCK,session,acquire,block,0,0,0);
+}
+static inline LONG probe_window_region(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height)
+{
+    return probe_call6(CUIS_WINDOW_REGION,window,index,(uintptr_t)x,(uintptr_t)y,(uintptr_t)width,(uintptr_t)height);
 }
 
-static inline LONG probe_update_begin(LONG window)
-{
-    return probe_call(CUIS_UPDATE_BEGIN, window);
-}
-static inline LONG probe_update_end(LONG window)
-{
-    return probe_call(CUIS_UPDATE_END, window);
-}
-static inline LONG probe_window_clip(LONG window, ULONG index, LONG *x, LONG *y, LONG *width, LONG *height)
-{
-    return probe_call6(CUIS_WINDOW_CLIP, (QUAD)window, index,
-                      (uintptr_t)x, (uintptr_t)y, (uintptr_t)width, (uintptr_t)height);
-}
-
-static inline LONG probe_window_focus(LONG window)
-{
-    return probe_call(CUIS_FOCUS_REQUEST, window);
-}
 static inline LONG probe_window_focused(LONG window)
 {
     return probe_call(CUIS_FOCUS_QUERY, window);
 }
-static inline LONG probe_window_unfocus(LONG window)
-{
-    return probe_call(CUIS_FOCUS_RELEASE, window);
-}
 
-static inline LONG probe_key_read(LONG window, ULONG *key)
-{
-    return probe_call6(CUIS_KEY_READ, (QUAD)window, (uintptr_t)key, 0, 0, 0, 0);
-}
-static inline LONG probe_key_wait(LONG window, LONG timeout_ms)
-{
-    return probe_call5(CUIS_KEY_WAIT, window, timeout_ms, 0, 0, 0);
-}
 
-static inline LONG probe_pointer_read(LONG window, LONG *x, LONG *y, ULONG *buttons, ULONG *state)
-{
-    return probe_call6(CUIS_POINTER_READ, (QUAD)window, (uintptr_t)x,
-                      (uintptr_t)y, (uintptr_t)buttons, (uintptr_t)state, 0);
-}
 static inline LONG probe_event_wait(LONG window, ULONG events, LONG timeout_ms)
 {
     return probe_call6(CUIS_EVENT_WAIT, (QUAD)window, events, (QUAD)timeout_ms, 0, 0, 0);
-}
-
-static inline LONG probe_message_send(LONG destination, ULONG a, ULONG b, ULONG c, ULONG d)
-{
-    return probe_call6(CUIS_MESSAGE_SEND, (QUAD)destination, a, b, c, d, 0);
-}
-static inline LONG probe_message_read(LONG session, LONG *sender, ULONG *a, ULONG *b, ULONG *c, ULONG *d)
-{
-    return probe_call6(CUIS_MESSAGE_READ, (QUAD)session, (uintptr_t)sender,
-                      (uintptr_t)a, (uintptr_t)b, (uintptr_t)c, (uintptr_t)d);
-}
-static inline LONG probe_message_wait(LONG session, LONG timeout_ms)
-{
-    return probe_call5(CUIS_MESSAGE_WAIT, session, timeout_ms, 0, 0, 0);
 }
 
 #endif

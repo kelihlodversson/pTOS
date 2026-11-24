@@ -7,7 +7,7 @@
 #include "syscall.h"
 #include "asm.h"
 #include <stdarg.h>
-#include "biosbind.h"
+#include "string.h"
 #include "deskaes.h"
 
 extern void *desk_basepage;
@@ -98,7 +98,7 @@ WORD sh_find(char *path)
 #if CONF_WITH_X32_DESKTOP_TEST
 void desk_test_record(const char *message)
 {
-    while (*message)
-        Bconout(1, *message++);
+    /* Emit the record in one GEMDOS call so user preemption cannot split it. */
+    Fwrite(-2, strlen(message), message);  /* AUX: */
 }
 #endif

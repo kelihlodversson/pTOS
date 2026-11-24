@@ -377,6 +377,8 @@ config CONF_AMIGA_ROM_512K
 	  Build the Amiga ROM image of 512 KB instead of 256 KB: it is at
 	  0x00f80000, and its first word is 0x1114.  The static tree of the
 	  68040 and 68060 (CONF_AMIGA_HIGHER_HALF_68040) needs the room.
+	  The full native scheduler owner/admission profile also needs this
+	  format on the 68030; the ordinary 256 KB profile remains available.
 
 # The same for a 68040 or a 68060 (#737): their MMU is not the 68030's (see
 # CONF_ATARI_HIGHER_HALF_68040), so the static tree and the start of it are

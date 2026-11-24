@@ -1,0 +1,90 @@
+Pclone Phase 1: FAT/PFS CWD ownership correction (#948)
+=====================================================
+The real standard-PFS ARM/m68k regression exposed a directory namespace
+collision: ckdrv published a legacy dirtbl index into PD_CURDIR while PFS
+interpreted that number as its independently allocated cookie slot. Process
+construction/exit also acquired/released BOTH namespaces. The original native
+COPY_CWD assertion is retained. The user authorized this correction in #948.
+
+One PROCESS namespace
+---------------------
+With PLUGGABLE_FS enabled, PD_CURDIR indexes only the existing PFS table.
+ckdrv performs media setup without assigning a legacy PROCESS directory slot.
+Legacy FAT relative loader/I/O paths borrow the FAT directory owned by that
+PFS slot, rejecting foreign drivers instead of interpreting their cookies.
+The FAT getdir/chdir wrappers delegate to PFS in this configuration. Without
+PLUGGABLE_FS, the legacy table remains authoritative and its layout is unchanged.
+
+pfs_cwd_inherit validates every source slot/drive/refcount and empty target
+before changing anything. It then acquires all table references and publishes
+all child slots in one non-yielding interval. Saturation or invalid ownership
+fails with the child unchanged. Pexec and the clone factory use this same
+helper and propagate failure through existing unpublished construction rollback.
+A shared table slot owns one driver cookie; the final PROCESS reference alone
+releases it. There is no second directory registry or PID-based owner lookup.
+
+Replacement acquires a fresh owned driver cookie before publishing it and
+releasing the previous reference. A full table permits replacement of a unique
+old slot, saving the old cookie locally and releasing it only AFTER publishing
+the replacement. Stale/empty indices are never allowed to consume a freshly
+reused slot. Failed lookup/table acquisition preserves the original directory.
+
+Retirement unpublishes the complete PROCESS directory table before any driver
+release callback. Searches are also detached before release. KPROC's existing
+file-resource retirement latch rejects new directory/search attachment through
+live and destroying identities, including unlinked prepared-child teardown.
+No new PROCESS-retirement flag, scheduler callback or cleanup registry is added.
+
+FAT cookie and cache lifetime
+----------------------------
+A FAT root/lookup result owns one checked d_cookie_refs hold on its exact DND.
+Directory cookie pos=-1 identifies that ownership; file cookies continue to
+carry native SFT handles and nonnegative sequential positions. Directory
+search cursors remain independent in aux. Duplicating a directory cookie via
+lookup("") acquires another hold, never the source cookie's search cursor.
+
+Both existing DND cache scavengers respect cookie holds, and cache-node
+construction initializes them. Removal/rename cannot free a referenced DND.
+Media change drops durable FAT searches/cookies before freeing the old DND
+tree. Referenced invalidated PFS slots become reserved tombstones: lookup uses
+the new root, while old owner release cannot decrement a reused cookie/slot.
+Non-FAT drivers keep their own real-resource release contract unchanged.
+
+Directory permissions and cache ownership are internal, with no public ABI,
+clone flag, syscall, scheduler policy, feature flag, SFT ownership or activation
+change. The libcmini source pin is unchanged.
+
+Scope and executable evidence
+-----------------------------
+Supported scope remains single-CPU cooperative execution. Driver release must
+consume its reference on normal return; arbitrary fatal/nonlocal driver unwind
+or arbitrary reentrant/yielding mapping/device callbacks are not made safe.
+Built-in disk errors are distinct: typed PFS call guards catch in their own
+frame, return explicit error metadata, release temporary directory cookies
+(and a failed search) in the owning frame, then rethrow to the original loaded
+GEMDOS/DISK_CALL error continuation. Nested resolution/rename cleans every
+selected directory, including media-change errors. Error/rw/drive metadata,
+GEMDOS media retry and kernel DISK_CALL error-return behavior are preserved.
+There is no asynchronous cleanup stack or pointer retained past a call.
+No SMP or preemptive filesystem guarantee follows from this fix.
+
+Production PFS hosted tests count every cookie and cover directory reads,
+transactional nested inheritance, saturation/foreign-slot rejection, table
+exhaustion, unique replacement, parent-first and child-first release, retirement
+reentry, media tombstones, PD/slot reuse and exact final resource baselines.
+Production FAT cache tests execute makdnd and process_dnd_tree to prove held
+nodes survive both scavengers and are reclaimed/reused after their final hold.
+The hosted driver/allocation providers are models, not native MMU execution.
+Actual hosted filesystem longjmp injection covers lookup, both rename
+selections, all directory operations, search callbacks and borrowed CWDs, with
+exact cookie baselines and original error/rw/drive propagation. Hosted tests
+use libc's real jmp_buf; native kernels retain their architecture's own ABI.
+
+Actual native public-trap tests retain the four resource-copy policies and add
+non-root Dgetcwd, nested COPY_CWD, independent child directory changes, parent
+changes before orphan execution, original-parent retirement and subsequent PD
+churn. They run on the real FAT/PFS adapter, alongside execute-policy checks,
+normal void return, rollback, PROCESS/TID and mapped-page baseline assertions.
+Traditional FAT, standard PFS, no-PRIVATE_CLONE m68k, x32 desktop, shutdown,
+ASan/UBSan, fortified GCC13, ABI/ELF, ROM and pinned-emulator results must be
+recorded for the actual final head. Source correction alone is not acceptance.

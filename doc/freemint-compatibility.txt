@@ -1,0 +1,63 @@
+pTOS MMU fork compatibility
+===========================
+
+The planned Pfork and Pvfork APIs use private copy-on-write memory on MMU pTOS.
+After either call, parent and child have separate process identities and logically
+independent address spaces and user stacks. Each initially observes the memory
+contents at the call; later writes to ordinary private memory are isolated.
+
+Pvfork additionally suspends the calling parent thread until that exact child
+exits or successfully replaces its executable with Pexec(200), keeping its PID.
+A failed exec does not resume the parent. The child receives0 and the resumed
+parent receives the child PID. Pfork lets the parent continue immediately.
+
+This is a deliberate difference from FreeMiNT Pvfork, where child memory writes
+are shared with the parent. Programs relying on that sharing are not compatible
+with pTOS's MMU Pvfork policy. Explicitly shared mappings retain their own
+semantics; pTOS's public MAP_SHARED is currently unsupported. Non-MMU fork is
+outside this initial implementation.
+
+Public Pfork/Pvfork are available with CONF_WITH_FORK. It defaults on in
+eligible x32, ARMv7 and 68040 stack-ABI native MMU builds with eager allocation
+or demand paging. The profile also provides native scheduling, Pclone,
+Pthjoin, private clone, PROCESS-local files and public Pexec(200). The calls
+return EINVFN when disabled, including on classic ROM-window and fastcall
+builds, or when the runtime return image is ineligible (see below). A 68030
+running the falcon-aspace build returns EINVFN. The child inherits every
+descriptor with its shared file position, the current directories, the DTA
+and directory searches, the environment and limits.
+Pvfork's parent resumes at the child's final completion or committed
+Pexec(200). The release follows the kernel's committed-exec event, not the
+syscall: when #1008 replaces public Pexec on ARM/x32 with Pexecve(200), that
+same-PID replacement releases the parent the same way. A multi-THREAD or
+shared-root caller gets EACCDN. Only an anchor execution may fork: one
+started with Pexec(100), Pexec(104) where it is public (m68k only), a clone,
+or an ordinary Pexec(0) (below). A nested carrier gets EINVFN, as for
+Pclone. The return image is admitted
+on x86-64 with the default segment registers and no FS/GS base (no TLS), on
+ARMv7 (A32) with an idle VFP and on a 68040 format-0 trap frame with an idle
+FPU; on any other CPU or state (68030/6888x, 68060, fastcall, Thumb)
+both calls return EINVFN. No general signals/TLS/preemption support is
+implied. See fork.txt and
+phase6-acceptance.txt for the current supported configuration and evidence.
+
+Pexec(0) children are anchors (#1015, #1039)
+-------------------------------------
+As in FreeMiNT, Pexec(0) from a managed THREAD with an address space of its
+own starts the child as Pexec(100) would, as a PROCESS with a scheduler task
+of its own, and the calling THREAD waits for that exact child. The child can
+therefore Pclone, Pthjoin, Ptermgrp, Pfork, Pvfork and Pexec(200) like any
+anchor. The caller claims the child before it can run, so no other THREAD's
+Pwaitpid and no wait-any can take it, and Pexec(0) returns the child's whole
+16-bit exit code (0xffff after a fault), not the low byte a Pwaitpid status
+carries. If the calling THREAD is cancelled while it waits (Ptermgrp, group
+exit), it releases its claim and the child lives on as an orphan, as in
+FreeMiNT; the child is never killed with its launcher.
+
+The first ordinary program started by the boot controller also enters with
+an anchor. The controller waits on the kernel's synchronous admission
+result, and the new PROCESS can create and wait for its own dependents.
+The controller executes no synthetic user THREAD. See doc/startup.txt for
+the entry paths. A deliberately nested launcher executes on its carrier
+and cannot own dependents. User callbacks cannot perform process-control
+system calls.

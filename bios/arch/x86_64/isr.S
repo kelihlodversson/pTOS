@@ -127,7 +127,18 @@ x86_64_isr_common:
         cld
 
         mov     %rsp, %rdi
+#if CONF_WITH_PRIVATE_CLONE
+        /* A recoverable COW/demand fault resumes the interrupted instruction.
+         * Keep its full FP state while kernel C copies pages/metadata. The
+         * exception-frame pointer/layout remains unchanged. */
+        subq    $512, %rsp
+        fxsave  (%rsp)
+#endif
         call    C_SYM(x86_64_exception_dispatch)
+#if CONF_WITH_PRIVATE_CLONE
+        fxrstor (%rsp)
+        addq    $512, %rsp
+#endif
 
         /* Back only after a page fault that demand paging answered: put the
          * registers back, drop the vector and error code and resume.

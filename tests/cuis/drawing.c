@@ -1,4 +1,4 @@
-/* Real VDI service writes must stay inside the active CUIS visible region. */
+/* Real VDI display ownership, explicit clipping, snapshots and overlap. */
 #include "emutos.h"
 #include "native_probe.h"
 #include "gemerror.h"
@@ -48,8 +48,7 @@ static LONG pixel(WORD handle, WORD x, WORD y, WORD *output)
 }
 /* Capturing into application memory is allowed outside the active window.
  * Compare overlapping screen copies against that immutable source image. */
-/* Save reads are unrestricted. Restores intersect both the live CUIS region
- * and the workstation clip, preserving an occluder's pixels. */
+/* Save reads are unrestricted. Restores obey the explicit workstation clip. */
 static int snapshot_checks(WORD handle)
 {
     ULONG buffer[16*16] = { 0 }, again[16*16] = { 0 };
@@ -66,6 +65,10 @@ static int snapshot_checks(WORD handle)
     SNAP_CHECK(service(VDI_SERVICE_SCREEN_BUFFER,handle,(uintptr_t)rect,(uintptr_t)buffer,0) == E_OK);
     for (y = 0; y < 16; y++) for (x = 0; x < 16; x++) {
         SNAP_CHECK(pixel(handle,x,y,output) == E_OK); before[y*16+x] = output[1];
+    }
+    {
+        WORD paint_clip[4]={8,8,47,47};
+        SNAP_CHECK(service(VDI_SERVICE_CLIP,handle,1,(uintptr_t)paint_clip,0) == E_OK);
     }
     SNAP_CHECK(attribute(handle,25,2) == E_OK && bar(handle) == E_OK);
     SNAP_CHECK(service(VDI_SERVICE_CLIP,handle,1,(uintptr_t)clip,0) == E_OK);
@@ -102,7 +105,16 @@ static int copy_checks(WORD handle)
 #undef CHECK
 #define CHECK(condition) do { if (!(condition)) return 0x5000 | __LINE__; } while (0)
     for (c = 0; c < 6; c++) {
-        CHECK(bar(handle) == E_OK);
+        for (y=0;y<8;y++) for (x=0;x<8;x++) {
+            WORD stripe[4];
+            stripe[0]=5*x; stripe[1]=5*y; stripe[2]=5*x+4; stripe[3]=5*y+4;
+            CHECK(service(VDI_SERVICE_CLIP,handle,1,(uintptr_t)stripe,0) == E_OK);
+            CHECK(attribute(handle,25,1+(x+3*y)%14) == E_OK && bar(handle) == E_OK);
+        }
+        {
+            WORD unused[4]={0,0,0,0};
+            CHECK(service(VDI_SERVICE_CLIP,handle,0,(uintptr_t)unused,0) == E_OK);
+        }
         for (y = 0; y < 40; y++) for (x = 0; x < 40; x++) {
             CHECK(pixel(handle, x, y, output) == E_OK);
             image[y * 40 + x] = output[1];
@@ -118,9 +130,7 @@ static int copy_checks(WORD handle)
         for (y = 0; y < 40; y++) for (x = 0; x < 40; x++) {
             expected = image[y * 40 + x];
             if (x >= copy.xy[4] && x <= copy.xy[6] &&
-                y >= copy.xy[5] && y <= copy.xy[7] &&
-                x >= 8 && x < 48 && y >= 8 && y < 48 &&
-                !(x >= 16 && x < 32 && y >= 16 && y < 32))
+                y >= copy.xy[5] && y <= copy.xy[7])
                 expected = image[(y - copy.xy[5] + copy.xy[1]) * 40 + x - copy.xy[4] + copy.xy[0]];
             CHECK(pixel(handle, x, y, output) == E_OK && output[1] == expected);
         }
@@ -148,84 +158,39 @@ int libaes_drawing_checks(void)
 {
 #if CONF_WITH_X32_VDI
     VDI_SERVICE_WORKSTATION workstation;
-    WORD input[11] = { 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 2 };
-    WORD output[2], black, handle;
-    WORD line[4] = { 0, 50, 63, 50 }, clip[4] = { 10, 10, 12, 12 };
-    LONG audit, target, cover;
+    WORD input[11]={1,1,1,1,1,1,1,0,1,1,2}, output[2], black, handle;
+    WORD clip[4]={10,10,12,12}, line[4]={0,50,63,50};
+    LONG session=probe_session_open();
     int rc;
-    static const char pass[] = "x32 CUIS VDI enforcement: PASS\r\n";
-#define CHECK(condition) do { if (!(condition)) return 0x6000 | __LINE__; } while (0)
-    CHECK(service(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&workstation, 0, 0) == E_OK);
-    handle = workstation.handle;
+    static const char pass[]="x32 CUIS VDI enforcement: PASS\r\n";
+#define CHECK(c) do { if (!(c)) return 0x6000|__LINE__; } while (0)
+    CHECK(service(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&workstation,0,0) == E_OK);
+    handle=workstation.handle;
     CHECK(bar(handle) == EACCDN);
-    CHECK(service(VDI_SERVICE_LINE, handle, 2, (uintptr_t)line, 0) == EACCDN);
-    CHECK(pixel(handle, 0, 0, output) == E_OK);
-    audit = probe_window_create(0, 0, 64, 64);
-    CHECK(audit >= 0 && probe_window_show(audit) == E_OK);
-    CHECK(probe_update_begin(audit) == E_OK);
-    CHECK(attribute(handle, 23, 1) == E_OK);  /* solid */
-    CHECK(attribute(handle, 32, 1) == E_OK);  /* replace */
-    CHECK(attribute(handle, 25, 1) == E_OK);  /* black */
-    CHECK(bar(handle) == E_OK);
-    CHECK(pixel(handle, 4, 4, output) == E_OK);
-    black = output[1];
-    CHECK(probe_update_end(audit) == E_OK && probe_window_hide(audit) == E_OK);
-    target = probe_window_create(8, 8, 40, 40);
-    cover = probe_window_create(16, 16, 16, 16);
-    CHECK(target >= 0 && cover >= 0);
-    CHECK(probe_window_show(target) == E_OK && probe_window_show(cover) == E_OK);
-    CHECK(probe_update_begin(target) == E_OK);
-    CHECK(service(VDI_SERVICE_CLIP, handle, 0, (uintptr_t)clip, 0) == E_OK);
-    CHECK(service(VDI_SERVICE_COLOR, handle, 0, 0, 0) == 0);
-    CHECK(service(VDI_SERVICE_LINE, handle, 2, (uintptr_t)line, 0) == E_OK);
-    CHECK(attribute(handle, 25, 0) == E_OK);  /* white */
-    CHECK(gdp_bar(handle) == E_OK); /* default perimeter expands input points */
-    CHECK(pixel(handle, 10, 10, output) == E_OK && output[1] != black);
-    CHECK(pixel(handle, 40, 40, output) == E_OK && output[1] != black);
-    CHECK(pixel(handle, 10, 20, output) == E_OK && output[1] != black);
-    CHECK(pixel(handle, 35, 20, output) == E_OK && output[1] != black);
-    CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
-    CHECK(service(VDI_SERVICE_SCREEN_COPY, handle, 0, 0, 0) == EIMBA);
-    rc = snapshot_checks(handle);
-    if (rc) return rc;
-    rc = copy_checks(handle);
-    if (rc) return rc;
-    CHECK(service(VDI_SERVICE_CLIP, handle, 1, (uintptr_t)clip, 0) == E_OK);
-    CHECK(attribute(handle, 25, 1) == E_OK);
-    CHECK(bar(handle) == E_OK);
-    CHECK(probe_update_end(target) == E_OK);
-    CHECK(probe_window_show(audit) == E_OK && probe_update_begin(audit) == E_OK);
-    CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 47, 47, output) == E_OK && output[1] != black);
-    CHECK(pixel(handle, 48, 48, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 20, 50, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 11, 11, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 13, 13, output) == E_OK && output[1] != black);
-    CHECK(probe_update_end(audit) == E_OK);
-    CHECK(probe_window_hide(audit) == E_OK);
-    CHECK(probe_window_configure(target, -100, -100, 10, 10) == E_OK);
-    CHECK(probe_update_begin(target) == E_OK);
-    CHECK(service(VDI_SERVICE_CLIP, handle, 0, (uintptr_t)clip, 0) == E_OK);
-    CHECK(attribute(handle, 25, 0) == E_OK);
-    CHECK(bar(handle) == E_OK); /* empty screen intersection must not draw */
-    CHECK(probe_update_end(target) == E_OK);
-    CHECK(probe_window_show(audit) == E_OK && probe_update_begin(audit) == E_OK);
-    CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 20, 20, output) == E_OK && output[1] == black);
-    /* Last close and the next client open must not clear the display, even
-     * while an update is held. Whole-screen screenshot reads remain usable. */
-    CHECK(service(VDI_SERVICE_CLOSE, handle, 0, 0, 0) == E_OK);
-    CHECK(service(VDI_SERVICE_OPEN, (uintptr_t)input, (uintptr_t)&workstation, 0, 0) == E_OK);
-    handle = workstation.handle;
-    CHECK(pixel(handle, 4, 4, output) == E_OK && output[1] == black);
-    CHECK(pixel(handle, 47, 47, output) == E_OK && output[1] != black);
-    CHECK(probe_update_end(audit) == E_OK);
-    CHECK(probe_window_destroy(audit) == E_OK && probe_window_destroy(target) == E_OK);
-    CHECK(probe_window_destroy(cover) == E_OK);
-    CHECK(service(VDI_SERVICE_CLOSE, handle, 0, 0, 0) == E_OK);
-    CHECK(ptos_write(1, pass, sizeof(pass) - 1) == sizeof(pass) - 1);
+    CHECK(service(VDI_SERVICE_LINE,handle,2,(uintptr_t)line,0) == EACCDN);
+    CHECK(pixel(handle,0,0,output) == E_OK);
+    CHECK(probe_display_lock(session,1,0) == E_OK);
+    CHECK(attribute(handle,23,1) == E_OK && attribute(handle,32,1) == E_OK);
+    CHECK(attribute(handle,25,1) == E_OK && bar(handle) == E_OK);
+    CHECK(pixel(handle,4,4,output) == E_OK); black=output[1];
+    CHECK(service(VDI_SERVICE_CLIP,handle,1,(uintptr_t)clip,0) == E_OK);
+    CHECK(attribute(handle,25,0) == E_OK && gdp_bar(handle) == E_OK);
+    CHECK(pixel(handle,10,10,output) == E_OK && output[1] != black);
+    CHECK(pixel(handle,4,4,output) == E_OK && output[1] == black);
+    CHECK(pixel(handle,13,13,output) == E_OK && output[1] == black);
+    CHECK(service(VDI_SERVICE_CLIP,handle,0,(uintptr_t)clip,0) == E_OK);
+    CHECK(service(VDI_SERVICE_SCREEN_COPY,handle,0,0,0) == EIMBA);
+    rc=snapshot_checks(handle); if (rc) return rc;
+    rc=copy_checks(handle); if (rc) return rc;
+    CHECK(pixel(handle,4,4,output) == E_OK); black=output[1];
+    CHECK(service(VDI_SERVICE_CLOSE,handle,0,0,0) == E_OK);
+    CHECK(service(VDI_SERVICE_OPEN,(uintptr_t)input,(uintptr_t)&workstation,0,0) == E_OK);
+    handle=workstation.handle;
+    CHECK(pixel(handle,4,4,output) == E_OK && output[1] == black);
+    CHECK(probe_display_lock(session,0,0) == E_OK);
+    CHECK(bar(handle) == EACCDN);
+    CHECK(service(VDI_SERVICE_CLOSE,handle,0,0,0) == E_OK);
+    CHECK(ptos_write(1,pass,sizeof(pass)-1) == sizeof(pass)-1);
 #undef CHECK
 #endif
     return 0;

@@ -24,10 +24,11 @@ LONG fat_mkdir_path(char *s);
 LONG fat_rmdir_path(char *p);
 LONG fat_chmod_path(char *p, int wrt, char mod);
 LONG fat_chdir_path(char *p);
-#if CONF_WITH_CUIS
+#if CONF_WITH_CUIS || CONF_WITH_MULTITHREADING
 LONG fat_set_process_directory(char *path, PD *process);
 #endif
 LONG fat_getdir_path(char *buf, int drv);
+LONG fat_sfirst_path_to(char *,WORD,DTAINFO *address,DTAINFO *output);
 LONG fat_sfirst_path_at(char *name, WORD att, DTAINFO *dt);
 LONG fat_snext_path_at(DTAINFO *dt);
 LONG fat_rename_path(char *p1, char *p2);

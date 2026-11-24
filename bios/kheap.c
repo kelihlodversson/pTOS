@@ -24,6 +24,7 @@
 #include "portab.h"
 #include "string.h"
 #include "kheap.h"
+#include "kowner.h"
 #include "pmem32.h"
 
 #define PAGE            PMEM32_PAGE
@@ -115,6 +116,7 @@ void *kalloc(ULONG size)
     struct block *b;
     ULONG pages;
 
+    kowner_assert_unlocked();
     if (!size)
         return NULL;
 
@@ -162,6 +164,7 @@ void kfree(void *p)
     struct block *b;
     UWORD cls;
 
+    kowner_assert_unlocked();
     if (!p)
         return;
 

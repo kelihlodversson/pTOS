@@ -120,7 +120,11 @@ typedef struct {
 typedef struct {
     UQUAD kernel_rsp; /* offset 0: loaded into rsp on every syscall entry */
     UQUAD user_rsp;   /* offset 8: the interrupted (caller's) rsp, saved here across the round trip */
+    volatile int syscall_gs_swapped; /* C-only loaded syscall/launcher state */
 } x86_64_percpu_t;
+#include <stddef.h>
+typedef char x86_64_percpu_kernel_rsp_offset[offsetof(x86_64_percpu_t,kernel_rsp)==0 ? 1:-1];
+typedef char x86_64_percpu_user_rsp_offset[offsetof(x86_64_percpu_t,user_rsp)==8 ? 1:-1];
 
 /*
  * Called from trapasm.S's entry stub (from_ring3 = 1) and from

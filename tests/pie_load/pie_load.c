@@ -17,15 +17,17 @@
 
 #include "test.h"
 #include <mint/osbind.h>
+#include <mint/mintbind.h>
 #include <mint/basepage.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 void test_pie_load(void);
 
 /* the segments follow the basepage back to back only where the image is loaded
  * into the TPA: in an address space of its own it is at the image address */
-#if (defined(__arm__) || defined(__mc68000__)) && !defined(TEST_WITH_USER_ASPACE)
+#if defined(__arm__) && !defined(TEST_WITH_USER_ASPACE)
 
 /*
  * The sizes in the basepage of a loaded program add up (with the basepage) to
@@ -84,11 +86,26 @@ void test_pie_load(void)
                       "PIEPROBE.TOS exited nonzero "
                       "(PIE dynamic relocations not applied?)");
 
-#if (defined(__arm__) || defined(__mc68000__)) && !defined(TEST_WITH_USER_ASPACE)
+#if defined(TEST_WITH_LEGACY_PEXEC)
+    /* #1018: 68k mode 3 stages a PRG only: this ELF is refused unloaded */
+    ptest_assert_msg(Pexec(PE_LOAD, "C:\\PIEPROBE.TOS", "", 0) == -66L,
+                     "mode 3 staged an ELF");
+#elif defined(__arm__) && !defined(TEST_WITH_USER_ASPACE)
     {
+        /* non-MMU ARM (to be deprecated) keeps the staged modes unchecked */
         const char *failure = check_footprint();
 
         ptest_assert_msg(!failure, failure ? failure : "");
+    }
+#else
+    {
+        /* #1018: MMU ARM and x32 have no staged modes; refused before any argument
+         * is used, so the bogus pointers below are never looked at */
+        static const short modes[] = { 3, 4, 5, 6, 7, 104, 106 };
+        unsigned i;
+        for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
+            ptest_assert_msg(Pexec(modes[i], (void *)1, (void *)1, (void *)1) == -32L,
+                             "an unsupported staged Pexec mode was not EINVFN");
     }
 #endif
 

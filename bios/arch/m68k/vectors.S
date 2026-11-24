@@ -10,6 +10,9 @@
 #define DBG_CHECK_READ_BYTE 0   // to trace check_read_byte() calls
 
 #include "asmdefs.h"
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+#include "arch/m68k/irqframe.h"
+#endif
 
 // ==== Definitions ==========================================================
 
@@ -116,8 +119,8 @@ set_vec:
 #else
         dbra    d0, set_vec
 #endif
-#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
-        // the bus error of a process may be a page of its lazy memory
+#if CONF_WITH_USER_ASPACE && CONF_WITH_USER_PAGE_FAULTS && !defined(__mcoldfire__)
+        // the bus error of a process may be recoverable
         lea     buserr_user(pc), a0
         move.l  a0, 8.w
 #endif
@@ -296,7 +299,10 @@ dump_stack:
         // process, and only that (the frame is at (sp); its status first)
         btst    #5,(sp)
         jne     dump_kernel_stack
-        move.l  sp,C_SYM(user_fault_frame)
+        move.l  sp,a0                  // retained original frame, not global staging
+#if !CONF_WITH_MFASTCALL
+        move.l  a0,-(sp)
+#endif
         move.w  #0x2000,sr              // supervisor mode, interrupts back on
         jsr     C_SYM(m68k_user_fault)  // does not return
 dump_kernel_stack:
@@ -320,22 +326,26 @@ dump_kernel_stack:
         lea     panic_stack,sp
         jmp     C_SYM(dopanic)
 
-#if CONF_WITH_USER_ASPACE && CONF_WITH_DEMAND_PAGING && !defined(__mcoldfire__)
+#if CONF_WITH_USER_ASPACE && CONF_WITH_USER_PAGE_FAULTS && !defined(__mcoldfire__)
 /*
- * Vector 2 in a kernel with address spaces and demand paging.  The frame of the
- * exception is at (sp), its status register first.  A fault of the kernel is
- * what it always was; one of a process in user mode may be a page of its memory
- * that is not there yet, in which case the registers it had come back and the
- * instruction runs again (m68k_user_busfault(), userfault.c).  Otherwise this
+ * Vector 2 on a kernel with recoverable user faults. The frame of the
+ * exception is at (sp), its status register first. A user fault may need
+ * lazy backing or a private copy. After recovery, restore the registers and
+ * retry the instruction (m68k_user_busfault(), userfault.c). Otherwise this
  * is the default handler, as if the table had sent the exception there.
  */
 buserr_user:
         btst    #5,(sp)                 // supervisor mode?
         jne     buserr_default
         movem.l d0-d7/a0-a6,-(sp)
-        lea     60(sp),a0               // the exception frame (a global: no argument, for -mfastcall)
-        move.l  a0,C_SYM(user_fault_frame)
+        lea     60(sp),a0               // exact original frame on this continuation
+#if !CONF_WITH_MFASTCALL
+        move.l  a0,-(sp)
+#endif
         jsr     C_SYM(m68k_user_busfault)
+#if !CONF_WITH_MFASTCALL
+        addq.l  #4,sp
+#endif
         tst.l   d0
         jeq     buserr_unhandled
         movem.l (sp)+,d0-d7/a0-a6
@@ -568,6 +578,14 @@ vbl_end:
 #define REAL_TIMER_C_HANDLER (CONF_WITH_MFP && !CONF_COLDFIRE_TIMER_C)
 
 C_SYM(int_timerc):
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+        M68K_IRQ_CAPTURE
+#endif
+#if CONF_WITH_PREEMPTION
+        movem.l d0-d1/a0-a1,-(sp)
+        jsr     C_SYM(ksched_preempt_tick)
+        movem.l (sp)+,d0-d1/a0-a1
+#endif
         addq.l  #1, C_SYM(hz_200).w           // increment 200 Hz counter
 
 #ifdef __mcoldfire__
@@ -653,6 +671,9 @@ timerc_end:
         // exception stack frame pointing to a pseudo-VBL routine. In that case,
         // the RTE below jumps to that pseudo-VBL. Then that one will return to
         // our caller with RTE.
+#if CONF_WITH_IRQ_RESTART && REAL_TIMER_C_HANDLER
+        M68K_IRQ_RESTART_RETURN
+#endif
         rte
 
 #if CONF_WITH_MFP_RS232

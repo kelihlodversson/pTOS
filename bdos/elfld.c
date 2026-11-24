@@ -1156,18 +1156,9 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  * by proc.c using the sizes returned by elf_pgmhdrld().
  */
 #if CONF_WITH_USER_ASPACE
-static BOOL elf_into_caller;
-
-void elf_set_load_into_caller(BOOL wanted)
-{
-    elf_into_caller = wanted;
-}
-
-/* where elf_load_image() put the image if it went into the caller's heap */
+/* where elf_load_image() put the image */
 typedef struct {
-    VADDR va;           /* the block (0: none) */
-    ULONG pages;
-    VADDR image_va;     /* where the image's first byte (link_base) is in it */
+    VADDR image_va;     /* where the image's first byte (link_base) is */
     BOOL pending;       /* the image is in the new process's own address space,
                          * made for it now (kproc_load_begin()) */
 } ELFPLACE;
@@ -1219,8 +1210,7 @@ LONG elf_pgmld(FH h, PD *p)
 #if CONF_WITH_USER_ASPACE
     /*
      * The image is read, and relocated if it has to be, straight into the pages
-     * it will run from, with no buffer in between: the block a PE_LOAD by a
-     * ring-3 caller gets in the caller's heap, or private pages of the new
+     * it will run from, with no buffer in between: private pages of the new
      * process's own address space, made now (kproc_load_begin()) and entered
      * for the loading. It keeps its link address where the layout permits;
      * otherwise it moves to the default image base and is relocated.
@@ -1238,30 +1228,6 @@ LONG elf_pgmld(FH h, PD *p)
         image_bytes = ((span + info.link_base - lo + USER_PAGE_SIZE - 1)
                        & ~(ULONG)(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK;
 
-        place->va = 0;
-        if (elf_into_caller && kproc_has_heap(run))
-        {
-            /*
-             * Pexec(PE_LOAD) from a ring-3 caller: the program goes into the
-             * caller's heap (kproc_load_alloc()), relocated to the address it
-             * gets there, where the caller can read and patch it until
-             * PE_GO moves it to the new process.  The block holds the image
-             * from its first page on and the startup area after it.
-             */
-            ULONG imgpages = (info.mem_end - lo + USER_PAGE_SIZE - 1) / USER_PAGE_SIZE;
-
-            /* (the rounded image and the startup area must fit the heap, exactly) */
-            if ((VADDR)imgpages * USER_PAGE_SIZE + USER_IMAGE_SLACK
-                > USER_HEAP_LIMIT - USER_HEAP_BASE)
-                return ENSMEM;
-            place->pages = imgpages + USER_IMAGE_SLACK / USER_PAGE_SIZE;
-            place->va = kproc_load_alloc(run, p, place->pages * USER_PAGE_SIZE, lo);
-            if (!place->va)
-                return ENSMEM;
-            bias = (LONG)((ULONG)place->va - lo);
-            place->image_va = (ULONG)info.link_base + (ULONG)bias;
-        }
-        else
         {
             /* (limit is page-aligned, so the end rounded up to a page is
              * within it exactly when the end is: no rounding that could wrap
@@ -1285,8 +1251,8 @@ LONG elf_pgmld(FH h, PD *p)
             place->image_va = (ULONG)info.link_base + (ULONG)bias;
         }
         /* the file is read, and relocated, straight into the pages of the image
-         * (the block in the caller's heap, or the new process's pending address
-         * space, which is in use for that): no kernel buffer holds it */
+         * (the new process's pending address space, which is in use for that):
+         * no kernel buffer holds it */
         load_base = (UBYTE *)(uintptr_t)place->image_va;
     }
 
@@ -1503,11 +1469,9 @@ LONG elf_pgmld(FH h, PD *p)
  * placed in the TPA, which is its basepage and nothing more: elf_load_image()
  * reads the file and relocates it, if it had to be moved, in place, in the
  * pages the image will run from -- private pages of the new process's own
- * address space, made now and adopted by the launch (mode 0, and a PE_LOAD by
- * a caller with none), or a block of a ring-3 caller's heap, which PE_GO moves
- * to the new process (PE_LOAD).  No kernel buffer holds it.  Either way the
- * image belongs to the process it is for, not to the process that asked for
- * it, and the process's kernel record owns the pages (or the block) from the
+ * address space, made now and adopted by the launch.  No kernel buffer holds
+ * it.  The image belongs to the process it is for, not to the process that
+ * asked for it, and the process's kernel record owns the pages from the
  * moment they exist: the caller destroys the record if this fails.
  */
 LONG elf_pgmld(FH h, PD *p)
@@ -1516,19 +1480,16 @@ LONG elf_pgmld(FH h, PD *p)
     ELFPLACE place;
     LONG r;
 
-    place.va = 0;
     place.pending = FALSE;
     r = elf_load_image(h, p, &layout, &place);
     kproc_load_leave();
     if (r < 0L)
     {
-        /* (the block in the caller's heap and the new process's address
-         * space are the process's record's, which the caller destroys) */
+        /* (the new process's address space is the process's record's, which
+         * the caller destroys) */
         return r;
     }
-    if (place.va
-        ? !kproc_set_moved_image(p, &layout, run, place.va, place.pages)
-        : !kproc_set_loaded_image(p, &layout))
+    if (!kproc_set_loaded_image(p, &layout))
     {
         KDEBUG(("BDOS elf_pgmld: image refused\n"));
         return EPLFMT;

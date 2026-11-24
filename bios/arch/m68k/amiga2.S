@@ -11,6 +11,9 @@
  */
 
 #include "asmdefs.h"
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+#include "arch/m68k/irqframe.h"
+#endif
 #include "amiga_io.h"
 
 #ifdef MACHINE_AMIGA
@@ -130,6 +133,9 @@ is_pal:
 
         .globl  C_SYM(amiga_int_2)
 C_SYM(amiga_int_2):
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+        M68K_IRQ_CAPTURE
+#endif
         //move.w  #0x0f00,0xdff180        // Background color = red
         move    #0x2700,sr              // Original interrupt mask will be restored by RTE
         movem.l d0-d2/a0-a1,-(sp)
@@ -149,6 +155,9 @@ amiga_ciaa_end:
 
 amiga_int_2_end:
         movem.l (sp)+,d0-d2/a0-a1
+#if CONF_WITH_IRQ_RESTART
+        M68K_IRQ_RESTART_RETURN
+#endif
         rte
 
 /* CIA A interrupt */

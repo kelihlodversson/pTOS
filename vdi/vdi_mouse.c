@@ -441,7 +441,9 @@ void mov_cur(WORD new_x, WORD new_y)      /* user button vector */
     if (linea_vars.HIDE_CNT)
         return;
 #ifdef __arm__
-    cpsr = disable_interrupts();
+    /* IRQ callback: a lexical mask must not claim/overwrite the loaded
+     * CPU's non-nesting legacy scope or require a later enable_interrupts. */
+    __asm__ volatile ("mrs %0,cpsr; cpsid if" : "=r"(cpsr) :: "memory", "cc");
 #else
     __asm__ volatile ("pushfq; popq %0; cli" : "=r"(rflags) :: "memory");
 #endif

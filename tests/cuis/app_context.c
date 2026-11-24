@@ -6,6 +6,7 @@
 #include "../../lib/aes/app_context.h"
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/lifecycle.h"
+#include "process_identity.h"
 
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("AES context failure: %d\n", __LINE__); return 1; } } while (0)
@@ -33,6 +34,24 @@ UQUAD aes_memory_call(ULONG function, UQUAD argument)
     return (QUAD)EINVFN;
 }
 LONG aes_process_call(ULONG function) { return function == 0x10b ? pid : E_OK; }
+/* One PROCESS owns every modeled session; each session is its own GUI client. */
+#define MODEL_PROCESS_LOW 123UL
+#define MODEL_PROCESS_HIGH 5UL
+static LONG model_client(LONG session) { return session - 99; }
+UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
+{
+    if (function == 0x154 && a == 0xfff8) {
+        PROCESS_IDENTITY *identity = (PROCESS_IDENTITY *)(uintptr_t)b;
+        if (c != sizeof(*identity)) return (UQUAD)(QUAD)EINVAL;
+        identity->number_low = MODEL_PROCESS_LOW; identity->number_high = MODEL_PROCESS_HIGH;
+        identity->pid = pid; identity->selector = 0;
+        return E_OK;
+    }
+    if (function == 0x154 && a == 0xfff9) {
+        __builtin_memcpy((void *)(uintptr_t)b,"TEST.PRG",9); return 8;
+    }
+    return (UQUAD)(QUAD)EINVFN;
+}
 LONG cuis_call(ULONG function, LONG session)
 {
     if (function == CUIS_SESSION_START) {
@@ -52,10 +71,7 @@ LONG cuis_call(ULONG function, LONG session)
 LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
 {
     LONG peer;
-    (void)e; (void)f;
-    if (function == CUIS_SESSION_NAME) {
-        __builtin_memcpy((void *)(uintptr_t)b,"TEST.PRG",9); return 8;
-    }
+    (void)a; (void)e; (void)f;
     if (function == CUIS_SESSION_LABEL) return fail_label ? EACCDN : E_OK;
     if (function == CUIS_SESSION_TAG) return fail_tag ? EACCDN : E_OK;
     if (function == CUIS_PEER_NEXT) {
@@ -66,11 +82,18 @@ LONG cuis_call6(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQU
     if (function == CUIS_PEER_QUERY) {
         if (c == CUIS_PEER_BACKGROUND) return EFILNF;
         if (c == CUIS_PEER_TAG) return APP_APPLICATION;
+        if (c == CUIS_PEER_IDENTITY) {
+            CUIS_PEER_IDENTITY_DATA *identity = (CUIS_PEER_IDENTITY_DATA *)(uintptr_t)d;
+            if (b < 100 || b >= (UQUAD)next_session || !live[b-100]) return EFILNF;
+            identity->client_id = (ULONG)model_client((LONG)b);
+            identity->process_low = MODEL_PROCESS_LOW; identity->process_high = MODEL_PROCESS_HIGH;
+            identity->reserved = 0;
+            return sizeof(*identity);
+        }
         if (c == CUIS_PEER_LABEL) {
             __builtin_memcpy((void *)(uintptr_t)d,"TESTAPP ",8); return 8;
         }
     }
-    if (function == CUIS_PEER_PID) return a >= 100 && a < (UQUAD)next_session ? 7 : EFILNF;
     return EINVFN;
 }
 static BOOL fail_resource_cleanup;
@@ -153,7 +176,7 @@ int main(void)
     void *context;
     ULONG before, cleanup_before;
     char name[9];
-    short type, id;
+    short type, id, first_id, second_id;
     first.ap_private = 0x12345678;
     CHECK(mt_appl_init(NULL) == -1);
     CHECK(!mt_appl_exit(NULL) && !mt_appl_exit(&first) && !releases);
@@ -171,24 +194,27 @@ int main(void)
     fail_tag = TRUE;
     CHECK(mt_appl_init(&first) == -1 && !first.ap_3resv && allocations == releases && closes == 2);
     fail_tag = FALSE;
-    CHECK(mt_appl_init(&first) == 7 && first.ap_3resv && first.ap_private == 0x12345678);
+    first_id = mt_appl_init(&first);
+    CHECK(first_id > 0 && first.ap_3resv && first.ap_private == 0x12345678);
+    CHECK(first_id == model_client(aes_application_session(&first)) && first_id != pid);
     context = first.ap_3resv;
     before = opens;
     CHECK(shell_initializations == 4);
     ((AES_APP_CONTEXT *)context)->shell.command[0] = 'B';
     first.ap_rscmem = (void *)(uintptr_t)0x1000;
     first.ap_rsclen = 42;
-    CHECK(mt_appl_init(&first) == 7 && first.ap_3resv == context && opens == before);
+    CHECK(mt_appl_init(&first) == first_id && first.ap_3resv == context && opens == before);
     CHECK(first.ap_rscmem == (void *)(uintptr_t)0x1000 && first.ap_rsclen == 42);
     alias.ap_3resv = context;
     alias.ap_private = 99;
     alias.ap_rscmem = (void *)(uintptr_t)0x2000;
     alias.ap_rsclen = 17;
-    CHECK(mt_appl_init(&alias) == 7 && alias.ap_3resv == context && opens == before);
+    CHECK(mt_appl_init(&alias) == first_id && alias.ap_3resv == context && opens == before);
     CHECK(alias.ap_private == 99 && alias.ap_rscmem == (void *)(uintptr_t)0x2000 && alias.ap_rsclen == 17);
     CHECK(aes_application_session(&alias) == aes_application_session(&first));
     CHECK(shell_initializations == 4 && ((AES_APP_CONTEXT *)context)->shell.command[0] == 'B');
-    CHECK(mt_appl_init(&second) == 7 && second.ap_3resv && second.ap_3resv != context);
+    second_id = mt_appl_init(&second);
+    CHECK(second_id > 0 && second_id != first_id && second.ap_3resv && second.ap_3resv != context);
     CHECK(aes_application_session(&second) != aes_application_session(&first));
     CHECK(shell_initializations == 5 && ((AES_APP_CONTEXT *)second.ap_3resv)->shell.command[0] == 'A');
     CHECK(mt_appl_search(APP_FIRST,name,&type,&id,&first) == 1);
@@ -204,7 +230,7 @@ int main(void)
     cleanup_before = resets;
     alias.ap_id = 0;
     CHECK(!mt_appl_exit(&alias) && alias.ap_3resv == context && releases == before && resets == cleanup_before);
-    alias.ap_id = 7;
+    alias.ap_id = first_id;
     fail_close = TRUE;
     CHECK(!mt_appl_exit(&alias) && alias.ap_3resv == context && releases == before && resets == cleanup_before);
     fail_close = FALSE;

@@ -6,6 +6,7 @@ obj-y += bdosmain.o console.o fsbuf.o fsdir.o fsdrive.o fsfat.o fsglob.o \
 	 fshand.o fsio.o fsmain.o fsopnclo.o iumem.o kpgmld.o kproc.o osmem.o \
 	 proc.o time.o umem.o rwa.o launch.o
 obj-$(CONF_WITH_ELF_LOADER) += elfld.o
+obj-$(CONF_WITH_EXEC_REPLACE) += exec_replace.o
 obj-$(CONF_WITH_BINFMT) += binfmt.o binfmt_rules.o binfmt_args.o
 # a process in an address space of its own: its entry, its switching
 obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(or $(ARCH_ARM),$(ARCH_M68K)),uspaceasm.o uspace.o) $(if $(ARCH_M68K),fpuctx.o)
@@ -15,6 +16,7 @@ obj-$(CONF_WITH_USER_CALLBACKS) += user_callback.o callback_entry.o
 # Ssystem() (bdos/ssystem.c) is needed by every non-m68k/ColdFire arch --
 # see the comment in osif() (bdos/bdosmain.c).
 obj-$(CONF_WITH_SSYSTEM) += ssystem.o
+obj-$(CONF_WITH_PROCESS_EXEC_DISPATCH) += process_exec_dispatch.o
 obj-$(CONF_WITH_KCALL) += kcall.o
 
 # the file calls of kernel code (the scalable fonts' font files; Fopen() & co.
@@ -23,6 +25,10 @@ ifneq ($(CONF_WITH_KCALL)$(CONF_WITH_VDI_SCALABLE_FONTS)$(CONF_WITH_ELF_SHARED)$
 obj-y += kfile.o
 endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
+obj-$(CONF_WITH_MULTITHREADING) += clone.o clone_args.o
+obj-$(CONF_WITH_FORK_CORE) += fork_parent.o
+obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o proc_clone.o process_observer.o thread_startup.o
+obj-$(CONF_WITH_PROCESS_FILES) += process_files.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
 # The kernel shares only load-plan validation and stack construction with
@@ -42,4 +48,13 @@ obj/elfstartup.o: lib/ldso/startup.c lib/ldso/startup.h $(AUTOCONF_H)
 obj-$(CONF_WITH_MMAP) += fileback.o
 
 # Native kernel tasks for external libaes, independent of kernel AES.
-obj-$(CONF_WITH_NATIVE_SCHED) += native_sched.o native_sched_entry.o
+obj-$(CONF_WITH_MULTITHREADING) += kowner.o process_exec.o process_exec_request.o native_sched.o sched_lifetime.o native_sched_entry.o kthread_context.o $(if $(ARCH_X86_64),thread_startup_x32.o interrupt_user.o,thread_startup32.o interrupt_user.o) thread_return.o
+obj-$(CONF_WITH_SHARED_VM_PEXEC) += shared_vm_exec.o
+obj-$(CONF_WITH_IRQ_RESTART) += interrupt_restart.o
+
+# Native ownership assertions, using only existing memory/rollback test gates.
+ifeq ($(CONF_WITH_MULTITHREADING),y)
+ifneq ($(filter y,$(CONF_WITH_EXIT_HANDOFF_TEST) $(CONF_WITH_X86_64_MEMTEST)),)
+obj-y += region_selftest.o
+endif
+endif

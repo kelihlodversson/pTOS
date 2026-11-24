@@ -61,6 +61,7 @@
 
 /* taken from FreeMiNT -- used by USB code */
 #define EINVAL       -25L  /* Invalid argument */
+#define EDEADLK    -22L  /* Resource deadlock would occur (FreeMiNT) */
 #define ESRCH      -20L  /* No such process (FreeMiNT's number) */
 #define    EOPNOTSUPP -307L /* Operation not supported.  */
 #define    ESHUTDOWN  -319L /* Cannot send after shutdown.  */
