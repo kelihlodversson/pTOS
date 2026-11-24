@@ -12,6 +12,7 @@
 #define EXEC200_PRG
 #endif
 #include "exec200_check.h"
+#include "exec200_vfork.h"
 #include "../../include/mapping_lifetime_test.h"
 #include <mint/mintbind.h>
 #if defined(TEST_WITH_IRQ_RESTART) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
@@ -235,6 +236,12 @@ int main(void)
     int prg = 0;
 #ifdef TEST_IS_PRG
     prg = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'P';
+#endif
+#ifdef EXEC200_VFORK_CASE
+    if (_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='V') {
+        exec200_vfork_source("EXEC200B.TOS");
+        return 0;
+    }
 #endif
     if ((unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'F') final_program();
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("initial query", 0);

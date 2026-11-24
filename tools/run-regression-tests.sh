@@ -1029,6 +1029,20 @@ if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&
             record "native Pexec(200) $formats" FAIL "missing native replacement and startup ABI evidence"
         fi
     done
+    if ! grep -qs '^BUILD_TOOLCHAIN_ELF=y' "$top/.config" &&
+       grep -qx '#define CONF_WITH_ELF_LOADER 1' "$top/obj/autoconf.h"; then
+        if grep -qx '#define CONF_WITH_FORK 1' "$top/obj/autoconf.h"; then
+            for formats in 'PRG to ELF' 'ELF to PRG'; do
+                if ! grep -aqF "native Pvfork Pexec(200) $formats: PASS" "$suite_log"; then
+                    record "native Pvfork Pexec(200) $formats" FAIL "missing exact-child release at committed replacement"
+                fi
+            done
+        fi
+        if grep -qx '#define CONF_WITH_SHARED_VM_PEXEC 1' "$top/obj/autoconf.h" &&
+           ! grep -aqF 'native ELF caller Pexec(5/7, 4/6/104/106) PRG startup and ownership: PASS' "$suite_log"; then
+            record "native ELF caller legacy Pexec" FAIL "missing staged PRG entry and ownership evidence"
+        fi
+    fi
 fi
 
 if grep -q '^#define CONF_WITH_EXEC_REPLACEMENT_TEST 1' "$top/obj/autoconf.h" &&

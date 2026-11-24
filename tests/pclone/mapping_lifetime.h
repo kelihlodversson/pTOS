@@ -39,15 +39,18 @@ static long mlt_protect(long address,long bytes,long protection)
 { return clone_test_sys6(GEMDOS_MPROT,address,bytes,protection,0,0,0); }
 static long mlt_claim(unsigned long operation,MAPPING_LIFETIME_CLAIM *claim)
 { return pclone_trap(claim,operation); }
-static void mlt_equal(const MAPPING_LIFETIME_SNAPSHOT *a,const MAPPING_LIFETIME_SNAPSHOT *b)
+static int mlt_equal(const MAPPING_LIFETIME_SNAPSHOT *a,const MAPPING_LIFETIME_SNAPSHOT *b)
 {
     unsigned i;
+    int equal=1;
     for(i=0;i<MLT_FIELDS;i++) if(a->value[i]!=b->value[i]) {
         char text[96];
         sprintf(text,"mapping resource field %u: %lu -> %lu\r\n",i,
                 (unsigned long)a->value[i],(unsigned long)b->value[i]);conws(text);
         ptest_assert_msg(0,"exact steady-root resource conservation");
+        equal=0;
     }
+    return equal;
 }
 static long mlt_launch(void (*entry)(void *),void *stack,unsigned flags,int scoped,int32_t *pid,int32_t *tid)
 {

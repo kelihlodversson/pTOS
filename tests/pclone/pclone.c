@@ -2370,6 +2370,28 @@ void pclone_run_managed_tests(void)
     }
 }
 #endif
+#if defined(TEST_WITH_EXEC_REPLACEMENT_TEST) && defined(__mc68000__) && \
+    defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER) && \
+    (defined(TEST_WITH_FORK) || defined(TEST_WITH_SHARED_VM_PEXEC))
+static void exec200_acceptance_case(const char *source,const char *tail,const char *description)
+{
+    long result;
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+    int before=mlt_snapshot(&mlt_before)==0, after, conserved;
+    ptest_assert_msg(before,"snapshot before m68k Pexec acceptance case");
+#endif
+    result=Pexec(0,source,tail,0);
+    ptest_assert_msg(result==0,description);
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+    after=mlt_snapshot(&mlt_after)==0;
+    ptest_assert_msg(after,"snapshot after m68k Pexec acceptance case");
+    conserved=before && after && mlt_equal(&mlt_before,&mlt_after);
+    if (!conserved) return;
+#endif
+    if (!result) { conws(description); conws(": PASS\r\n"); }
+}
+#endif
+
 void test_pclone(void);
 void test_pclone(void)
 {
@@ -2531,6 +2553,18 @@ void test_pclone(void)
 #if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
         ptest_assert_msg(mlt_snapshot(&mlt_after)==0,"snapshot after Pexec(200) runs");
         mlt_equal(&mlt_before,&mlt_after);
+#endif
+#if defined(__mc68000__) && defined(TEST_IS_PRG) && defined(TEST_WITH_ELF_LOADER)
+#if defined(TEST_WITH_FORK)
+        ptest_log_flush();
+        exec200_acceptance_case("EXEC200.TOS","\001V","native Pvfork Pexec(200) PRG to ELF");
+        exec200_acceptance_case("EXEC200B.TOS","\001V","native Pvfork Pexec(200) ELF to PRG");
+#endif
+#if defined(TEST_WITH_SHARED_VM_PEXEC)
+        ptest_log_flush();
+        exec200_acceptance_case("EXEC200B.TOS","\001L",
+                                "native ELF caller Pexec(5/7, 4/6/104/106) PRG startup and ownership");
+#endif
 #endif
 #endif
     }
