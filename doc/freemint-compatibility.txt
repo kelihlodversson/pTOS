@@ -17,15 +17,15 @@ with pTOS's MMU Pvfork policy. Explicitly shared mappings retain their own
 semantics; pTOS's public MAP_SHARED is currently unsupported. Non-MMU fork is
 outside this initial implementation.
 
-Public Pfork/Pvfork are available with CONF_WITH_FORK, which is built in by
-default on MMU kernels with demand paging (x32, ARMv7, m68k without fastcall),
-together with the native scheduling, Pclone, Pthjoin, private clone,
-PROCESS-local files and public Pexec(200) it needs. Elsewhere both calls return
-EINVFN, and so do they at run time on a CPU whose return image is not admitted
-(below): on m68k only a 68040 forks, so a 68030 running the falcon-aspace
-build gets EINVFN. The child
-inherits every descriptor with its shared file position, the current
-directories, the DTA and directory searches, the environment and limits.
+Public Pfork/Pvfork are available with CONF_WITH_FORK. It defaults on in
+eligible x32, ARMv7 and 68040 stack-ABI native MMU builds with eager allocation
+or demand paging. The profile also provides native scheduling, Pclone,
+Pthjoin, private clone, PROCESS-local files and public Pexec(200). The calls
+return EINVFN when disabled, including on classic ROM-window and fastcall
+builds, or when the runtime return image is ineligible (see below). A 68030
+running the falcon-aspace build returns EINVFN. The child inherits every
+descriptor with its shared file position, the current directories, the DTA
+and directory searches, the environment and limits.
 Pvfork's parent resumes at the child's final completion or committed
 Pexec(200). The release follows the kernel's committed-exec event, not the
 syscall: when #1008 replaces public Pexec on ARM/x32 with Pexecve(200), that

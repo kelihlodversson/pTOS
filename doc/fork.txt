@@ -18,8 +18,11 @@ attachment or VM detachment is required for COW Pvfork. Public Pexec(200)
 (#970, #999) replaces a private-VM child in its own PROCESS (#1003, #1007) and
 publishes the committed-exec generation the Pvfork release reads.
 
-Public opcodes0x11b/0x113 are CONF_WITH_FORK (built in by default on MMU kernels with demand paging: x32, ARMv7, m68k without fastcall, where only a 68040 forks at run time; EINVFN without it), after the resource/snapshot prerequisites
-and public native acceptance. The existing0x895f0000 shared-return experiment is
+CONF_WITH_FORK enables the public GEMDOS calls 0x11b and 0x113. It defaults
+on for eligible native MMU builds using eager allocation or demand paging:
+x32, ARMv7 and the 68040 stack-ABI profile outside classic ROM-window builds.
+Disabled and unsupported configurations return EINVFN. The existing
+0x895f0000 shared-return experiment is
 historical CPU startup coverage ONLY, never the Pvfork implementation. New private
 selectors share one constructor;0x895fc000 adds exact-child parent suspension.
 See fork-return.txt and phase6-acceptance.txt for current source/test evidence.
