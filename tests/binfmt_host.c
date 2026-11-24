@@ -7,6 +7,7 @@
 #include "gemerror.h"
 #include "binfmt.h"
 #include "startup.h"
+#include "argv_legacy.h"
 
 static BINFMT_REGISTRY registry;
 static BINFMT_PARSER parser;
@@ -117,6 +118,8 @@ static void shebangs(void)
 static void dynamic_arguments(const char *const *expected, UWORD count)
 {
     static unsigned char stack[8192];
+    static const char *slots[LEGACY_START_SLOTS(BINFMT_ENV)];
+    LEGACY_START_ARGS arguments;
     DL_START_INFO info;
     uint32_t rsp, used, argc, offset, address, i, size;
     const uint32_t top = 0x80000000UL, base = top - sizeof(stack);
@@ -125,9 +128,11 @@ static void dynamic_arguments(const char *const *expected, UWORD count)
     assert(size + 1 < BINFMT_ENV);
     memset(&info, 0, sizeof(info));
     info.pagesz = 4096;
+    assert(legacy_start_vectors(&arguments, expected[0], (const unsigned char *)tail,
+                                sizeof(tail), (const unsigned char *)storage, size + 2,
+                                slots, sizeof(slots) / sizeof(slots[0])) == DL_OK);
     assert(dl_start_stack(stack, sizeof(stack), top, expected[0], strlen(expected[0]) + 1,
-                          (const unsigned char *)tail, sizeof(tail),
-                          (const unsigned char *)storage, size + 2, &info, &rsp, &used) == DL_OK);
+                          &arguments.vectors, &info, NULL, &rsp, &used) == DL_OK);
     assert(rsp + used == top && !(rsp & 15));
     offset = rsp - base;
     memcpy(&argc, stack + offset, 4);

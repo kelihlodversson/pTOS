@@ -171,18 +171,23 @@ the ordinary RSP+8 C-call alignment before invoking a C function.  All
 pointers and auxiliary addresses must fit in x32 user memory.  Copy the
 argument strings, environment, vectors and auxiliary data into the child's
 private stack with checked arithmetic; do not expose parent/kernel pointers.
-lib/ldso/startup.c and the host/ring-3 probes implement the producer/consumer
-contract. Short GEMDOS tails (0..126 bytes) split on spaces/tabs; single and
-double quotes group text, are removed and preserve empty arguments. Adjacent
-quoted/unquoted pieces concatenate. Backslashes are literal; unmatched quotes
-or embedded NULs are invalid. argv[0] is the supplied executable filename.
+lib/ldso/startup.c copies the supplied argument and environment vectors
+literally. A launch's executable pathname supplies AT_EXECFN independently
+of argv[0]. For existing GEMDOS launch callers, bdos/argv_legacy.c decodes
+the command tail and environment before handing vectors to the stack builder.
+Short GEMDOS tails (0..126 bytes) split on spaces/tabs. Single and double
+quotes group text, are removed and preserve empty arguments. Adjacent
+quoted/unquoted pieces concatenate. Backslashes are literal. Unmatched quotes
+or embedded NULs are invalid. For a short tail, argv[0] is the supplied
+executable filename.
 
 With tail length 127, an exact ARGV= environment marker supplies a following
 NUL-separated list including argv[0]. The marker and all following entries
 are omitted from envp. With a short tail that payload is omitted, but unused.
-ARGV=NULL: extensions for empty arguments are explicitly unsupported. Missing
-extended argv or unterminated environments fail. Bounds are 32768 environment
-bytes, 1024 filename bytes including NUL and a 128 KiB construction buffer.
+ARGV=NULL:index,... restores empty arguments at the specified indices. Missing
+extended argv or unterminated environments fail. The bounds are 32768 bytes
+for the compatibility environment, 1024 filename bytes including NUL and a
+128 KiB construction buffer.
 Strings and vectors are copied at load time; later edits of the public
 basepage or environment cannot change the staged startup arguments.
 

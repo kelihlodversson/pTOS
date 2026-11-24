@@ -55,7 +55,7 @@
 #include "process_files.h"
 #endif
 #if CONF_WITH_ELF_SHARED
-#include "../lib/ldso/startup.h"
+#include "argv_legacy.h"
 #endif
 
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
@@ -4222,10 +4222,16 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
 {
     KPROC *kproc = kproc_find(pd);
     ULONG bias = 0, ibias, i, fnsize = 0;
+    ULONG envsize, slots;
     uint32_t rsp = 0, used = 0;        /* (the types of dl_start_stack(): not always ULONG) */
     UQUAD stack_first;
     UBYTE *stack;
+    LEGACY_START_ARGS arguments;
     DL_START_INFO info;
+    const DL_LAUNCH *launch = NULL;
+#if CONF_WITH_LIBAES
+    DL_LAUNCH compat;
+#endif
     LONG rc = ENSMEM;
     int status;
 
@@ -4247,9 +4253,21 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     while (fnsize < 1024 && filename[fnsize]) fnsize++;
     if (fnsize == 1024)
         return ERANGE;
-    stack = kalloc(DL_START_CAPACITY);
+    envsize = kproc->env_end - kproc->env_start;
+    if (envsize < 2 || envsize > LEGACY_START_ENV_MAX)
+        return EPLFMT;
+    slots = LEGACY_START_SLOTS(envsize);
+    stack = kalloc(DL_START_CAPACITY + slots * sizeof(char *));
     if (!stack)
         return ENSMEM;
+    status = legacy_start_vectors(&arguments, filename,
+                    (const UBYTE *)pd->p_cmdlin, sizeof(pd->p_cmdlin),
+                    kproc->env_start, envsize,
+                    (const char **)(stack + DL_START_CAPACITY), slots);
+    if (status != DL_OK) {
+        rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;
+        goto done;
+    }
     info.phdr = program->phdr + bias;
     info.phnum = program->phnum;
     info.entry = program->entry + bias;
@@ -4258,15 +4276,15 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
     info.basepage = (ULONG)(uintptr_t)pd;
     info.bootdrive = bootdev;
     info.load_bias = bias;
-    info.capture_launch = 0;
-    info.environment = 0;
 #if CONF_WITH_LIBAES
-    info.capture_launch = 1;
-    info.environment = (ULONG)(uintptr_t)kproc->env_start;
+    memset(&compat, 0, sizeof(compat));
+    compat.environment = (ULONG)(uintptr_t)kproc->env_start;
+    compat.environment_size = envsize;
+    memcpy(compat.tail, pd->p_cmdlin, sizeof(compat.tail));
+    launch = &compat;
 #endif
     status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
-                        (const unsigned char *)pd->p_cmdlin, sizeof(pd->p_cmdlin), kproc->env_start,
-                        (ULONG)(kproc->env_end - kproc->env_start), &info, &rsp, &used);
+                            &arguments.vectors, &info, launch, &rsp, &used);
     if (status != DL_OK) {
         KDEBUG(("PT_INTERP: stack construction failed %ld\n", (long)status));
         rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;

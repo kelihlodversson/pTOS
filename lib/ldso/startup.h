@@ -9,29 +9,24 @@
 #define DL_AT_PTOS_LOADBIAS 0x5002
 
 typedef struct {
-    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias, capture_launch, environment;
+    uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias;
 } DL_START_INFO;
 
+typedef struct {
+    const char *const *argv, *const *envp;
+    uint32_t argc, envc;
+} DL_START_VECTORS;
+
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
- * representing [top-capacity,top). Output RSP is 16-byte aligned. All inputs
- * are bounded, immutable and disjoint from the buffer and outputs. On error
- * outputs are zero; buffer contents are unspecified. No allocation or syscall.
- * Short GEMDOS tails split on spaces/tabs; single/double quotes group text,
- * are removed, and preserve empty arguments. Backslashes remain literal.
- * An unmatched quote is invalid. ARGV= with tail length 127 supplies the
- * NUL-separated argument list (including argv[0]); the marker and everything
- * after it are omitted from envp. ARGV=NULL:index,... marks empty arguments
- * using nonempty placeholders; indices are checked against the final argc.
- * With a short tail, ARGV= and its payload are omitted but not used as argv.
- * Without extended ARGV, argv[0] and AT_EXECFN are the supplied filename.
- * capture_launch reserves a DL_LAUNCH auxiliary record and copies the complete
- * 128-byte original tail and original environment address/extent before user code; the interpreter qualifies its
- * command before preinitializers. A zero flag retains the existing stack ABI.
- * The environment must be double-NUL terminated within envsize (<=32768).
- */
+ * representing [top-capacity,top). The vector inputs are already validated,
+ * with a NUL-terminated string in each of their counted entries. Arguments
+ * and environment entries are copied literally, including empty strings.
+ * AT_EXECFN comes from filename. The optional launch record is copied into
+ * the stack and reachable via AT_PTOS_LAUNCH. All inputs are immutable and
+ * disjoint from the buffer and outputs. RSP is 16-byte aligned. On error,
+ * outputs are zero and buffer contents are unspecified. No allocation. */
 int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
-                    const char *filename, uint32_t filenamesize,
-                    const unsigned char *tail, uint32_t tailsize,
-                    const unsigned char *env, uint32_t envsize,
-                    const DL_START_INFO *info, uint32_t *rsp, uint32_t *used);
+                   const char *filename, uint32_t filenamesize,
+                   const DL_START_VECTORS *vectors, const DL_START_INFO *info,
+                   const DL_LAUNCH *launch, uint32_t *rsp, uint32_t *used);
 #endif
