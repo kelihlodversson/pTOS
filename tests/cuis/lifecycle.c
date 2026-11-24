@@ -14,7 +14,7 @@ static LONG result_id = EFILNF, result_offset, result_bytes;
 static ULONG bytes, queued, consumed, request_start, published, rejected, resets, windows;
 static BOOL reset_fails, reset_busy, last_poll, pending_notice, notice_blocked;
 static LONG phase, published_result_token;
-static BOOL published_result, late_refusal;
+static BOOL published_result, late_refusal, self_receipt;
 LONG aes_window_messages_poll(LONG session, AESGLOBAL *global)
 {
     (void)session; (void)global;
@@ -59,7 +59,10 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
             result_id = read_offset >= 0 ? published_result_token : EFILNF;
             result_offset = read_offset; result_bytes = c;
         }
-        if (fn == CUIS_STREAM_READ) consumed += c;
+        if (fn == CUIS_STREAM_READ) {
+            if (d == CUIS_STREAM_READ_ORIGIN && e) *(LONG *)(uintptr_t)e = self_receipt;
+            consumed += c;
+        }
         return c;
     }
     if (fn == CUIS_PEER_QUERY) return tag;
@@ -231,6 +234,16 @@ int main(void)
     VERIFY(aes_lifecycle_messages(&aes_global) == E_OK && !published && token);
     VERIFY(aes_lifecycle_messages(&aes_global) == E_OK && published == 1 && !token);
     VERIFY(next(message) == E_OK && message[0] == AP_TFAIL && message[1] == 23);
+    {
+        /* The delivery policy depends on the consuming read's origin. */
+        const WORD child_notice[8] = { CH_EXIT,0,0,11,37,0,0,0 };
+        queued = consumed = 0;
+        memcpy(stream,child_notice,16); queued = 16;
+        VERIFY(next(message) == EAGAIN && consumed == 16);
+        self_receipt = TRUE;
+        memcpy(stream+8,child_notice,16); queued = 32;
+        VERIFY(next(message) == E_OK && !memcmp(message,child_notice,16));
+    }
     puts("Lifecycle receiver consent, complete preflight, provenance and ordered reset: PASS");
     return 0;
 }

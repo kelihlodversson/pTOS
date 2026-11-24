@@ -126,7 +126,7 @@ typedef struct cuis_client {
     struct cuis_receipt_table *receipt_table;
     UQUAD receipt_epoch;
     ULONG receipt_observations; /* Import envelopes, including preflight/unwind. */
-    UBYTE *stream_data; /* Byte ring followed by a WORD sender-ID ring. */
+    UBYTE *stream_data; /* Byte ring followed by a WORD origin ring. */
     ULONG stream_head, stream_bytes;
     CUIS_BUTTON_EDGE button_history[CUIS_BUTTON_HISTORY_CAPACITY];
     UQUAD button_sequence, button_policy;
@@ -1725,9 +1725,15 @@ static ULONG cohort_work(CUIS_CLIENT *client)
     return 0;
 }
 static BOOL cohort_ready(CUIS_CLIENT *client) { return cohort_work(client) != 0; }
-/* The caller holds input exclusion and has reserved ring capacity. Publish
- * data and its exact sender together before exposing the new byte count. */
-static void stream_append(CUIS_CLIENT *client, const UBYTE *data, ULONG bytes, UWORD sender)
+
+/* AES IDs occupy only the low 15 bits. For a receipt delivered to its own
+ * endpoint, the first entry records the packet length. Its sender is the
+ * receiving endpoint itself, and the rest of the entries still carry its ID. */
+#define STREAM_RECEIPT_START 0x8000U
+
+/* The caller holds input exclusion and has reserved ring capacity. */
+static void stream_append(CUIS_CLIENT *client, const UBYTE *data, ULONG bytes, UWORD sender,
+                          BOOL own_receipt)
 {
     ULONG at = (client->stream_head+client->stream_bytes)%CUIS_STREAM_BYTES;
     ULONG first = CUIS_STREAM_BYTES-at, i;
@@ -1736,6 +1742,7 @@ static void stream_append(CUIS_CLIENT *client, const UBYTE *data, ULONG bytes, U
     memcpy(client->stream_data+at,data,first);
     if (first < bytes) memcpy(client->stream_data,data+first,bytes-first);
     for (i = 0; i < bytes; i++) senders[(at+i)%CUIS_STREAM_BYTES] = (UWORD)sender;
+    if (own_receipt) senders[at] = STREAM_RECEIPT_START | (UWORD)bytes;
     client->stream_bytes += bytes;
 }
 LONG cuis_endpoint_barrier(UQUAD session, UQUAD action, UQUAD token)
@@ -1837,7 +1844,7 @@ LONG cuis_stream_batch(UQUAD session, UQUAD command, UQUAD a, UQUAD b, UQUAD c, 
             if (a || b || c || d) { result=EINVAL; goto out; }
             if (work!=CUIS_BATCH_REQUEST) { result=EAGAIN; goto out; }
             client->cohort_unread=client->stream_bytes+client->cohort_bytes;
-            stream_append(client,client->cohort_data,client->cohort_bytes,cohort.owner->aes_id);
+            stream_append(client,client->cohort_data,client->cohort_bytes,cohort.owner->aes_id,FALSE);
             client->cohort_delivered=TRUE;
             goto out;
         }
@@ -1869,7 +1876,7 @@ LONG cuis_stream_batch(UQUAD session, UQUAD command, UQUAD a, UQUAD b, UQUAD c, 
         client->cohort_result_token=cohort.token;
         client->cohort_result_bytes=length;
         client->cohort_result_unread=client->stream_bytes+length;
-        stream_append(client,a ? data:cohort.data,length,sender);
+        stream_append(client,a ? data:cohort.data,length,sender,FALSE);
         if (c) cohort_clear(); /* Generic barrier disposition selected by the owner. */
         else cohort.phase=CUIS_BATCH_FINISHED;
         goto out;
@@ -3147,12 +3154,16 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
     UQUAD flags;
     ULONG session, bytes;
     UWORD *senders;
-    LONG pid;
+    UWORD origin;
+    LONG source_info;
     BOOL write, copied;
+    BOOL receipt_origin = function == CUIS_STREAM_READ && block == CUIS_STREAM_READ_ORIGIN;
     UBYTE *storage;
     if (function != CUIS_STREAM_READ && function != CUIS_STREAM_WRITE &&
         function != CUIS_STREAM_PEEK && function != CUIS_STREAM_PENDING) return EINVFN;
-    if (handle > 0x7fffffffULL || length > CUIS_STREAM_MAX || block > 1) return EINVAL;
+    if (handle > 0x7fffffffULL || length > CUIS_STREAM_MAX ||
+        (block > 1 && !receipt_origin) || (receipt_origin && !sender)) return EINVAL;
+    block = block == 1;
     if (function==CUIS_STREAM_WRITE && sender>0x80000000ULL) return EINVAL;
     flags=cuis_input_lock();
     client=function==CUIS_STREAM_WRITE ? (sender ? owned_client(sender-1) : *find_owner(run)) : owned_client(handle);
@@ -3226,7 +3237,7 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
         if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
         if (stream_ready(operation)) {
             if (write) {
-                stream_append(peer,operation->packet->data,(ULONG)length,(UWORD)operation->packet->sender_id);
+                stream_append(peer,operation->packet->data,(ULONG)length,(UWORD)operation->packet->sender_id,FALSE);
                 operation->state = STREAM_COMMITTED;
                 return stream_finish(&operation,flags,(LONG)length);
             }
@@ -3234,13 +3245,17 @@ LONG cuis_stream_service(ULONG function, UQUAD handle, UQUAD buffer, UQUAD lengt
              * overwrite unread bytes; client retention owns the ring lifetime. */
             operation->head = client->stream_head; operation->state = STREAM_COPYING;
             senders = (UWORD *)(client->stream_data+CUIS_STREAM_BYTES);
-            pid = senders[operation->head];
+            origin = senders[operation->head];
+            if (receipt_origin)
+                source_info = origin == (STREAM_RECEIPT_START | (UWORD)length);
+            else
+                source_info = (origin & STREAM_RECEIPT_START) ? client->aes_id : origin;
             bytes = CUIS_STREAM_BYTES-operation->head;
             if (bytes > length) bytes = (ULONG)length;
             cuis_input_unlock(flags);
             copied = kproc_copy_to_user_resident(buffer,client->stream_data+operation->head,bytes) &&
                 (bytes == length || kproc_copy_to_user_resident(buffer+bytes,client->stream_data,(ULONG)length-bytes)) &&
-                (!sender || kproc_copy_to_user_resident(sender,&pid,sizeof(pid)));
+                (!sender || kproc_copy_to_user_resident(sender,&source_info,sizeof(source_info)));
             flags = cuis_input_lock();
             if (!stream_owned(operation)) return stream_finish(&operation,flags,EACCDN);
             if (!copied) return stream_finish(&operation,flags,EIMBA);
@@ -3399,7 +3414,7 @@ LONG cuis_notice_service(ULONG function, UQUAD session, UQUAD a, UQUAD b, UQUAD 
         if (!storage) { result = EACCDN; goto publish_done; }
         client->stream_data = storage; storage = NULL;
     }
-    stream_append(client,data,(ULONG)d,client->aes_id);
+    stream_append(client,data,(ULONG)d,client->aes_id,FALSE);
     window->notices &= ~(ULONG)b;
     if (b == CUIS_NOTICE_REDRAW) window->redraw = FALSE;
     result = E_OK;

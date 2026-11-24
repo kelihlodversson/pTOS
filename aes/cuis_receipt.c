@@ -339,8 +339,8 @@ static LONG receipt_commit(const CUIS_RECEIPT_RECORD *record)
     if (!result && (!destination || destination->retired || !destination->stream_data)) result=EACCDN;
     if (!result && CUIS_STREAM_BYTES-destination->stream_bytes<slot->bytes) result=EAGAIN;
     if (!result) {
-        /* The same leaf publishes bytes, sender and durable outcome. */
-        stream_append(destination,slot->packet,slot->bytes,source->aes_id);
+        /* The same leaf publishes bytes, origin and durable outcome. */
+        stream_append(destination,slot->packet,slot->bytes,source->aes_id,destination==source);
         slot->committed=TRUE; slot->state=CUIS_RECEIPT_COMMITTED;
         result=(LONG)slot->bytes;
     }

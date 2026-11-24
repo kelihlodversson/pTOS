@@ -181,8 +181,10 @@ static int receipt_runtime_checks(void)
     /* Publisher A stalled. Publisher B must not pass its canonical ordinal. */
     CHECK(cuis_receipt_test_commit(&b)==EAGAIN && !find_handle(destination)->stream_bytes);
     CHECK(cuis_receipt_test_commit(&a)==16);
-    run=&second;CHECK(cuis_stream_service(CUIS_STREAM_READ,destination,0x20000,16,0,0)==16);
-    CHECK(stream_output[0]==0x41);run=&first;
+    run=&second;
+    CHECK(cuis_stream_service(CUIS_STREAM_READ,destination,0x20000,16,CUIS_STREAM_READ_ORIGIN,0x1000)==16);
+    CHECK(stream_output[0]==0x41 && !copied[0]);
+    run=&first;
     /* THREAD loss is modeled by discarding local success, then sibling QUERY.
      * Receiver has drained; the endpoint-owned receipt remains authoritative. */
     query=query_identity(a);query.packet=0;query.bytes=0;
@@ -280,6 +282,33 @@ static int receipt_runtime_checks(void)
         CHECK(cuis_receipt_test_reclaim(&c)==E_OK);
     }
     CHECK(!receipt_active && receipt_import_count==receipt_release_count);
+
+    /* A consuming read authenticates the full self-publication even after
+     * its receipt is reclaimed. Wrap the origin ring with the bytes. */
+    CHECK(!find_handle(source)->stream_bytes);
+    find_handle(source)->stream_head=CUIS_STREAM_BYTES-5;
+    for (j=0;j<2;j++) {
+        CHECK(cuis_receipt_test_launch(source,source,0,"child",tail,environment,&c)>0);
+        memset(stream_input,0x52+j,16);c.packet=0x10000;c.bytes=16;
+        CHECK(cuis_receipt_test_prepare(&c)==E_OK);
+        complete_receipt_child(&c,30+j);
+        CHECK(cuis_receipt_test_commit(&c)==16 && cuis_receipt_test_ack(&c)==E_OK);
+        CHECK(receipt_fixture_close((KPROC *)run,c.tag)==E_OK && cuis_receipt_test_reclaim(&c)==E_OK);
+        CHECK(cuis_stream_service(CUIS_STREAM_PEEK,source,0x20000,16,0,0x1000)==16 &&
+              copied[0]==find_handle(source)->aes_id);
+        if (!j) {
+            fail_copy_address=0x1000;
+            CHECK(cuis_stream_service(CUIS_STREAM_READ,source,0x20000,16,CUIS_STREAM_READ_ORIGIN,0x1000)==EIMBA);
+            fail_copy_address=0;
+            CHECK(cuis_stream_service(CUIS_STREAM_READ,source,0x20000,16,CUIS_STREAM_READ_ORIGIN,0x1000)==16 &&
+                  copied[0]==TRUE && !memcmp(stream_output,stream_input,16));
+        } else {
+            CHECK(cuis_stream_service(CUIS_STREAM_READ,source,0x20000,8,CUIS_STREAM_READ_ORIGIN,0x1000)==8 && !copied[0]);
+            CHECK(cuis_stream_service(CUIS_STREAM_READ,source,0x20000,8,CUIS_STREAM_READ_ORIGIN,0x1000)==8 && !copied[0]);
+        }
+        CHECK(!find_handle(source)->stream_bytes && !receipt_active);
+    }
+
     /* Retirement closes each endpoint's generic right and preserves bytes
      * already committed to the unrelated receiver. */
     run=&second;CHECK(cuis_stream_service(CUIS_STREAM_READ,replacement,0x20000,16,0,0)==16);run=&first;

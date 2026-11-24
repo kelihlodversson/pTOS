@@ -1381,7 +1381,7 @@ WORD hndl_msg(void)
             shutdown_pending = FALSE; shutdown_token = 0;
         }
         break;
-    case CH_EXIT: /* Parent consumes its public completion, then refreshes. */
+    case CH_EXIT: /* libaes delivers only receipt-backed child notifications. */
         {
             LONG waited = desk_reap_child(G.g_rmsg[3]);
 #if CONF_WITH_X32_DESKTOP_TEST

@@ -92,6 +92,8 @@ static int stream_checks(void)
     CHECK(SR(a, 0x20000, 4, 0, 0x1000) == 4 && copied[0] == sender_a);
     CHECK(SR(a, 0x20000, 8, 0, 0x1000) == 8 && copied[0] == sender_a);
     CHECK(SR(a, 0x20000, 4, 0, 0x1000) == 4 && copied[0] == sender_b);
+    CHECK(SW(a, 0x10000, 16, 0) == 16 &&
+          SR(a, 0x20000, 16, CUIS_STREAM_READ_ORIGIN, 0x1000) == 16 && !copied[0]);
     b = cuis_window_service(CUIS_WINDOW_CREATE, 0, 0, 10, 10, 0);
     CHECK(b >= 0 && cuis_window_service(CUIS_WINDOW_SHOW, b, 0, 0, 0, 0) == E_OK);
     CHECK(SW(a, 0x10000, 32767, 0) == 32767 && SW(a, 0x10000, 32767, 0) == 32767 && SW(a, 0x10000, 2, 0) == 2);
