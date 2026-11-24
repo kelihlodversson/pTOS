@@ -345,6 +345,9 @@ static LONG ssystem_getlval(LONG addr)
     if (sval_is_hidden(lval_table, ARRAY_SIZE(lval_table), addr))
         return 0;
 #endif
+    /* Use a single native load so a timer interrupt cannot tear the tick. */
+    if (p == &hz_200)
+        return hz_200;
     svar_copy(&value, p, sizeof(value));
     return value;
 }
