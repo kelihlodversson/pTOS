@@ -22,6 +22,9 @@
 #define CUIS_LABEL_FIND 27UL
 #define CUIS_STREAM_WRITE 30UL
 #define CUIS_STREAM_READ 31UL
+/* STREAM_READ mode 2 polls and copies a LONG indicating whether the exact
+ * transfer came from a receipt committed to its own endpoint. */
+#define CUIS_STREAM_READ_ORIGIN 2UL
 #define CUIS_SESSION_WAIT 32UL
 #define CUIS_PROCESS_WAIT_MAX 16UL /* Fixed-width PROCESS rights in SESSION_WAIT's e/f array. */
 #define CUIS_INPUT_STATE 33UL

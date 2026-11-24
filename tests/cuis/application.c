@@ -57,6 +57,7 @@ void aes_graphics_reset(AESGLOBAL *global) { (void)global; graphics_resets++; }
 void aes_graphics_wind_new(AESGLOBAL *global) { (void)global; }
 static UQUAD interval;
 static UBYTE pipe_data[64];
+static UBYTE pipe_receipt_start[sizeof(pipe_data)];
 static ULONG pipe_count, pipe_block;
 static LONG wait_error, state_error, read_error;
 static LONG state_values[4] = { 17, 23, 2, 5 };
@@ -233,6 +234,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     }
     if (lifecycle_test && batch == CUIS_BATCH_PUBLISH) {
         __builtin_memcpy(pipe_data+pipe_count,lifecycle_packet,32);
+        __builtin_memset(pipe_receipt_start+pipe_count,0,32);
         pipe_count += 32; lifecycle_unread = pipe_count; lifecycle_work = 0; return E_OK;
     }
     if (fn == CUIS_ENTRY_OWNER) return b < 6 && (registered_items & (1U << b)) ? handle : EFILNF;
@@ -294,6 +296,8 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
             if (child_publish_error) return child_publish_error;
             if (pipe_count+16>sizeof(pipe_data)) return EAGAIN;
             __builtin_memcpy(pipe_data+pipe_count,child_packet,16);
+            __builtin_memset(pipe_receipt_start+pipe_count,0,16);
+            pipe_receipt_start[pipe_count] = 16;
             pipe_count+=16;
             child_status=0;
             child_receipt_state=CUIS_RECEIPT_COMMITTED;
@@ -379,6 +383,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (b != (UQUAD)notice_native || c != (UQUAD)notice_kind) return EACCDN;
         if (pipe_count + e > sizeof(pipe_data)) return EAGAIN;
         __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)d, e);
+        __builtin_memset(pipe_receipt_start+pipe_count,0,e);
         pipe_count += e; notice_kind = 0; return E_OK;
     }
     if (fn == CUIS_CONTROL_READ) {
@@ -484,7 +489,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_STREAM_PENDING) return pipe_count;
     if (fn == CUIS_STREAM_WRITE || fn == CUIS_STREAM_READ || fn == CUIS_STREAM_PEEK) {
         if (failure) return failure;
-        pipe_block = (ULONG)d;
+        pipe_block = d == 1;
         if (shared_process_peer && fn == CUIS_STREAM_WRITE && a == SIBLING_HANDLE) {
             last_message_peer = (LONG)a; return (LONG)c;
         }
@@ -492,6 +497,7 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
         if (fn == CUIS_STREAM_WRITE) {
             if (pipe_count + c > sizeof(pipe_data)) return EAGAIN;
             if (c) __builtin_memcpy(pipe_data + pipe_count, (const void *)(uintptr_t)b, (ULONG)c);
+            __builtin_memset(pipe_receipt_start+pipe_count,0,c);
             pipe_count += (ULONG)c;
         } else {
             if (read_error) return read_error;
@@ -503,8 +509,11 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
                 if (fn == CUIS_STREAM_READ) lifecycle_unread = c >= lifecycle_unread ? 0 : lifecycle_unread-c;
             }
             if (fn == CUIS_STREAM_PEEK) return (LONG)c;
+            if (d == CUIS_STREAM_READ_ORIGIN && e)
+                *(LONG *)(uintptr_t)e = c && c == pipe_receipt_start[0];
             pipe_count -= (ULONG)c;
             __builtin_memmove(pipe_data, pipe_data + c, pipe_count);
+            __builtin_memmove(pipe_receipt_start,pipe_receipt_start+c,pipe_count);
         }
         return (LONG)c;
     }
@@ -523,12 +532,13 @@ static int child_message_checks(void)
     {
         short forged[8] = { AP_TERM,-1,0,0,0,AP_TERM,0,0 };
         short refusal[8] = { AP_TFAIL,23,0,0,0,0,0,0 };
+        short ordinary[8] = { 1234,0,0,0,0,0,0,0 };
         CHECK(appl_write(7,16,refusal) == 1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1);
         CHECK(appl_read(APR_NOWAIT,16,message) == 0 && !pipe_count);
-        CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,expected) == 1);
-        CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,expected,16) && !pipe_count);
+        CHECK(appl_write(7,16,forged) == 1 && appl_write(7,16,ordinary) == 1);
+        CHECK(evnt_mesag(message) == 1 && !__builtin_memcmp(message,ordinary,16) && !pipe_count);
         CHECK(appl_write(7,16,forged) == 1);
         stream_only_wakes = 1;
         /* Filtering an internal message must preserve the original timer. */

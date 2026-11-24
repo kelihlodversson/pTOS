@@ -809,7 +809,12 @@ Native CUIS calls use flat registers and scalar lengths/handles/errors:
  31 STREAM_READ(own, buffer, length, block, optional_sender_id) -> exact count
 
 Invalid arguments/ownership and missing peers return ordinary negative
-errors. block is 0 (EAGAIN when not ready) or 1 (wait). These GUI services compile only with CONF_WITH_CUIS;
+errors. block is 0 (EAGAIN when not ready) or 1 (wait). STREAM_READ also
+accepts CUIS_STREAM_READ_ORIGIN (2), which polls and writes a LONG to the
+required output pointer in place of the sender ID. The value is 1 only if
+the exact bytes consumed are one receipt packet committed to its own
+endpoint. The byte ring retains this provenance independently of receipt
+reclamation. These GUI services compile only with CONF_WITH_CUIS;
 PROCESS basename and identity snapshots are generic Ssystem services. Message/timer combined waits are described below; input/window integration
 remains subsequent work.
 
@@ -2746,6 +2751,10 @@ endpoint receipt before runnable publication. The receipt keeps this right
 through publisher THREAD cancellation. libaes reads the full canonical
 PROCESS snapshot, selects the smallest terminal ordinal, and builds CH_EXIT.
 Normal exit retains its full status word. A crash uses signal << 8.
+For 16-byte GEM message reads, libaes delivers CH_EXIT only when the
+consuming stream read authenticates the exact self-publication. Raw native
+stream transfers remain opaque, and reading CH_EXIT leaves public wait and
+reaping to the launching parent.
 
 CUIS_STREAM_RECEIPT (94) accepts the source endpoint, operation, aligned
 address of a 64-byte CUIS_RECEIPT_RECORD and its size. The record uses native
@@ -3241,9 +3250,10 @@ accounting and existing message/event/window regressions.
 Lifecycle delivery ordering and polls
 ------------------------------------
 
-CUIS_STREAM_PEEK (88) has the STREAM_READ arguments and copies/provides native
-provenance without consuming bytes or acknowledging the request. It validates
-the entire user destination just as READ does. CUIS_STREAM_PENDING (89) takes
+CUIS_STREAM_PEEK (88) accepts STREAM_READ arguments with block 0 or 1. It
+copies bytes and provides sender and cohort metadata without consuming data
+or acknowledging the request. It validates the entire user destination just
+as READ does. CUIS_STREAM_PENDING (89) takes
 only the owned session, with other arguments zero, and returns the byte count.
 These remain opaque native stream operations; the kernel decodes no GEM data.
 

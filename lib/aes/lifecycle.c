@@ -153,7 +153,7 @@ LONG aes_lifecycle_read(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pollin
 {
     AES_LIFECYCLE_STATE *state = &aes_app_context(global)->lifecycle;
     WORD message[8], consumed[8];
-    LONG session = aes_application_session(global), result, policy = E_OK;
+    LONG session = aes_application_session(global), result, policy = E_OK, own_receipt = 0;
     if (session < 0) return session;
     state->reset_wait_display = FALSE;
     if (bytes == 16) {
@@ -167,12 +167,18 @@ LONG aes_lifecycle_read(void *buffer, LONG bytes, AESGLOBAL *global, BOOL pollin
         else policy = aes_lifecycle_deliver(message,16,global,polling);
         if (policy == DELIVERY_DEFERRED) return EAGAIN; /* Deferred; do not consume the head. */
         if (policy != E_OK && policy != EAGAIN) return policy;
-        result = cuis_call6(CUIS_STREAM_READ,session,(uintptr_t)consumed,16,0,0,0);
+        result = cuis_call6(CUIS_STREAM_READ,session,(uintptr_t)consumed,16,
+                            CUIS_STREAM_READ_ORIGIN,(uintptr_t)&own_receipt,0);
     } else result = cuis_call6(CUIS_STREAM_READ,session,(uintptr_t)buffer,bytes,0,0,0);
     if (result > 0) {
         state->stale_window_bytes = (ULONG)result >= state->stale_window_bytes ? 0 : state->stale_window_bytes-(ULONG)result;
         if (bytes == 16) {
-            if (policy == EAGAIN) return 0; /* Obsolete/internal packet consumed. */
+            /* CH_EXIT can authorize a wait in the desktop. Use only the
+             * bytes and origin from the same successful consuming read. */
+            if (consumed[0] == CH_EXIT || message[0] == CH_EXIT) {
+                if (consumed[0] != CH_EXIT || !own_receipt) return 0;
+                memcpy(message,consumed,sizeof(message));
+            } else if (policy == EAGAIN) return 0; /* Obsolete/internal packet consumed. */
             memcpy(buffer,message,sizeof(message));
         }
     }
