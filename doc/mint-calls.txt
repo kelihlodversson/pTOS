@@ -260,10 +260,10 @@ share PROCESS-owner synchronization before preemption/SMP. Local IRQ exclusion
 alone is not that lock. GUI locks must not acquire a blocking PROCESS lock.
 
 
-Planned MMU Pfork/Pvfork policy (#895, explicit FreeMiNT deviation)
-----------------------------------------------------------------
-Pfork(): GEMDOS0x11b, no arguments. Pvfork(): GEMDOS0x113, no arguments.
-Both will create a distinct PROCESS/PID and privately owned COW address space,
+MMU Pfork/Pvfork policy (#895, explicit FreeMiNT deviation)
+---------------------------------------------------------
+Pfork(): GEMDOS 0x11b, no arguments. Pvfork(): GEMDOS 0x113, no arguments.
+Both create a distinct PROCESS/PID and privately owned COW address space,
 resuming after the originating trap with child0 and parent positive child PID.
 Failures use signed negative GEMDOS errors; a TID is never returned as a PID.
 Pfork returns the parent immediately after publication. Pvfork blocks only the
@@ -277,10 +277,9 @@ child writes to private/anonymous memory and its private user stack are not
 visible in parent private memory. Explicitly shared mappings retain their
 semantics; public MAP_SHARED currently remains unsupported. This difference is
 intentional, not full FreeMiNT Pvfork memory compatibility. Non-MMU shadow fork
-is outside this policy. Public Pfork/Pvfork are enabled by CONF_WITH_FORK
-(built in by default on MMU kernels with demand paging: x32, ARMv7, m68k
-without fastcall; on m68k they run only on a 68040) and otherwise return EINVFN;
-see
-freemint-compatibility.txt for the inherited state and the CPUs whose return
-image is admitted. See fork.txt,
-phase6-acceptance.txt and freemint-compatibility.txt.
+is outside this policy. CONF_WITH_FORK defaults on for eligible native MMU
+builds with eager allocation or demand paging: x32, ARMv7 and the 68040
+stack-ABI profile outside classic ROM-window builds. Both calls return EINVFN
+when disabled or on unsupported CPU return images. See
+freemint-compatibility.txt for inherited state and return-image eligibility,
+and fork.txt and phase6-acceptance.txt for implementation evidence.

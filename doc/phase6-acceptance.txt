@@ -332,9 +332,9 @@ requests none. UID/GID are fixed0; groups remain the existing
 single-process model; signal masks/dispositions are unsupported, not silently
 claimed. Fault/completion identity stays the child's exact PROCESS/THREAD.
 
-Public Pfork/Pvfork (CONF_WITH_FORK, on by default with the native process
-profile on MMU kernels with demand paging): implemented over the same
-saved-return private constructor with PROC_CLONE_COPY_STANDARD_HANDLES|COPY_CWD|
+Public Pfork/Pvfork (CONF_WITH_FORK, on by default in eligible native MMU
+builds with eager allocation or demand paging) use the same saved-return
+private constructor with PROC_CLONE_COPY_STANDARD_HANDLES|COPY_CWD|
 COPY_FILES (descriptors, directories, DTA/search state through the PROCESS
 file snapshot, #969/#984). Pvfork's parent resumes at the exact child's
 final completion or committed Pexec(200) (#970/#1003). Architecture scope is
