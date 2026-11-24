@@ -52,6 +52,12 @@ typedef struct {
     BOOL has_argument;
 } BINFMT_SELECTION;
 
+typedef struct {
+    const char *interpreter;
+    const char *program;
+    const char *argument;  /* optional interpreter argument */
+} BINFMT_REDIRECT;
+
 /* Pure, bounded parsing/matching; no filesystem, allocation or host ABI. */
 void binfmt_parser_init(BINFMT_PARSER *parser, BINFMT_REGISTRY *registry,
                        WORD bootdrive, BINFMT_DIAGNOSTIC diagnostic, void *argument);
@@ -62,7 +68,7 @@ LONG binfmt_absolute(WORD bootdrive, const char *path, char *result);
 LONG binfmt_select(const BINFMT_REGISTRY *registry, const UBYTE *header,
                    ULONG length, BINFMT_SELECTION *selection);
 LONG binfmt_arguments(const char *environment, const char *tail,
-                      const BINFMT_SELECTION *selection, const char *program,
+                      const BINFMT_REDIRECT *redirects, unsigned int count,
                       char *storage, char output_tail[128]);
 
 /* Kernel integration. Path points to argv[0] inside the generated environment.
