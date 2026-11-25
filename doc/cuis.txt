@@ -2534,34 +2534,27 @@ standard mt_* counterparts and GEMlib signatures. Shell launching and shared
 shell/desktop context are separate work; these queries add no kernel service.
 They require the caller's registered AESGLOBAL and live private context.
 
-shel_read writes the complete startup executable specification and the original
-128-byte GEMDOS command tail, including its leading length byte. The command
-buffer must have at least 260 bytes. With CONF_WITH_LIBAES, the startup stack
-builder saves the original tail in an optional AT_PTOS_LAUNCH record. LD.SO
-qualifies AT_EXECFN in that record before executable preinitializers or any
-dependency constructor. The library copies the saved command and tail into
-each fresh AES_APP_CONTEXT, even if executable hooks have already changed
-cwd or the default DTA. Registration before libptos auxiliary-vector setup
-leaves capture pending; the first shell/resource lookup after setup completes
-it from the saved record. Early shell queries return 0 without changing
-outputs. Explicit aliases reuse the context without recapturing completed
-metadata; libaes has no DT_INIT startup cache.
-The resource loader consumes the same captured command with a 260-byte bound.
-Extended ARGV[0] remains independent of the supplied executable pathname.
-Missing or invalid startup metadata returns 0 without changing either output.
+shel_read copies the qualified startup command to a buffer of at least 260
+bytes and writes a 128-byte GEMDOS tail. A classic launch preserves its short
+tail. A vector launch has a classic view when its arguments can be quoted
+and fit in 126 bytes. Other launches return 0 without changing either output.
 
-shel_envrn performs the native AES prefix search in the process's startup
-GEMDOS environment block. It returns 1 for a completed lookup and writes the
-address immediately following the prefix, or NULL when absent. The result is
-an ordinary process-local pointer into that environment. Lookup stops before
-the ARGV= marker and argument payload, matching the startup envp boundary;
-variable-looking arguments never supply environment values. Empty values remain
-empty; PATH parsing does not treat the next environment variable as a path.
-The snapshot retains the original environment address and actual allocation
-extent, so validation does not scan a short block up to the 32 KB ABI maximum.
-NULL arguments, failed native registration or a malformed unterminated
-environment return 0 without changing the output pointer. Invalid private
-context pointers remain undefined behavior under the #953 lifetime contract.
+The ELF startup stack provides AT_PTOS_LAUNCH and AT_PTOS_LAUNCH_VECTORS on
+libaes configurations. LD.SO qualifies the resource lookup path before
+executable preinitializers. The kernel saves an independent copy of the
+original launch path, argv and envp before user entry. Binfmt can give the
+interpreter its own argv while the saved copy retains the caller's argv[0].
+mt_shel_readve returns borrowed read-only pointers from this snapshot.
+They remain valid through repeated reads and aliases until appl_exit retires
+the context. Missing metadata, invalid registration or a NULL output return
+0 without changing the outputs. Early registration can complete capture
+after libptos initializes its auxv access.
+
+shel_envrn searches the current process environment for the supplied prefix.
+It returns 1 for a completed lookup and writes the address immediately
+after the prefix, or NULL when absent. On older launch records the saved
+flat environment is bounded by its allocation and ends at ARGV metadata.
+PATH parsing keeps an empty value distinct from the next variable.
 
 shel_find uses the original native AES search core in aes/shared/gemshquery.c:
 first the basename in the launch application directory, then the supplied
@@ -2970,50 +2963,37 @@ process cleanup. Real desktop tests launch TOS and TTP programs that use only
 GEMDOS console I/O, send keyboard input/parameters, exercise normal and fault
 exit, run the external EmuCON, and verify one CH_EXIT without restarting EmuDesk.
 
-Standard ARGV and launch environments (#861)
-------------------------------------------
-AES4 shel_write/mt_shel_write mode 0 accepts CL_PARSE as well as CL_NORMAL.
-CL_PARSE converts the command text into a private ARGV environment: ordinary
-tails retain their counted 0..126-byte format; byte 127 selects a NUL-terminated
-long string at tail+1. Space/tab delimit arguments, matching single/double
-quotes group them, doubled matching quotes represent literal quotes, and
-backslashes remain literal. Unmatched quotes and embedded NULs in counted
-text fail before launch. Empty quoted arguments use the standard ARGV=NULL:
-index list with nonempty placeholders; LD.SO validates that list and restores
-empty strings on the child's private initial stack. Indices include argv[0],
-and may be repeated or unordered. AT_EXECFN retains the executable identity.
+Native shell launch vectors (#1012, #1014)
+-----------------------------------------
 
-SW_ENVIRON (0x0800) combines with the implemented mode 0/1 calls. Command then
-points to the standard GEMlib SHELW layout; newcmd names the executable and
-env supplies its ordinary double-NUL environment. NULL means inherit, while
-an empty double-NUL block supplies no variables. Other upper-byte flags fail
-before the overloaded command is dereferenced. Default-directory, memory/
-priority, UID/GID and MagiC flags are not silently accepted. SWM_ENVIRON, the
-separate AES environment-management mode, is not implemented by this slice.
+shel_write and mt_shel_write convert classic counted tails to argv at the AES
+boundary. Mode 0 CL_PARSE also accepts byte 127 followed by a NUL-terminated
+long string. Space/tab delimit arguments. Single or double quotes group
+them, doubled matching quotes insert a literal quote and backslashes remain
+literal. Empty quoted arguments become empty strings. Unmatched quotes and
+embedded NULs in counted text fail before launch.
 
-CL_PARSE retains ordinary inherited/explicit variables up to the ARGV marker,
-replaces an old argument payload and supplies argv[0] from the shel_find result.
-It does not expand variables, interpret redirection or run another shell.
-CL_NORMAL with byte 127 instead copies an existing ARGV environment unchanged,
-without reading command text beyond that marker byte. The MagiC byte-255 tail
-shorthand remains unsupported. Mode 1 keeps its existing SHW_PARALLEL/SHW_CHAIN
-meaning; CL_PARSE is a mode-0 selector, not a replacement for MagiC's modes.
+CL_NORMAL byte 127 and the MagiC byte-255 shortcut return 0 in native libaes.
+Use explicit vectors to launch through native binfmt, including ParaTOS.
+The emulated 68k GEMDOS boundary owns its historical ARGV format. SW_ENVIRON
+takes a standard SHELW with a bounded double-NUL environment. A NULL env
+inherits the live environ and an empty block selects no variables. Entries
+at or after a legacy ARGV marker are excluded from the launch environment.
 
-Preparation uses bounded caller-local allocations. The total encoded block,
-including filename, empty-index list and terminators, must fit the existing
-32766-byte GEMDOS environment limit. Copies include padding for the loader's
-even-size read. Temporary storage is released after immediate or deferred
-loading and on failure, without changing parent buffers, DTA, CWD, environment
-or descriptors. Console ownership and full-word CH_EXIT remain the existing
-launch policies; there is no new CUIS syscall or request structure.
+mt_shel_writeve accepts already separated argv and envp. argv must contain
+argv[0], which may be empty. NULL envp inherits the live environment and a
+vector containing just NULL selects an empty environment. The vector API
+requires CL_NORMAL for mode 0 and refuses SW_ENVIRON. SW_DEFDIR retains the
+SHELW.newcmd and defdir fields. Mode 1 keeps SHW_IMMED, SHW_PARALLEL and GEM
+SHW_CHAIN. Native libaes exports the mt_* symbols and GEMlib provides
+shel_writeve and shel_readve. Build with the matching pTOS SDK, libaes and
+kernel. Systems without the launch snapshot return 0 from mt_shel_readve.
 
-Host/sanitizer cases cover quoting/empty arguments, long tails, explicit/raw
-ARGV, empty and maximum-size environments, allocation and launch failures and
-cleanup. Ordinary GEM source compiled against unmodified GEMlib headers runs
-in isolated children, checking inherited/explicit environments, 400-byte
-arguments, spaces/quotes/backslashes, empty strings, raw argv[0], console launch
-and exactly one CH_EXIT. ELF tests exercise valid/malformed NULL index lists;
-the combined boot retains final memory accounting and the desktop regressions.
+The PROCESS request copies bounded 32-bit vectors before loading the child.
+The native attach operation binds the console and completion receipt before
+publishing a runnable child. Deferred replacement keeps the prepared image
+independent of the caller's later argument, environment or CWD changes.
+The same transaction owns failure and retirement for both shell APIs.
 
 Resident accessories and Desk registration (#863)
 ------------------------------------------------

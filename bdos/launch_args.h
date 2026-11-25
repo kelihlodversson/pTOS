@@ -16,6 +16,7 @@ typedef struct pexecve_args {
     const char *const *envp;
     ULONG argc;
     ULONG envc;
+    const unsigned char *classic_tail;
 } PEXECVE_ARGS;
 
 /* Copy a bounded string, or a legacy double-NUL environment. On success

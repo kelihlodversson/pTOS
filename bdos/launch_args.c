@@ -145,6 +145,7 @@ LONG pexecve_args_capture(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
     if (error != E_OK)
         goto fail;
     storage->args.path = storage->path;
+    storage->args.classic_tail = NULL;
     storage->args.argv = storage->entries;
     storage->args.envp = environment;
     *out = &storage->args;

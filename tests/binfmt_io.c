@@ -246,7 +246,7 @@ static void redirect_vectors(void)
 {
     static const char *const argv[] = {"chosen zero", "", "two words", NULL};
     static const char *const envp[] = {"X=1", "", NULL};
-    const DL_START_VECTORS input = {argv, envp, 3, 2};
+    const DL_START_VECTORS input = {argv, envp, 3, 2, NULL, NULL};
     BINFMT_LAUNCH launch;
     PGMHDR01 header;
     FH handle;

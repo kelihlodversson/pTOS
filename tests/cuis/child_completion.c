@@ -31,6 +31,15 @@ static void abort_console_launch(void)
     __builtin_longjmp(console_launch_escape,1);
 }
 static char launched_directory[1024];
+LONG proc_exec_copy_request(UQUAD address, UQUAD size, PROCESS_EXEC_REQUEST *request)
+{
+    if (address != 0x19000 || size != sizeof(*request)) return EIMBA;
+    memset(request,0,sizeof(*request));
+    request->flags=PROCESS_EXEC_VECTOR_ARGS;
+    request->path=0x11000;
+    request->tail=0x12000;
+    return E_OK;
+}
 LONG proc_exec_prepare_user_args(KPROC *owner, const PROCESS_EXEC_REQUEST *request)
 {
     ULONG length;

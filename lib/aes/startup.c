@@ -61,6 +61,7 @@ static void capture_shell(AES_SHELL_STATE *state)
      * preinitializers. Leave capture pending until that dependency is ready. */
     if (!__ptos_getauxval(6)) return;
     state->capture_pending = FALSE;
+    state->vectors = (const DL_LAUNCH_VECTORS *)(uintptr_t)__ptos_getauxval(DL_AT_PTOS_LAUNCH_VECTORS);
     capture_directory(state,launch);
     state->environment = launch && launch->environment ?
         (char *)(uintptr_t)launch->environment : state->empty_environment;

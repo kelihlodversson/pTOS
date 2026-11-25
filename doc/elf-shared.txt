@@ -210,6 +210,15 @@ Required auxiliary entries:
     AT_PTOS_BOOTDRIVE (0x5001) kernel boot filesystem drive, A=0 through Z=25
     AT_PTOS_LOADBIAS (0x5002)  kernel-validated executable load bias (0 for ET_EXEC)
     AT_PTOS_LAUNCH (0x5003)    optional private DL_LAUNCH startup record
+    AT_PTOS_LAUNCH_VECTORS (0x5004)
+                              optional private DL_LAUNCH_VECTORS record
+                              with three ELF32 pointers: requested path,
+                              original NULL-terminated argv and envp
+
+The libaes startup vectors have their own slots and string copies in the new
+process. They are independent of the live stack vectors and interpreter
+argument prefixes. LibAES exposes these values as read-only borrowed data
+for the lifetime of a registered AES context.
     AT_NULL    terminator
 
 With CONF_WITH_LIBAES, the stack builder reserves an aligned DL_LAUNCH record

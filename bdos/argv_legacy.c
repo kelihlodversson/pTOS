@@ -153,5 +153,7 @@ int legacy_start_vectors(LEGACY_START_ARGS *out, const char *filename,
     out->vectors.argc = argc;
     out->vectors.envp = slots;
     out->vectors.envc = envc;
+    out->vectors.original = 0;
+    out->vectors.classic_tail = 0;
     return DL_OK;
 }

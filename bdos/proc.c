@@ -616,7 +616,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 static LONG exec_vector_child(const PEXECVE_ARGS *args)
 {
-    DL_START_VECTORS vectors;
+    DL_START_VECTORS vectors = {0};
 
     vectors.argv = args->argv;
     vectors.envp = args->envp;
@@ -701,11 +701,11 @@ long proc_exec_observe(char *path, char *tail, char *env, char *directory,
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,directory,out,NULL,NULL,NULL));
 }
 long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG policy,
-                       PROCESS_OBSERVER **out, void **prepared)
+                       PROCESS_OBSERVER **out, void **prepared, const DL_START_VECTORS *vectors)
 {
     if (!out || *out || !prepared || *prepared || policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,
-                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL,NULL));
+                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL,vectors));
 }
 #endif
 #if CONF_WITH_EXEC_REPLACE

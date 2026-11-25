@@ -26,6 +26,11 @@ LONG cuis_call6(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d,UQUAD e,UQUAD f)
     last_function=function;
     last[0]=a; last[1]=b; last[2]=c; last[3]=d; last[4]=e; last[5]=f;
     if (function==CUIS_LAUNCH_ATTACH) {
+        const PROCESS_EXEC_REQUEST *request=(const PROCESS_EXEC_REQUEST *)(uintptr_t)c;
+        VERIFY(b & CUIS_LAUNCH_VECTORS);
+        VERIFY(d==sizeof(*request) && !e && !f && request->operation==PROCESS_EXEC_PREPARE &&
+               request->flags==PROCESS_EXEC_VECTOR_ARGS && !request->policy);
+        last[5]=request->directory;
         if (launch_error) return launch_error;
         launches++;
         return 123;
@@ -68,13 +73,6 @@ LONG cuis_call6(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d,UQUAD e,UQUAD f)
     slots[index].state=CUIS_RECEIPT_RECLAIMED;
     return E_OK;
 }
-UQUAD aes_gemdos_call4(ULONG function,UQUAD a,UQUAD b,UQUAD c,UQUAD d)
-{
-    VERIFY(function==0x4b && a==PE_ASYNC_LOADGO);
-    launches++; last_function=function;
-    last[0]=a; last[1]=b; last[2]=c; last[3]=d;
-    return 321;
-}
 UQUAD aes_gemdos_call(ULONG function,UQUAD mode,UQUAD address,UQUAD size)
 {
     PROCESS_EXEC_REQUEST *request=(PROCESS_EXEC_REQUEST *)(uintptr_t)address;
@@ -93,7 +91,7 @@ UQUAD aes_gemdos_call(ULONG function,UQUAD mode,UQUAD address,UQUAD size)
         return E_OK;
     }
     VERIFY((request->operation==PROCESS_EXEC_DEFER || request->operation==PROCESS_EXEC_START) &&
-           !request->policy && !request->handle);
+           !request->policy && !request->handle && request->flags==PROCESS_EXEC_VECTOR_ARGS);
     last_function=request->operation;
     last[0]=request->path; last[1]=request->tail;
     last[2]=request->environment; last[3]=request->directory;
@@ -113,7 +111,12 @@ static void child(unsigned index, WORD pid, ULONG high, ULONG low)
 }
 int main(void)
 {
-    const char path[]="CHILD.PRG", tail[]={0}, env[]={0,0}, directory[]="C:\\APPS";
+    PROCESS_EXEC_REQUEST request={0};
+    const UQUAD address=(uintptr_t)&request;
+    request.flags=PROCESS_EXEC_VECTOR_ARGS;
+    request.path=0x12000;
+    request.tail=0x13000;
+    request.environment=0x14000;
     child(0,41,2,1);
     slots[0].completion.kind=PROCESS_COMPLETION_SIGNAL;
     slots[0].completion.signal=4;
@@ -136,25 +139,28 @@ int main(void)
     VERIFY(slots[2].state==CUIS_RECEIPT_RECLAIMED && slots[3].state==CUIS_RECEIPT_RECLAIMED &&
            slots[4].state==CUIS_RECEIPT_RECLAIMED);
     launch_error=EAGAIN;
-    VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,TRUE)==EAGAIN && !launches);
+    VERIFY(aes_child_launch(session_id,&request,FALSE,TRUE)==EAGAIN && !launches);
     launch_error=0;
-    VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,TRUE)==123);
-    VERIFY(last_function==CUIS_LAUNCH_ATTACH && last[1]==CUIS_LAUNCH_OBSERVE && launches==1);
-    VERIFY(last[2]==(uintptr_t)path && last[3]==(uintptr_t)tail && last[4]==(uintptr_t)env && !last[5]);
-    VERIFY(aes_child_launch(session_id,path,tail,env,directory,TRUE,TRUE)==123);
-    VERIFY(last_function==CUIS_LAUNCH_ATTACH && last[1]==(CUIS_LAUNCH_OBSERVE | CUIS_LAUNCH_CONSOLE) &&
-           last[5]==(uintptr_t)directory && launches==2);
-    VERIFY(aes_child_launch(session_id,path,tail,env,directory,FALSE,FALSE)==123);
-    VERIFY(last_function==PROCESS_EXEC_START && last[3]==(ULONG)(uintptr_t)directory && launches==3);
-    VERIFY(aes_child_launch(session_id,path,tail,env,NULL,TRUE,FALSE)==123);
-    VERIFY(last_function==CUIS_LAUNCH_ATTACH && last[1]==CUIS_LAUNCH_CONSOLE && !last[5] && launches==4);
-    VERIFY(aes_child_launch(session_id,path,tail,env,NULL,FALSE,FALSE)==321);
-    VERIFY(last_function==0x4b && launches==5);
-    VERIFY(aes_child_defer(path,tail,env,directory)==E_OK);
-    VERIFY(last_function==PROCESS_EXEC_DEFER && last[0]==(ULONG)(uintptr_t)path &&
-           last[1]==(ULONG)(uintptr_t)tail && last[2]==(ULONG)(uintptr_t)env &&
-           last[3]==(ULONG)(uintptr_t)directory);
-    VERIFY(aes_child_defer(path,tail,env,NULL)==E_OK && !last[3]);
+    VERIFY(aes_child_launch(session_id,&request,FALSE,TRUE)==123);
+    VERIFY(last_function==CUIS_LAUNCH_ATTACH && last[1]==(CUIS_LAUNCH_VECTORS | CUIS_LAUNCH_OBSERVE) && launches==1);
+    VERIFY(last[2]==address && last[3]==sizeof(request) && !last[4] && !last[5]);
+    request.directory=0x15000;
+    VERIFY(aes_child_launch(session_id,&request,TRUE,TRUE)==123);
+    VERIFY(last_function==CUIS_LAUNCH_ATTACH && last[1]==(CUIS_LAUNCH_VECTORS | CUIS_LAUNCH_OBSERVE | CUIS_LAUNCH_CONSOLE) &&
+           last[5]==request.directory && launches==2);
+    VERIFY(aes_child_launch(session_id,&request,FALSE,FALSE)==123);
+    VERIFY(last_function==PROCESS_EXEC_START && last[3]==request.directory && launches==3);
+    request.directory=0;
+    VERIFY(aes_child_launch(session_id,&request,TRUE,FALSE)==123);
+    VERIFY(last_function==CUIS_LAUNCH_ATTACH && last[1]==(CUIS_LAUNCH_VECTORS | CUIS_LAUNCH_CONSOLE) && !last[5] && launches==4);
+    VERIFY(aes_child_launch(session_id,&request,FALSE,FALSE)==123);
+    VERIFY(last_function==PROCESS_EXEC_START && launches==5);
+    request.directory=0x15000;
+    VERIFY(aes_child_defer(&request)==E_OK);
+    VERIFY(last_function==PROCESS_EXEC_DEFER && last[0]==request.path &&
+           last[1]==request.tail && last[2]==request.environment && last[3]==request.directory);
+    request.directory=0;
+    VERIFY(aes_child_defer(&request)==E_OK && !last[3]);
     puts("Production libaes CHILD policy: canonical status/order, failed publication, receipt recovery and launch routing: PASS");
     return 0;
 }

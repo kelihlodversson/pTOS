@@ -45,7 +45,7 @@ long proc_exec_observe(char *path, char *tail, char *environment, char *director
  * must publish or cancel it exactly once; output references are kernel-owned.
  * Failure leaves both outputs empty and reclaims the unstarted image. */
 long proc_exec_prepare(char *path, char *tail, char *environment, char *directory, ULONG policy,
-                       struct kproc **observer, void **prepared);
+                       struct kproc **observer, void **prepared, const struct dl_start_vectors *vectors);
 #endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;

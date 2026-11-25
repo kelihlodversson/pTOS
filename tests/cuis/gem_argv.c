@@ -28,13 +28,49 @@ static uint32_t hash(char **envp)
     }
     return value;
 }
+static int32_t launch_direct(const char *path, char *const argv[], char *const envp[])
+{
+    register uint64_t ax __asm__("rax") = (1ULL << 32) | 0x193;
+    register uint64_t env __asm__("r10") = (uintptr_t)envp;
+    __asm__ volatile ("syscall" : "+a"(ax) : "D"(100ULL), "S"((uintptr_t)path),
+                      "d"((uintptr_t)argv), "r"(env) : "rcx","r11","memory","cc");
+    return (int32_t)ax;
+}
 int gem_argv_child(int argc, char **argv, char **envp)
 {
     unsigned i;
     uint32_t expected = 0;
     if (argv[1][0] == 'r') {
-        VERIFY(argc == 3 && equal(argv[0],"alias") && !*argv[2]);
-        VERIFY(envp[0] && equal(envp[0],"ONLY=child") && !envp[1]);
+        const char *path = NULL, *again;
+        const char *const *saved_argv = NULL, *const *saved_envp = NULL;
+        const char *const *read_args, *const *read_env;
+        AESGLOBAL alias;
+        char command[260], tail[128], *live;
+        int empty = equal(argv[1],"read-empty");
+        unsigned j;
+        VERIFY(argc == 4 && equal(argv[0],"alias") && !*argv[2]);
+        for (j = 0; j < 400; j++) VERIFY(argv[3][j] == 'y');
+        VERIFY(!argv[3][400]);
+        VERIFY(empty ? !envp[0] : (envp[0] && equal(envp[0],"ONLY=child") && !envp[1]));
+        VERIFY(appl_init() > 0);
+        alias = aes_global;
+        VERIFY(shel_readve(&path,&saved_argv,&saved_envp));
+        VERIFY(equal(path,"C:\\APPS\\GEMCHILD.PRG") && equal(saved_argv[0],"alias") &&
+               equal(saved_argv[1],argv[1]) && !*saved_argv[2] && equal(saved_argv[3],argv[3]) && !saved_argv[4]);
+        VERIFY(empty ? !saved_envp[0] : (saved_envp[0] && equal(saved_envp[0],"ONLY=child") && !saved_envp[1]));
+        command[0] = tail[0] = 'x';
+        VERIFY(!shel_read(command,tail) && command[0] == 'x' && tail[0] == 'x');
+        argv[0][0] = 'X'; argv[3][0] = 'Z';
+        if (envp[0]) {
+            envp[0][5] = 'X';
+            VERIFY(shel_envrn(&live,"ONLY=") && equal(live,"Xhild"));
+            VERIFY(equal(saved_envp[0],"ONLY=child"));
+        }
+        VERIFY(mt_shel_readve(&again,&read_args,&read_env,&alias) &&
+               again == path && read_args == saved_argv && read_env == saved_envp);
+        VERIFY(equal(saved_argv[0],"alias") && saved_argv[3][0] == 'y');
+        VERIFY(appl_exit());
+        VERIFY(!shel_readve(&path,&saved_argv,&saved_envp));
         return 0x68;
     }
     VERIFY(argc == 8 && (equal(argv[0],"C:\\APPS\\GEMCHILD.PRG") || equal(argv[0],"C:\\APPS\\GEMCHILD.TOS")));
@@ -65,6 +101,10 @@ int gem_argv_checks(AESGLOBAL *global, char **envp)
     char custom[] = "ARGVCUSTOM=child\0KEEP=still\0\0";
     char raw[] = "ONLY=child\0ARGV=NULL:2\0alias\0raw\0 \0\0";
     char *custom_envp[] = { "ARGVCUSTOM=child","KEEP=still",NULL };
+    char only[] = "ONLY=child", long_arg[401];
+    char *custom_args[] = { "alias", "read", "", long_arg, NULL };
+    char *only_env[] = { only, NULL }, *no_env[] = { NULL };
+    volatile uintptr_t invalid_vector = 1;
     const char *digits = "0123456789abcdef", *arguments = " '' \"two words\" 'can''t' C:\\test ";
     SHELW extended = { command,0,0,NULL,custom,0,0 };
     short pid;
@@ -88,7 +128,20 @@ int gem_argv_checks(AESGLOBAL *global, char **envp)
     }
     extended.newcmd = command;
     extended.env = raw;
-    pid = shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail);
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail));
+    for (i = 0; i < 400; i++) long_arg[i] = 'y';
+    long_arg[400] = 0;
+    VERIFY(!shel_writeve(SWM_LAUNCH,GEMAPP,CL_PARSE,command,custom_args,only_env));
+    VERIFY(!shel_writeve(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,custom_args,only_env));
+    VERIFY(!shel_writeve(SWM_LAUNCH,GEMAPP,CL_NORMAL,command,(char *const *)invalid_vector,only_env));
+    pid = shel_writeve(SWM_LAUNCH,GEMAPP,CL_NORMAL,command,custom_args,only_env);
+    long_arg[0] = 'z'; only[5] = 'x';
     VERIFY(pid > 0 && completed(pid,0x68,global) == 0);
+    long_arg[0] = 'y'; only[5] = 'c';
+    custom_args[1] = "read-empty";
+    pid = launch_direct(command,custom_args,no_env);
+    if (pid <= 0) (void)failure((uint16_t)pid);
+    VERIFY(pid > 0 && gem_wait_child_flags(pid,0) == (int32_t)(((uint32_t)pid << 16) | 0x68));
+    (void)ptos_write(1,"x32 GEM shell vectors: PASS\r\n",29);
     return 0;
 }

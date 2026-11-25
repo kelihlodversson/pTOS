@@ -295,7 +295,7 @@ int main(void)
                 dirtbl[3].use = dirtbl[4].use = 1;
                 directory_releases = attempts = interrupted = invalidations = 0;
                 inject_errors = errors; return_close_error = returned_error;
-                CHECK(proc_exec_prepare("NEXT.PRG",tail,env,NULL,1,&deferred_observer,&deferred_slot) == rejection);
+                CHECK(proc_exec_prepare("NEXT.PRG",tail,env,NULL,1,&deferred_observer,&deferred_slot,NULL) == rejection);
                 CHECK(!deferred_observer && !deferred_slot);
                 CHECK(pending_request == &pending && run == &parent);
                 CHECK(!allocations && !records && attempts == errors+3);
@@ -308,7 +308,7 @@ int main(void)
     dirtbl[3].use = dirtbl[4].use = 1;
     directory_releases = attempts = interrupted = invalidations = 0;
     inject_errors = 0; return_close_error = FALSE;
-    CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\MISSING",1,&deferred_observer,&deferred_slot) == EPTHNF);
+    CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\MISSING",1,&deferred_observer,&deferred_slot,NULL) == EPTHNF);
     CHECK(pending_request == &pending && run == &parent);
     CHECK(!allocations && !records && disposals == 13);
     /* Exercise notification ordering for an already committed completion;
@@ -317,7 +317,7 @@ int main(void)
     references[0] = 2; references[1] = 1;
     dirtbl[3].use = dirtbl[4].use = 1;
     directory_releases = attempts = interrupted = invalidations = 0;
-    CHECK(proc_exec_prepare("NEXT.PRG",tail,env,NULL,1,&deferred_observer,&deferred_slot) == rejection);
+    CHECK(proc_exec_prepare("NEXT.PRG",tail,env,NULL,1,&deferred_observer,&deferred_slot,NULL) == rejection);
     CHECK(completion_stage == 3 && !allocations && !records);
     observer_mode=TRUE; fake_completion=FALSE; inject_errors=0;
     {
@@ -358,7 +358,7 @@ int main(void)
             observer_output=&out;
             expected=stage==0?EINVFN:stage==1?EFILNF:stage==2?EPLFMT:
                      stage==3?EPTHNF:stage==4?ENSMEM:stage==5?EAGAIN:E_OK;
-            CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\TARGET",0,&out,&prepared)==expected);
+            CHECK(proc_exec_prepare("NEXT.PRG",tail,env,"C:\\TARGET",0,&out,&prepared,NULL)==expected);
             if (stage<6) CHECK(!prepared && !out && !observer_refs && !allocations && !records);
             else {
                 CHECK(out==(KPROC *)&image && observer_refs==1 && !publications && prepared==&image);

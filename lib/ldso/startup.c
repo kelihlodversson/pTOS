@@ -69,6 +69,33 @@ static int aligned_copy(STACK *s, const void *data, uint32_t bytes, uint32_t *ad
     return 1;
 }
 
+/* Reserve the saved slots at the back (the front is for live argc/argv).
+ * Strings are then added below the slots, disjoint from the live vectors. */
+static int save_vector(STACK *s, const char *const *entries, uint32_t count,
+                       uint32_t *address)
+{
+    uint32_t i, at, value, bytes;
+
+    if (!entries || count >= (s->back - s->front) / 4)
+        return DL_NO_SPACE;
+    bytes = (count + 1) * 4;
+    at = ((s->base + s->back - bytes) & ~3U) - s->base;
+    if (at < s->front || at > s->back)
+        return DL_NO_SPACE;
+    *address = s->base + at;
+    s->back = at;
+    for (i = 0; i < count; i++, at += 4) {
+        uint32_t j, limit = s->back - s->front;
+        if (!entries[i])
+            return DL_BAD_ELF;
+        if (!string(s, entries[i], length(entries[i], limit), &value))
+            return DL_NO_SPACE;
+        for (j = 0; j < 4; j++)
+            s->buffer[at + j] = ((const unsigned char *)&value)[j];
+    }
+    return DL_OK; /* slots were zeroed, including the terminator */
+}
+
 int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
                    const char *filename, uint32_t filenamesize,
                    const DL_START_VECTORS *vectors, const DL_START_INFO *info,
@@ -76,7 +103,7 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
 {
     STACK s;
     uint32_t n, execfn, i, at, phdr;
-    uint32_t aux[24], auxwords = 22, record = 0;
+    uint32_t aux[26], auxwords = 20, record = 0, snapshot = 0;
     int status;
 
     *rsp = *used = 0;
@@ -98,8 +125,22 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     if (info->phdr_copy && (info->phnum > capacity / info->phent ||
         !aligned_copy(&s, info->phdr_copy, info->phnum * info->phent, &phdr)))
         return DL_NO_SPACE;
-    if (launch && !aligned_copy(&s, launch, sizeof(*launch), &record))
-        return DL_NO_SPACE;
+    if (launch) {
+        DL_LAUNCH_VECTORS saved;
+        const DL_START_VECTORS *original = vectors->original ? vectors->original : vectors;
+
+        if (!aligned_copy(&s, launch, sizeof(*launch), &record) ||
+            !string(&s, filename, n, &saved.path))
+            return DL_NO_SPACE;
+        status = save_vector(&s, original->argv, original->argc, &saved.argv);
+        if (status != DL_OK)
+            return status;
+        status = save_vector(&s, original->envp, original->envc, &saved.envp);
+        if (status != DL_OK)
+            return status;
+        if (!aligned_copy(&s, &saved, sizeof(saved), &snapshot))
+            return DL_NO_SPACE;
+    }
     status = vector(&s, vectors->argv, vectors->argc);
     if (status != DL_OK)
         return status;
@@ -118,10 +159,10 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     aux[16] = DL_AT_PTOS_BOOTDRIVE; aux[17] = info->bootdrive;
     aux[18] = DL_AT_PTOS_LOADBIAS; aux[19] = info->load_bias;
     if (record) {
-        aux[20] = DL_AT_PTOS_LAUNCH; aux[21] = record;
-        auxwords += 2;
+        aux[auxwords++] = DL_AT_PTOS_LAUNCH; aux[auxwords++] = record;
+        aux[auxwords++] = DL_AT_PTOS_LAUNCH_VECTORS; aux[auxwords++] = snapshot;
     }
-    aux[auxwords-2] = aux[auxwords-1] = 0;
+    aux[auxwords++] = 0; aux[auxwords++] = 0;
     for (i = 0; i < auxwords; i++)
         if (!word(&s, aux[i]))
             return DL_NO_SPACE;

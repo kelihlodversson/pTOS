@@ -105,7 +105,8 @@ class StartInfo(C.Structure):
 
 class StartVectors(C.Structure):
     _fields_ = [("argv", C.POINTER(C.c_char_p)), ("envp", C.POINTER(C.c_char_p)),
-                ("argc", C.c_uint32), ("envc", C.c_uint32)]
+                ("argc", C.c_uint32), ("envc", C.c_uint32),
+                ("original", C.c_void_p), ("classic_tail", C.c_void_p)]
 
 
 class LegacyStartArgs(C.Structure):
@@ -611,7 +612,7 @@ class Metadata(unittest.TestCase):
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
                 capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False,
-                explicit=None, phdr_copy=None):
+                explicit=None, phdr_copy=None, original=None):
         tail = bytes([len(args)]) + args if tail is None else tail
         record = None
         if capture:
@@ -634,6 +635,12 @@ class Metadata(unittest.TestCase):
             argv_slots = (C.c_char_p * (len(argv_in) + 1))(*argv_in)
             envp_slots = (C.c_char_p * (len(envp_in) + 1))(*envp_in)
             vectors = StartVectors(argv_slots, envp_slots, len(argv_in), len(envp_in))
+        if original is not None:
+            original_args, original_env = original
+            original_slots = (C.c_char_p * (len(original_args) + 1))(*original_args)
+            original_env_slots = (C.c_char_p * (len(original_env) + 1))(*original_env)
+            request = StartVectors(original_slots, original_env_slots, len(original_args), len(original_env))
+            vectors.original = C.addressof(request)
         info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, 32)
         if phdr_copy is not None:
             self.assertEqual(len(phdr_copy), info.phent * info.phnum)
@@ -695,8 +702,19 @@ class Metadata(unittest.TestCase):
             self.assertEqual(data[launch+12:launch+272], bytes(260))
             self.assertEqual(data[launch+272:launch+400], tail[:128])
             self.assertEqual(aux[0x5003] & 3, 0)
+            original_args, original_env = original if original is not None else (argv, envp)
+            saved = aux[0x5004]
+            self.assertEqual(string(word(saved)), filename)
+            for slots, entries in ((word(saved+4), original_args), (word(saved+8), original_env)):
+                self.assertEqual(slots & 3, 0)
+                self.assertEqual([string(word(slots+4*i)) for i in range(len(entries))], entries)
+                self.assertEqual(word(slots+4*len(entries)), 0)
+                self.assertNotEqual(slots, rsp.value+4)
+                if entries:
+                    self.assertNotEqual(word(slots), word(rsp.value+4))
         else:
             self.assertNotIn(0x5003, aux)
+            self.assertNotIn(0x5004, aux)
         return rc, (argv, envp, aux)
 
     def test_standard_initial_stack_launch_capture(self):
@@ -704,6 +722,16 @@ class Metadata(unittest.TestCase):
         self.assertEqual(self.startup(tail=b'\x7f',
             env=b'FOO=bar\0ARGV=\0alias\0PATH=from-arg\0\0', capture=True)[0], 0)
         self.assertEqual(self.startup(capture=True, capacity=256)[0], -4)
+
+    def test_redirected_launch_keeps_original_vectors(self):
+        original = ([b'alias', b'', b'a'*65200], [b'FLAG=direct'])
+        forwarded = ([b'C:\\INTERP.PRG', b'-x', b'C:\\FILE.TOS', *original[0][1:]], original[1])
+        rc, result = self.startup(explicit=forwarded, original=original, capture=True,
+                                  filename=b'C:\\FILE.TOS', capacity=196608)
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[:2], forwarded)
+        self.assertEqual(self.startup(explicit=forwarded, original=original, capture=True,
+                                      capacity=131072)[0], -4)
 
     def test_standard_initial_stack_explicit_vectors(self):
         argv = [b'custom argv[0]', b'', b' "literal quote" ', b'x' * 4096]

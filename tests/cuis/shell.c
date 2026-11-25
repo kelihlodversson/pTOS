@@ -8,6 +8,7 @@
 #include "string.h"
 #include "runtime.h"
 #include "process_exec.h"
+#include "ptos.h"
 #define VERIFY(c) do { if (!(c)) { __builtin_printf("shell failure: %d\n",__LINE__); return __LINE__; } } while (0)
 static PD basepage;
 static DL_LAUNCH launch;
@@ -35,7 +36,8 @@ static LONG deferred_result, completion_error, reservations;
 static UQUAD launched_console;
 static int launches, native_calls;
 static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
-static char launched_environment[AES_SHELL_ENV];
+static char launched_environment[AES_SHELL_ENV], launched_arguments[2048];
+static char *mock_environment[] = {NULL};
 static void *last_allocation;
 static size_t last_allocation_size;
 static LONG allocation_balance;
@@ -60,16 +62,40 @@ UQUAD aes_memory_call(ULONG function, UQUAD argument)
     }
     return (QUAD)EINVFN;
 }
-static void save_environment(UQUAD address)
+static uintptr_t wire_pointer(const PROCESS_EXEC_REQUEST *request, ULONG address)
 {
-    const char *source = (const char *)(uintptr_t)address;
-    ULONG i;
-    memset(launched_environment,0,sizeof(launched_environment));
-    if (!source) return;
-    for (i = 0; i+1 < sizeof(launched_environment); i++) {
-        launched_environment[i] = source[i];
-        if (!source[i] && !source[i+1]) break;
+    ULONG offset = address - (ULONG)(uintptr_t)last_allocation;
+    if (last_allocation && offset < last_allocation_size) return (uintptr_t)last_allocation+offset;
+    if (address == (ULONG)(uintptr_t)mock_environment) return (uintptr_t)mock_environment;
+    return ((uintptr_t)request & ~(uintptr_t)0xffffffffUL) | address;
+}
+
+static void save_vector(char *buffer, size_t size, const char *const *vector)
+{
+    size_t used = 0;
+    memset(buffer,0,size);
+    for (; *vector; vector++) {
+        size_t bytes = strlen(*vector)+1;
+        if (bytes >= size-used) __builtin_abort();
+        memcpy(buffer+used,*vector,bytes);
+        used += bytes;
     }
+}
+
+static void save_request(const PROCESS_EXEC_REQUEST *request)
+{
+    if (request->flags != PROCESS_EXEC_VECTOR_ARGS ||
+        request->policy || request->handle) __builtin_abort();
+    if (request->directory) strcpy(launched_directory,(const char *)wire_pointer(request,request->directory));
+    else launched_directory[0] = 0;
+    save_vector(launched_environment,sizeof(launched_environment),
+        (const char *const *)wire_pointer(request,request->environment));
+    save_vector(launched_arguments,sizeof(launched_arguments),
+        (const char *const *)wire_pointer(request,request->tail));
+    strcpy(launched_path,(const char *)wire_pointer(request,request->path));
+    if (request->classic_tail)
+        memcpy(launched_tail,(const char *)wire_pointer(request,request->classic_tail),sizeof(launched_tail));
+    else memset(launched_tail,0,sizeof(launched_tail));
 }
 LONG aes_windows_reset_policy(AESGLOBAL *global, BOOL polling, LONG token) { (void)global; (void)polling; (void)token; return E_OK; }
 LONG aes_window_messages_poll(LONG session, AESGLOBAL *global) { (void)session; (void)global; return E_OK; }
@@ -83,19 +109,10 @@ UQUAD aes_gemdos_call(ULONG function, UQUAD a, UQUAD b, UQUAD c)
 {
     if (function == 0x154 && (QUAD)a == PROCESS_EXEC_SSYSTEM) {
         const PROCESS_EXEC_REQUEST *request = (const PROCESS_EXEC_REQUEST *)(uintptr_t)b;
-        /* The path, tail and directory are in the calling host stack. */
-        uintptr_t high = (uintptr_t)b & ~(uintptr_t)0xffffffffUL;
-        ULONG environment_offset = request->environment - (ULONG)(uintptr_t)last_allocation;
         if (c != sizeof(*request) ||
-            (request->operation != PROCESS_EXEC_DEFER && request->operation != PROCESS_EXEC_START) ||
-            request->policy || request->handle) return (QUAD)EINVAL;
-        if (request->environment && (!last_allocation ||
-            environment_offset >= last_allocation_size)) return (QUAD)EIMBA;
-        if (request->directory) strcpy(launched_directory,(const char *)(high | request->directory));
-        else launched_directory[0] = 0;
-        save_environment(request->environment ? (uintptr_t)last_allocation+environment_offset : 0);
-        strcpy(launched_path,(const char *)(high | request->path));
-        memcpy(launched_tail,(const char *)(high | request->tail),sizeof(launched_tail));
+            (request->operation != PROCESS_EXEC_DEFER && request->operation != PROCESS_EXEC_START)) return (QUAD)EINVAL;
+        save_request(request);
+        if (current_dta != &caller_dta) return (QUAD)EIMBA;
         if (request->operation == PROCESS_EXEC_START) {
             launched_console = FALSE;
             launches++;
@@ -148,32 +165,21 @@ LONG cuis_call6(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d, UQUAD e, UQUAD f)
     if (fn == CUIS_LAUNCH_ATTACH) {
         BOOL observe=(b & CUIS_LAUNCH_OBSERVE)!=0;
         launched_console=(b & CUIS_LAUNCH_CONSOLE)!=0;
-        if (b & ~(CUIS_LAUNCH_CONSOLE | CUIS_LAUNCH_OBSERVE)) return EINVAL;
+        const PROCESS_EXEC_REQUEST *request = (const PROCESS_EXEC_REQUEST *)(uintptr_t)c;
+        if (!(b & CUIS_LAUNCH_VECTORS) ||
+            (b & ~(CUIS_LAUNCH_CONSOLE | CUIS_LAUNCH_OBSERVE | CUIS_LAUNCH_VECTORS)) ||
+            d != sizeof(*request) || e || f || request->operation != PROCESS_EXEC_PREPARE) return EINVAL;
         if (observe) {
             reservations++;
             if (watch_result<0) return watch_result;
         }
-        if (f) strcpy(launched_directory,(const char *)(uintptr_t)f);
-        else launched_directory[0] = 0;
-        save_environment(e);
-        strcpy(launched_path,(const char *)(uintptr_t)c);
-        memcpy(launched_tail,(const char *)(uintptr_t)d,sizeof(launched_tail));
+        save_request(request);
         observed_launches++; launches++;
         if (launch_result < 0 && observe) cancellations++;
         return launch_result;
     }
     return EINVFN;
 }
-UQUAD aes_gemdos_call4(ULONG function, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
-{
-    if (function != 0x4b || a != PE_ASYNC_LOADGO || current_dta != &caller_dta) return (QUAD)EINVFN;
-    save_environment(d);
-    launches++;
-    strcpy(launched_path,(const char *)(uintptr_t)b);
-    memcpy(launched_tail,(const char *)(uintptr_t)c,sizeof(launched_tail));
-    return (QUAD)launch_result;
-}
-
 int64_t dl_syscall(uint32_t fn, uint64_t a, uint64_t b, uint64_t c,
                   uint64_t d, uint64_t e, uint64_t f)
 {
@@ -187,6 +193,7 @@ static void capture(void)
     launch.environment_size = basepage.p_env ? sizeof(environment) : 0;
     dl_capture_launch(&launch,executable);
     aes_shell_init(aes_app_context(&aes_global));
+    environ = mock_environment;
 }
 static int search(const char *input, const char *hit, const char *result, int count)
 {
@@ -360,27 +367,26 @@ static int argument_checks(void)
     char marker[] = { 127 }, empty_environment[] = { 0,0 };
     char custom[] = "ONLY=child\0ARGV=\0old\0old-argument\0\0";
     SHELW extended = { name,0,0,NULL,custom,0,0 };
-    static const char expected[] = "ONLY=child\0ARGV=NULL:2\0D:\\CHANGED\\GOOD\\NEXT.PRG\0one two\0 \0a'b\0C:\\test\0\0";
+    static const char expected[] = "D:\\CHANGED\\GOOD\\NEXT.PRG\0one two\0\0a'b\0C:\\test\0";
     int before;
     LONG before_reservations;
     ULONG before_allocations;
     found = "GOOD\\NEXT.PRG";
     strcpy(tail+1,"\"one two\" '' 'a''b' C:\\test"); tail[0] = strlen(tail+1);
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
-    VERIFY(launched_tail[0] == 127 && !memcmp(launched_environment,expected,sizeof(expected)-1));
+    VERIFY(!launched_tail[0] && !memcmp(launched_arguments,expected,sizeof(expected)) &&
+           !memcmp(launched_environment,"ONLY=child\0",12));
     VERIFY(!allocation_balance && !strcmp(name,"NEXT.PRG") && !strcmp(custom,"ONLY=child"));
     tail[0] = 127; memset(tail+1,'x',400); tail[401] = 0;
     VERIFY(mt_shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,name,tail,&aes_global) == 42);
-    VERIFY(launched_tail[0] == 127 && !allocation_balance);
-    /* Explicit ARGV is copied unchanged for CL_NORMAL, including argv[0]. */
-    tail[0] = 127;
-    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,marker) == 42);
-    VERIFY(!memcmp(launched_environment,custom,sizeof(custom)) && !allocation_balance);
+    VERIFY(!launched_tail[0] && launched_arguments[strlen(launched_arguments)+1+399] == 'x' && !allocation_balance);
+    /* Native classic launches reject a marker; ordinary environment stops at ARGV. */
+    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,marker));
     tail[0] = 0;
     VERIFY(shel_write(SWM_LAUNCHNOW|SW_ENVIRON,GEMAPP,SHW_PARALLEL,&extended,tail) == 42);
-    VERIFY(!memcmp(launched_environment,custom,sizeof(custom)) && !allocation_balance);
+    VERIFY(!memcmp(launched_environment,"ONLY=child\0",12) && !allocation_balance);
     VERIFY(shel_write(SWM_LAUNCHNOW|SW_ENVIRON,GEMAPP,SHW_CHAIN,&extended,tail) == 1);
-    VERIFY(!memcmp(launched_environment,custom,sizeof(custom)) && !allocation_balance);
+    VERIFY(!memcmp(launched_environment,"ONLY=child\0",12) && !allocation_balance);
     before = launches;
     strcpy(tail+1,"'unclosed"); tail[0] = strlen(tail+1);
     VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,name,tail) && launches == before);
@@ -403,12 +409,12 @@ static int argument_checks(void)
     watch_result = 17;
     extended.env = empty_environment;
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
-    VERIFY(!memcmp(launched_environment,"ARGV=\0D:\\CHANGED\\GOOD\\NEXT.PRG\0\0",32) && !allocation_balance);
+    VERIFY(!launched_environment[0] && !strcmp(launched_arguments,"D:\\CHANGED\\GOOD\\NEXT.PRG") && !allocation_balance);
     memset(long_prefix,'X',sizeof(long_prefix)); long_prefix[32764] = long_prefix[32765] = 0;
     extended.env = long_prefix;
     VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail) == 42 && !allocation_balance);
+    VERIFY(shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) == 42);
     before = launches;
-    VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_PARSE,&extended,tail) && launches == before);
     long_prefix[32765] = 'X';
     VERIFY(!shel_write(SWM_LAUNCH|SW_ENVIRON,GEMAPP,CL_NORMAL,&extended,tail) && launches == before);
     return 0;

@@ -402,6 +402,7 @@ short mt_scrp_write(const char *path, AESGLOBAL *global);
 short mt_shel_get(char *buffer, short length, AESGLOBAL *global);
 short mt_shel_put(const char *buffer, short length, AESGLOBAL *global);
 short mt_shel_read(char *command, char *tail, AESGLOBAL *global);
+short mt_shel_readve(const char **path, const char *const **argv, const char *const **envp, AESGLOBAL *global);
 #define SWM_LAUNCH 0
 #define SWM_LAUNCHNOW 1
 #define SWM_LAUNCHACC 3
@@ -439,6 +440,8 @@ short mt_shel_read(char *command, char *tail, AESGLOBAL *global);
 #define ENVIRON_CHANGE 1
 #define ENVIRON_COPY 2
 short mt_shel_write(short mode, short graphical, short execution, const void *command, const char *tail, AESGLOBAL *global);
+short mt_shel_writeve(short mode, short graphical, short execution, const void *command,
+                      char *const argv[], char *const envp[], AESGLOBAL *global);
 short mt_shel_find(char *path, AESGLOBAL *global);
 short mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global);
 short mt_fsel_input(char *path, char *selection, short *button, AESGLOBAL *global);

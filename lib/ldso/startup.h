@@ -3,7 +3,7 @@
 #define LDSO_STARTUP_H
 #include "dynamic.h"
 #include "launch.h"
-#define DL_START_CAPACITY 131072
+#define DL_START_CAPACITY 196608
 #define DL_AT_PTOS_BASEPAGE 0x5000
 #define DL_AT_PTOS_BOOTDRIVE 0x5001
 #define DL_AT_PTOS_LOADBIAS 0x5002
@@ -17,6 +17,8 @@ typedef struct dl_start_info {
 typedef struct dl_start_vectors {
     const char *const *argv, *const *envp;
     uint32_t argc, envc;
+    const struct dl_start_vectors *original; /* request before binfmt, if redirected */
+    const unsigned char *classic_tail; /* optional original AES short tail, 128 bytes */
 } DL_START_VECTORS;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
@@ -26,7 +28,8 @@ typedef struct dl_start_vectors {
  * AT_EXECFN comes from filename. If supplied, phdr_copy contains phnum
  * entries of phent bytes for which AT_PHDR points to a child-owned copy.
  * The optional launch record is copied into
- * the stack and reachable via AT_PTOS_LAUNCH. All inputs are immutable and
+ * the stack and reachable via AT_PTOS_LAUNCH. A separate auxv tag supplies
+ * private copies of the requested path and vectors. All inputs are immutable and
  * disjoint from the buffer and outputs. RSP is 16-byte aligned. On error,
  * outputs are zero and buffer contents are unspecified. No allocation. */
 int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,

@@ -249,6 +249,7 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         launch->vectors = *vectors;
         launch->vectors.argv = slots;
         launch->vectors.argc = count;
+        launch->vectors.original = vectors;
         launch->vector_storage = work;
         work = NULL;
     } else if (!rc && !error.code && depth) {
