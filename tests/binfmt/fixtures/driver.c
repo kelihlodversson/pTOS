@@ -4,6 +4,7 @@
 #include <string.h>
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#include "../../legacy-pexec.h"
 #ifdef PROCESS_DIRECTORY_TEST
 #include <mint/mintbind.h>
 #include "../../../include/process_exec.h"
