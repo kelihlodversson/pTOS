@@ -49,7 +49,12 @@ LONG rc;
 
     if (is_graphical(path))
         (void)Cursconf(0,0);
+#if defined(STANDALONE_CONSOLE) && defined(__arm__)
+    /* Standalone ARM EmuCON still launches basepage-entry programs. */
+    rc = trap_1_wwlll(0x4b,0,(long)path,(long)cmdline,0);
+#else
     rc = Pexec(0,path,cmdline,NULL);
+#endif
     (void)Cursconf(1,0);
 
     restore_stdout(redir);
