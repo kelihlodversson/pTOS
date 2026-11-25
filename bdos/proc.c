@@ -559,7 +559,8 @@ static WORD envsize(char *env)
 
 struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
-    BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement);
+    BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement,
+    const struct dl_start_vectors *vectors);
 /* #1018: the public modes of this platform. The historical staged modes are
  * 68k compatibility (doc/pexec-legacy-modes.txt); MMU ARM and x32 keep only
  * Pexec(0/100/200) until #1008. Non-MMU ARM is left unchecked: it has no
@@ -596,7 +597,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * FreeMiNT's mode 0 does. The result is the child's 16-bit exit code, as
      * from the nested carrier. */
     if (flag == PE_LOADGO && ksched_anchor_launch_allowed()) {
-        LONG pid = exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,NULL,NULL,NULL,NULL);
+        LONG pid = exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL);
         LONG result, error;
         if (pid <= 0) return pid ? pid : EINTRN;
         error = ksched_wait_exact((WORD)pid, &result);
@@ -604,7 +605,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     }
 #endif
     /* exec_common() learns whether this is the kernel's own request. */
-    return exec_common(flag|kernel,path,tail,env,FALSE,NULL,NULL,NULL,NULL);
+    return exec_common(flag|kernel,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL);
 }
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 /* The region self-test is kernel code running on behalf of a managed process
@@ -612,22 +613,31 @@ long xexec(WORD flag, char *path, char *tail, char *env)
  * has a user address space. Never reachable from a GEMDOS trap. */
 long xexec_selftest(WORD flag, char *path, char *tail, char *env)
 {
-    return exec_common(flag|PE_KERNEL,path,tail,env,FALSE,NULL,NULL,NULL,NULL);
+    return exec_common(flag|PE_KERNEL,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL);
 }
+#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
+long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors)
+{
+    static char empty[2];
+
+    return DISK_CALL(exec_common(PE_LOADGO|PE_KERNEL,path,empty,empty,
+                                 FALSE,NULL,NULL,NULL,NULL,vectors));
+}
+#endif
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
                        PROCESS_OBSERVER **out)
 {
     if (!out || *out) return EINVAL;
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,directory,out,NULL,NULL));
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,directory,out,NULL,NULL,NULL));
 }
 long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG policy,
                        PROCESS_OBSERVER **out, void **prepared)
 {
     if (!out || *out || !prepared || *prepared || policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,
-                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL));
+                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL,NULL));
 }
 #endif
 #if CONF_WITH_EXEC_REPLACE
@@ -638,14 +648,14 @@ LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *replacement,
     if (kproc_exec_replacement_validate(replacement) || !path || !tail)
         return EACCDN;
     result = DISK_CALL(exec_common(PE_LOAD,path,tail,env,FALSE,
-                                  NULL,NULL,NULL,replacement));
+                                  NULL,NULL,NULL,replacement,NULL));
     if (result < 0) return result;
     return kproc_exec_replacement_image_ready(replacement) ? E_OK : EPLFMT;
 }
 #endif
 static long exec_common(WORD flag, char *path, char *tail, char *env,
     BOOL deferred, char *directory, struct kproc **observe, void **prepared,
-    void *replacement)
+    void *replacement, const struct dl_start_vectors *vectors)
 {
     PD *p, *owner;
     PGMHDR01 hdr;
@@ -896,6 +906,11 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
      * when interpreter support is disabled.
      */
 #if CONF_WITH_BINFMT
+    if (vectors) {
+        /* The vector binfmt adapter will own redirects for vector launches. */
+        memset(&interpreter, 0, sizeof(interpreter));
+        rc = kpgmhdrld(path, &hdr, &fh);
+    } else
     rc = binfmt_load_header(path, tail, env ? env : (char *)
 #if CONF_WITH_PRIVATE_CLONE
         (uintptr_t)kproc_private_environment(run)
@@ -1057,7 +1072,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 
     /* now, load the rest of the program, perform relocation, close the file */
-    rc = kpgmld(cur_p, fh, &hdr, path);
+    rc = kpgmld(cur_p, fh, &hdr, path, vectors);
 #if KPROC_LEGACY_PRG
     if (rc == E_OK && !kproc_record_legacy_text(cur_p, (ULONG)hdr.h01_tlen)) rc = EPLFMT;
 #endif

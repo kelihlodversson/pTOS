@@ -33,7 +33,11 @@ obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
 # The kernel shares only load-plan validation and stack construction with
 # ld.so, never its metadata resolver, relocation engine or dependency graph.
-obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o elfstartup.o argv_legacy.o
+obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o
+ifeq ($(CONF_WITH_USER_ASPACE),y)
+obj-$(CONF_WITH_ELF_LOADER) += elfstartup.o
+endif
+obj-$(CONF_WITH_ELF_SHARED) += argv_legacy.o
 
 obj/elfimage.o: lib/ldso/image_plan.c lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@

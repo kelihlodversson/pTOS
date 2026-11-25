@@ -99,7 +99,8 @@ class Image(C.Structure):
 
 
 class StartInfo(C.Structure):
-    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias")]
+    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias", "phent")]
+    _fields_ += [("phdr_copy", C.c_void_p)]
 
 
 class StartVectors(C.Structure):
@@ -610,7 +611,7 @@ class Metadata(unittest.TestCase):
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
                 capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False,
-                explicit=None):
+                explicit=None, phdr_copy=None):
         tail = bytes([len(args)]) + args if tail is None else tail
         record = None
         if capture:
@@ -633,7 +634,12 @@ class Metadata(unittest.TestCase):
             argv_slots = (C.c_char_p * (len(argv_in) + 1))(*argv_in)
             envp_slots = (C.c_char_p * (len(envp_in) + 1))(*envp_in)
             vectors = StartVectors(argv_slots, envp_slots, len(argv_in), len(envp_in))
-        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias)
+        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, 32)
+        if phdr_copy is not None:
+            self.assertEqual(len(phdr_copy), info.phent * info.phnum)
+            headers = C.create_string_buffer(phdr_copy)
+            info.phdr = 0
+            info.phdr_copy = C.addressof(headers)
         rsp, used = C.c_uint32(123), C.c_uint32(456)
         rc = self.lib.dl_start_stack(memory, capacity, 0x80000000,
             name, len(filename) + 1, C.byref(vectors), C.byref(info),
@@ -672,8 +678,14 @@ class Metadata(unittest.TestCase):
             aux[word(at)] = word(at + 4)
             at += 8
         self.assertEqual(word(at + 4), 0)
-        self.assertEqual((aux[3], aux[4], aux[5], aux[6], aux[7], aux[9], aux[0x5000]),
-                         (info.phdr, 32, info.phnum, 4096, info.base, info.entry, info.basepage))
+        self.assertEqual((aux[4], aux[5], aux[6], aux[7], aux[9], aux[0x5000]),
+                         (32, info.phnum, 4096, info.base, info.entry, info.basepage))
+        if phdr_copy is None:
+            self.assertEqual(aux[3], info.phdr)
+        else:
+            self.assertEqual(aux[3] & 3, 0)
+            self.assertGreaterEqual(aux[3], rsp.value)
+            self.assertEqual(data[aux[3]-base:aux[3]-base+len(phdr_copy)], phdr_copy)
         self.assertEqual(string(aux[31]), filename)
         self.assertEqual(aux[0x5001], 2)
         self.assertEqual(aux[0x5002], info.load_bias)
@@ -704,6 +716,11 @@ class Metadata(unittest.TestCase):
         self.assertEqual(result[:2], ([], []))
         self.assertEqual(self.startup(explicit=([None], []))[0], -1)
         self.assertEqual(self.startup(explicit=(argv, envp), capacity=4096)[0], -4)
+
+    def test_standard_initial_stack_copies_unmapped_program_headers(self):
+        phdr = bytes(range(160)) * 2
+        self.assertEqual(self.startup(explicit=([], []), phdr_copy=phdr)[0], 0)
+        self.assertEqual(self.startup(explicit=([], []), phdr_copy=phdr, capacity=256)[0], -4)
 
     def test_standard_initial_stack_load_bias(self):
         for bias in (0, 0x400000):

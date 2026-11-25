@@ -132,8 +132,14 @@ reader skips tags it does not interpret; it is not that admission check.
 Kernel responsibilities and process entry
 ----------------------------------------
 
-Keep the existing PRG and static-ELF dispatch and entry conventions.  Select
-the standard dynamic startup path only through a validated PT_INTERP, never
+The static ELF loader uses the standard stack for kernel-supplied vectors.
+PT_LOAD, relocations, permissions and layout admission use the existing
+static loader. AT_ENTRY selects the executable entry and AT_BASE is zero.
+AT_PHDR points to the loaded program-header table when a readable segment
+covers it at an aligned address. Otherwise the stack contains an aligned
+private copy of the table. AT_PHENT describes the actual header stride.
+
+Select the standard dynamic startup path only through a validated PT_INTERP, never
 merely because an ELF is ET_DYN or has PT_DYNAMIC (static PIE may have both).
 Malformed or unsupported dynamic objects must fail, not enter the static
 loader's additive relocation/import path.  A bare DSO is not an executable.

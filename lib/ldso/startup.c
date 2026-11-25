@@ -56,20 +56,34 @@ static int vector(STACK *s, const char *const *entries, uint32_t count)
     return word(s, 0) ? DL_OK : DL_NO_SPACE;
 }
 
+static int aligned_copy(STACK *s, const void *data, uint32_t bytes, uint32_t *address)
+{
+    uint32_t i, padding = (s->base + s->back - bytes) & 3U;
+
+    if (bytes > s->back - s->front || padding > s->back - s->front - bytes)
+        return 0;
+    s->back -= bytes + padding;
+    for (i = 0; i < bytes; i++)
+        s->buffer[s->back + i] = ((const unsigned char *)data)[i];
+    *address = s->base + s->back;
+    return 1;
+}
+
 int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
                    const char *filename, uint32_t filenamesize,
                    const DL_START_VECTORS *vectors, const DL_START_INFO *info,
                    const DL_LAUNCH *launch, uint32_t *rsp, uint32_t *used)
 {
     STACK s;
-    uint32_t n, execfn, i, at;
+    uint32_t n, execfn, i, at, phdr;
     uint32_t aux[24], auxwords = 22, record = 0;
     int status;
 
     *rsp = *used = 0;
     if (!buffer || !filename || !vectors || !info || capacity > DL_START_CAPACITY ||
         capacity < 128 || capacity > top || !filenamesize || filenamesize > 1024 ||
-        !vectors->argv || !vectors->envp)
+        !vectors->argv || !vectors->envp || info->phent < 32 ||
+        (info->phdr_copy && (info->phdr || !info->phnum)))
         return DL_BAD_ELF;
     n = length(filename, filenamesize);
     if (!n || n == filenamesize)
@@ -80,15 +94,12 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     s.buffer = buffer; s.front = 0; s.back = capacity; s.base = top - capacity;
     if (!word(&s, vectors->argc) || !string(&s, filename, n, &execfn))
         return DL_NO_SPACE;
-    if (launch) {
-        uint32_t padding = (s.base + s.back) & 3U;
-        if (s.back - s.front < sizeof(*launch) + padding)
-            return DL_NO_SPACE;
-        s.back -= sizeof(*launch) + padding;
-        record = s.base + s.back;
-        for (i = 0; i < sizeof(*launch); i++)
-            buffer[s.back + i] = ((const unsigned char *)launch)[i];
-    }
+    phdr = info->phdr;
+    if (info->phdr_copy && (info->phnum > capacity / info->phent ||
+        !aligned_copy(&s, info->phdr_copy, info->phnum * info->phent, &phdr)))
+        return DL_NO_SPACE;
+    if (launch && !aligned_copy(&s, launch, sizeof(*launch), &record))
+        return DL_NO_SPACE;
     status = vector(&s, vectors->argv, vectors->argc);
     if (status != DL_OK)
         return status;
@@ -96,8 +107,8 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     if (status != DL_OK)
         return status;
 
-    aux[0] = 3; aux[1] = info->phdr;
-    aux[2] = 4; aux[3] = 32;
+    aux[0] = 3; aux[1] = phdr;
+    aux[2] = 4; aux[3] = info->phent;
     aux[4] = 5; aux[5] = info->phnum;
     aux[6] = 6; aux[7] = info->pagesz;
     aux[8] = 7; aux[9] = info->base;

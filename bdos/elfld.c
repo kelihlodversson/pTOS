@@ -66,6 +66,7 @@
 #include "kheap.h"
 #include "procmem.h"
 #include "userlayout.h"
+#include "../lib/ldso/startup.h"
 #endif
 
 /*
@@ -1161,6 +1162,8 @@ typedef struct {
     VADDR image_va;     /* where the image's first byte (link_base) is */
     BOOL pending;       /* the image is in the new process's own address space,
                          * made for it now (kproc_load_begin()) */
+    ULONG phoff;
+    DL_START_INFO start;
 } ELFPLACE;
 
 static LONG elf_load_image(FH h, PD *p, PROG_LAYOUT *layout, ELFPLACE *place)
@@ -1272,6 +1275,11 @@ LONG elf_pgmld(FH h, PD *p)
     layout->nseg = 0;
     layout->end = 0;
     layout->entry = (ULONG)ehdr.e_entry + (ULONG)bias;
+    place->phoff = ehdr.e_phoff;
+    place->start.phent = ehdr.e_phentsize;
+    place->start.phnum = ehdr.e_phnum;
+    place->start.entry = layout->entry;
+    place->start.load_bias = (ULONG)bias;
 #else
     /*
      * the image is loaded at the first byte after the basepage, but on
@@ -1391,6 +1399,12 @@ LONG elf_pgmld(FH h, PD *p)
             s->src = load_base + (ph.p_vaddr - info.link_base);
             if (s->vaddr + s->memsz > layout->end)
                 layout->end = s->vaddr + s->memsz;
+            if (!place->start.phdr && (ph.p_flags & 4) && ehdr.e_phoff >= ph.p_offset) {
+                ULONG offset = ehdr.e_phoff - ph.p_offset;
+                if (offset <= s->filesz && ph_table_size <= s->filesz - offset &&
+                    !((s->vaddr + offset) & 3))
+                    place->start.phdr = s->vaddr + offset;
+            }
         }
 #endif
 
@@ -1474,13 +1488,12 @@ LONG elf_pgmld(FH h, PD *p)
  * asked for it, and the process's kernel record owns the pages from the
  * moment they exist: the caller destroys the record if this fails.
  */
-LONG elf_pgmld(FH h, PD *p)
+LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vectors)
 {
     PROG_LAYOUT layout;
-    ELFPLACE place;
+    ELFPLACE place = {0};
     LONG r;
 
-    place.pending = FALSE;
     r = elf_load_image(h, p, &layout, &place);
     kproc_load_leave();
     if (r < 0L)
@@ -1494,7 +1507,29 @@ LONG elf_pgmld(FH h, PD *p)
         KDEBUG(("BDOS elf_pgmld: image refused\n"));
         return EPLFMT;
     }
-    return 0;
+    if (vectors) {
+        void *headers = NULL;
+        DISK_ERROR error = {0};
+
+        /* Some native link layouts start PT_LOAD after the file headers.
+         * Supply their program-header table through the child-owned stack. */
+        if (!place.start.phdr) {
+            ULONG bytes;
+            if (place.start.phnum > DL_START_CAPACITY / place.start.phent)
+                return ERANGE;
+            bytes = place.start.phnum * place.start.phent;
+            headers = kalloc(bytes);
+            if (!headers)
+                return ENSMEM;
+            r = DISK_CALL_ERROR(read_at(h, place.phoff, headers, bytes), &error);
+            place.start.phdr_copy = headers;
+        }
+        if (r == E_OK)
+            r = kproc_set_static_elf_entry(p, filename, vectors, &place.start);
+        kfree(headers);
+        DISK_RETHROW(error);
+    }
+    return r;
 }
 #endif
 

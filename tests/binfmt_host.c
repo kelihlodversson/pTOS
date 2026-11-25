@@ -128,6 +128,7 @@ static void dynamic_arguments(const char *const *expected, UWORD count)
     assert(size + 1 < BINFMT_ENV);
     memset(&info, 0, sizeof(info));
     info.pagesz = 4096;
+    info.phent = 32;
     assert(legacy_start_vectors(&arguments, expected[0], (const unsigned char *)tail,
                                 sizeof(tail), (const unsigned char *)storage, size + 2,
                                 slots, sizeof(slots) / sizeof(slots[0])) == DL_OK);
