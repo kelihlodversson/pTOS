@@ -1002,7 +1002,7 @@ $(X32_CLI_OBJ): $(AUTOCONF_H)
 # EmuCON's own sources use cmd.h's standalone definitions and the cli/x32
 # headers; util/ and the generated version use the kernel's.
 X32_CLI_INC = -DSTANDALONE_CONSOLE -DX32_USERLAND -Icli/x32 -Icli/x32/include \
-              -Iinclude -Iobj -Icli
+              -DCLI_VECTOR_EXEC=$(if $(CONF_WITH_CLI_VECTOR_EXEC),1,0) -Iinclude -Iobj -Icli
 X32_UTIL_INC = -Iinclude/arch/x86_64 -Iinclude -Iobj -Iutil
 obj/x32/doprintf.o obj/x32/string.o obj/x32/version.o: X32_CLI_INC = $(X32_UTIL_INC)
 
@@ -1782,6 +1782,7 @@ else
 EMUCON_MAKE = $(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) \
     BUILD_M68K_LRA=$(if $(M68K_LRA_FLAGS),y,n) \
     CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) \
+    CLI_VECTOR_EXEC=$(if $(CONF_WITH_CLI_VECTOR_EXEC),1,0) \
     M68K_ELF=$(BUILD_TOOLCHAIN_ELF) \
     M68K_PRG_FLAGS="$(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf)" \
     CROSS_COMPILE=$(CROSS_COMPILE) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) \
@@ -1945,6 +1946,7 @@ endif
 # independently loader-created roots rather than advertising private-fork tests.
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
+              $(if $(or $(ARCH_ARM),$(ARCH_X86_64)),-include tests/legacy-pexec.h) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_FAT_FILE_LIFETIMES),-DTEST_WITH_FAT_FILE_LIFETIMES) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
@@ -2200,6 +2202,32 @@ $(eval $(call shutdown-prog,reboot,1,rebooting))
 $(eval $(call shutdown-prog,coldboot,2,cold booting))
 $(eval $(call shutdown-prog,halt,3,halting))
 TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
+
+ifdef CONF_WITH_CLI_VECTOR_EXEC
+# The CLI enters ELF with argv/envp. Keep the basepage startup in runtests.tos
+# and the other legacy fixtures for callers that still exercise Pexec(0x4b).
+TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
+TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos cliargs.tos
+
+$(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
+	@$(LIBCMINI_MAKE) $@
+
+runvec.tos: $(TEST_VECTOR_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+
+pwroffv.tos: obj/poweroff.o
+rebootv.tos: obj/reboot.o
+coldbtv.tos: obj/coldboot.o
+haltv.tos: obj/halt.o
+pwroffv.tos rebootv.tos coldbtv.tos haltv.tos: $(TEST_VECTOR_STARTUP) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+
+obj/cliargs.o: tests/emucon/arguments.c $(AUTOCONF_H) $(LIBCMINI_LIB) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+cliargs.tos: $(TEST_VECTOR_STARTUP) obj/cliargs.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+endif
 
 # ISOPROBE.TOS: the payload of the isolation suite (tests/isolation/isoprobe.c),
 # linked like runtests.tos.
@@ -2498,6 +2526,7 @@ endif
 endif
 
 TEST_HD_FILES = $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
+TEST_HD_FILES += $(TEST_VECTOR_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2513,6 +2542,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
+test-hd.img: $(TEST_VECTOR_FILES)
 test-hd.img: $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
@@ -2578,6 +2608,7 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
+TOCLEAN += runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos cliargs.tos
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
            halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \

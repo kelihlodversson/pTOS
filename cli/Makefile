@@ -25,6 +25,7 @@ include ../version.mk
 
 TARGET = emucon.tos
 ARCH ?= m68k
+CLI_VECTOR_EXEC ?= 0
 M68K_LRA_FLAGS = $(if $(filter m68k-y,$(ARCH)-$(BUILD_M68K_LRA)),-mlra)
 
 # libcmini provides the C library, GEMDOS/BIOS/XBIOS bindings, and startup
@@ -109,7 +110,8 @@ endif
 # for the couple of headers libcmini doesn't have, e.g. version.h,
 # scancode.h), which would otherwise shadow libcmini's <string.h> since
 # both provide one.
-CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE $(CLI_DEFS)
+CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE \
+           -DCLI_VECTOR_EXEC=$(CLI_VECTOR_EXEC) $(CLI_DEFS)
 # -fno-tree-loop-distribute-patterns: matches the kernel's own OTHERFLAGS
 # (see ../Makefile) for the same reason -- GCC can silently rewrite an
 # ordinary loop (e.g. cmdutil.c's convulong()) into a call to memset()/
@@ -155,7 +157,7 @@ HEADERS = cmd.h
 # up to date, and creating it must force them to be rebuilt.  Only objects go:
 # the generated sources in ml/ do not depend on any of the three, and removing
 # them while a parallel make has already looked at their times would break it.
-STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)$(if $(filter 1,$(CLI_SSYSTEM)),-ss)$(if $(M68K_LRA_FLAGS),-lra)
+STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)$(if $(filter 1,$(CLI_SSYSTEM)),-ss)$(if $(M68K_LRA_FLAGS),-lra)$(if $(filter 1,$(CLI_VECTOR_EXEC)),-vectors)
 $(OBJECTS) version.c: $(STAMP)
 $(STAMP):
 	-rm -f ml/*.o *.o version.c $(TARGET) .arch-*

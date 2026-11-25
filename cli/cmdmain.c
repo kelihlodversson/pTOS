@@ -45,7 +45,7 @@ LONG redir_handle;
  * local to this set of functions
  */
 LOCAL char input_line[MAX_LINE_SIZE];
-LOCAL char *arglist[MAX_ARGS];
+LOCAL char *arglist[MAX_ARGS+1];
 LOCAL char redir_name[MAXPATHLEN];
 LOCAL WORD original_res;
 LOCAL WORD original_color3;
@@ -217,7 +217,11 @@ LONG rc;
         if (rc == CHANGE_RES)
             return 1;
     }
-    else rc = exec_program(argc,argv,redir);
+    else {
+        if (CLI_VECTOR_EXEC)
+            strip_quotes(argc,argv);
+        rc = exec_program(argc,argv,redir);
+    }
 
     errmsg(rc);
 
@@ -259,9 +263,17 @@ int i;
     for (i = 0; i < argc; i++, argv++) {
         if (**argv == DBLQUOTE) {
             (*argv)++;
+#if CLI_VECTOR_EXEC
+            for (p = *argv; *p && *p != DBLQUOTE; p++)
+                ;
+            if (*p)
+                while ((*p = *(p+1)) != '\0')
+                    p++;
+#else
             for (p = *argv; *p; p++)
                 ;
             *(p-1) = '\0';
+#endif
         }
     }
 }

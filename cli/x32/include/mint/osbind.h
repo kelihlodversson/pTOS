@@ -84,6 +84,8 @@ static __inline__ long x32_syscall(unsigned trap, unsigned fn,
 #define Fforce(std,h)           GEMDOS2(0x46, std, h)
 #define Dgetpath(buf,drv)       GEMDOS2(0x47, buf, drv)
 #define Pexec(mode,name,cmd,env) GEMDOS4(0x4b, mode, name, cmd, env)
+#include "pexecve.h"
+#define Pexecve(mode,path,argv,envp) GEMDOS4(GEMDOS_PEXECVE, mode, path, argv, envp)
 #define Pterm(rc)               GEMDOS1(0x4c, rc)
 #define Fsfirst(name,attr)      GEMDOS2(0x4e, name, attr)
 #define Fsnext()                GEMDOS0(0x4f)

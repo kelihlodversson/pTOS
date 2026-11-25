@@ -16,6 +16,7 @@
 #include <stddef.h>
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#include <string.h>
 #include "x32rt.h"
 
 struct basepage *_base;
@@ -32,6 +33,31 @@ __attribute__((constructor)) static void console_init(void)
     _base = (struct basepage *)(uintptr_t)ptos_basepage;
 }
 #else
+#if CONF_WITH_CLI_VECTOR_EXEC
+char **environ;
+
+/* Static EmuCON still enters with a basepage. Import its environment once. */
+static int init_environment(char *block)
+{
+    char *entry;
+    size_t count = 0;
+    size_t i;
+
+    for (entry = block; *entry && strncmp(entry,"ARGV=",5) != 0;
+         entry += strlen(entry)+1)
+        count++;
+    environ = x32_malloc((count+1)*sizeof(*environ));
+    if (!environ)
+        return 0;
+    for (i = 0; i < count; i++) {
+        environ[i] = block;
+        block += strlen(block)+1;
+    }
+    environ[count] = NULL;
+    return 1;
+}
+#endif
+
 /* Entered from x32crt.S with the process-entry contract's registers. */
 void x32_start(struct basepage *bp, long entry_type) __attribute__((noreturn));
 
@@ -41,7 +67,16 @@ void x32_start(struct basepage *bp, long entry_type)
 
     (void)entry_type;           /* ENTRY_PROGRAM: nothing else to select */
     _base = bp;
+#if CONF_WITH_CLI_VECTOR_EXEC
+    if (init_environment(bp->p_env)) {
+        rc = main();
+        x32_free(environ);
+    } else {
+        rc = 8;                 /* GEMDOS ENSMEM exit status */
+    }
+#else
     rc = main();
+#endif
     Pterm(rc);
     for (;;)
         ;

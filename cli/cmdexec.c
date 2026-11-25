@@ -12,13 +12,19 @@
 #include "cmd.h"
 #include "string.h"
 
+#if CLI_VECTOR_EXEC
+extern char **environ;
+#endif
+
 static UWORD old_stdout;
 
 /*
  *  function prototypes
  */
 PRIVATE void add_to_path(char *path,const char *name);
+#if !CLI_VECTOR_EXEC
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv);
+#endif
 PRIVATE WORD check_user_path(char *path,const char *name);
 PRIVATE WORD find_executable(char *fullname,const char *name);
 PRIVATE WORD is_graphical(const char *name);
@@ -29,14 +35,20 @@ PRIVATE void restore_stdout(char *redir);
 LONG exec_program(WORD argc,char **argv,char *redir)
 {
 char path[MAXPATHLEN];
+#if !CLI_VECTOR_EXEC
 char cmdline[CMDLINELEN];
+#endif
 LONG rc;
 
-    if (has_wildcard(argv[0]))
+    if (!argv[0][0] || has_wildcard(argv[0]))
         return EPTHNF;
 
+#if CLI_VECTOR_EXEC
+    (void)argc;
+#else
     if (build_cmdline(cmdline,argc,argv) < 0)
         return CMDLINE_LENGTH;
+#endif
 
     if (find_executable(path,argv[0]) == 0)
         ;
@@ -49,7 +61,14 @@ LONG rc;
 
     if (is_graphical(path))
         (void)Cursconf(0,0);
+#if CLI_VECTOR_EXEC
+    rc = Pexecve(0,path,argv,environ);
+#elif defined(STANDALONE_CONSOLE) && defined(__arm__)
+    /* The non-scheduled ARM console still launches basepage-entry programs. */
+    rc = trap_1_wwlll(0x4b,0,(long)path,(long)cmdline,0);
+#else
     rc = Pexec(0,path,cmdline,NULL);
+#endif
     (void)Cursconf(1,0);
 
     restore_stdout(redir);
@@ -81,6 +100,7 @@ const char *q;
  *
  *  returns -1 iff the line is too long
  */
+#if !CLI_VECTOR_EXEC
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv)
 {
 char *p, *q;
@@ -103,6 +123,7 @@ WORD i, len;
 
     return 0;
 }
+#endif
 
 /*
  *  check user_path[] directories for matching filename

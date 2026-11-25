@@ -92,6 +92,10 @@
  #define FALLTHROUGH do { } while (0)
 #endif
 
+#ifndef CLI_VECTOR_EXEC
+#define CLI_VECTOR_EXEC 0
+#endif
+
 
 /*
  * system calls
@@ -222,7 +226,7 @@ static __inline__ long cli_supexec_(long a)
 
 #define IOBUFSIZE       16384L  /* buffer size */
 
-#define MAX_LINE_SIZE   200L    /* must be greater than the largest screen width */
+#define MAX_LINE_SIZE   200L    /* command buffer including its terminating NUL */
 #define HISTORY_SIZE    10      /* number of lines of history */
 #define MAX_ARGS        30      /* maximum number of args we can parse */
 

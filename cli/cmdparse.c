@@ -48,20 +48,27 @@ WORD argc, n, rc;
              * to avoid surprises, we do not convert the args of the 'echo'
              * builtin command.
              */
-            if ((nflops_copy == 1) && (temp[1] == DRIVESEP) && ((temp[0]|0x20) == 'b'))
-                if (!strequal(argv[0],"echo"))
+            if (!CLI_VECTOR_EXEC && (nflops_copy == 1) && (temp[1] == DRIVESEP) && ((temp[0]|0x20) == 'b'))
+                if (!argc || !strequal(argv[0],"echo"))
                     temp[0] = '9';
 #endif
             if (redir_addr && (temp > redir_addr)) {
                 strcpy(redir_name,temp);
                 redir_addr = NULL;
-            } else argv[argc++] = temp;
+            } else {
+                if (argc == MAX_ARGS) {
+                    messagenl(_("error parsing line"));
+                    return -1;
+                }
+                argv[argc++] = temp;
+            }
             break;
         case NO_MORE_ARGS:
             if (redir_addr) {
                 messagenl(_("no filename for redirection"));
                 return -1;
             }
+            argv[argc] = NULL;
             return argc;
             break;
         case QUOTING_ERROR:
