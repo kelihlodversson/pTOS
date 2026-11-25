@@ -23,6 +23,7 @@ WORD parse_line(char *line,char **argv,char *redir_name)
 char *p, *temp, *redir_addr;
 WORD argc, n, rc;
 
+    redir_name[0] = '\0';
     redir_addr = NULL;
     n = get_redirect(line,&redir_addr);
     if (n > 1) {

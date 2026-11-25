@@ -49,10 +49,11 @@ PRIVATE void redraw_input(const char *line,WORD pos,WORD len,WORD width,
         cursor_left();
         --*column;
     }
-    if (pos < *start)
-        *start = pos;
-    if (pos >= *start+width)
-        *start = pos-width+1;
+    if (pos < *start || pos >= *start+width) {
+        *start = pos-width/2;
+        if (*start < 0)
+            *start = 0;
+    }
     end = *start;
     while (end < len && end < *start+width)
         conout(line[end++]);
@@ -82,7 +83,7 @@ WORD width, first = 0, column = 0;
     message(prompt);
     message(">");
 #if CLI_VECTOR_EXEC
-    width = screen_cols - (strlen(prompt)+1) % screen_cols - 1;
+    width = screen_cols > 1 ? screen_cols - (strlen(prompt)+1) % screen_cols - 1 : 1;
     if (width < 1) {
         messagenl("");
         width = screen_cols-1;

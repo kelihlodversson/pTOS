@@ -14,6 +14,7 @@
  */
 #include "config.h"
 #include <stddef.h>
+#include "gemerror.h"
 #include <mint/osbind.h>
 #include <mint/basepage.h>
 #include <string.h>
@@ -43,7 +44,7 @@ static int init_environment(char *block)
     size_t count = 0;
     size_t i;
 
-    for (entry = block; *entry && strncmp(entry,"ARGV=",5) != 0;
+    for (entry = block; entry && *entry && strncmp(entry,"ARGV=",5) != 0;
          entry += strlen(entry)+1)
         count++;
     environ = x32_malloc((count+1)*sizeof(*environ));
@@ -72,7 +73,7 @@ void x32_start(struct basepage *bp, long entry_type)
         rc = main();
         x32_free(environ);
     } else {
-        rc = 8;                 /* GEMDOS ENSMEM exit status */
+        rc = ENSMEM;
     }
 #else
     rc = main();

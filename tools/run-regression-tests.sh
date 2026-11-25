@@ -203,7 +203,17 @@ type_line() {
     [ "$autorun" != true ] || return 0
     case $machine in
     pc-x86_64) python3 "$tools/qemu-type.py" "$work/mon.sock" "$1" ;;
-    *) printf '%s\r' "$1" >&3 ;;
+    *)
+        if [ "${#1}" -gt 80 ]; then
+            # Let the guest drain its UART while the editor redraws a long line.
+            python3 -c 'import sys, time
+for character in sys.argv[1] + "\r":
+    print(character, end="", flush=True)
+    time.sleep(0.02)' "$1" >&3
+        else
+            printf '%s\r' "$1" >&3
+        fi
+        ;;
     esac
 }
 

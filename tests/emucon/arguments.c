@@ -25,7 +25,7 @@ int main(int argc, char **argv)
     for (i = 0; i < 130; i++)
         if (argv[4][i] != digits[i % 10])
             goto fail;
-    if (Fwrite(1,sizeof(PASS)-1,PASS) != sizeof(PASS)-1)
+    if (Fseek(0,1,1) != 0 || Fwrite(1,sizeof(PASS)-1,PASS) != sizeof(PASS)-1)
         goto fail;
     return 0;
 
