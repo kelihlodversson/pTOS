@@ -34,7 +34,8 @@ int main(int argc, char **argv)
             return fail("incorrect long argument\r\n");
     if (!lang || !*lang)
         return fail("missing inherited LANG\r\n");
-    if (Dgetdrv() != 2 || Dgetpath(cwd,0) < 0 || strcasecmp(cwd,"\\tests"))
+    if (Dgetdrv() != 2 || Dgetpath(cwd,0) < 0 ||
+        strcasecmp(cwd + (cwd[0] == '\\'),"tests"))
         return fail("incorrect inherited CWD\r\n");
     if (Fseek(0,1,1) != 0 || Fwrite(1,sizeof(PASS)-1,PASS) != sizeof(PASS)-1)
         return fail("stdout is not the redirected file\r\n");
