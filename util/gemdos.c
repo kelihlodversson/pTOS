@@ -29,6 +29,9 @@
 #endif
 
 
+/* The staged load belongs to kernel AES accessory startup. External x32
+ * EmuDesk uses libaes and has no caller or kernel-mode binding for it. */
+#ifndef X32_USERLAND
 WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
 {
     LONG    length, ret;
@@ -65,6 +68,7 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
 
     return 0;
 }
+#endif
 
 WORD dos_setdt(UWORD h, UWORD time, UWORD date)
 {
