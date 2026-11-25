@@ -51,6 +51,8 @@
 #include "ksched.h"
 #include "ksched_lifetime.h"
 #include "kthread.h"
+#include "launch_args.h"
+#include "../lib/ldso/startup.h"
 #if CONF_WITH_CUIS
 #include "bdosbind.h"
 #endif
@@ -607,6 +609,68 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* exec_common() learns whether this is the kernel's own request. */
     return exec_common(flag|kernel,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL);
 }
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+static LONG exec_vector_child(const PEXECVE_ARGS *args)
+{
+    DL_START_VECTORS vectors;
+
+    vectors.argv = args->argv;
+    vectors.envp = args->envp;
+    vectors.argc = args->argc;
+    vectors.envc = args->envc;
+    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,(char *)args->path,NULL,NULL,
+                                  FALSE,NULL,NULL,NULL,NULL,&vectors));
+}
+
+LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
+{
+    KSCHED_CLEANUP_SCOPE cleanup = {0};
+    PEXECVE_ARGS *args = NULL;
+    LONG rc;
+
+    switch (mode) {
+    case PE_LOADGO:
+        if (!ksched_anchor_launch_allowed())
+            return EACCDN;
+        break;
+    case PE_ASYNC_LOADGO:
+        if (!ksched_async_allowed())
+            return EACCDN;
+        break;
+#if CONF_WITH_EXEC_REPLACE
+    case PE_EXEC_REPLACE:
+        break;
+#endif
+    default:
+        return EINVFN;
+    }
+    if (!kproc_user_aspace(run))
+        return EACCDN;
+
+    ksched_cleanup_begin(&cleanup);
+    rc = pexecve_args_capture(mode, path, argv, envp, &args);
+#if CONF_WITH_EXEC_REPLACE
+    if (rc == E_OK && mode == PE_EXEC_REPLACE) {
+        /* Replacement has its own cleanup receipt. Transfer the allocation
+         * to its caller before that receipt becomes the outermost scope. */
+        ksched_cleanup_end(&cleanup);
+        return proc_exec_replace_vectors(&args);
+    }
+#endif
+    if (rc == E_OK)
+        rc = exec_vector_child(args);
+    pexecve_args_release(&args);
+    ksched_cleanup_end(&cleanup);
+    if (mode == PE_LOADGO && rc >= 0) {
+        LONG status;
+        if (!rc)
+            return EINTRN;
+        rc = ksched_wait_exact((WORD)rc, &status);
+        return rc < 0 ? rc : status;
+    }
+    return rc;
+}
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 /* The region self-test is kernel code running on behalf of a managed process
  * (bdos/region_selftest.c): its requests are the kernel's own, although run
@@ -642,13 +706,14 @@ long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG
 #endif
 #if CONF_WITH_EXEC_REPLACE
 LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *replacement,
-                                char *path, char *tail, char *env)
+                                char *path, char *tail, char *env,
+                                const struct dl_start_vectors *vectors)
 {
     LONG result;
-    if (kproc_exec_replacement_validate(replacement) || !path || !tail)
+    if (kproc_exec_replacement_validate(replacement) || !path || (!tail && !vectors))
         return EACCDN;
     result = DISK_CALL(exec_common(PE_LOAD,path,tail,env,FALSE,
-                                  NULL,NULL,NULL,replacement,NULL));
+                                  NULL,NULL,NULL,replacement,vectors));
     if (result < 0) return result;
     return kproc_exec_replacement_image_ready(replacement) ? E_OK : EPLFMT;
 }
@@ -944,6 +1009,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
 
     /* allocate the environment first, depending on memory policy */
+    if (vectors && !tail) {
+        /* The ELF entry stack carries the explicit vector environment.
+         * Its compatibility basepage still owns a valid environment block. */
+        static char empty[2];
+        tail = empty;
+        env = empty;
+    }
     env_ptr = alloc_env(hdr.h01_flags, env);
     if (env_ptr == NULL) {
 #if CONF_WITH_BINFMT

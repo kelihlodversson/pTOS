@@ -10,7 +10,7 @@
 #include "portab.h"
 #include "pexecve.h"
 
-typedef struct {
+typedef struct pexecve_args {
     const char *path;
     const char *const *argv;
     const char *const *envp;

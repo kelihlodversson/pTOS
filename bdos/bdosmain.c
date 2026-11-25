@@ -47,6 +47,7 @@
 #include "ssystem.h"
 #include "shutdown.h"
 #include "mintproc.h"
+#include "pexecve.h"
 #include "uaccess.h"
 #include "bdosstub.h"
 #include "tosvars.h"
@@ -727,6 +728,23 @@ long osif(short *pw)
 
 restrt:
     fn = pw[0];
+
+#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+    if (fn == GEMDOS_PEXECVE) {
+#if CONF_WITH_NATIVE_ABI
+        /* The mode is a signed WORD. Keep the pointer slots full width
+         * until checked by launch_args, including the upper half on x32. */
+        if (pw[1] != (WORD)pw[1])
+            return EINVFN;
+        return xpexecve((WORD)pw[1], (UQUAD)(unsigned long)pw[2],
+                        (UQUAD)(unsigned long)pw[3], (UQUAD)(unsigned long)pw[4]);
+#else
+        return xpexecve(pw[1], (ULONG)pwlong((const WORD *)pw, 2),
+                        (ULONG)pwlong((const WORD *)pw, 4),
+                        (ULONG)pwlong((const WORD *)pw, 6));
+#endif
+    }
+#endif
 
 #if CONF_WITH_MMAP
     /*

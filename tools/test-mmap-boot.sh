@@ -197,6 +197,7 @@ fi
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
     if [ -f "$work/STKVEC.ELF" ]; then
         grep -q 'native static ELF vector startup: PASS' "$log"
+        grep -q 'native Pexecve syscall: PASS' "$log"
     fi
     grep -q 'x86-64 ldso relocations: PASS' "$log"
     [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]

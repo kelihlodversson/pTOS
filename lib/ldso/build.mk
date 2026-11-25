@@ -172,10 +172,11 @@ LDSO_APP_BASE = $(LDSO_APP_BASE-y)
 LDSO_STATIC_BASE-$(ARCH_X86_64) = $(LDSO_APP_BASE)
 LDSO_STATIC_BASE-$(ARCH_ARM) = -Wl,-Ttext=0
 LDSO_STATIC_BASE-$(ARCH_M68K) = -Wl,-Ttext=0
-obj/ldso/test/STKVEC.ELF: $(LDSO_TEST_START-y) tests/ldso_runtime/static_program.c lib/ldso/startup.h lib/ldso/build.mk $(AUTOCONF_H)
+obj/ldso/test/STKVEC.ELF: $(LDSO_TEST_START-y) tests/ldso_runtime/static_program.c $(LDSO_SYSCALL-y) $(LDSO_TEST_SUPPORT-y) include/pexecve.h lib/ldso/startup.h lib/ldso/build.mk $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -fno-pic -fno-pie -DPTOS_STATIC_PROBE -nostdlib -no-pie -static \
-	  $(LDSO_STATIC_BASE-y) -Wl,--emit-relocs,-e,_start,-z,noexecstack -o $@ $(filter %.c %.S,$^)
+	  -DPTOS_TEST_EXEC_REPLACE=$(if $(CONF_WITH_EXEC_REPLACE),1,0) \
+	  $(LDSO_STATIC_BASE-y) -Wl,--emit-relocs,-e,_start,-z,noexecstack -o $@ $(filter %.c %.S,$^) $(LDSO_TEST_LIBS-y)
 ifeq ($(CONF_WITH_ELF_VECTOR_ENTRY_TEST),y)
 all: obj/ldso/test/STKVEC.ELF
 LDSO_STATIC_TEST_APP := obj/ldso/test/STKVEC.ELF

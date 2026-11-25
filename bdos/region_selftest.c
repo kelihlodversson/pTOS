@@ -463,6 +463,16 @@ void kproc_static_elf_selftest(void)
                 kcprintf("native static ELF vector startup: status %ld\n", (long)status);
             REQUIRE(status == 79);
             kcprintf("native static ELF vector startup: PASS\n");
+            {
+                const char *const syscall_argv[] = {"check-syscalls", path, NULL};
+                const DL_START_VECTORS syscall_vectors = {syscall_argv, envp, 2, 3};
+
+                status = proc_exec_vector_test(path, &syscall_vectors);
+                if (status != 78)
+                    kcprintf("native Pexecve syscall: status %ld\n", (long)status);
+                REQUIRE(status == 78);
+                kcprintf("native Pexecve syscall: PASS\n");
+            }
         }
     }
 }
