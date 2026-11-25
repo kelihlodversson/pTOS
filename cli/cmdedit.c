@@ -127,7 +127,7 @@ WORD width, first = 0, column = 0;
             continue;
 
         /* if other ASCII key but line is full, ignore */
-        if (len >= linesize-2)
+        if (len >= linesize-(CLI_VECTOR_EXEC ? 1 : 2))
             continue;
 
         /* handle normal ASCII key */
@@ -327,7 +327,7 @@ WORD n, word = 0;
         if (prevcode != TAB)
             insert = insertion_point(start);    /* where we insert the names */
         line[*pos] = saved;
-        if (insert+sizeof(dta->d_fname)-line >= linesize)
+        if ((size_t)(insert-line)+sizeof(dta->d_fname) >= (size_t)linesize)
             break;
         if (prevcode == TAB) {
             rc = getnextfile(start==line);

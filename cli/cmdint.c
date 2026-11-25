@@ -505,6 +505,8 @@ const char *p;
         message(" ");
         messagenl(p);
     } else {
+        if (strlen(argv[1]) >= sizeof(user_path))
+            return EPTHNF;
         strcpy(user_path,argv[1]);
     }
 
@@ -774,6 +776,8 @@ LONG rc = 0L;
     if (*p != PATHSEP) {
         if (Dgetpath(temp,out[0]-'A'+1) != 0)   /* e.g. invalid drive */
             temp[0] = '\0';
+        if (strlen(temp)+1 >= (size_t)(out+MAXPATHLEN-q))
+            return EPTHNF;
         strcpy(q,temp);
         q += strlen(q);
     } else p++;
@@ -793,6 +797,8 @@ LONG rc = 0L;
             rc = EPTHNF;
             break;
         }
+        if (strlen(temp) >= (size_t)(out+MAXPATHLEN-q))
+            return EPTHNF;
         strcpy(q,temp);
         q += strlen(q);
     }
@@ -848,6 +854,8 @@ LONG bufsize, n, rc;
     outptr = extract_path(outname,fullname);
     if (output_is_dir) {
         outptr += strlen(outptr);
+        if ((size_t)(outptr-outname)+1+sizeof(dta->d_fname) > sizeof(outname))
+            return EPTHNF;
         if ((*(outptr-1) != PATHSEP) && (*(outptr-1) != DRIVESEP))
             *outptr++ = PATHSEP;
         *outptr = '\0';
