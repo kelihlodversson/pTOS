@@ -57,9 +57,23 @@ static int stop(short pid)
     }
     return 0;
 }
+
+static int raise_application(short app, short window)
+{
+    short top;
+    int raised;
+
+    /* LIFE_READY confirms the windows exist. The peer can still hold an
+     * update lock while servicing its redraws. Serialize raise and readback. */
+    if (!wind_update(BEG_UPDATE)) return 0;
+    raised = appl_control(app,APC_TOP,0) == 1 &&
+             wind_get(0,WF_TOP,&top,0,0,0) && top == window;
+    return wind_update(END_UPDATE) && raised;
+}
+
 int gem_lifecycle_checks(void)
 {
-    short app, acc, a[8], b[8], message[8], type, id, top;
+    short app, acc, a[8], b[8], message[8], type, id;
     int mode, closed, exited, completed, seen, opened;
     unsigned rejection;
     static const char bad_results[] = "fxsole";
@@ -71,8 +85,7 @@ int gem_lifecycle_checks(void)
     VERIFY(shel_write(SWM_REZCHANGE,2,0,0,0) == 0);
     VERIFY(shel_write(SWM_REZCHANGE,0,1,0,0) == 0);
     VERIFY(shel_write(SWM_SHUTDOWN,0,SD_COMPLETE,0,0) == 0); /* No AP_TERM consent. */
-    VERIFY(appl_control(a[3],APC_TOP,0) == 1);
-    VERIFY(wind_get(0,WF_TOP,&top,0,0,0) && top == a[5]);
+    VERIFY(raise_application(a[3],a[5]));
     VERIFY(appl_control(-1,APC_INFO,&type) == 1);
     VERIFY(stop(app));
     for (mode = SD_PARTIAL; mode <= SD_COMPLETE; mode++) {
@@ -133,7 +146,7 @@ int gem_lifecycle_checks(void)
     app = launch('y',0); VERIFY(app > 0 && ready(app,a));
     VERIFY(shel_write(SWM_SHUTDOWN,0,SD_COMPLETE,0,0) == 1);
     VERIFY(shel_write(SWM_SHUTDOWN,0,SD_ABORT,0,0) == 1);
-    VERIFY(appl_control(a[3],APC_TOP,0) == 1 && stop(app));
+    VERIFY(raise_application(a[3],a[5]) && stop(app));
     {
         static const char pass[] = "x32 GEM discovery/control/shutdown: PASS\r\n";
         ptos_write(1,pass,sizeof(pass)-1);
