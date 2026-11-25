@@ -533,6 +533,8 @@ finish_cuis_input() {
 
 start_vm suite
 if [ "$suite_program" = runvec.tos ]; then
+    type_line 'path c:\'
+    type_line 'cd c:\tests'
     long_arg=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
     type_line "cliargs \"two words\" \"\" \"a>b\" $long_arg >cliargs.out"
     type_line 'type cliargs.out'
@@ -541,6 +543,7 @@ if [ "$suite_program" = runvec.tos ]; then
     else
         record 'native EmuCON vectors and stdout redirection' FAIL 'argument probe did not pass'
     fi
+    type_line 'cd c:\'
 fi
 type_line "$suite_program"
 
