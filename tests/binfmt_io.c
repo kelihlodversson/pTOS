@@ -26,6 +26,7 @@ static const char config[] = "[binfmt.test]\nmagic=4d46\ninterpreter=A:/INTERP.T
 static const UBYTE foreign[] = "MFpayload", native[] = "\177ELFpayload";
 static struct { const UBYTE *data; long size, at; int kind; BOOL open; } files[16];
 static int allocations, handles, interpreter_opens, source_opens, scenario;
+static int allocation_fail_after = -1;
 static BOOL interrupted, changed;
 enum { NORMAL, CLOSE_PROBE, CLOSE_PREFIX, MEDIA_LOOKUP, READ_THEN_CLOSE, CLOSE_FORMAT, CWD_ERROR };
 
@@ -42,7 +43,10 @@ void mark_bcbs_invalid(int drive)
 
 void *kalloc(ULONG size)
 {
-    void *p = calloc(1, size);
+    void *p;
+    if (allocation_fail_after == 0) return NULL;
+    if (allocation_fail_after > 0) allocation_fail_after--;
+    p = calloc(1, size);
     assert(p); allocations++;
     return p;
 }
@@ -217,6 +221,27 @@ static void failure(int kind, long code, int drive, int opens)
     assert(!allocations && !handles && interpreter_opens == opens);
 }
 
+static void rewrite_failure(void)
+{
+    BINFMT_LAUNCH launch;
+    PGMHDR01 header;
+    FH handle;
+    int i;
+
+    reset(NORMAL);
+    assert(binfmt_load_header("C:\\APP.TOS", "\005'oops", "X=1\0",
+                              &header, &handle, &launch, FALSE) == EINVAL);
+    assert(interpreter_opens == 1 && !handles && !allocations);
+    assert(!launch.path && !launch.tail && !launch.environment);
+    for (i = 0; i < 3; i++) {
+        reset(NORMAL);
+        allocation_fail_after = i;
+        assert(load() == ENSMEM);
+        assert(interpreter_opens == (i != 0) && !handles && !allocations);
+    }
+    allocation_fail_after = -1;
+}
+
 int main(void)
 {
     parent.p_curdrv = 2;
@@ -240,6 +265,7 @@ int main(void)
     assert(load_file("APP.TOS", FALSE, "APP.TOS") == 0);
     assert(!allocations && !handles);
     failure(CWD_ERROR, E_CHNG, 2, 0);
+    rewrite_failure();
     puts("binfmt disk cleanup and media-change recovery: PASS");
     return 0;
 }

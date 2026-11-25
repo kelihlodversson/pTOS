@@ -58,7 +58,8 @@ static ULONG half(const UBYTE *p, BOOL big)
     return big ? ((ULONG)p[0] << 8) | p[1] : (ULONG)p[0] | ((ULONG)p[1] << 8);
 }
 
-LONG elf_interp_load(FH h, PD *pd, const char *filename)
+LONG elf_interp_load(FH h, PD *pd, const char *filename,
+                     const struct dl_start_vectors *vectors)
 {
     UBYTE header[52], ph[32];
     char pathname[DL_MAX_INTERP + 3];
@@ -126,7 +127,7 @@ LONG elf_interp_load(FH h, PD *pd, const char *filename)
         rc = EPLFMT;
         goto done;
     }
-    rc = kproc_set_interpreter(pd, &main_plan, program, &interp_plan, interpreter, filename);
+    rc = kproc_set_interpreter(pd, &main_plan, program, &interp_plan, interpreter, filename, vectors);
 done:
     if (handle >= 0) {
         LONG closed = kdos_fclose(handle);

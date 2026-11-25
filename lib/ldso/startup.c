@@ -1,5 +1,5 @@
 /*
- * startup.c - bounded GEMDOS argument conversion and ELF32 initial stack
+ * startup.c - bounded ELF32 initial stack from argument vectors
  * Copyright (C) 2026 The pTOS development team.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -10,7 +10,7 @@ typedef struct {
     uint32_t front, back, base;
 } STACK;
 
-static uint32_t length(const unsigned char *s, uint32_t limit)
+static uint32_t length(const char *s, uint32_t limit)
 {
     uint32_t i;
     for (i = 0; i < limit && s[i]; i++)
@@ -28,7 +28,7 @@ static int word(STACK *s, uint32_t value)
     return 1;
 }
 
-static int string(STACK *s, const unsigned char *text, uint32_t n, uint32_t *address)
+static int string(STACK *s, const char *text, uint32_t n, uint32_t *address)
 {
     uint32_t i;
     if (n >= s->back - s->front)
@@ -41,156 +41,74 @@ static int string(STACK *s, const unsigned char *text, uint32_t n, uint32_t *add
     return 1;
 }
 
-static int argument(STACK *s, const unsigned char *text, uint32_t n)
+static int vector(STACK *s, const char *const *entries, uint32_t count)
 {
-    uint32_t address;
-    return string(s, text, n, &address) && word(s, address);
+    uint32_t i, limit, address;
+
+    for (i = 0; i < count; i++) {
+        if (!entries[i])
+            return DL_BAD_ELF;
+        limit = s->back - s->front;
+        if (!string(s, entries[i], length(entries[i], limit), &address) ||
+            !word(s, address))
+            return DL_NO_SPACE;
+    }
+    return word(s, 0) ? DL_OK : DL_NO_SPACE;
+}
+
+static int aligned_copy(STACK *s, const void *data, uint32_t bytes, uint32_t *address)
+{
+    uint32_t i, padding = (s->base + s->back - bytes) & 3U;
+
+    if (bytes > s->back - s->front || padding > s->back - s->front - bytes)
+        return 0;
+    s->back -= bytes + padding;
+    for (i = 0; i < bytes; i++)
+        s->buffer[s->back + i] = ((const unsigned char *)data)[i];
+    *address = s->base + s->back;
+    return 1;
 }
 
 int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
-                    const char *filename, uint32_t filenamesize,
-                    const unsigned char *tail, uint32_t tailsize,
-                    const unsigned char *env, uint32_t envsize,
-                    const DL_START_INFO *info, uint32_t *rsp, uint32_t *used)
+                   const char *filename, uint32_t filenamesize,
+                   const DL_START_VECTORS *vectors, const DL_START_INFO *info,
+                   const DL_LAUNCH *launch, uint32_t *rsp, uint32_t *used)
 {
     STACK s;
-    uint32_t pos, n, argc = 0, envend, argstart = 0, execfn, i, at, vectors;
-    uint32_t aux[24], auxwords = 22, launch = 0, nullstart = 0, nullend = 0;
-    unsigned char token[128], quote;
+    uint32_t n, execfn, i, at, phdr;
+    uint32_t aux[24], auxwords = 22, record = 0;
+    int status;
 
     *rsp = *used = 0;
-    if (!buffer || !filename || !tail || !env || !info || capacity > DL_START_CAPACITY ||
+    if (!buffer || !filename || !vectors || !info || capacity > DL_START_CAPACITY ||
         capacity < 128 || capacity > top || !filenamesize || filenamesize > 1024 ||
-        !tailsize || envsize < 2 || envsize > 32768)
+        !vectors->argv || !vectors->envp || info->phent < 32 ||
+        (info->phdr_copy && (info->phdr || !info->phnum)))
         return DL_BAD_ELF;
-    n = length((const unsigned char *)filename, filenamesize);
+    n = length(filename, filenamesize);
     if (!n || n == filenamesize)
         return DL_BAD_ELF;
-    /* Even an unused ARGV payload must end inside the bounded environment. */
-    for (i = 0; i + 1 < envsize; i++)
-        if (!env[i] && !env[i + 1])
-            break;
-    if (i + 1 == envsize)
-        return DL_BAD_ELF;
+
     for (i = 0; i < capacity; i++)
         buffer[i] = 0;
     s.buffer = buffer; s.front = 0; s.back = capacity; s.base = top - capacity;
-    if (!word(&s, 0) || !string(&s, (const unsigned char *)filename, n, &execfn))
+    if (!word(&s, vectors->argc) || !string(&s, filename, n, &execfn))
         return DL_NO_SPACE;
-    if (info->capture_launch) {
-        if (tailsize < DL_LAUNCH_TAIL || !info->environment) return DL_BAD_ELF;
-        s.back &= ~3U;
-        if (s.back < s.front || s.back-s.front < sizeof(DL_LAUNCH)) return DL_NO_SPACE;
-        s.back -= sizeof(DL_LAUNCH);
-        launch = s.base+s.back;
-        for (i = 0; i < sizeof(uint32_t); i++) {
-            buffer[s.back+sizeof(uint32_t)+i] = ((const unsigned char *)&info->environment)[i];
-            buffer[s.back+2*sizeof(uint32_t)+i] = ((const unsigned char *)&envsize)[i];
-        }
-        for (i = 0; i < DL_LAUNCH_TAIL; i++)
-            buffer[s.back+3*sizeof(uint32_t)+DL_LAUNCH_PATH+i] = tail[i];
-    }
-    /* Locate the end of ordinary environment entries and the extended argv. */
-    pos = 0; envend = 0;
-    while (pos < envsize && env[pos]) {
-        n = length(env + pos, envsize - pos);
-        if (n == envsize - pos)
-            return DL_BAD_ELF;
-        if (n >= 5 && env[pos] == 'A' && env[pos+1] == 'R' && env[pos+2] == 'G' &&
-            env[pos+3] == 'V' && env[pos+4] == '=') {
-            envend = pos;
-            if (tail[0] == 127) {
-                if (n != 5) {
-                    if (n < 10 || env[pos+5] != 'N' || env[pos+6] != 'U' ||
-                        env[pos+7] != 'L' || env[pos+8] != 'L' || env[pos+9] != ':')
-                        return DL_UNSUPPORTED;
-                    nullstart = pos+10; nullend = pos+n;
-                }
-                argstart = pos + n + 1;
-            }
-            break;
-        }
-        pos += n + 1;
-        envend = pos;
-    }
-    if (pos >= envsize || (!pos && !env[0] && env[1]))
-        return DL_BAD_ELF;
-    if (tail[0] == 127) {
-        pos = argstart;
-        if (!pos || pos >= envsize || !env[pos])
-            return DL_BAD_ELF;
-        while (pos < envsize && env[pos]) {
-            n = length(env + pos, envsize - pos);
-            if (n == envsize - pos)
-                return DL_BAD_ELF;
-            if (!argument(&s, env + pos, n))
-                return DL_NO_SPACE;
-            argc++;
-            pos += n + 1;
-        }
-        if (pos >= envsize)
-            return DL_BAD_ELF;
-        /* The standard NULL:index,... suffix represents empty arguments with
-         * nonempty placeholders, so the environment still ends in a NUL pair.
-         * Apply the list to the private stack strings after argv is built. */
-        pos = nullstart;
-        while (pos < nullend) {
-            uint32_t index = 0, address = 0;
-            if (env[pos] < '0' || env[pos] > '9') return DL_BAD_ELF;
-            do {
-                if (index > argc/10) return DL_BAD_ELF;
-                index = index*10 + env[pos++]-'0';
-                if (index >= argc) return DL_BAD_ELF;
-            } while (pos < nullend && env[pos] >= '0' && env[pos] <= '9');
-            for (i = 0; i < 4; i++)
-                ((unsigned char *)&address)[i] = s.buffer[4+index*4+i];
-            s.buffer[address-s.base] = 0;
-            if (pos < nullend && (env[pos++] != ',' || pos == nullend)) return DL_BAD_ELF;
-        }
-    } else {
-        if (tail[0] > 126 || (uint32_t)tail[0] + 1 > tailsize || !word(&s, execfn))
-            return DL_BAD_ELF;
-        argc = 1;
-        pos = 1;
-        while (pos <= tail[0]) {
-            while (pos <= tail[0] && (tail[pos] == ' ' || tail[pos] == '\t'))
-                pos++;
-            if (pos > tail[0])
-                break;
-            n = 0; quote = 0;
-            while (pos <= tail[0]) {
-                unsigned char c = tail[pos++];
-                if (!c)
-                    return DL_BAD_ELF;
-                if (quote) {
-                    if (c == quote) quote = 0;
-                    else token[n++] = c;
-                } else if (c == '\'' || c == '"') {
-                    quote = c;
-                } else if (c == ' ' || c == '\t') {
-                    break;
-                } else {
-                    token[n++] = c;
-                }
-            }
-            if (quote)
-                return DL_BAD_ELF;
-            if (!argument(&s, token, n))
-                return DL_NO_SPACE;
-            argc++;
-        }
-    }
-    if (!word(&s, 0))
+    phdr = info->phdr;
+    if (info->phdr_copy && (info->phnum > capacity / info->phent ||
+        !aligned_copy(&s, info->phdr_copy, info->phnum * info->phent, &phdr)))
         return DL_NO_SPACE;
-    for (pos = 0; pos < envend; pos += n + 1) {
-        n = length(env + pos, envend - pos);
-        if (!argument(&s, env + pos, n))
-            return DL_NO_SPACE;
-    }
-    if (!word(&s, 0))
+    if (launch && !aligned_copy(&s, launch, sizeof(*launch), &record))
         return DL_NO_SPACE;
-    aux[0] = 3; aux[1] = info->phdr;
-    aux[2] = 4; aux[3] = 32;
+    status = vector(&s, vectors->argv, vectors->argc);
+    if (status != DL_OK)
+        return status;
+    status = vector(&s, vectors->envp, vectors->envc);
+    if (status != DL_OK)
+        return status;
+
+    aux[0] = 3; aux[1] = phdr;
+    aux[2] = 4; aux[3] = info->phent;
     aux[4] = 5; aux[5] = info->phnum;
     aux[6] = 6; aux[7] = info->pagesz;
     aux[8] = 7; aux[9] = info->base;
@@ -199,22 +117,19 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     aux[14] = DL_AT_PTOS_BASEPAGE; aux[15] = info->basepage;
     aux[16] = DL_AT_PTOS_BOOTDRIVE; aux[17] = info->bootdrive;
     aux[18] = DL_AT_PTOS_LOADBIAS; aux[19] = info->load_bias;
-    if (launch) {
-        aux[20] = DL_AT_PTOS_LAUNCH; aux[21] = launch;
+    if (record) {
+        aux[20] = DL_AT_PTOS_LAUNCH; aux[21] = record;
         auxwords += 2;
     }
     aux[auxwords-2] = aux[auxwords-1] = 0;
     for (i = 0; i < auxwords; i++)
         if (!word(&s, aux[i]))
             return DL_NO_SPACE;
-    for (i = 0; i < 4; i++)
-        buffer[i] = ((unsigned char *)&argc)[i];
-    vectors = s.front;
-    if (s.back - vectors < 15)
+    if (s.back - s.front < 15)
         return DL_NO_SPACE;
-    at = ((s.base + s.back - vectors) & ~15U) - s.base;
+    at = ((s.base + s.back - s.front) & ~15U) - s.base;
     /* memmove: vector source and final location may overlap. */
-    for (i = vectors; i; i--)
+    for (i = s.front; i; i--)
         buffer[at + i - 1] = buffer[i - 1];
     *rsp = s.base + at;
     *used = top - *rsp;
