@@ -10,6 +10,7 @@
  * register but d0 on the way back.
  */
 #include "runtime.h"
+#include "../../../../include/pexecve.h"
 
 static const char *shape(uint32_t fn)
 {
@@ -20,8 +21,10 @@ static const char *shape(uint32_t fn)
     case 0x42: return "lww";            /* Fseek (offset, handle, mode) */
     case 0x4b: return "wlll";           /* Pexec (mode, name, tail, environment) */
     case 0x4c: return "w";              /* Pterm (code) */
+    case 0x13a: return "wwl";          /* Pwaitpid (pid, flags, usage) */
     case 0x154: return "wll";           /* Ssystem (mode, arg1, arg2) */
     case 0x17d: return "llw";           /* Maccess (address, length, mode) */
+    case GEMDOS_PEXECVE: return "wlll";
     default: return "llllll";
     }
 }

@@ -2362,7 +2362,14 @@ static void task_entry(void)
     lifetime_probe_begin(task);
 #endif
 #if CONF_WITH_X86_64_MEMTEST
-    if (task->startup && kthread_create(task->program))
+    /* Clone admission excludes a second unvalidated THREAD. A fresh
+     * exec handoff also has a startup draft, but uses the normal PROCESS
+     * attachment rules after replacement admission has been released. */
+    if (task->startup
+#if CONF_WITH_EXEC_REPLACE
+        && !ksched_exec_handoff_launch(task->program)
+#endif
+        && kthread_create(task->program))
         panic("clone admitted unvalidated execution after publication");
 #endif
     {

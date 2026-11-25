@@ -24,10 +24,15 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+struct dl_start_vectors;
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 long xexec_selftest(WORD, char *, char *, char *);
+#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
+long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors);
+#endif
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
+LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
  * Kernel-owned empty output handle; acquired before scheduler publication.
@@ -86,16 +91,23 @@ struct disk_error;
 LONG kpgmhdrld_error(char *s, PGMHDR01 *hd, FH *h, struct disk_error *error);
 BOOL kpgm_can_interpret(void);
 LONG binfmt_load_header(char *path, char *tail, char *environment,
-                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch, BOOL qualify);
+                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch,
+                       BOOL qualify, const DL_START_VECTORS *vectors);
 #endif
-LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename);
+/* A trusted vector input selects the standard ELF process entry. */
+LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
+            const struct dl_start_vectors *vectors);
 
 #if CONF_WITH_ELF_LOADER
 /*
  * in elfld.c
  */
 LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign);
+#if CONF_WITH_USER_ASPACE
+LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors);
+#else
 LONG elf_pgmld(FH h, PD *p);
+#endif
 #endif
 
 #if DETECT_NATIVE_FEATURES

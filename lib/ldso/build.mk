@@ -169,6 +169,25 @@ LDSO_APP_BASE-$(ARCH_ARM) = -Wl,-Ttext-segment=0x401000 -Wl,-z,noexecstack
 LDSO_APP_BASE-$(ARCH_M68K) = -Wl,-Ttext-segment=0x401000 -Wl,-z,noexecstack -Wl,--no-as-needed
 LDSO_APP_BASE-$(ARCH_X86_64) = -Wl,-Ttext-segment=0x400000 -Wl,-z,noexecstack -Wl,--no-as-needed
 LDSO_APP_BASE = $(LDSO_APP_BASE-y)
+LDSO_STATIC_BASE-$(ARCH_X86_64) = $(LDSO_APP_BASE)
+LDSO_STATIC_BASE-$(ARCH_ARM) = -Wl,-Ttext=0
+LDSO_STATIC_BASE-$(ARCH_M68K) = -Wl,-Ttext=0
+obj/ldso/test/STKVEC.ELF: $(LDSO_TEST_START-y) tests/ldso_runtime/static_program.c $(LDSO_SYSCALL-y) $(LDSO_TEST_SUPPORT-y) include/pexecve.h lib/ldso/startup.h lib/ldso/build.mk $(AUTOCONF_H)
+	@mkdir -p $(@D)
+	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CFLAGS) -fno-pic -fno-pie -DPTOS_STATIC_PROBE -nostdlib -no-pie -static \
+	  -DPTOS_TEST_EXEC_REPLACE=$(if $(CONF_WITH_EXEC_REPLACE),1,0) \
+	  -DPTOS_TEST_PRG=$(if $(LDSO_VECTOR_TEST_PRG),1,0) \
+	  $(LDSO_STATIC_BASE-y) -Wl,--emit-relocs,-e,_start,-z,noexecstack -o $@ $(filter %.c %.S,$^) $(LDSO_TEST_LIBS-y)
+ifeq ($(CONF_WITH_ELF_VECTOR_ENTRY_TEST),y)
+all: obj/ldso/test/STKVEC.ELF
+LDSO_STATIC_TEST_APP := obj/ldso/test/STKVEC.ELF
+ifeq ($(and $(ARCH_M68K),$(CONF_WITH_PRG_LOADER)),y)
+ifndef BUILD_TOOLCHAIN_ELF
+LDSO_VECTOR_TEST_PRG = obj/ldso/test/VEC.PRG
+LDSO_STATIC_TEST_APP += $(LDSO_VECTOR_TEST_PRG)
+endif
+endif
+endif
 obj/ldso/test/soapp.elf: LDSO_RUNTIME_APP_LINK = -no-pie $(LDSO_APP_BASE)
 obj/ldso/test/soapp-pie.elf: LDSO_RUNTIME_APP_LINK = -pie -Wl,-z,noexecstack
 obj/ldso/test/soapp.elf obj/ldso/test/soapp-pie.elf: $(LDSO_TEST_START-y) tests/ldso_runtime/program.c $(LDSO_SYSCALL-y) $(LDSO_TEST_SUPPORT-y) obj/ldso/test/libdyn.so $(AUTOCONF_H)

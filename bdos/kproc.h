@@ -346,11 +346,18 @@ void kproc_require_no_threads(PD *pd);
  * with it by kproc_destroy(), exactly once.  kproc_create() must have
  * succeeded for pd first.
  */
+struct dl_start_vectors;
+#if CONF_WITH_ELF_LOADER
+struct dl_start_info;
+LONG kproc_set_static_elf_entry(PD *pd, const char *filename,
+                               const struct dl_start_vectors *vectors,
+                               const struct dl_start_info *info);
+#endif
 #if CONF_WITH_ELF_SHARED
 #include "../lib/ldso/image.h"
 LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
-                            const DL_IMAGE *interpreter, const UBYTE *interp_file,
-                            const char *filename);
+                           const DL_IMAGE *interpreter, const UBYTE *interp_file,
+                           const char *filename, const struct dl_start_vectors *vectors);
 #endif
 BOOL kproc_standard_entry(PD *pd);
 BOOL kproc_prepare_user(PD *pd, PD *parent);

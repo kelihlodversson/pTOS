@@ -107,8 +107,10 @@ program paths remain valid because the caller's directory is inherited.
 For CUIS launches that override the child's directory, qualify the original
 program against the parent's drive/per-drive directory first. This keeps the
 interpreter's input file independent of the overridden child directory.
-Replace any old ARGV extension with the complete resulting argument vector,
-including ARGV=NULL: indices for empty arguments. Preserve argument boundaries.
+Keep the interpreter paths, optional arguments and program paths through
+the whole redirect chain. Apply their prefixes to the original argument
+sequence. Encode the final compatibility environment once, including
+ARGV=NULL: indices for empty arguments.
 Use the caller's ARGV only when the command-tail length byte is 127. Otherwise
 discard any inherited ARGV extension and tokenize the bounded classic tail:
 whitespace separates
@@ -123,6 +125,8 @@ ERANGE; no argument is silently dropped. Temporary kernel buffers are freed
 after copying the child environment, before a non-returning architecture launch.
 Per-launch path/tail state stays off the small legacy filesystem stacks; the
 tail is released after copying the basepage and before native ELF relocation.
+If the final conversion fails, close the resolved executable's handle before
+returning the launch error.
 
 Implementation limits
 ---------------------

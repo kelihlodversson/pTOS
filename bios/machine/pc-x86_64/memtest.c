@@ -71,6 +71,9 @@
 #include "../../../bdos/thread_startup_backend.h"
 #endif
 #include "../../../bdos/proc.h"
+#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
+#include "../../../bdos/region_selftest.h"
+#endif
 #if CONF_WITH_CUIS
 #include "../../../aes/cuis.h"
 #include "process.h"
@@ -7015,6 +7018,9 @@ void x86_64_memtest_run(void)
     test_ring3();
 #if CONF_WITH_MULTITHREADING
     (void)ksched_test_nested(0x23);
+#endif
+#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
+    kproc_static_elf_selftest();
 #endif
 
     same(&s, "whole memtest");

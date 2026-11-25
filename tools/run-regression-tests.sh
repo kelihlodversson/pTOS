@@ -752,6 +752,14 @@ if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native allocation/reservation ownership and orphan reclamation: PASS' "$suite_log"; then
     record "native region ownership" FAIL "configured allocator/reservation probe did not execute"
 fi
+if [ -f "$top/test-dir/STKVEC.ELF" ] &&
+   ! grep -aq 'native static ELF vector startup: PASS' "$suite_log"; then
+    record "native static ELF vector startup" FAIL "configured ELF entry probe did not execute"
+fi
+if [ -f "$top/test-dir/STKVEC.ELF" ] &&
+   ! grep -aq 'native Pexecve syscall: PASS' "$suite_log"; then
+    record "native Pexecve syscall" FAIL "configured syscall probe did not execute"
+fi
 
 # Generation publication in the check-to-block window must reject sleeping.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&

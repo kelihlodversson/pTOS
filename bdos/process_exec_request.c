@@ -5,6 +5,7 @@
 #include "ksched.h"
 #include "procmem.h"
 #include "string.h"
+#include "launch_args.h"
 #include "process_exec_internal.h"
 extern PD *run;
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
@@ -13,33 +14,12 @@ extern PD *run;
 
 static LONG copy_argument(ULONG address, ULONG capacity, BOOL environment, char **out)
 {
-    ULONG i;
     char *buffer;
     if (!address) return EIMBA;
     buffer = kalloc(capacity);
     if (!buffer) return ENSMEM;
     *out = buffer;
-    for (i = 0; i < capacity;) {
-        UQUAD source=(UQUAD)address+i;
-        ULONG count=USER_PAGE_SIZE-(source & (USER_PAGE_SIZE-1));
-        ULONG end;
-        LONG error;
-        if (count>64) count=64;
-        if (count>capacity-i) count=capacity-i;
-        /* Never back the next page before finding this page's terminator.
-         * Recorded non-ASPACE ranges may end inside a page: on error retry
-         * one byte, so memory beyond a valid terminator is not required. */
-        error=kproc_copy_from_user_checked(buffer+i,source,count);
-        if (error!=E_OK && count>1) {
-            count=1;
-            error=kproc_copy_from_user_checked(buffer+i,source,count);
-        }
-        if (error!=E_OK) return error;
-        end=i+count;
-        for (; i<end; i++)
-            if (!buffer[i] && (!environment || (i && !buffer[i-1]))) return E_OK;
-    }
-    return ERANGE;
+    return launch_copy_user_string(address,buffer,capacity,environment,NULL);
 }
 LONG proc_exec_prepare_user_args(KPROC *owner, const PROCESS_EXEC_REQUEST *request)
 {

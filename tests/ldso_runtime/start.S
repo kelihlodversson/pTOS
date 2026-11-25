@@ -9,6 +9,9 @@ _start:
         leal 8(%rsp,%rdi,4), %edx
         movl %r12d, %ecx
         call app_main
+#ifdef PTOS_STATIC_PROBE
+        movl %eax, %edi
+#else
         movl %eax, %ebx
         testq %r12, %r12
         jz failed
@@ -25,6 +28,7 @@ failed:
 exit_error:
         movl %eax, %edi
 exit:
+#endif
         movabsq $0x10000004c, %rax
         syscall
         ud2

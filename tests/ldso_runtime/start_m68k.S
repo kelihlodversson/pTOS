@@ -16,6 +16,7 @@ _start:
         move.l  %d0,-(%sp)
         bsr.l   app_main
         lea     16(%sp),%sp
+#ifndef PTOS_STATIC_PROBE
         move.l  %d0,%d4
         tst.l   %d2
         jeq     failed
@@ -31,6 +32,7 @@ _start:
 failed:
         moveq   #93,%d0
 exit:
+#endif
         move.w  %d0,-(%sp)              | Pterm(code)
         move.w  #0x4c,-(%sp)
         trap    #1

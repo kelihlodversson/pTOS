@@ -105,6 +105,10 @@ cp "$firmware/OVMF_VARS_4M.fd" "$work/vars.fd"
 # A raw image also works in restricted containers where QEMU fat:rw cannot
 # create its temporary files in /var/tmp. Always use private disk/NVRAM copies.
 set -- "$work/EFI" "$work/X32CB.TOS" "$work/X32VDI.TOS"
+if grep -q '^CONF_WITH_ELF_VECTOR_ENTRY_TEST=y' .config; then
+    cp obj/ldso/test/STKVEC.ELF "$work/STKVEC.ELF"
+    set -- "$@" "$work/STKVEC.ELF"
+fi
 if [ -f "$work/EMUCON.TOS" ]; then
     set -- "$@" "$work/EMUCON.TOS"
 fi
@@ -191,6 +195,10 @@ if [ "$expected" = PASS ] && grep -q '^CONF_WITH_MULTITHREADING=y' .config; then
     fi
 fi
 if grep -q '^CONF_WITH_ELF_SHARED=y' .config; then
+    if [ -f "$work/STKVEC.ELF" ]; then
+        grep -q 'native static ELF vector startup: PASS' "$log"
+        grep -q 'native Pexecve syscall: PASS' "$log"
+    fi
     grep -q 'x86-64 ldso relocations: PASS' "$log"
     [ "$(grep -c 'x32 dynamic CRT lifecycle: PASS' "$log")" -eq 8 ]
     grep -q 'x86-64 LD.SO runtime: PASS' "$log"

@@ -55,6 +55,8 @@
 #include "process_files.h"
 #endif
 #if CONF_WITH_ELF_SHARED
+#include "argv_legacy.h"
+#elif CONF_WITH_ELF_LOADER
 #include "../lib/ldso/startup.h"
 #endif
 
@@ -231,8 +233,11 @@ struct kproc {
 #endif
 #if CONF_WITH_ELF_SHARED
     PROG_LAYOUT interpreter_layout;
+    UQUAD interp_entry, interp_bytes;
+#endif
+#if CONF_WITH_ELF_LOADER
     BOOL standard_entry;
-    UQUAD interp_entry, initial_rsp, interp_bytes;
+    VADDR initial_rsp;
 #endif
     ASPACE *pending_as;  /* borrowed from pending_space */
     KASPACE *pending_space; /* owning reference while the image is loaded */
@@ -277,8 +282,11 @@ struct private_image_snapshot {
 #endif
 #if CONF_WITH_ELF_SHARED
     PROG_LAYOUT interpreter;
+    UQUAD interp_entry,interp_bytes;
+#endif
+#if CONF_WITH_ELF_LOADER
     BOOL standard_entry;
-    UQUAD interp_entry,initial_rsp,interp_bytes;
+    VADDR initial_rsp;
 #endif
 };
 static void private_image_commit(KPROC *target);
@@ -1029,8 +1037,10 @@ LONG kproc_clone_prepare_private_image(KPROC *target,KPROC *source)
     for (i=0;i<snapshot->interpreter.nseg;i++) {
         snapshot->interpreter.seg[i].src=NULL;snapshot->interpreter.seg[i].filesz=0;
     }
-    snapshot->standard_entry=source->standard_entry;snapshot->interp_entry=source->interp_entry;
-    snapshot->initial_rsp=source->initial_rsp;snapshot->interp_bytes=source->interp_bytes;
+    snapshot->interp_entry=source->interp_entry;snapshot->interp_bytes=source->interp_bytes;
+#endif
+#if CONF_WITH_ELF_LOADER
+    snapshot->standard_entry=source->standard_entry;snapshot->initial_rsp=source->initial_rsp;
 #endif
     target->private_image=snapshot;
     return E_OK;
@@ -1059,9 +1069,11 @@ static void private_image_commit(KPROC *target)
 #endif
 #endif
 #if CONF_WITH_ELF_SHARED
-    target->interpreter_layout=snapshot->interpreter;target->standard_entry=snapshot->standard_entry;
-    target->interp_entry=snapshot->interp_entry;target->initial_rsp=snapshot->initial_rsp;
-    target->interp_bytes=snapshot->interp_bytes;
+    target->interpreter_layout=snapshot->interpreter;
+    target->interp_entry=snapshot->interp_entry;target->interp_bytes=snapshot->interp_bytes;
+#endif
+#if CONF_WITH_ELF_LOADER
+    target->standard_entry=snapshot->standard_entry;target->initial_rsp=snapshot->initial_rsp;
 #endif
     target->logical_context=TRUE;
     target->logical_basepage=snapshot->basepage;target->logical_environment=snapshot->environment;
@@ -1524,9 +1536,11 @@ static BOOL image_policy_valid(const KPROC_IMAGE_POLICY *policy)
         if (!image_layout_policy_valid(&policy->program)) return FALSE;
     } else if (policy->program.nseg || policy->program.entry || policy->program.end) return FALSE;
     if (!policy->entry || policy->entry>=USER_VA_LIMIT) return FALSE;
-    if (policy->standard_entry) {
+    if (policy->standard_entry &&
+        (!CONF_WITH_ELF_LOADER || !policy->has_image || policy->legacy)) return FALSE;
+    if (policy->interpreter.nseg) {
 #if CONF_WITH_ELF_SHARED
-        if (!policy->has_image || policy->legacy ||
+        if (!policy->standard_entry ||
             !image_layout_policy_valid(&policy->interpreter) ||
             policy->entry!=policy->interpreter.entry) return FALSE;
         for (i=0;i<policy->interpreter.nseg;i++) {
@@ -1545,7 +1559,7 @@ static BOOL image_policy_valid(const KPROC_IMAGE_POLICY *policy)
 #else
         return FALSE;
 #endif
-    } else if (policy->interpreter.nseg || policy->interpreter.entry ||
+    } else if (policy->interpreter.entry ||
         policy->interpreter.end || policy->interpreter_bytes ||
         (policy->has_image && policy->entry!=policy->program.entry)) return FALSE;
     (void)bytes;(void)i;(void)j;
@@ -1588,9 +1602,11 @@ LONG kproc_image_policy_capture(const KPROC *source,KPROC_IMAGE_POLICY *output)
 #if KPROC_LEGACY_PRG
     if (policy.legacy_text_recorded && !policy.has_image) policy.entry=source->legacy_text_entry;
 #endif
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_ELF_LOADER
     policy.standard_entry=source->standard_entry;
-    if (policy.standard_entry) {
+#endif
+#if CONF_WITH_ELF_SHARED
+    if (source->interpreter_layout.nseg || source->interp_entry || source->interp_bytes) {
         ULONG i;
         if (source->interp_entry>=USER_VA_LIMIT) return EACCDN;
         image_layout_capture(&source->interpreter_layout,&policy.interpreter);
@@ -1627,8 +1643,10 @@ static BOOL image_preparation_ready(const KPROC_IMAGE_PREPARATION *prepared,BOOL
         target->legacy_text_recorded || target->legacy_text_bytes || target->legacy_text_entry ||
 #endif
 #if CONF_WITH_ELF_SHARED
-        target->standard_entry || target->interpreter_layout.nseg || target->initial_rsp ||
-        target->interp_entry || target->interp_bytes ||
+        target->interpreter_layout.nseg || target->interp_entry || target->interp_bytes ||
+#endif
+#if CONF_WITH_ELF_LOADER
+        target->standard_entry || target->initial_rsp ||
 #endif
         !kthread_clone_run_ready(prepared->thread) ||
         kthread_tid(prepared->thread)!=prepared->tid ||
@@ -1721,8 +1739,10 @@ static void image_policy_commit(KPROC *target)
 #endif
 #if CONF_WITH_ELF_SHARED
     image_layout_install(&target->interpreter_layout,&policy->interpreter);
-    target->standard_entry=policy->standard_entry;
     target->interp_entry=policy->interpreter.entry;target->interp_bytes=policy->interpreter_bytes;
+#endif
+#if CONF_WITH_ELF_LOADER
+    target->standard_entry=policy->standard_entry;
 #endif
     target->image_policy_only=TRUE;
     target->image_preparation=NULL;prepared->state=IMAGE_COMMITTED;
@@ -1995,6 +2015,36 @@ BOOL kproc_thread_is_sole(KPROC *process, KTHREAD *thread)
         process->pd && !process->completed && process->threads == thread &&
         !*kthread_next_link(thread) && kthread_process(thread) == process;
 }
+
+#if CONF_WITH_ELF_LOADER
+static VADDR elf_user_entry(const KPROC *process)
+{
+#if CONF_WITH_ELF_SHARED
+    if (process->interp_entry)
+        return process->interp_entry;
+#endif
+    return process->layout.entry;
+}
+
+/* The initial ELF stack pages are already backed. Respect the inherited
+ * limit and extend the mapping downwards when there is no demand paging. */
+static BOOL elf_stack_limit(ASPACE *as, VADDR *low, VADDR size)
+{
+    VADDR bottom = USER_STACK_TOP - size;
+
+    if (*low < bottom || *low >= USER_STACK_TOP)
+        return FALSE;
+#if CONF_WITH_DEMAND_PAGING
+    UNUSED(as);
+#else
+    if (*low != bottom &&
+        !aspace_map_private(as, bottom, *low - bottom, ASPACE_PROT_USER | ASPACE_PROT_WRITE))
+        return FALSE;
+    *low = bottom;
+#endif
+    return TRUE;
+}
+#endif
 
 #if CONF_WITH_EXEC_REPLACE
 static UQUAD last_exec_replacement_ticket;
@@ -2317,10 +2367,8 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     if (!x32_vdi_image_load(as)) goto failed;
 #endif
     if (exec_image_injected(6)) goto failed;
-    /* 7: the stack. The PROCESS's own Psetlimit() size is kept, or the exec
-     * fails here when it no longer fits above the new image. A classic PRG
-     * keeps its stack in its TPA and starts at p_tbase; a dynamic ELF image
-     * has its ELF stack; a static one a private stack. */
+    /* 7: the stack. Keep the PROCESS's Psetlimit() size. A classic PRG
+     * starts in its TPA. ELF vector entry uses the loader's initial stack. */
     b->stack_size = source->stack_size;
 #if KPROC_LEGACY_PRG
     if (image->legacy) {
@@ -2335,12 +2383,12 @@ LONG kproc_exec_image_prepare(KPROC *source, KPROC *image, KASPACE *selected, KP
     if (source->stack_size && USER_STACK_TOP - source->stack_size - USER_PAGE_SIZE <
         ((image->layout.end + USER_PAGE_SIZE - 1) & ~(USER_PAGE_SIZE - 1)) + USER_IMAGE_SLACK)
         goto failed;
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_ELF_LOADER
     if (image->standard_entry) {
         b->stack_low = image->stack_low;
-        if (USER_STACK_TOP - b->stack_low > (b->stack_size ? b->stack_size : USER_STACK_SIZE))
+        if (!elf_stack_limit(as, &b->stack_low, b->stack_size ? b->stack_size : USER_STACK_SIZE))
             goto failed;
-        b->entry = image->interp_entry;
+        b->entry = elf_user_entry(image);
         b->stack_top = image->initial_rsp;
     } else
 #endif
@@ -2458,10 +2506,13 @@ void kproc_exec_image_commit(KPROC_EXEC_IMAGE *b)
 #endif
 #if CONF_WITH_ELF_SHARED
     s->interpreter_layout = i->interpreter_layout;
-    s->standard_entry = i->standard_entry; s->interp_entry = i->interp_entry;
-    s->initial_rsp = i->initial_rsp; s->interp_bytes = i->interp_bytes;
-    i->standard_entry = FALSE; i->interp_entry = i->initial_rsp = i->interp_bytes = 0;
+    s->interp_entry = i->interp_entry; s->interp_bytes = i->interp_bytes;
+    i->interp_entry = i->interp_bytes = 0;
     memset(&i->interpreter_layout, 0, sizeof(i->interpreter_layout));
+#endif
+#if CONF_WITH_ELF_LOADER
+    s->standard_entry = i->standard_entry; s->initial_rsp = i->initial_rsp;
+    i->standard_entry = FALSE; i->initial_rsp = 0;
 #endif
     s->legacy = i->legacy; i->legacy = FALSE;
 #if KPROC_LEGACY_PRG
@@ -3702,6 +3753,13 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
             }
         }
     }
+#if CONF_WITH_ELF_LOADER
+    if (kproc->standard_entry) {
+        if (!elf_stack_limit(as, &kproc->stack_low, stack_bytes(kproc)))
+            return prepare_failed(kproc, owner);
+    } else
+#endif
+    {
 #if !CONF_WITH_DEMAND_PAGING
     /* Without demand paging the stack is mapped now, all of it, and before the
      * move below.  (A classic PRG has its stack in its TPA.) */
@@ -3713,6 +3771,7 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
     if (!kproc->legacy)
         kproc->stack_low = USER_STACK_TOP - stack_bytes(kproc);
 #endif
+    }
     /* The constructor retains this explicit construction space. Keep the
      * PROCESS's active-space view unpublished until preparation commits. */
     if (thread_result) {
@@ -3732,13 +3791,6 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         kthread_destroy(thread);
         return prepare_failed(kproc, owner);
     }
-#if CONF_WITH_ELF_SHARED
-    if (kproc->standard_entry && USER_STACK_TOP - kproc->stack_low >
-        (kproc->stack_size ? kproc->stack_size : USER_STACK_SIZE)) {
-        kthread_destroy(thread);
-        return prepare_failed(kproc, owner);
-    }
-#endif
     if (kproc->legacy)
         /* In the TPA, the program sets its own stack. As FreeMiNT's
          * exec_region() does, the initial sp (stack_top - 8) is
@@ -3748,9 +3800,9 @@ BOOL kproc_prepare_user_thread(PD *pd, PD *parent, KTHREAD **thread_result)
         kproc->stack_top = USER_STACK_TOP - 8;   /* RSP + 8 divisible by 16 */
     if (kproc->has_image)
         kproc->entry = kproc->layout.entry;
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_ELF_LOADER
     if (kproc->standard_entry) {
-        kproc->entry = kproc->interp_entry;
+        kproc->entry = elf_user_entry(kproc);
         kproc->stack_top = kproc->initial_rsp;
     }
 #endif
@@ -4179,7 +4231,7 @@ BOOL kproc_set_loaded_image(PD *pd, const PROG_LAYOUT *layout)
 
 BOOL kproc_standard_entry(PD *pd)
 {
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_ELF_LOADER
     KPROC *kproc = kproc_find(pd);
     return kproc && kproc->standard_entry;
 #else
@@ -4187,6 +4239,100 @@ BOOL kproc_standard_entry(PD *pd)
     return FALSE;
 #endif
 }
+
+#if CONF_WITH_ELF_LOADER
+/* Both ELF entry paths publish only the copied stack in the pending root. */
+static LONG set_elf_stack(KPROC *process, const char *filename,
+                          const DL_START_VECTORS *vectors, DL_START_INFO info)
+{
+    ULONG fnsize = 0, bytes = DL_START_CAPACITY;
+    uint32_t rsp, used;
+    VADDR first;
+    UBYTE *stack;
+    const DL_LAUNCH *launch = NULL;
+#if CONF_WITH_ELF_SHARED
+    ULONG envsize = 0, slots = 0;
+    LEGACY_START_ARGS arguments;
+#if CONF_WITH_LIBAES
+    DL_LAUNCH compat;
+#endif
+#endif
+    LONG rc;
+    int status;
+
+    while (fnsize < 1024 && filename[fnsize]) fnsize++;
+    if (fnsize == 1024)
+        return ERANGE;
+#if CONF_WITH_ELF_SHARED
+    if (!vectors) {
+        envsize = process->env_end - process->env_start;
+        if (envsize < 2 || envsize > LEGACY_START_ENV_MAX)
+            return EPLFMT;
+        slots = LEGACY_START_SLOTS(envsize);
+        bytes += slots * sizeof(char *);
+    }
+#endif
+    stack = kalloc(bytes);
+    if (!stack)
+        return ENSMEM;
+#if CONF_WITH_ELF_SHARED
+    if (!vectors) {
+        status = legacy_start_vectors(&arguments, filename,
+                           (const UBYTE *)process->pd->p_cmdlin, sizeof(process->pd->p_cmdlin),
+                           process->env_start, envsize,
+                           (const char **)(stack + DL_START_CAPACITY), slots);
+        if (status != DL_OK) {
+            rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;
+            goto done;
+        }
+        vectors = &arguments.vectors;
+#if CONF_WITH_LIBAES
+        memset(&compat, 0, sizeof(compat));
+        compat.environment = (ULONG)(uintptr_t)process->env_start;
+        compat.environment_size = envsize;
+        memcpy(compat.tail, process->pd->p_cmdlin, sizeof(compat.tail));
+        launch = &compat;
+#endif
+    }
+#endif
+    info.pagesz = USER_PAGE_SIZE;
+    info.basepage = (ULONG)(uintptr_t)process->pd;
+    info.bootdrive = bootdev;
+    status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
+                            vectors, &info, launch, &rsp, &used);
+    if (status != DL_OK) {
+        rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;
+        goto done;
+    }
+    first = rsp & ~(VADDR)(USER_PAGE_SIZE - 1);
+    if (!aspace_load_private(process->pending_as, first, USER_STACK_TOP - first,
+                             ASPACE_PROT_USER | ASPACE_PROT_WRITE,
+                             stack + DL_START_CAPACITY - (USER_STACK_TOP - first),
+                             (ULONG)(USER_STACK_TOP - first))) {
+        rc = ENSMEM;
+        goto done;
+    }
+    process->initial_rsp = rsp;
+    process->stack_low = first;
+    process->standard_entry = TRUE;
+    rc = E_OK;
+done:
+    kfree(stack);
+    return rc;
+}
+
+LONG kproc_set_static_elf_entry(PD *pd, const char *filename,
+                               const DL_START_VECTORS *vectors, const DL_START_INFO *info)
+{
+    KPROC *process = kproc_find(pd);
+
+    if (!process || !process->pending_as || process->aspace || process->started ||
+        !process->has_image || process->legacy || process->standard_entry ||
+        !filename || !vectors || !info || info->base || info->entry != process->layout.entry)
+        return EPLFMT;
+    return set_elf_stack(process, filename, vectors, *info);
+}
+#endif
 
 #if CONF_WITH_ELF_SHARED
 #define INTERPRETER_BASE  0x0f000000UL
@@ -4217,17 +4363,13 @@ static BOOL interpreter_fill(ASPACE *as, const DL_IMAGE *plan, const UBYTE *file
 }
 
 LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
-                            const DL_IMAGE *interpreter, const UBYTE *interp_file,
-                            const char *filename)
+                           const DL_IMAGE *interpreter, const UBYTE *interp_file,
+                           const char *filename, const DL_START_VECTORS *vectors)
 {
     KPROC *kproc = kproc_find(pd);
-    ULONG bias = 0, ibias, i, fnsize = 0;
-    uint32_t rsp = 0, used = 0;        /* (the types of dl_start_stack(): not always ULONG) */
-    UQUAD stack_first;
-    UBYTE *stack;
-    DL_START_INFO info;
-    LONG rc = ENSMEM;
-    int status;
+    ULONG bias = 0, ibias, i;
+    DL_START_INFO info = {0};
+    LONG rc;
 
     if (!kproc || kproc->has_image || kproc->pending_as || kproc->aspace ||
         program->nload > PROG_MAX_SEGMENTS || interpreter->nload > PROG_MAX_SEGMENTS ||
@@ -4244,56 +4386,23 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
         (UQUAD)interpreter->base + ibias < INTERPRETER_BASE ||
         (UQUAD)interpreter->base + ibias + interpreter->size > INTERPRETER_LIMIT)
         return EPLFMT;
-    while (fnsize < 1024 && filename[fnsize]) fnsize++;
-    if (fnsize == 1024)
-        return ERANGE;
-    stack = kalloc(DL_START_CAPACITY);
-    if (!stack)
+    if (!kproc_load_begin(pd, program->base + bias, program->size))
+        return ENSMEM;
+    if (!aspace_map_private(kproc->pending_as, interpreter->base + ibias, interpreter->size,
+                            ASPACE_PROT_USER | ASPACE_PROT_WRITE))
+        return ENSMEM;
+    if (!interpreter_fill(kproc->pending_as, program, file, bias) ||
+        !interpreter_fill(kproc->pending_as, interpreter, interp_file, ibias))
         return ENSMEM;
     info.phdr = program->phdr + bias;
+    info.phent = 32;
     info.phnum = program->phnum;
     info.entry = program->entry + bias;
     info.base = ibias;
-    info.pagesz = USER_PAGE_SIZE;
-    info.basepage = (ULONG)(uintptr_t)pd;
-    info.bootdrive = bootdev;
     info.load_bias = bias;
-    info.capture_launch = 0;
-    info.environment = 0;
-#if CONF_WITH_LIBAES
-    info.capture_launch = 1;
-    info.environment = (ULONG)(uintptr_t)kproc->env_start;
-#endif
-    status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
-                        (const unsigned char *)pd->p_cmdlin, sizeof(pd->p_cmdlin), kproc->env_start,
-                        (ULONG)(kproc->env_end - kproc->env_start), &info, &rsp, &used);
-    if (status != DL_OK) {
-        KDEBUG(("PT_INTERP: stack construction failed %ld\n", (long)status));
-        rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;
-        goto done;
-    }
-    if (!kproc_load_begin(pd, program->base + bias, program->size)) {
-        KDEBUG(("PT_INTERP: main reservation failed\n"));
-        goto done;
-    }
-    if (!aspace_map_private(kproc->pending_as, interpreter->base + ibias, interpreter->size,
-                           ASPACE_PROT_USER | ASPACE_PROT_WRITE)) {
-        KDEBUG(("PT_INTERP: interpreter reservation failed\n"));
-        goto done;
-    }
-    if (!interpreter_fill(kproc->pending_as, program, file, bias) ||
-        !interpreter_fill(kproc->pending_as, interpreter, interp_file, ibias)) {
-        KDEBUG(("PT_INTERP: image copy/protection failed\n"));
-        goto done;
-    }
-    stack_first = rsp & ~(USER_PAGE_SIZE - 1);
-    if (!aspace_load_private(kproc->pending_as, stack_first, USER_STACK_TOP - stack_first,
-                            ASPACE_PROT_USER | ASPACE_PROT_WRITE,
-                            stack + DL_START_CAPACITY - (USER_STACK_TOP - stack_first),
-                            (ULONG)(USER_STACK_TOP - stack_first))) {
-        KDEBUG(("PT_INTERP: stack reservation failed\n"));
-        goto done;
-    }
+    rc = set_elf_stack(kproc, filename, vectors, info);
+    if (rc != E_OK)
+        return rc;
     kproc->layout.nseg = program->nload;
     kproc->layout.entry = info.entry;
     kproc->layout.end = program->base + bias + program->size;
@@ -4313,18 +4422,13 @@ LONG kproc_set_interpreter(PD *pd, const DL_IMAGE *program, const UBYTE *file,
         s->flags = interpreter->loads[i].flags;
         kproc->interp_bytes += s->memsz;
     }
-    kproc->has_image = kproc->standard_entry = TRUE;
+    kproc->has_image = TRUE;
     kproc->interp_entry = interpreter->entry + ibias;
-    kproc->initial_rsp = rsp;
-    kproc->stack_low = stack_first;
     pd->p_tbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)info.entry);
     pd->p_tlen = program->size;
     pd->p_dbase = pd->p_bbase = PTR_TO_USERPTR_UNCHECKED((UBYTE *)(uintptr_t)kproc->layout.end);
     pd->p_dlen = pd->p_blen = 0;
-    rc = E_OK;
-done:
-    kfree(stack);
-    return rc;
+    return E_OK;
 }
 #endif
 
@@ -5198,7 +5302,7 @@ static BOOL standard_image_range(const KPROC *kproc, UQUAD address, UQUAD length
 {
     UQUAD page;
     ULONG which, i;
-    if (!kproc->standard_entry ||
+    if (!kproc->standard_entry || !kproc->interpreter_layout.nseg ||
 #if CONF_WITH_IMAGE_POLICY_TEST
         kproc->image_policy_only ||
 #endif

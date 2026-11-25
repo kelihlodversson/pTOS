@@ -38,7 +38,9 @@ void kproc_exec_replacement_abort(KPROC_EXEC_REPLACEMENT **);
 LONG kproc_exec_replacement_load_begin(KPROC_EXEC_REPLACEMENT *,struct kproc *image);
 BOOL kproc_exec_replacement_image_ready(const KPROC_EXEC_REPLACEMENT *);
 /* Trusted strings, used only by the loader's private staging consumer. */
-LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *,char *path,char *tail,char *env);
+struct dl_start_vectors;
+LONG proc_exec_replacement_stage(KPROC_EXEC_REPLACEMENT *,char *path,char *tail,char *env,
+                                 const struct dl_start_vectors *vectors);
 
 /* KPROC owner internals. Not an address-space adoption or execution capability. */
 LONG kproc_exec_replacement_claim(struct kproc *, struct kthread *, struct kaspace *, UQUAD *ticket);
@@ -84,6 +86,9 @@ LONG ksched_exec_replace(KPROC_EXEC_REPLACEMENT **, KPROC_EXEC_IMAGE **);
 /* Pexec(200). Returns only on failure, with the caller unchanged. env NULL
  * keeps the caller's own environment, as for every other Pexec mode. */
 LONG proc_exec_replace(char *path, char *tail, char *env);
+struct pexecve_args;
+/* Takes the captured launch allocation, including on preflight failure. */
+LONG proc_exec_replace_vectors(struct pexecve_args **args);
 #endif
 /* Committed-exec generation producer, for the scheduler-root commit only.
  * Check capacity while failure is still allowed; advance has no failure return. */

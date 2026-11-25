@@ -18,6 +18,10 @@
 #include "string.h"
 #include "progimage.h"
 #include "kheap.h"
+#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
+#include "../lib/ldso/startup.h"
+#include "tosvars.h"
+#endif
 #if defined(MACHINE_PC_X86_64)
 #include "../bios/machine/pc-x86_64/pmem.h"
 #define REGION_FREE_RAM() pmem_free_bytes()
@@ -436,4 +440,40 @@ void kproc_region_selftest(void)
     *fs_error_current()=error;
     ksched_cleanup_end(&scope); /* enclosing Syield owns the safe checkpoint */
     kcprintf("native allocation/reservation ownership and orphan reclamation: PASS\n");
+#if CONF_WITH_ELF_VECTOR_ENTRY_TEST && !CONF_WITH_X86_64_MEMTEST
+    kproc_static_elf_selftest();
+#endif
 }
+
+#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
+void kproc_static_elf_selftest(void)
+{
+    if (bootdev >= 0 && bootdev < 26) {
+        static const char *const argv[] = {"custom name", "", "two words", "literal\"quote", NULL};
+        static const char *const envp[] = {"KEY=two words", "", "FLAG=", NULL};
+        static const DL_START_VECTORS vectors = {argv, envp, 4, 3};
+        char path[] = "A:\\STKVEC.ELF";
+        LONG status;
+
+        path[0] += bootdev;
+        status = proc_exec_vector_test(path, &vectors);
+        /* Only native suites staging the fixture request this probe. */
+        if (status != EFILNF) {
+            if (status != 79)
+                kcprintf("native static ELF vector startup: status %ld\n", (long)status);
+            REQUIRE(status == 79);
+            kcprintf("native static ELF vector startup: PASS\n");
+            {
+                const char *const syscall_argv[] = {"check-syscalls", path, NULL};
+                const DL_START_VECTORS syscall_vectors = {syscall_argv, envp, 2, 3};
+
+                status = proc_exec_vector_test(path, &syscall_vectors);
+                if (status != 78)
+                    kcprintf("native Pexecve syscall: status %ld\n", (long)status);
+                REQUIRE(status == 78);
+                kcprintf("native Pexecve syscall: PASS\n");
+            }
+        }
+    }
+}
+#endif

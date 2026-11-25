@@ -7,7 +7,10 @@ obj-y += bdosmain.o console.o fsbuf.o fsdir.o fsdrive.o fsfat.o fsglob.o \
 	 proc.o time.o umem.o rwa.o launch.o
 obj-$(CONF_WITH_ELF_LOADER) += elfld.o
 obj-$(CONF_WITH_EXEC_REPLACE) += exec_replace.o
-obj-$(CONF_WITH_BINFMT) += binfmt.o binfmt_rules.o binfmt_args.o
+obj-$(CONF_WITH_BINFMT) += binfmt.o binfmt_rules.o
+ifneq ($(CONF_WITH_BINFMT)$(and $(CONF_WITH_MULTITHREADING),$(CONF_WITH_PRG_LOADER)),)
+obj-y += binfmt_args.o
+endif
 # a process in an address space of its own: its entry, its switching
 obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(or $(ARCH_ARM),$(ARCH_M68K)),uspaceasm.o uspace.o) $(if $(ARCH_M68K),fpuctx.o)
 obj-$(CONF_WITH_USER_COPY) += uaccess.o
@@ -27,13 +30,17 @@ endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
 obj-$(CONF_WITH_MULTITHREADING) += clone.o clone_args.o
 obj-$(CONF_WITH_FORK_CORE) += fork_parent.o
-obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o proc_clone.o process_observer.o thread_startup.o
+obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o launch_args.o proc_clone.o process_observer.o thread_startup.o
 obj-$(CONF_WITH_PROCESS_FILES) += process_files.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
 # The kernel shares only load-plan validation and stack construction with
 # ld.so, never its metadata resolver, relocation engine or dependency graph.
-obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o elfstartup.o
+obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o
+ifeq ($(CONF_WITH_USER_ASPACE),y)
+obj-$(CONF_WITH_ELF_LOADER) += elfstartup.o
+endif
+obj-$(CONF_WITH_ELF_SHARED) += argv_legacy.o
 
 obj/elfimage.o: lib/ldso/image_plan.c lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@

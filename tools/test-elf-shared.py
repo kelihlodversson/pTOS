@@ -99,7 +99,23 @@ class Image(C.Structure):
 
 
 class StartInfo(C.Structure):
-    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias", "capture_launch", "environment")]
+    _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias", "phent")]
+    _fields_ += [("phdr_copy", C.c_void_p)]
+
+
+class StartVectors(C.Structure):
+    _fields_ = [("argv", C.POINTER(C.c_char_p)), ("envp", C.POINTER(C.c_char_p)),
+                ("argc", C.c_uint32), ("envc", C.c_uint32)]
+
+
+class LegacyStartArgs(C.Structure):
+    _fields_ = [("vectors", StartVectors), ("text", C.c_char * 128)]
+
+
+class StartLaunch(C.Structure):
+    _fields_ = [("ready", C.c_uint32), ("environment", C.c_uint32),
+                ("environment_size", C.c_uint32), ("command", C.c_char * 260),
+                ("tail", C.c_ubyte * 128)]
 
 
 class Mapping(C.Structure):
@@ -195,7 +211,8 @@ class Metadata(unittest.TestCase):
                   str(ROOT / "lib/ldso/dynamic.c"), str(ROOT / "lib/ldso/relocate.c"),
                   str(ROOT / "lib/ldso/arch/x32/reloc.c"), str(ROOT / "lib/ldso/graph.c"),
                   str(ROOT / "lib/ldso/image.c"), str(ROOT / "lib/ldso/image_plan.c"),
-                  str(ROOT / "lib/ldso/startup.c"), str(ROOT / "lib/ldso/arch/x32/image_abi.c"),
+                  str(ROOT / "lib/ldso/startup.c"), str(ROOT / "bdos/argv_legacy.c"),
+                  str(ROOT / "lib/ldso/arch/x32/image_abi.c"),
                   "-o", str(hostlib)])
         cls.lib = C.CDLL(str(hostlib))
         cls.lib.dl_read_dynamic.argtypes = [C.POINTER(Object), C.c_void_p] + [C.c_uint32] * 5
@@ -229,9 +246,12 @@ class Metadata(unittest.TestCase):
         cls.lib.dl_image_range.restype = C.c_int
         cls.image_abi = ImageAbi.in_dll(cls.lib, "dl_image_abi")
         cls.lib.dl_start_stack.argtypes = [C.c_void_p, C.c_uint32, C.c_uint32,
-            C.c_void_p, C.c_uint32, C.c_void_p, C.c_uint32, C.c_void_p, C.c_uint32,
-            C.POINTER(StartInfo), C.POINTER(C.c_uint32), C.POINTER(C.c_uint32)]
+            C.c_void_p, C.c_uint32, C.POINTER(StartVectors), C.POINTER(StartInfo),
+            C.POINTER(StartLaunch), C.POINTER(C.c_uint32), C.POINTER(C.c_uint32)]
         cls.lib.dl_start_stack.restype = C.c_int
+        cls.lib.legacy_start_vectors.argtypes = [C.POINTER(LegacyStartArgs), C.c_void_p,
+            C.c_void_p, C.c_uint32, C.c_void_p, C.c_uint32, C.POINTER(C.c_char_p), C.c_uint32]
+        cls.lib.legacy_start_vectors.restype = C.c_int
         cls.backend = Backend.in_dll(cls.lib, "dl_reloc_backend")
 
     @classmethod
@@ -590,17 +610,40 @@ class Metadata(unittest.TestCase):
         self.assertEqual(self.lookup(obj)[2], 0x1400200)
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
-                capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False):
+                capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False,
+                explicit=None, phdr_copy=None):
         tail = bytes([len(args)]) + args if tail is None else tail
+        record = None
         if capture:
             tail = tail.ljust(128, b'\0')
+            record = StartLaunch(0, 0x202000, len(env))
+            record.tail[:] = tail
         memory = C.create_string_buffer(capacity)
-        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, int(capture), 0x202000 if capture else 0)
+        name = C.create_string_buffer(filename)
+        if explicit is None:
+            decoded = LegacyStartArgs()
+            env_buffer = C.create_string_buffer(env)
+            slots = (C.c_char_p * (len(env) // 2 + 66))()
+            rc = self.lib.legacy_start_vectors(C.byref(decoded), name,
+                C.create_string_buffer(tail), len(tail), env_buffer, len(env), slots, len(slots))
+            if rc:
+                return rc, None
+            vectors = decoded.vectors
+        else:
+            argv_in, envp_in = explicit
+            argv_slots = (C.c_char_p * (len(argv_in) + 1))(*argv_in)
+            envp_slots = (C.c_char_p * (len(envp_in) + 1))(*envp_in)
+            vectors = StartVectors(argv_slots, envp_slots, len(argv_in), len(envp_in))
+        info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, 32)
+        if phdr_copy is not None:
+            self.assertEqual(len(phdr_copy), info.phent * info.phnum)
+            headers = C.create_string_buffer(phdr_copy)
+            info.phdr = 0
+            info.phdr_copy = C.addressof(headers)
         rsp, used = C.c_uint32(123), C.c_uint32(456)
         rc = self.lib.dl_start_stack(memory, capacity, 0x80000000,
-            C.create_string_buffer(filename), len(filename) + 1,
-            C.create_string_buffer(tail), len(tail), C.create_string_buffer(env), len(env),
-            C.byref(info), C.byref(rsp), C.byref(used))
+            name, len(filename) + 1, C.byref(vectors), C.byref(info),
+            C.byref(record) if record is not None else None, C.byref(rsp), C.byref(used))
         if rc:
             self.assertEqual((rsp.value, used.value), (0, 0))
             return rc, None
@@ -635,8 +678,14 @@ class Metadata(unittest.TestCase):
             aux[word(at)] = word(at + 4)
             at += 8
         self.assertEqual(word(at + 4), 0)
-        self.assertEqual((aux[3], aux[4], aux[5], aux[6], aux[7], aux[9], aux[0x5000]),
-                         (info.phdr, 32, info.phnum, 4096, info.base, info.entry, info.basepage))
+        self.assertEqual((aux[4], aux[5], aux[6], aux[7], aux[9], aux[0x5000]),
+                         (32, info.phnum, 4096, info.base, info.entry, info.basepage))
+        if phdr_copy is None:
+            self.assertEqual(aux[3], info.phdr)
+        else:
+            self.assertEqual(aux[3] & 3, 0)
+            self.assertGreaterEqual(aux[3], rsp.value)
+            self.assertEqual(data[aux[3]-base:aux[3]-base+len(phdr_copy)], phdr_copy)
         self.assertEqual(string(aux[31]), filename)
         self.assertEqual(aux[0x5001], 2)
         self.assertEqual(aux[0x5002], info.load_bias)
@@ -655,6 +704,23 @@ class Metadata(unittest.TestCase):
         self.assertEqual(self.startup(tail=b'\x7f',
             env=b'FOO=bar\0ARGV=\0alias\0PATH=from-arg\0\0', capture=True)[0], 0)
         self.assertEqual(self.startup(capture=True, capacity=256)[0], -4)
+
+    def test_standard_initial_stack_explicit_vectors(self):
+        argv = [b'custom argv[0]', b'', b' "literal quote" ', b'x' * 4096]
+        envp = [b'KEY=two words', b'', b'FLAG=']
+        rc, result = self.startup(explicit=(argv, envp))
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[:2], (argv, envp))
+        rc, result = self.startup(explicit=([], []))
+        self.assertEqual(rc, 0)
+        self.assertEqual(result[:2], ([], []))
+        self.assertEqual(self.startup(explicit=([None], []))[0], -1)
+        self.assertEqual(self.startup(explicit=(argv, envp), capacity=4096)[0], -4)
+
+    def test_standard_initial_stack_copies_unmapped_program_headers(self):
+        phdr = bytes(range(160)) * 2
+        self.assertEqual(self.startup(explicit=([], []), phdr_copy=phdr)[0], 0)
+        self.assertEqual(self.startup(explicit=([], []), phdr_copy=phdr, capacity=256)[0], -4)
 
     def test_standard_initial_stack_load_bias(self):
         for bias in (0, 0x400000):

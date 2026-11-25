@@ -212,9 +212,10 @@ LONG kpgmhdrld(char *path, PGMHDR01 *header, FH *handle)
     *handle = NUMSTD+2;
     return header_error;
 }
-LONG kpgmld(PD *p, FH handle, PGMHDR01 *header, const char *path)
+LONG kpgmld(PD *p, FH handle, PGMHDR01 *header, const char *path,
+            const struct dl_start_vectors *vectors)
 {
-    CHECK(p == &image && records == 1 && handle == NUMSTD+2);
+    CHECK(p == &image && records == 1 && handle == NUMSTD+2 && !vectors);
     return load_error;
 }
 BOOL ksched_spawn_allowed(void) { return !deny_start; }

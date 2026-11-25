@@ -25,5 +25,5 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
         '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
         '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
-        'tests/process_exec_handles.c','-Wl,--gc-sections','-o',str(work/'observer')],check=True)
+        'tests/process_exec_handles.c','bdos/launch_args.c','-Wl,--gc-sections','-o',str(work/'observer')],check=True)
     subprocess.run([str(work/'observer')],check=True)
