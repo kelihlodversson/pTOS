@@ -173,6 +173,10 @@ static LONG capture(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
                                             TRUE, &storage->args.guest_environment_size);
             if (error != E_OK)
                 goto fail;
+            if (!raw[0] && raw[1]) {
+                error = EINVAL;
+                goto fail;
+            }
             storage->args.guest_environment = raw;
         }
     }
