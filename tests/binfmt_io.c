@@ -246,7 +246,7 @@ static void redirect_vectors(void)
 {
     static const char *const argv[] = {"chosen zero", "", "two words", NULL};
     static const char *const envp[] = {"X=1", "", NULL};
-    const DL_START_VECTORS input = {argv, envp, 3, 2, NULL, NULL};
+    const DL_START_VECTORS input = {.argv = argv, .envp = envp, .argc = 3, .envc = 2};
     BINFMT_LAUNCH launch;
     PGMHDR01 header;
     FH handle;
@@ -260,6 +260,7 @@ static void redirect_vectors(void)
     assert(!strcmp(launch.vectors.argv[1], "C:\\APP.TOS"));
     assert(launch.vectors.argv[2] == argv[1] && launch.vectors.argv[3] == argv[2]);
     assert(launch.vectors.envp == envp && launch.vectors.envc == 2);
+    assert(launch.vectors.original == &input && launch.vectors.direct_redirect);
     assert(xclose(handle) == 0);
     binfmt_release(&launch);
     assert(!launch.vectors.argv && !allocations && !handles);

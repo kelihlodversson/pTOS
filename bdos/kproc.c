@@ -4287,7 +4287,7 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
                           const DL_START_VECTORS *vectors, DL_START_INFO info)
 {
     ULONG fnsize = 0;
-    const ULONG capacity = CONF_WITH_LIBAES ? DL_START_CAPACITY : 131072UL;
+    const ULONG capacity = CONF_WITH_LIBAES || (vectors && vectors->original) ? DL_START_CAPACITY : 131072UL;
     ULONG bytes = capacity;
     uint32_t rsp, used;
     VADDR first;

@@ -451,7 +451,7 @@ void kproc_static_elf_selftest(void)
     if (bootdev >= 0 && bootdev < 26) {
         static const char *const argv[] = {"custom name", "", "two words", "literal\"quote", NULL};
         static const char *const envp[] = {"KEY=two words", "", "FLAG=", NULL};
-        static const DL_START_VECTORS vectors = {argv, envp, 4, 3, NULL, NULL};
+        static const DL_START_VECTORS vectors = {.argv = argv, .envp = envp, .argc = 4, .envc = 3};
         char path[] = "A:\\STKVEC.ELF";
         LONG status;
 
@@ -465,7 +465,7 @@ void kproc_static_elf_selftest(void)
             kcprintf("native static ELF vector startup: PASS\n");
             {
                 const char *const syscall_argv[] = {"check-syscalls", path, NULL};
-                const DL_START_VECTORS syscall_vectors = {syscall_argv, envp, 2, 3, NULL, NULL};
+                const DL_START_VECTORS syscall_vectors = {.argv = syscall_argv, .envp = envp, .argc = 2, .envc = 3};
 
                 status = proc_exec_vector_test(path, &syscall_vectors);
                 if (status != 78)

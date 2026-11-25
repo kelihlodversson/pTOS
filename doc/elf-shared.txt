@@ -214,12 +214,19 @@ Required auxiliary entries:
                               optional private DL_LAUNCH_VECTORS record
                               with three ELF32 pointers: requested path,
                               original NULL-terminated argv and envp
+    AT_PTOS_GUEST_LAUNCH (0x5005)
+                              direct binfmt redirect only. Four ELF32 words:
+                              original argv[0] pointer, optional raw 128-byte
+                              tail pointer, optional raw environment pointer,
+                              exact environment size including both NUL bytes
+    AT_NULL    terminator
 
 The libaes startup vectors have their own slots and string copies in the new
 process. They are independent of the live stack vectors and interpreter
 argument prefixes. LibAES exposes these values as read-only borrowed data
-for the lifetime of a registered AES context.
-    AT_NULL    terminator
+for the lifetime of a registered AES context. Redirected launches also carry
+this snapshot on configurations without libaes. The optional guest record
+is launch data owned by the new image and carries no process authority.
 
 With CONF_WITH_LIBAES, the stack builder reserves an aligned DL_LAUNCH record
 and copies the complete original 128-byte GEMDOS tail before any user code.

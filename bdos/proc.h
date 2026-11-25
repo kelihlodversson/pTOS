@@ -33,6 +33,9 @@ long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors);
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
+#if CONF_WITH_BINFMT
+LONG xpexecve_guest(UQUAD address, UQUAD size);
+#endif
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
  * Kernel-owned empty output handle; acquired before scheduler publication.

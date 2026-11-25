@@ -37,6 +37,10 @@
 #include "fs.h"            /* OPNFILES */
 #include "biosext.h"       /* phys_pages_total() */
 #include "kproc.h"
+#if CONF_WITH_BINFMT && CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+#include "pexecve.h"
+#include "proc.h"
+#endif
 #if CONF_WITH_PROCESS_EXEC_DISPATCH
 #include "process_exec_internal.h"
 #endif
@@ -727,6 +731,9 @@ static BOOL ssystem_has_mode(WORD mode)
     switch (mode)
     {
     case S_INQUIRE:
+#if CONF_WITH_BINFMT && CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+    case PEXECVE_GUEST_SSYSTEM:
+#endif
 #if CONF_WITH_PROCESS_EXEC
     case S_PROCEXEC:
 #endif
@@ -845,6 +852,10 @@ LONG xssystem(WORD mode, long arg1, long arg2)
          * itself would give to a mode it does not know. */
         return ssystem_has_mode((WORD)arg1) ? E_OK : EINVFN;
 
+#if CONF_WITH_BINFMT && CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
+    case PEXECVE_GUEST_SSYSTEM:
+        return xpexecve_guest((UQUAD)(unsigned long)arg1, (UQUAD)(unsigned long)arg2);
+#endif
 #if CONF_WITH_KPROC
     case S_PROCNAME:
         return ssystem_procname(arg1, arg2);

@@ -154,9 +154,7 @@ LONG proc_exec_handle_prepare_vectors(KPROC *owner, const PEXECVE_ARGS *args,
                                       char *directory, ULONG policy)
 {
     KSCHED_CLEANUP_SCOPE scope = {0};
-    const DL_START_VECTORS vectors = {
-        args->argv, args->envp, args->argc, args->envc, NULL, args->classic_tail
-    };
+    const DL_START_VECTORS vectors = pexecve_start_vectors(args);
     LONG result;
 
     ksched_cleanup_begin(&scope);

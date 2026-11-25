@@ -106,7 +106,9 @@ class StartInfo(C.Structure):
 class StartVectors(C.Structure):
     _fields_ = [("argv", C.POINTER(C.c_char_p)), ("envp", C.POINTER(C.c_char_p)),
                 ("argc", C.c_uint32), ("envc", C.c_uint32),
-                ("original", C.c_void_p), ("classic_tail", C.c_void_p)]
+                ("original", C.c_void_p), ("classic_tail", C.c_void_p),
+                ("guest_tail", C.c_void_p), ("guest_environment", C.c_void_p),
+                ("guest_environment_size", C.c_uint32), ("direct_redirect", C.c_uint32)]
 
 
 class LegacyStartArgs(C.Structure):
@@ -612,7 +614,7 @@ class Metadata(unittest.TestCase):
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
                 capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False,
-                explicit=None, phdr_copy=None, original=None):
+                explicit=None, phdr_copy=None, original=None, direct=False, guest=None):
         tail = bytes([len(args)]) + args if tail is None else tail
         record = None
         if capture:
@@ -641,6 +643,13 @@ class Metadata(unittest.TestCase):
             original_env_slots = (C.c_char_p * (len(original_env) + 1))(*original_env)
             request = StartVectors(original_slots, original_env_slots, len(original_args), len(original_env))
             vectors.original = C.addressof(request)
+            vectors.direct_redirect = direct
+            if guest:
+                guest_tail = C.create_string_buffer(guest[0])
+                guest_env = C.create_string_buffer(guest[1])
+                request.guest_tail = C.addressof(guest_tail)
+                request.guest_environment = C.addressof(guest_env)
+                request.guest_environment_size = len(guest[1])
         info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, 32)
         if phdr_copy is not None:
             self.assertEqual(len(phdr_copy), info.phent * info.phnum)
@@ -702,6 +711,9 @@ class Metadata(unittest.TestCase):
             self.assertEqual(data[launch+12:launch+272], bytes(260))
             self.assertEqual(data[launch+272:launch+400], tail[:128])
             self.assertEqual(aux[0x5003] & 3, 0)
+        else:
+            self.assertNotIn(0x5003, aux)
+        if capture or original is not None:
             original_args, original_env = original if original is not None else (argv, envp)
             saved = aux[0x5004]
             self.assertEqual(string(word(saved)), filename)
@@ -713,8 +725,19 @@ class Metadata(unittest.TestCase):
                 if entries:
                     self.assertNotEqual(word(slots), word(rsp.value+4))
         else:
-            self.assertNotIn(0x5003, aux)
             self.assertNotIn(0x5004, aux)
+        if direct:
+            record_at = aux[0x5005]
+            self.assertEqual(string(word(record_at)), original[0][0])
+            raw_tail, raw_env, raw_size = (word(record_at + i) for i in (4, 8, 12))
+            if guest:
+                self.assertEqual(data[raw_tail-base:raw_tail-base+128], guest[0])
+                self.assertEqual(raw_size, len(guest[1]))
+                self.assertEqual(data[raw_env-base:raw_env-base+raw_size], guest[1])
+            else:
+                self.assertEqual((raw_tail, raw_env, raw_size), (0, 0, 0))
+        else:
+            self.assertNotIn(0x5005, aux)
         return rc, (argv, envp, aux)
 
     def test_standard_initial_stack_launch_capture(self):
@@ -732,6 +755,18 @@ class Metadata(unittest.TestCase):
         self.assertEqual(result[:2], forwarded)
         self.assertEqual(self.startup(explicit=forwarded, original=original, capture=True,
                                       capacity=131072)[0], -4)
+
+    def test_guest_metadata_is_separate_from_live_native_vectors(self):
+        original = ([b'original guest name', b'plain', b'again'], [b'KEY=guest'])
+        forwarded = ([b'C:\\PARATOS.PRG', b'C:\\DEMO.TOS', *original[0][1:]], original[1])
+        tail = b'\x0cplain  again\0'.ljust(127, b'\0') + b'Z'
+        environment = b'KEY=guest\0ARGV=\0original guest name\0plain\0again\0\0'
+        for direct in (False, True):
+            rc, result = self.startup(explicit=forwarded, original=original, direct=direct,
+                                      guest=(tail, environment))
+            self.assertEqual(rc, 0)
+            self.assertEqual(result[:2], forwarded)
+        self.assertEqual(self.startup(explicit=forwarded, original=original, direct=True)[0], 0)
 
     def test_standard_initial_stack_explicit_vectors(self):
         argv = [b'custom argv[0]', b'', b' "literal quote" ', b'x' * 4096]
