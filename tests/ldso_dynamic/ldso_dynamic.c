@@ -107,7 +107,10 @@ void test_ldso_dynamic(void)
     ptest_begin("ldso_dynamic (#693)");
 #ifdef TEST_WITH_ELF_SHARED
     {
-        long rc = Pexec(0, "C:\\LDSOAPP.ELF", "", 0L);
+        /* This legacy call supplies its own block. A vector-started
+         * runner's native envp lives on its ELF entry stack. */
+        static char environment[] = "PTOSTEST=1\0";
+        long rc = Pexec(0, "C:\\LDSOAPP.ELF", "", environment);
 
         if (rc != EXPECTED)
         {
