@@ -2076,10 +2076,16 @@ runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
 ifdef LDSO_VECTOR_TEST_PRG
+# minicrt0 only parses the environment. The PRG vector probe needs the
+# full startup that consumes marker 127 and the ARGV=NULL argument block.
+LDSO_VECTOR_TEST_PRG_STARTUP = $(LIBCMINI_OBJDIR)/crt0.o
+$(LDSO_VECTOR_TEST_PRG_STARTUP): $(LIBCMINI_LIB)
+	@$(LIBCMINI_MAKE) $@
+
 obj/pexecve_prg.o: tests/ldso_runtime/pexecve_prg.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-$(LDSO_VECTOR_TEST_PRG): $(TEST_STARTUP) obj/pexecve_prg.o $(LIBCMINI_LIB)
+$(LDSO_VECTOR_TEST_PRG): $(LDSO_VECTOR_TEST_PRG_STARTUP) obj/pexecve_prg.o $(LIBCMINI_LIB)
 	@mkdir -p $(@D)
 	$(TEST_LD) $(TEST_LDFLAGS) $^ -L$(dir $(LIBCMINI_LIB)) $(TEST_LIBS) -o $@
 endif

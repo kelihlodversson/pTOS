@@ -63,9 +63,12 @@ static int test_syscalls(const char *path)
         const char *const prg_env[] = {variable, "FLAG=", 0};
 
         prg_path[0] = path[0];
-        if (pexecve(0, prg_path, argv, envp) != ERANGE ||
-            pexecve(0, prg_path, argv, prg_env) != 77)
-            return 94;
+        status = pexecve(0, prg_path, argv, envp);
+        if (status != ERANGE)
+            return 110 - status;
+        status = pexecve(0, prg_path, argv, prg_env);
+        if (status != 77)
+            return status < 0 ? 160 - status : status;
     }
 #endif
     pid = pexecve(100, path, argv, envp);
