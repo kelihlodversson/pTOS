@@ -191,7 +191,7 @@ static LONG load_file(const char *name, BOOL qualify, const char *expected)
     BINFMT_LAUNCH launch;
     PGMHDR01 header;
     FH handle;
-    LONG rc = binfmt_load_header((char *)name, "", "X=1\0", &header, &handle, &launch, qualify);
+    LONG rc = binfmt_load_header((char *)name, "", "X=1\0", &header, &handle, &launch, qualify, NULL);
     if (!rc) {
         char *path = child_environment + (launch.path - launch.environment);
         memcpy(child_environment, launch.environment, sizeof(child_environment));
@@ -230,7 +230,7 @@ static void rewrite_failure(void)
 
     reset(NORMAL);
     assert(binfmt_load_header("C:\\APP.TOS", "\005'oops", "X=1\0",
-                              &header, &handle, &launch, FALSE) == EINVAL);
+                              &header, &handle, &launch, FALSE, NULL) == EINVAL);
     assert(interpreter_opens == 1 && !handles && !allocations);
     assert(!launch.path && !launch.tail && !launch.environment);
     for (i = 0; i < 3; i++) {
@@ -240,6 +240,29 @@ static void rewrite_failure(void)
         assert(interpreter_opens == (i != 0) && !handles && !allocations);
     }
     allocation_fail_after = -1;
+}
+
+static void redirect_vectors(void)
+{
+    static const char *const argv[] = {"chosen zero", "", "two words", NULL};
+    static const char *const envp[] = {"X=1", "", NULL};
+    const DL_START_VECTORS input = {argv, envp, 3, 2};
+    BINFMT_LAUNCH launch;
+    PGMHDR01 header;
+    FH handle;
+
+    reset(NORMAL);
+    assert(binfmt_load_header("C:\\APP.TOS", NULL, NULL, &header,
+                              &handle, &launch, FALSE, &input) == 0);
+    assert(!launch.environment && !launch.tail && !launch.path);
+    assert(launch.vectors.argc == 4 && !launch.vectors.argv[4]);
+    assert(!strcmp(launch.vectors.argv[0], "A:\\INTERP.TOS"));
+    assert(!strcmp(launch.vectors.argv[1], "C:\\APP.TOS"));
+    assert(launch.vectors.argv[2] == argv[1] && launch.vectors.argv[3] == argv[2]);
+    assert(launch.vectors.envp == envp && launch.vectors.envc == 2);
+    assert(xclose(handle) == 0);
+    binfmt_release(&launch);
+    assert(!launch.vectors.argv && !allocations && !handles);
 }
 
 int main(void)
@@ -266,6 +289,7 @@ int main(void)
     assert(!allocations && !handles);
     failure(CWD_ERROR, E_CHNG, 2, 0);
     rewrite_failure();
+    redirect_vectors();
     puts("binfmt disk cleanup and media-change recovery: PASS");
     return 0;
 }

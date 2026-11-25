@@ -45,6 +45,29 @@ static int test_syscalls(const char *path)
         return 86;
     if (pexecve(0, path, argv, envp) != 79 || wait_child(-1, 1) != EFILNF)
         return 87;
+    {
+#if defined(__x86_64__)
+        char dynamic_path[] = "A:\\SOAPP.TOS";
+#else
+        char dynamic_path[] = "A:\\LDSOAPP.ELF";
+#endif
+        const char *const dynamic_argv[] = {"vector shared", "", arg, 0};
+
+        dynamic_path[0] = path[0];
+        if (pexecve(0, dynamic_path, dynamic_argv, envp) != 76)
+            return 93;
+    }
+#if PTOS_TEST_PRG
+    {
+        char prg_path[] = "A:\\VEC.PRG";
+        const char *const prg_env[] = {variable, "FLAG=", 0};
+
+        prg_path[0] = path[0];
+        if (pexecve(0, prg_path, argv, envp) != ERANGE ||
+            pexecve(0, prg_path, argv, prg_env) != 77)
+            return 94;
+    }
+#endif
     pid = pexecve(100, path, argv, envp);
     if (pid <= 0 || pid == self)
         return 88;

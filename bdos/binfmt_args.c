@@ -11,6 +11,7 @@
 #endif
 #include "binfmt.h"
 #include "gemerror.h"
+#include "../lib/ldso/startup.h"
 
 typedef struct {
     const char *environment, *arguments;
@@ -201,6 +202,66 @@ static LONG write_argument(void *context, const char *s, ULONG n, ULONG index)
     return E_OK;
 }
 
+static LONG finish_arguments(WRITER *w)
+{
+    LONG rc = append(w, "", 1);
+
+    if (rc)
+        return rc;
+    w->storage[w->used] = 0; /* even-size padding for alloc_env() */
+    w->tail[0] = w->quoted || w->tail_size > 126 ? 127 : (char)w->tail_size;
+    return E_OK;
+}
+
+LONG legacy_pack_vectors(const DL_START_VECTORS *vectors, char *storage, char tail[128])
+{
+    WRITER writer;
+    ULONG i;
+    LONG rc;
+
+    /* The legacy PRG environment ends at an empty entry and reserves ARGV.
+     * Standard extended startup always needs an argv[0] slot. */
+    if (!vectors->argc)
+        return ERANGE;
+    memset(&writer, 0, sizeof(writer));
+    memset(tail, 0, 128);
+    writer.storage = storage;
+    writer.tail = tail;
+    for (i = 0; i < vectors->envc; i++) {
+        const char *entry = vectors->envp[i];
+
+        if (!*entry || !strncmp(entry, "ARGV=", 5))
+            return ERANGE;
+        rc = append(&writer, entry, strlen(entry) + 1);
+        if (rc)
+            return rc;
+    }
+    rc = append(&writer, "ARGV=", 5);
+    if (rc)
+        return rc;
+    for (i = 0; i < vectors->argc; i++) {
+        const char *entry = vectors->argv[i];
+
+        rc = empty_indices(&writer, entry, strlen(entry), i);
+        if (rc)
+            return rc;
+    }
+    rc = append(&writer, "", 1);
+    if (rc)
+        return rc;
+    for (i = 0; i < vectors->argc; i++) {
+        const char *entry = vectors->argv[i];
+
+        rc = write_argument(&writer, entry, strlen(entry), i);
+        if (rc)
+            return rc;
+    }
+    rc = finish_arguments(&writer);
+    if (!rc)
+        tail[0] = 127; /* activate the extended arguments even for short tails */
+    return rc;
+}
+
 LONG binfmt_arguments(const char *environment, const char *tail,
                       const BINFMT_REDIRECT *redirects, unsigned int count,
                       char *storage, char output_tail[128])
@@ -219,11 +280,7 @@ LONG binfmt_arguments(const char *environment, const char *tail,
     if (!rc) rc = visit_arguments(&args, redirects, count, empty_indices, &writer);
     if (!rc) rc = append(&writer, "", 1);
     if (!rc) rc = visit_arguments(&args, redirects, count, write_argument, &writer);
-    if (!rc) rc = append(&writer, "", 1);
-    if (rc) return rc;
-    storage[writer.used] = 0;        /* alloc_env() may copy an even-size pad */
     /* Native dynamic startup decodes quotes through ARGV, while legacy
      * readers still receive the MagX-quoted tail bytes. */
-    output_tail[0] = writer.quoted || writer.tail_size > 126 ? 127 : (char)writer.tail_size;
-    return E_OK;
+    return rc ? rc : finish_arguments(&writer);
 }

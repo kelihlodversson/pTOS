@@ -59,8 +59,26 @@ static int launch_child(void)
     return dynvalue == 123 ? 0 : 97;
 }
 #endif
+static int same_text(const char *a, const char *b)
+{
+    if (!a)
+        return 0;
+    while (*a && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
 int app_main(uint32_t argc, const char *const *argv, const char *const *envp, uint32_t finalizer)
 {
+    if (argc == 3 && same_text(argv[0], "vector shared")) {
+        if (!same_text(argv[1], "") || !same_text(argv[2], "two words") || argv[3] ||
+            !same_text(envp[0], "KEY=two words") || !same_text(envp[1], "") ||
+            !same_text(envp[2], "FLAG=") || envp[3] || !finalizer)
+            return 93;
+        return startup_log == 9123 && dynvalue == 9 && dynbss == 3 && answer() == 23 ? 76 : 91;
+    }
 #ifdef LDSO_TEST_SHARING
     if (argc == 3 && argv[1] && argv[1][0] == 'c' && argv[2]) return child(argv);
 #endif

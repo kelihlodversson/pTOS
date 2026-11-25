@@ -12,6 +12,7 @@
 #include "kheap.h"
 #include "tosvars.h"
 #include "binfmt.h"
+#include "pexecve.h"
 #include "string.h"
 
 static BINFMT_REGISTRY registry;
@@ -174,10 +175,14 @@ void binfmt_release(BINFMT_LAUNCH *launch)
     binfmt_release_environment(launch);
     release(launch->tail);
     launch->tail = NULL;
+    release(launch->vector_storage);
+    launch->vector_storage = NULL;
+    memset(&launch->vectors, 0, sizeof(launch->vectors));
 }
 
 LONG binfmt_load_header(char *path, char *tail, char *environment,
-                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch, BOOL qualify)
+                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch,
+                       BOOL qualify, const DL_START_VECTORS *vectors)
 {
     struct redirect_work {
         UBYTE header[BINFMT_HEADER];
@@ -191,12 +196,17 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
     unsigned int depth = 0, i;
 
     memset(launch, 0, sizeof(*launch));
+    if (vectors && vectors->argc > PEXECVE_MAX_ENTRIES)
+        return ERANGE;
     for (;;) {
         rc = kpgmhdrld_error(path, header, handle, &error);
         if (error.code || rc != EPLFMT || !kpgm_can_interpret()) break;
         if (!work) {
             if (strlen(path) >= BINFMT_PATH) { rc = ERANGE; break; }
-            work = allocate(sizeof(*work));
+            /* Space for a final interpreter name, option/path pairs, the
+             * original arguments after argv[0] and the terminator. */
+            work = allocate(sizeof(*work) + (vectors ?
+                (vectors->argc + 2 * BINFMT_DEPTH + 2) * sizeof(char *) : 0));
             if (!work) { rc = ENSMEM; break; }
             strcpy(work->visited[0], path);
         }
@@ -222,7 +232,26 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         strcpy(work->visited[++depth], work->selection.interpreter);
         path = work->visited[depth];
     }
-    if (!rc && !error.code && depth) {
+    if (!rc && !error.code && depth && vectors) {
+        const char **slots = (const char **)(work + 1);
+        ULONG count = 0;
+
+        slots[count++] = path;
+        while (depth) {
+            const BINFMT_REDIRECT *redirect = &work->redirects[--depth];
+            if (redirect->argument)
+                slots[count++] = redirect->argument;
+            slots[count++] = redirect->program;
+        }
+        for (i = 1; i < vectors->argc; i++)
+            slots[count++] = vectors->argv[i];
+        slots[count] = NULL;
+        launch->vectors = *vectors;
+        launch->vectors.argv = slots;
+        launch->vectors.argc = count;
+        launch->vector_storage = work;
+        work = NULL;
+    } else if (!rc && !error.code && depth) {
         /* Apply every prefix to the original argument sequence and emit the
          * compatibility tail/environment once, for the final load only. */
         launch->tail = allocate(128);

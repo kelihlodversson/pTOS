@@ -53,6 +53,10 @@
 #include "kthread.h"
 #include "launch_args.h"
 #include "../lib/ldso/startup.h"
+#if CONF_WITH_PRG_LOADER
+#include "binfmt.h"
+#include "kheap.h"
+#endif
 #if CONF_WITH_CUIS
 #include "bdosbind.h"
 #endif
@@ -737,6 +741,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #if CONF_WITH_BINFMT
     BINFMT_LAUNCH interpreter;
 #endif
+#if CONF_WITH_PRG_LOADER && CONF_WITH_MULTITHREADING
+    char *prg_environment = NULL;
+    char prg_tail[128];
+#endif
 #if CONF_WITH_USER_ASPACE
     PD *cur_p; /* assigned before setjmp, never changed across its return */
     FS_ERROR_SCOPE loader_error;
@@ -971,18 +979,15 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
      * when interpreter support is disabled.
      */
 #if CONF_WITH_BINFMT
-    if (vectors) {
-        /* The vector binfmt adapter will own redirects for vector launches. */
-        memset(&interpreter, 0, sizeof(interpreter));
-        rc = kpgmhdrld(path, &hdr, &fh);
-    } else
-    rc = binfmt_load_header(path, tail, env ? env : (char *)
+    rc = binfmt_load_header(path, tail, vectors ? NULL : env ? env : (char *)
 #if CONF_WITH_PRIVATE_CLONE
         (uintptr_t)kproc_private_environment(run)
 #else
         USERPTR_TO_PTR(run->p_env)
 #endif
-                           , &hdr, &fh, &interpreter, directory != NULL);
+                           , &hdr, &fh, &interpreter, directory != NULL, vectors);
+    if (!rc && interpreter.vector_storage)
+        vectors = &interpreter.vectors;
     if (!rc && interpreter.environment) {
         path = interpreter.path;
         tail = interpreter.tail;
@@ -1009,6 +1014,23 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
 
     /* allocate the environment first, depending on memory policy */
+#if CONF_WITH_PRG_LOADER && CONF_WITH_MULTITHREADING
+    if (vectors && kpgm_is_prg()) {
+        prg_environment = kalloc(BINFMT_ENV + 2);
+        rc = prg_environment ? legacy_pack_vectors(vectors, prg_environment, prg_tail) : ENSMEM;
+        if (rc) {
+            kfree(prg_environment);
+#if CONF_WITH_BINFMT
+            binfmt_release(&interpreter);
+#endif
+            xclose(fh);
+            return rc;
+        }
+        env = prg_environment;
+        tail = prg_tail;
+        vectors = NULL; /* The PRG loader consumes the staged basepage. */
+    }
+#endif
     if (vectors && !tail) {
         /* The ELF entry stack carries the explicit vector environment.
          * Its compatibility basepage still owns a valid environment block. */
@@ -1017,6 +1039,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         env = empty;
     }
     env_ptr = alloc_env(hdr.h01_flags, env);
+#if CONF_WITH_PRG_LOADER && CONF_WITH_MULTITHREADING
+    kfree(prg_environment);
+#endif
     if (env_ptr == NULL) {
 #if CONF_WITH_BINFMT
         binfmt_release(&interpreter);
@@ -1082,10 +1107,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 
     /* initialize the fields in the PD structure */
     init_pd_fields(p, tail, max, env_ptr);
-#if CONF_WITH_BINFMT
-    binfmt_release(&interpreter);       /* tail is now part of the basepage */
-#endif
     if (!kproc_create(p)) {
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         xexec_free(env_ptr);
         xexec_free(p);
         xclose(fh);
@@ -1105,6 +1130,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         rc = kproc_exec_replacement_load_begin(replacement,image);
         kproc_release(image);
         if (rc != E_OK) {
+#if CONF_WITH_BINFMT
+            binfmt_release(&interpreter);
+#endif
             kproc_destroy(p);
             xexec_free(env_ptr);
             xexec_free(p);
@@ -1127,6 +1155,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         KDEBUG(("Error and longjmp in xexec()!\n"));
 
         /* free any memory allocated so far & close the file */
+#if CONF_WITH_BINFMT
+        binfmt_release(&interpreter);
+#endif
         kproc_destroy(cur_p);
         xexec_free(USERPTR_TO_PTR(cur_p->p_env));
         xexec_free(cur_p);
@@ -1145,6 +1176,9 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 
     /* now, load the rest of the program, perform relocation, close the file */
     rc = kpgmld(cur_p, fh, &hdr, path, vectors);
+#if CONF_WITH_BINFMT
+    binfmt_release(&interpreter);
+#endif
 #if KPROC_LEGACY_PRG
     if (rc == E_OK && !kproc_record_legacy_text(cur_p, (ULONG)hdr.h01_tlen)) rc = EPLFMT;
 #endif

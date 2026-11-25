@@ -3,6 +3,7 @@
 #define BINFMT_H
 
 #include "portab.h"
+#include "../lib/ldso/startup.h"
 
 #define BINFMT_RULES 8
 #define BINFMT_NAME 32
@@ -70,12 +71,18 @@ LONG binfmt_select(const BINFMT_REGISTRY *registry, const UBYTE *header,
 LONG binfmt_arguments(const char *environment, const char *tail,
                       const BINFMT_REDIRECT *redirects, unsigned int count,
                       char *storage, char output_tail[128]);
+/* Convert counted vectors whose entries are borrowed for the call.
+ * storage is BINFMT_ENV + 2 bytes, including possible even-size padding. */
+LONG legacy_pack_vectors(const DL_START_VECTORS *vectors, char *storage,
+                         char output_tail[128]);
 
 /* Kernel integration. Path points to argv[0] inside the generated environment.
  * The caller rebases it into the child's environment copy before releasing
  * that storage; the separate tail is released after copying the basepage. */
 typedef struct {
     char *path, *tail, *environment;
+    void *vector_storage;
+    DL_START_VECTORS vectors;
 } BINFMT_LAUNCH;
 
 void binfmt_boot_init(void);

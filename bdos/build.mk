@@ -7,7 +7,10 @@ obj-y += bdosmain.o console.o fsbuf.o fsdir.o fsdrive.o fsfat.o fsglob.o \
 	 proc.o time.o umem.o rwa.o launch.o
 obj-$(CONF_WITH_ELF_LOADER) += elfld.o
 obj-$(CONF_WITH_EXEC_REPLACE) += exec_replace.o
-obj-$(CONF_WITH_BINFMT) += binfmt.o binfmt_rules.o binfmt_args.o
+obj-$(CONF_WITH_BINFMT) += binfmt.o binfmt_rules.o
+ifneq ($(CONF_WITH_BINFMT)$(and $(CONF_WITH_MULTITHREADING),$(CONF_WITH_PRG_LOADER)),)
+obj-y += binfmt_args.o
+endif
 # a process in an address space of its own: its entry, its switching
 obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(or $(ARCH_ARM),$(ARCH_M68K)),uspaceasm.o uspace.o) $(if $(ARCH_M68K),fpuctx.o)
 obj-$(CONF_WITH_USER_COPY) += uaccess.o

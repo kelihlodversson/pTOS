@@ -91,7 +91,8 @@ struct disk_error;
 LONG kpgmhdrld_error(char *s, PGMHDR01 *hd, FH *h, struct disk_error *error);
 BOOL kpgm_can_interpret(void);
 LONG binfmt_load_header(char *path, char *tail, char *environment,
-                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch, BOOL qualify);
+                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch,
+                       BOOL qualify, const DL_START_VECTORS *vectors);
 #endif
 /* A trusted vector input selects the standard ELF process entry. */
 LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,

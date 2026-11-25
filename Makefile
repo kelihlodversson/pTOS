@@ -2075,6 +2075,15 @@ endif
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
+ifdef LDSO_VECTOR_TEST_PRG
+obj/pexecve_prg.o: tests/ldso_runtime/pexecve_prg.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(LDSO_VECTOR_TEST_PRG): $(TEST_STARTUP) obj/pexecve_prg.o $(LIBCMINI_LIB)
+	@mkdir -p $(@D)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ -L$(dir $(LIBCMINI_LIB)) $(TEST_LIBS) -o $@
+endif
+
 ifeq ($(CONF_WITH_FORK_CORE),y)
 TEST_FORK_PARENT_FILES = FORKPAR.TOS
 obj/fork_parent_native.o: tests/pclone/fork_parent_native.c $(AUTOCONF_H) | obj
