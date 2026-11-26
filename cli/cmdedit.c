@@ -38,7 +38,7 @@ PRIVATE WORD previous_word_count(const char *line,WORD pos);
 PRIVATE WORD replace_line(char *line,WORD num);
 PRIVATE char *start_of_current_word(char *line,WORD pos);
 
-#if CLI_VECTOR_EXEC
+#if CLI_VECTOR_ARGUMENTS
 /* Keep the cursor and the visible portion of the command on the prompt row. */
 PRIVATE void redraw_input(const char *line,WORD pos,WORD len,WORD width,
                           WORD *start,WORD *column)
@@ -72,7 +72,7 @@ UWORD save_history_num;
 WORD scancode, prevcode = 0;
 WORD pos = 0, len = 0;
 char prompt[MAXPATHLEN];
-#if CLI_VECTOR_EXEC
+#if CLI_VECTOR_ARGUMENTS
 WORD width, first = 0, column = 0;
 #endif
 
@@ -82,7 +82,7 @@ WORD width, first = 0, column = 0;
     get_path(prompt,0);
     message(prompt);
     message(">");
-#if CLI_VECTOR_EXEC
+#if CLI_VECTOR_ARGUMENTS
     width = screen_cols > 1 ? screen_cols-1 : 1;
     /* VT52 may discard characters at the right edge. Start fresh when
      * the prompt leaves insufficient space, regardless of the wrap mode. */
@@ -98,7 +98,7 @@ WORD width, first = 0, column = 0;
         /* check for line-editing key & handle if so */
         prevcode = edit_line(line,&pos,&len,scancode,prevcode);
         if (prevcode >= 0) {
-#if CLI_VECTOR_EXEC
+#if CLI_VECTOR_ARGUMENTS
             redraw_input(line,pos,len,width,&first,&column);
 #endif
             continue;
@@ -129,11 +129,11 @@ WORD width, first = 0, column = 0;
             continue;
 
         /* if other ASCII key but line is full, ignore */
-        if (len >= linesize-(CLI_VECTOR_EXEC ? 1 : 2))
+        if (len >= linesize-(CLI_VECTOR_ARGUMENTS ? 1 : 2))
             continue;
 
         /* handle normal ASCII key */
-        if (!CLI_VECTOR_EXEC)
+        if (!CLI_VECTOR_ARGUMENTS)
             conout(c);
         if (pos < len)
             insert_char(line,pos,len,c);
@@ -141,7 +141,7 @@ WORD width, first = 0, column = 0;
         pos++;
         len++;
         line[len] = '\0';
-#if CLI_VECTOR_EXEC
+#if CLI_VECTOR_ARGUMENTS
         if (pos == len && column+1 < width) {
             conout(c);
             column++;
@@ -168,7 +168,7 @@ char *p;
         *p = *(p-1);
     *p++ = c;
 
-    if (CLI_VECTOR_EXEC)
+    if (CLI_VECTOR_ARGUMENTS)
         return;
 
     /* display characters after insertion point */
@@ -190,7 +190,7 @@ ULONG n;
     n = getwh();                    /* get max cell number for x and y */
     screen_cols = HIWORD(n) + 1;
     screen_rows = LOWORD(n) + 1;
-    if (CLI_VECTOR_EXEC) {
+    if (CLI_VECTOR_ARGUMENTS) {
         linesize = MAX_LINE_SIZE;
         return;
     }
@@ -291,7 +291,7 @@ WORD n, word = 0;
             n = word ? previous_word_count(line,*pos) : 1;
             while (n-- > 0) {
                 (*pos)--;
-                if (!CLI_VECTOR_EXEC)
+                if (!CLI_VECTOR_ARGUMENTS)
                     cursor_left();
             }
         }
@@ -304,7 +304,7 @@ WORD n, word = 0;
             n = word ? next_word_count(line,*pos,*len) : 1;
             while (n-- > 0) {
                 (*pos)++;
-                if (!CLI_VECTOR_EXEC)
+                if (!CLI_VECTOR_ARGUMENTS)
                     cursor_right();
             }
         }
@@ -347,7 +347,7 @@ WORD n, word = 0;
         if (rc == 0L) {
             erase_line(insert,*pos-(insert-line));
             for (q = insert, p = dta->d_fname; *p; ) {
-                if (!CLI_VECTOR_EXEC)
+                if (!CLI_VECTOR_ARGUMENTS)
                     conout(*p);
                 *q++ = *p++;
             }
@@ -382,7 +382,7 @@ char *p;
     for (p = line+pos; p < line+len; p++)
         *p = *(p+1);
 
-    if (CLI_VECTOR_EXEC)
+    if (CLI_VECTOR_ARGUMENTS)
         return;
 
     if (backspace)
@@ -405,7 +405,7 @@ PRIVATE void erase_line(char *start,WORD len)
 {
 WORD i;
 
-    if (!CLI_VECTOR_EXEC) {
+    if (!CLI_VECTOR_ARGUMENTS) {
         for (i = 0; i < len; i++)
             cursor_left();
         escape('K');
@@ -444,7 +444,7 @@ PRIVATE WORD replace_line(char *line,WORD num)
 char *p, *q;
 
     for (p = line, q = history_line[num]; *q; ) {
-        if (!CLI_VECTOR_EXEC)
+        if (!CLI_VECTOR_ARGUMENTS)
             conout(*q);
         *p++ = *q++;
     }

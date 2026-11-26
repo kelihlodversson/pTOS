@@ -2229,7 +2229,8 @@ $(TEST_DESK_INF): tests/emudesk.inf
 endif
 
 # The native desktop and vector-enabled CLI share the ELF test binaries.
-ifneq ($(filter y,$(CONF_WITH_CLI_VECTOR_EXEC))$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
+TEST_VECTOR_CONSOLE = $(or $(CONF_WITH_CLI_VECTOR_EXEC),$(and $(CONF_WITH_CLI),$(CONF_WITH_ARM_SHARED_EXEC)))
+ifneq ($(TEST_VECTOR_CONSOLE)$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
 TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos
 
 runvec.tos: $(TEST_VECTOR_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
@@ -2242,7 +2243,7 @@ haltv.tos: obj/halt.o
 pwroffv.tos rebootv.tos coldbtv.tos haltv.tos: $(TEST_VECTOR_STARTUP) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
 
-ifeq ($(CONF_WITH_CLI_VECTOR_EXEC),y)
+ifeq ($(TEST_VECTOR_CONSOLE),y)
 TEST_VECTOR_FILES += cliargs.tos
 
 obj/cliargs.o: tests/emucon/arguments.c $(AUTOCONF_H) $(LIBCMINI_LIB) | obj

@@ -18,7 +18,7 @@ static UWORD old_stdout;
  *  function prototypes
  */
 PRIVATE WORD add_to_path(char *path,const char *name);
-#if !CLI_VECTOR_EXEC && !CLI_ARM_BUILTIN_EXEC
+#if !CLI_VECTOR_ARGUMENTS
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv);
 #endif
 PRIVATE WORD check_user_path(char *path,const char *name);
@@ -75,7 +75,7 @@ static LONG launch_from_resident_cli(const char *path, WORD argc, char **argv)
 LONG exec_program(WORD argc,char **argv,char *redir)
 {
 char path[MAXPATHLEN];
-#if !CLI_VECTOR_EXEC && !CLI_ARM_BUILTIN_EXEC
+#if !CLI_VECTOR_ARGUMENTS
 char cmdline[CMDLINELEN];
 #endif
 LONG rc;
@@ -136,7 +136,7 @@ WORD separator = len && path[len-1] != PATHSEP;
  *
  *  returns -1 iff the line is too long
  */
-#if !CLI_VECTOR_EXEC && !CLI_ARM_BUILTIN_EXEC
+#if !CLI_VECTOR_ARGUMENTS
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv)
 {
 char *p, *q;

@@ -233,7 +233,7 @@ LONG rc;
             return 1;
     }
     else {
-        if (CLI_VECTOR_EXEC || CLI_ARM_BUILTIN_EXEC)
+        if (CLI_VECTOR_ARGUMENTS)
             strip_quotes(argc,argv);
         rc = exec_program(argc,argv,redir);
     }
@@ -278,7 +278,7 @@ int i;
     for (i = 0; i < argc; i++, argv++) {
         if (**argv == DBLQUOTE) {
             (*argv)++;
-#if CLI_VECTOR_EXEC
+#if CLI_VECTOR_ARGUMENTS
             for (p = *argv; *p && *p != DBLQUOTE; p++)
                 ;
             if (*p)

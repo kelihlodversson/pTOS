@@ -86,4 +86,7 @@ void ptest_log_flush(void);
  * The outer harness keeps the default truncation of a previous run's log. */
 void ptest_log_append(void);
 
+/* Launch the relocation and ELF startup fixture. */
+long test_start_pie_probe(void);
+
 #endif /* TEST_H */

@@ -29,18 +29,16 @@ static int *ptr = &target;
 int main(int argc, char **argv, char **envp)
 {
 #if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE)
-    if (argc == 3) {
-        const BASEPAGE *bp = _base;
+    const BASEPAGE *bp = _base;
 
-        if (strcmp(argv[0], "custom name") || strcmp(argv[1], "two words") || argv[2][0] ||
-            argv[3] || !envp[0] || strcmp(envp[0], "CHECK_LAYOUT=1") || !envp[1] ||
-            envp[1][0] || !envp[2] || strcmp(envp[2], "AFTER_EMPTY=1") || envp[3])
-            return 2;
-        if (!bp || (uintptr_t)bp->p_dbase != (uintptr_t)bp + sizeof(*bp) + bp->p_tlen ||
-            (uintptr_t)bp->p_bbase != (uintptr_t)bp->p_dbase + bp->p_dlen ||
-            (uintptr_t)bp->p_bbase + bp->p_blen > (uintptr_t)bp->p_hitpa)
-            return 3;
-    }
+    if (argc != 3 || strcmp(argv[0], "custom name") || strcmp(argv[1], "two words") ||
+        argv[2][0] || argv[3] || !envp[0] || strcmp(envp[0], "CHECK_LAYOUT=1") ||
+        !envp[1] || envp[1][0] || !envp[2] || strcmp(envp[2], "AFTER_EMPTY=1") || envp[3])
+        return 2;
+    if (!bp || (uintptr_t)bp->p_dbase != (uintptr_t)bp + sizeof(*bp) + bp->p_tlen ||
+        (uintptr_t)bp->p_bbase != (uintptr_t)bp->p_dbase + bp->p_dlen ||
+        (uintptr_t)bp->p_bbase + bp->p_blen > (uintptr_t)bp->p_hitpa)
+        return 3;
 #else
     (void)argc;
     (void)argv;

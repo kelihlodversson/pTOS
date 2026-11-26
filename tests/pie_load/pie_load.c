@@ -25,6 +25,18 @@
 
 void test_pie_load(void);
 
+long test_start_pie_probe(void)
+{
+#if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE)
+    char *argv[] = { "custom name", "two words", "", NULL };
+    char *envp[] = { "CHECK_LAYOUT=1", "", "AFTER_EMPTY=1", NULL };
+
+    return Pexecve(0, "C:\\PIEPROBE.TOS", argv, envp);
+#else
+    return Pexec(PE_LOADGO, "C:\\PIEPROBE.TOS", "", 0);
+#endif
+}
+
 #if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE)
 /* Exercise the same basepage sizing invariant from the running ELF child. */
 static const char *check_footprint(void)
@@ -32,8 +44,6 @@ static const char *check_footprint(void)
     static const long pads[] = { 0, 4, 8, 12, 16, 20, 24, 28 };
     void *held[sizeof pads / sizeof pads[0]];
     const char *failure = NULL;
-    char *argv[] = { "custom name", "two words", "", NULL };
-    char *envp[] = { "CHECK_LAYOUT=1", "", "AFTER_EMPTY=1", NULL };
     unsigned i;
 
     for (i = 0; i < sizeof pads / sizeof pads[0]; i++) {
@@ -41,7 +51,7 @@ static const char *check_footprint(void)
 
         held[i] = pads[i] ? (void *)Malloc(pads[i]) : NULL;
         before = Malloc(-1L);
-        if (Pexecve(0, "C:\\PIEPROBE.TOS", argv, envp) != 0)
+        if (test_start_pie_probe() != 0)
             failure = "shared ARM ELF argv, environment or image footprint";
         if (Malloc(-1L) != before)
             failure = "shared ARM launch did not return its memory";
@@ -60,7 +70,7 @@ void test_pie_load(void)
 
     ptest_begin("pie_load");
 
-    rc = Pexec(PE_LOADGO, "C:\\PIEPROBE.TOS", "", 0);
+    rc = test_start_pie_probe();
     ptest_assert_msg(rc == 0,
                       "PIEPROBE.TOS exited nonzero "
                       "(PIE dynamic relocations not applied?)");

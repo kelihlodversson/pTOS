@@ -970,9 +970,10 @@ static const char *env_language(void)
 }
 
 /*
- * Build the default environment string: "LANG=xx^PATH=^X:\^^" [where ^=nul]
+ * Build the default environment. Shared ARM uses ordinary PATH=value
+ * so its resident console can pass it directly to ELF children.
  *
- * PATH is last, in the TOS way (the name and the value are two strings):
+ * The classic PATH is last, in the TOS way (name and value in two strings):
  * a program startup that turns that into the usual NAME=value moves the value
  * one byte down and leaves a nul behind, which ends what follows too early.
  */
@@ -984,7 +985,11 @@ static void init_default_environment(void)
     strcat(p,env_language());
     p += strlen(p) + 1;
     strcpy(p,PATH_ENV);
+#if CONF_WITH_ARM_SHARED_EXEC
+    p += sizeof(PATH_ENV) - 1;          /* append the value to PATH= */
+#else
     p += sizeof(PATH_ENV);              /* point to first byte of path string */
+#endif
     strcpy(p,DEF_PATH);
     *p += bootdev;                      /* fix up drive letter */
 #if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
