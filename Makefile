@@ -884,22 +884,22 @@ X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
 X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
 
-x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
+x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $(filter %.c %.S,$^)
 
 # The same program linked into the reserved system range: Pexec() has to
 # move it to the default image base and use the relocations kept by -q.
-x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -o $@ $^
+x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -o $@ $(filter %.c %.S,$^)
 
 # ... and linked for another address without keeping the relocations (no -q):
 # Pexec() must refuse it, not run it with every absolute address wrong.
-x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x08000000 -o $@ $^
+x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x08000000 -o $@ $(filter %.c %.S,$^)
 
 # ... and one with a 6 MiB bss, bigger than the old image window.
-x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $(filter %.c %.S,$^)
 
 .PHONY: x32test
 x32test: x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
@@ -968,7 +968,7 @@ x32-vdi: obj/x32/libptos-vdi.so.1
 obj/x32/vdi-import-reloc.elf: X32_IMPORT_LINK_BASE = -Wl,-Ttext-segment=0x20000000
 obj/x32/vdi-import-plt.elf: X32_IMPORT_FLAGS = -DVDI_IMPORT_PLT
 obj/x32/vdi-import.elf obj/x32/vdi-import-reloc.elf obj/x32/vdi-import-plt.elf: \
-  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S \
+  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S tests/x32_probe/startup.h lib/ldso/startup.h \
   tests/vdi_contract/vdi_roundtrip.c obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DVDI_IMPORT_TEST $(X32_IMPORT_FLAGS) -Iinclude -Iobj \
 	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
@@ -1039,7 +1039,7 @@ obj/x32/x32probe.elf: tests/pclone/irq_registers.S tests/x32_probe/receipt_fault
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
                     include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
-                    obj/x32/libptos-vdi.a include/mman.h include/pclone.h include/threadcalls.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
+                    obj/x32/libptos-vdi.a include/mman.h include/pclone.h include/pexecve.h include/threadcalls.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -include $(AUTOCONF_H) -o $@ \
 	  $(filter %.c %.S %.a,$^)
 

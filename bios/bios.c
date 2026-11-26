@@ -24,6 +24,11 @@
 #include "bios.h"
 #include "shells.h"
 #include "../bdos/bdosstub.h"
+#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+#include "../bdos/fs.h"
+#include "../bdos/proc.h"
+#include "../lib/ldso/startup.h"
+#endif
 #if CONF_WITH_BINFMT
 #include "../bdos/binfmt.h"
 #endif
@@ -113,6 +118,22 @@ extern void x86_64_memtest_run(void);
 #define DEF_PATH    "A:\\"      /* default value for path */
 
 static char default_env[ENV_SIZE];  /* default environment area */
+#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+static char boot_path[] = "PATH=" DEF_PATH;
+static const char *boot_env[] = { default_env, boot_path };
+
+static LONG boot_exec(WORD mode, const char *path, const char *argument)
+{
+    const char *argv[] = { path, argument };
+    DL_START_VECTORS vectors = {0};
+
+    vectors.argv = argv;
+    vectors.argc = argument ? 2 : 1;
+    vectors.envp = boot_env;
+    vectors.envc = ARRAY_SIZE(boot_env);
+    return proc_exec_kernel_vectors(mode, path, &vectors);
+}
+#endif
 
 /*==== External declarations ==============================================*/
 
@@ -314,7 +335,12 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
  */
 static LONG try_shell(const char *path, void *env)
 {
+#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+    UNUSED(env);
+    return boot_exec(PE_LOADGO, path, NULL);
+#else
     return Pexec(PE_LOADGO, path, "", (char *)env);
+#endif
 }
 #endif
 
@@ -949,6 +975,9 @@ static void init_default_environment(void)
     p += sizeof(PATH_ENV);              /* point to first byte of path string */
     strcpy(p,DEF_PATH);
     *p += bootdev;                      /* fix up drive letter */
+#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+    boot_path[sizeof("PATH=") - 1] = *p;
+#endif
     p += sizeof(DEF_PATH);
     *p = '\0';                          /* terminate with double nul */
 }

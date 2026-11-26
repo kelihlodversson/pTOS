@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "../../lib/ldso/runtime.h"
 #include "../../include/mman.h"
+#include "../../include/pexecve.h"
 extern int answer(void), dynvalue, dynbss;
 int startup_log;
 int leaf(void) { return 11; }             /* executable interposes library leaf */
@@ -43,19 +44,21 @@ static int child(const char *const *argv)
     if (startup_log != 9123 || dynvalue != 9 || dynbss != 3 || answer() != 23) return 98;
     return cross_shares() > number(argv[2]) ? 78 : 99;
 }
-static int launch_child(void)
+static int launch_child(const char *const *envp)
 {
-    char tail[24] = { 0 };
+    const char *path = "C:\\LDSOAPP.ELF";
+    char value[12];
+    const char *const argv[] = { path, "child", value, 0 };
     uint32_t n = cross_shares(), digits = 0, i;
     char text[12];
 
     if (n == UINT32_MAX) return 95;
     do text[digits++] = (char)('0' + n % 10); while (n /= 10);
-    tail[1] = 'c'; tail[2] = 'h'; tail[3] = 'i'; tail[4] = 'l'; tail[5] = 'd'; tail[6] = ' ';
-    for (i = 0; i < digits; i++) tail[7 + i] = text[digits - 1 - i];
-    tail[0] = (char)(6 + digits);
+    for (i = 0; i < digits; i++) value[i] = text[digits - 1 - i];
+    value[digits] = 0;
     dynvalue = 123;                     /* ... which the child must not see */
-    if (dl_syscall(0x4b, 0, (uintptr_t)"C:\\LDSOAPP.ELF", (uintptr_t)tail, 0, 0, 0) != 78) return 96;
+    if (dl_syscall(GEMDOS_PEXECVE, 0, (uintptr_t)path, (uintptr_t)argv,
+                   (uintptr_t)envp, 0, 0) != 78) return 96;
     return dynvalue == 123 ? 0 : 97;
 }
 #endif
@@ -102,7 +105,7 @@ int app_main(uint32_t argc, const char *const *argv, const char *const *envp, ui
                    PROT_WRITE | PROT_EXEC, 0, 0, 0) >= 0) return 94;
 #ifdef LDSO_TEST_SHARING
     {
-        int rc = launch_child();
+        int rc = launch_child(envp);
 
         if (rc) return rc;
     }

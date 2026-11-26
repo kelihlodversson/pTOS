@@ -18,16 +18,23 @@ static QUAD call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
     return (QUAD)rax;
 }
 
+#include "../x32_probe/startup.h"
+
 void x32_probe_main(UQUAD basepage, UQUAD type, UQUAD sp, ULONG cs, ULONG ss);
 void x32_probe_main(UQUAD basepage, UQUAD type, UQUAD sp, ULONG cs, ULONG ss)
 {
-    const UBYTE *bp = (const UBYTE *)(uintptr_t)basepage;
-    char mode = bp[0x80];
+    const uint32_t *initial = (const uint32_t *)(uintptr_t)sp;
+    char mode;
     int rc;
+
+    if (basepage)
+        mode = ((const char *)(uintptr_t)basepage)[0x80];
+    else
+        mode = *initial > 1 ? *(const char *)(uintptr_t)initial[2] : 0;
 
     (void)type;
     (void)ss;
-    if ((cs & 3) != 3 || ((sp + 8) & 15))
+    if ((cs & 3) != 3 || ((sp + (basepage ? 8 : 0)) & 15))
         rc = 1;
     else if (vdi((VDIPB *)0) != EIMBA)
         rc = 2;

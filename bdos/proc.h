@@ -25,14 +25,21 @@
 
 long xexec(WORD, char *, char *, char *);
 struct dl_start_vectors;
+#if CONF_WITH_USER_ASPACE
+/* Trusted kernel launch. The loader consumes the vectors before entry. */
+long proc_exec_kernel_vectors(WORD mode, const char *path,
+                              const struct dl_start_vectors *vectors);
+#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 long xexec_selftest(WORD, char *, char *, char *);
 #if CONF_WITH_ELF_VECTOR_ENTRY_TEST
 long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors);
 #endif
 #endif
-#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
+#if CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI)
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
+#endif
+#if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 #if CONF_WITH_BINFMT
 LONG xpexecve_guest(UQUAD address, UQUAD size);
 #endif

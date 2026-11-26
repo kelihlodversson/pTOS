@@ -4,14 +4,18 @@
 #include <string.h>
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#ifndef NATIVE_VECTOR_FIXTURE
 #include "../../legacy-pexec.h"
+#endif
 #ifdef PROCESS_DIRECTORY_TEST
 #include <mint/mintbind.h>
 #include "../../../include/process_exec.h"
 #endif
 
 long _stksize = 16384;
-static char environment[32768], large[1001];
+static char large[1001];
+#ifndef NATIVE_VECTOR_FIXTURE
+static char environment[32768];
 static int boot;
 static long shared;
 
@@ -45,23 +49,49 @@ static void make_environment(const char *kind, int classic)
     }
     *at++ = 0; *at = 0;
 }
+#else
+static char case_env[80], boot_env[8], fd_env[24];
+static char *const envp[] = { "DEMO=present", case_env, boot_env, fd_env, NULL };
+
+static void make_vector_environment(const char *kind)
+{
+    sprintf(case_env, "CASE=%s", kind);
+    sprintf(boot_env, "BOOT=%c", 'A' + boot);
+    sprintf(fd_env, "FD=%ld", shared);
+}
+#endif
 
 #ifdef PROCESS_DIRECTORY_TEST
 static int process_directory(void)
 {
     PROCESS_EXEC_REQUEST request = {0};
-    char directory[16], tail[] = {0, 0};
+    char directory[16];
+#ifdef NATIVE_VECTOR_FIXTURE
+    char *const argv[] = { "DEMO.FMT", NULL };
+#else
+    char tail[] = {0, 0};
+#endif
     long handle, pid, status;
     unsigned int mode;
     sprintf(directory, "%c:\\BIN", 'A' + boot);
     if (Ssystem(-1, PROCESS_EXEC_SSYSTEM, 0L) || Dsetdrv(boot) < 0) return 1;
+#ifdef NATIVE_VECTOR_FIXTURE
+    make_vector_environment("PROCESSDIR");
+#else
     make_environment("PROCESSDIR", 1);
+#endif
     for (mode = 0; mode < 2; mode++) {
         memset(&request, 0, sizeof(request));
         request.operation = mode ? PROCESS_EXEC_PREPARE : PROCESS_EXEC_START;
         request.path = (ULONG)(uintptr_t)"DEMO.FMT";
+#ifdef NATIVE_VECTOR_FIXTURE
+        request.flags = PROCESS_EXEC_VECTOR_ARGS;
+        request.tail = (ULONG)(uintptr_t)argv;
+        request.environment = (ULONG)(uintptr_t)envp;
+#else
         request.tail = (ULONG)(uintptr_t)tail;
         request.environment = (ULONG)(uintptr_t)environment;
+#endif
         request.directory = (ULONG)(uintptr_t)directory;
         pid = Ssystem(PROCESS_EXEC_SSYSTEM, (long)&request, sizeof(request));
         if (mode && pid > 0) {
@@ -87,9 +117,34 @@ static int process_directory(void)
 
 static int run(const char *name, const char *kind, int mode, int classic, long expected, int writes)
 {
-    char path[80], tail[128] = {127, 0};
+    char path[80];
     long result, before = Fseek(0, (short)shared, 2);
+#ifdef NATIVE_VECTOR_FIXTURE
+    char *default_args[] = { "original-name", "two words", "", "quote'arg", NULL };
+    char *plain_args[] = { "original-name", "plain", NULL };
+    char *long_args[] = { "original-name", large, NULL };
+    char *quote_args[] = { "original-name", "it's", "literal\"quote", NULL };
+    char *classic_args[] = { path, "one", "two words", "", "it's", NULL };
+    char *fresh_args[] = { path, "fresh", "tail", NULL };
+    char **argv = default_args;
+
+    make_vector_environment(kind);
+    sprintf(path, "%c:\\%s", 'A' + boot, name);
+    if (classic == 3)
+        argv = fresh_args;
+    else if (classic)
+        argv = classic_args;
+    else if (!strcmp(kind, "SHORT") || !strcmp(kind, "SHORTCHAIN"))
+        argv = plain_args;
+    else if (!strcmp(kind, "LONG"))
+        argv = long_args;
+    else if (!strcmp(kind, "QUOTED"))
+        argv = quote_args;
+    result = Pexecve((short)mode, path, argv, envp);
+#else
+    char tail[128] = {127, 0};
     BASEPAGE *bp;
+
     make_environment(kind, classic == 1 || classic == 2);
     sprintf(path, "%c:\\%s", 'A' + boot, name);
     if (classic) {
@@ -102,6 +157,7 @@ static int run(const char *name, const char *kind, int mode, int classic, long e
         bp = (BASEPAGE *)result;
         result = Pexec(6, "", bp, 0);
     }
+#endif
     if (result != expected || Fseek(0, (short)shared, 2) != before + (writes ? 5 : 0)) {
         printf("binfmt boot: FAIL %s mode %d returned %ld, expected %ld\n", name, mode, result, expected);
         return 1;
@@ -109,7 +165,7 @@ static int run(const char *name, const char *kind, int mode, int classic, long e
     return 0;
 }
 
-#if defined(__m68k__) || !defined(STAGED_UNCHECKED)
+#if !defined(NATIVE_VECTOR_FIXTURE) && !defined(STAGED_UNCHECKED)
 /* #1018: mode 3 names an executable and stages a 68k PRG only; everything
  * that would stage an ELF (a foreign ELF, an interpreter) is EPLFMT before
  * anything is allocated, and MMU ARM/x32 have no mode 3 at all. */
@@ -201,6 +257,8 @@ int main(void)
         staged("SUB\\DEMO.FMT", interpreted_expectation()) ||
         staged("SUB\\SIMPLE.TOS", interpreted_expectation()) ||
         staged("BIN\\INTERP.TOS", interpreted_expectation())) goto failed;
+#elif defined(NATIVE_VECTOR_FIXTURE)
+    if (trap_1_wwlll(0x193, 3, 0, 0, 0) != -32) goto failed;
 #elif !defined(STAGED_UNCHECKED)
     if (staged("SUB\\RAW.TOS", -32) || staged("SUB\\DEMO.FMT", -32)) goto failed;
 #endif
