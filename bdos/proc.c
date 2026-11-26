@@ -30,16 +30,22 @@
 #include "process_observer.h"
 #include "process_exec.h"
 #include "exec_replace.h"
-#include "launch_args.h"
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
+#endif
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#include "launch_args.h"
+#endif
+#if CONF_WITH_ARM_SHARED_EXEC
+#include "argv_legacy.h"
+#include "arch/arm/entry.h"
 #endif
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
 #include "biosext.h"
-#if CONF_WITH_USER_ASPACE || (CONF_WITH_PROCMEM && CONF_WITH_KCALL)
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC || (CONF_WITH_PROCMEM && CONF_WITH_KCALL)
 #include "bdosstub.h"
 #endif
 #include "asm.h"
@@ -330,7 +336,7 @@ static void xexec_free(void *addr)
  * carries no alignment guarantee beyond the compiler's incidental default.
  */
 static WORD    supstk[SUPSIZ] __attribute__((aligned(8))); /* common sup stack for all processes */
-#if !CONF_WITH_USER_ASPACE
+#if !CONF_WITH_USER_ASPACE && !CONF_WITH_ARM_SHARED_EXEC
 /* Classic non-MMU launches reuse the supervisor stack and never participate
  * in native scheduling. Preserve their small-ROM loader implementation. */
 static jmp_buf bakbuf;
@@ -567,10 +573,8 @@ struct kproc;
 static long exec_common(WORD flag, char *path, char *tail, char *env,
     BOOL deferred, char *directory, struct kproc **observe, void **prepared, void *replacement,
     const struct dl_start_vectors *vectors);
-/* #1018: the public modes of this platform. The historical staged modes are
- * 68k compatibility (doc/pexec-legacy-modes.txt); MMU ARM and x32 keep only
- * Pexec(0/100/200) until #1008. Non-MMU ARM is left unchecked: it has no
- * user/kernel boundary. Unknown modes fail in exec_common(). */
+/* Public staged modes are a classic compatibility interface.
+ * Shared ARM's internal veneer enters exec_common() separately. */
 static BOOL pexec_public_mode(WORD flag)
 {
 #if CONF_WITH_STAGED_PEXEC
@@ -621,6 +625,87 @@ long proc_exec_kernel_vectors(WORD mode, const char *path,
         return EINVFN;
     return DISK_CALL(exec_common(mode|PE_KERNEL,(char *)path,NULL,NULL,
                                   FALSE,NULL,NULL,NULL,NULL,vectors));
+}
+#endif
+
+#if CONF_WITH_ARM_SHARED_EXEC
+/* The loader returns an unstarted child. The caller frees any temporary
+ * input and restores its disk-error scope before leaving the BDOS stack. */
+static LONG arm_load_vectors(const char *path, const DL_START_VECTORS *vectors)
+{
+    return DISK_CALL(exec_common(PE_LOADGO,(char *)path,NULL,NULL,
+                                  FALSE,NULL,NULL,NULL,NULL,vectors));
+}
+
+static LONG arm_enter_loaded(LONG loaded)
+{
+    if (loaded > 0)
+        proc_go((PD *)loaded, 0);
+    return loaded;
+}
+#endif
+
+#if ARCH_ARM && !CONF_WITH_USER_ASPACE
+/* Called from the internal veneer with the launcher's SVC frame saved. */
+long arm_kernel_exec(const long *args)
+{
+    WORD mode = (WORD)args[1];
+    char *path = (char *)args[2];
+    char *tail = (char *)args[3];
+    char *env = (char *)args[4];
+#if CONF_WITH_ARM_SHARED_EXEC
+    if (mode == (PE_KERNEL | PE_LOADGO))
+        return arm_enter_loaded(arm_load_vectors(path, (const DL_START_VECTORS *)tail));
+    if (mode == PE_LOADGO) {
+        struct {
+            LEGACY_START_ARGS start;
+            const char *slots[PEXECVE_MAX_ENTRIES + 2];
+        } *legacy = xmxalloc(sizeof(*legacy), MX_PREFTTRAM);
+        int status;
+        LONG loaded;
+
+        if (!legacy)
+            return ENSMEM;
+        if (!env)
+            env = (char *)USERPTR_TO_PTR(run->p_env);
+        status = legacy_start_vectors(&legacy->start, path, (const UBYTE *)tail,
+                                      PDCLSIZE, (const UBYTE *)env, envsize(env),
+                                      legacy->slots, ARRAY_SIZE(legacy->slots));
+        if (status == DL_OK)
+            loaded = arm_load_vectors(path, &legacy->start.vectors);
+        else
+            loaded = status == DL_NO_SPACE ? ERANGE : EPLFMT;
+        xmfree(legacy);
+        return arm_enter_loaded(loaded);
+    }
+#endif
+    return DISK_CALL(exec_common(mode,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL));
+}
+#endif
+
+#if CONF_WITH_ARM_SHARED_EXEC
+long proc_exec_kernel_vectors(WORD mode, const char *path, const DL_START_VECTORS *vectors)
+{
+    if (!vectors || mode != PE_LOADGO)
+        return EINVFN;
+    return trap1_pexec(PE_KERNEL | mode, path, (const char *)vectors, NULL);
+}
+
+LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
+{
+    PEXECVE_ARGS *args = NULL;
+    LONG loaded;
+
+    if (mode != PE_LOADGO)
+        return EINVFN;
+    loaded = pexecve_args_capture(mode, path, argv, envp, &args);
+    if (loaded == E_OK) {
+        DL_START_VECTORS vectors = pexecve_start_vectors(args);
+
+        loaded = arm_load_vectors(args->path, &vectors);
+    }
+    pexecve_args_release(&args);
+    return arm_enter_loaded(loaded);
 }
 #endif
 
@@ -777,7 +862,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     char *prg_environment = NULL;
     char prg_tail[128];
 #endif
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
     PD *cur_p; /* assigned before setjmp, never changed across its return */
     FS_ERROR_SCOPE loader_error;
 #endif
@@ -1112,8 +1197,17 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
             max &= ~15L;                /* an aligned p_hitpa: the stack is below it */
     }
 #endif
-    if (p == NULL)
-        p = (PD *)alloc_tpa(hdr.h01_flags,needed,&max);
+    if (p == NULL) {
+#if CONF_WITH_ARM_SHARED_EXEC
+        if (vectors) {
+            /* Keep the initial stack in the child TPA without consuming
+             * all remaining GEMDOS memory before it can launch a child. */
+            max = needed + ARM_SHARED_STACK_SIZE + 15;
+            p = xmxalloc(max, MX_STRAM);
+        } else
+#endif
+            p = (PD *)alloc_tpa(hdr.h01_flags,needed,&max);
+    }
 
     /* if failed, free env_ptr and return */
     if (p == NULL) {
@@ -1177,7 +1271,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     cur_p = p;
 
     /* we have now allocated memory, so we need to intercept longjmp. */
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
     fs_error_scope_save(loader_error);
 #else
     memcpy(bakbuf, errbuf, sizeof(errbuf));
@@ -1198,7 +1292,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         /* we still have to jump back to bdosmain.c so that the proper error
          * handling can occur.
          */
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
         memcpy(errbuf, fs_error_scope_jump(loader_error), sizeof(errbuf));
         longjmp(errbuf, 1);
 #else
@@ -1216,7 +1310,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
     /* No later launch/admission/cleanup may retain this loader frame as its
      * disk-error target, especially across nested synchronous Pexec. */
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
     fs_error_scope_restore(loader_error);
 #endif
     if (rc) {
@@ -1328,6 +1422,10 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
         return rc;
     }
+#endif
+#if CONF_WITH_ARM_SHARED_EXEC
+    if (vectors)
+        return (long)cur_p;
 #endif
     if (flag != PE_LOAD) {
 #if CONF_WITH_MULTITHREADING

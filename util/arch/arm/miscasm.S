@@ -39,6 +39,25 @@ C_SYM(trap1_pexec):
         // we need to shift r0-r3 up by one to make room for the Pexec op code in r0
         push {r0-r4 ,lr}
         pop {r1-r4}
-        mov r0, #0x4b // Pexec op code in r0
+#if CONF_WITH_USER_ASPACE
+        mov r0, #0x4b
+#else
+        mvn r0, #0      // reserved selector for the internal ARM veneer
+#endif
+        svc 1
+#if !CONF_WITH_USER_ASPACE
+        .globl C_SYM(arm_kernel_exec_return)
+C_SYM(arm_kernel_exec_return):
+#endif
+        pop {r4, pc}
+
+#if CONF_WITH_ARM_SHARED_EXEC
+#include "pexecve.h"
+        .globl C_SYM(trap1_pexecve)
+C_SYM(trap1_pexecve):
+        push {r0-r4, lr}
+        pop {r1-r4}
+        ldr r0, =GEMDOS_PEXECVE
         svc 1
         pop {r4, pc}
+#endif

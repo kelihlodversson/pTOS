@@ -66,7 +66,13 @@
 #include "kheap.h"
 #include "procmem.h"
 #include "userlayout.h"
+#endif
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
 #include "../lib/ldso/startup.h"
+#endif
+#if CONF_WITH_ARM_SHARED_EXEC
+#include "mem.h"
+#include "tosvars.h"
 #endif
 
 /*
@@ -1156,17 +1162,22 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  * relocates by the load bias.  The basepage TPA has already been allocated
  * by proc.c using the sizes returned by elf_pgmhdrld().
  */
-#if CONF_WITH_USER_ASPACE
-/* where elf_load_image() put the image */
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+/* Metadata for the standard ELF entry. */
 typedef struct {
+#if CONF_WITH_USER_ASPACE
     VADDR image_va;     /* where the image's first byte (link_base) is */
-    BOOL pending;       /* the image is in the new process's own address space,
-                         * made for it now (kproc_load_begin()) */
+    BOOL pending;       /* private image is being loaded in its address space */
+#endif
     ULONG phoff;
     DL_START_INFO start;
 } ELFPLACE;
+#endif
 
+#if CONF_WITH_USER_ASPACE
 static LONG elf_load_image(FH h, PD *p, PROG_LAYOUT *layout, ELFPLACE *place)
+#elif CONF_WITH_ARM_SHARED_EXEC
+static LONG elf_load_image(FH h, PD *p, ELFPLACE *place)
 #else
 LONG elf_pgmld(FH h, PD *p)
 #endif
@@ -1275,11 +1286,6 @@ LONG elf_pgmld(FH h, PD *p)
     layout->nseg = 0;
     layout->end = 0;
     layout->entry = (ULONG)ehdr.e_entry + (ULONG)bias;
-    place->phoff = ehdr.e_phoff;
-    place->start.phent = ehdr.e_phentsize;
-    place->start.phnum = ehdr.e_phnum;
-    place->start.entry = layout->entry;
-    place->start.load_bias = (ULONG)bias;
 #else
     /*
      * the image is loaded at the first byte after the basepage, but on
@@ -1334,6 +1340,14 @@ LONG elf_pgmld(FH h, PD *p)
     p->p_bbase = PTR_TO_USERPTR(load_base + (info.file_end - info.link_base));
     p->p_blen  = (LONG)(info.mem_end - info.file_end);
 
+#endif
+
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+    place->phoff = ehdr.e_phoff;
+    place->start.phent = ehdr.e_phentsize;
+    place->start.phnum = ehdr.e_phnum;
+    place->start.entry = ehdr.e_entry + (ULONG)bias;
+    place->start.load_bias = (ULONG)bias;
 #endif
 
     /* Zero the loaded image first so bss and inter-segment gaps start
@@ -1399,12 +1413,15 @@ LONG elf_pgmld(FH h, PD *p)
             s->src = load_base + (ph.p_vaddr - info.link_base);
             if (s->vaddr + s->memsz > layout->end)
                 layout->end = s->vaddr + s->memsz;
-            if (!place->start.phdr && (ph.p_flags & 4) && ehdr.e_phoff >= ph.p_offset) {
-                ULONG offset = ehdr.e_phoff - ph.p_offset;
-                if (offset <= s->filesz && ph_table_size <= s->filesz - offset &&
-                    !((s->vaddr + offset) & 3))
-                    place->start.phdr = s->vaddr + offset;
-            }
+        }
+#endif
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+        if (!place->start.phdr && (ph.p_flags & 4) && ehdr.e_phoff >= ph.p_offset) {
+            ULONG offset = ehdr.e_phoff - ph.p_offset;
+            ULONG vaddr = ph.p_vaddr + (ULONG)bias;
+            if (offset <= ph.p_filesz && ph_table_size <= ph.p_filesz - offset &&
+                !((vaddr + offset) & 3))
+                place->start.phdr = vaddr + offset;
         }
 #endif
 
@@ -1530,6 +1547,50 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
         DISK_RETHROW(error);
     }
     return r;
+}
+#elif CONF_WITH_ARM_SHARED_EXEC
+LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vectors)
+{
+    ELFPLACE place = {0};
+    LONG rc = elf_load_image(h, p, &place);
+    ULONG top = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
+    ULONG image_end = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_bbase) + p->p_blen;
+    void *headers = NULL;
+    DISK_ERROR error = {0};
+    ULONG rsp, used;
+    int status;
+
+    if (rc != E_OK || !vectors)
+        return rc;      /* Internal staged accessories keep their basepage entry. */
+    if (top < image_end || top - image_end < DL_START_CAPACITY)
+        return ENSMEM;
+    if (!place.start.phdr) {
+        ULONG bytes;
+        if (place.start.phnum > DL_START_CAPACITY / place.start.phent)
+            return ERANGE;
+        bytes = place.start.phnum * place.start.phent;
+        headers = xmxalloc(bytes, MX_STRAM);
+        if (!headers)
+            return ENSMEM;
+        rc = DISK_CALL_ERROR(read_at(h, place.phoff, headers, bytes), &error);
+        place.start.phdr_copy = headers;
+    }
+    if (rc == E_OK) {
+        place.start.pagesz = 4096;
+        place.start.basepage = (ULONG)(uintptr_t)p;
+        place.start.bootdrive = bootdev;
+        status = dl_start_stack((UBYTE *)(uintptr_t)(top - DL_START_CAPACITY),
+                                DL_START_CAPACITY, top, filename, strlen(filename) + 1,
+                                vectors, &place.start, NULL, &rsp, &used);
+        if (status == DL_OK)
+            p->p_areg[7-3] = rsp;
+        else
+            rc = status == DL_NO_SPACE ? ERANGE : EPLFMT;
+    }
+    if (headers)
+        xmfree(headers);
+    DISK_RETHROW(error);
+    return rc;
 }
 #endif
 

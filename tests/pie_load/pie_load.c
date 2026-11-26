@@ -25,46 +25,26 @@
 
 void test_pie_load(void);
 
-/* the segments follow the basepage back to back only where the image is loaded
- * into the TPA: in an address space of its own it is at the image address */
-#if defined(__arm__) && !defined(TEST_WITH_USER_ASPACE)
-
-/*
- * The sizes in the basepage of a loaded program add up (with the basepage) to
- * the end of its image: Mshrink() to that size must leave the bss.  On ARM
- * the loader moves the image up from the basepage by up to 15 bytes, to keep
- * the alignment of what it holds, by an amount that depends on where the TPA
- * is; the bss length then includes that gap.  So the program is loaded after
- * blocks of 0, 4, 8 ... bytes have moved the TPA, the gap worked out
- * from where the image starts (the data base less the text length), and the
- * length of the bss less the gap must be the same every time.
- */
+#if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE)
+/* Exercise the same basepage sizing invariant from the running ELF child. */
 static const char *check_footprint(void)
 {
     static const long pads[] = { 0, 4, 8, 12, 16, 20, 24, 28 };
     void *held[sizeof pads / sizeof pads[0]];
     const char *failure = NULL;
+    char *argv[] = { "custom name", "two words", "", NULL };
+    char *envp[] = { "CHECK_LAYOUT=1", "", "AFTER_EMPTY=1", NULL };
     unsigned i;
 
-    for (i = 0; i < sizeof pads / sizeof pads[0]; i++)
-    {
-        BASEPAGE *bp;
+    for (i = 0; i < sizeof pads / sizeof pads[0]; i++) {
+        long before;
 
         held[i] = pads[i] ? (void *)Malloc(pads[i]) : NULL;
-        bp = (BASEPAGE *)Pexec(PE_LOAD, "C:\\PIEPROBE.TOS", "", 0);
-        if ((long)bp <= 0)
-        {
-            failure = "PE_LOAD of PIEPROBE.TOS failed";
-            continue;
-        }
-        /* the segments follow the basepage back to back, so the sizes add up
-         * to where the bss ends, wherever the loader put the image */
-        if ((uintptr_t)bp->p_dbase != (uintptr_t)bp + sizeof(BASEPAGE) + bp->p_tlen
-            || (uintptr_t)bp->p_bbase + bp->p_blen
-               != (uintptr_t)bp + sizeof(BASEPAGE) + bp->p_tlen + bp->p_dlen + bp->p_blen)
-            failure = "the sizes in the basepage do not reach the end of the image";
-        if (Pexec(PE_GO_FREE, "", bp, 0) != 0)
-            failure = "PIEPROBE.TOS exited nonzero after PE_LOAD";
+        before = Malloc(-1L);
+        if (Pexecve(0, "C:\\PIEPROBE.TOS", argv, envp) != 0)
+            failure = "shared ARM ELF argv, environment or image footprint";
+        if (Malloc(-1L) != before)
+            failure = "shared ARM launch did not return its memory";
     }
     for (i = 0; i < sizeof pads / sizeof pads[0]; i++)
         if (held[i])
@@ -72,7 +52,6 @@ static const char *check_footprint(void)
 
     return failure;
 }
-
 #endif
 
 void test_pie_load(void)
@@ -90,22 +69,20 @@ void test_pie_load(void)
     /* #1018: 68k mode 3 stages a PRG only: this ELF is refused unloaded */
     ptest_assert_msg(Pexec(PE_LOAD, "C:\\PIEPROBE.TOS", "", 0) == -66L,
                      "mode 3 staged an ELF");
-#elif defined(__arm__) && !defined(TEST_WITH_USER_ASPACE)
+#elif defined(TEST_NATIVE_ELF_ENTRY)
     {
-        /* non-MMU ARM (to be deprecated) keeps the staged modes unchecked */
-        const char *failure = check_footprint();
-
-        ptest_assert_msg(!failure, failure ? failure : "");
-    }
-#else
-    {
-        /* #1018: MMU ARM and x32 have no staged modes; refused before any argument
-         * is used, so the bogus pointers below are never looked at */
         static const short modes[] = { 3, 4, 5, 6, 7, 104, 106 };
         unsigned i;
         for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
-            ptest_assert_msg(Pexec(modes[i], (void *)1, (void *)1, (void *)1) == -32L,
+            ptest_assert_msg(trap_1_wwlll(0x4b, modes[i], 1, 1, 1) == -32L,
                              "an unsupported staged Pexec mode was not EINVFN");
+    }
+#endif
+#if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE)
+    {
+        const char *failure = check_footprint();
+
+        ptest_assert_msg(!failure, failure ? failure : "");
     }
 #endif
 

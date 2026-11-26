@@ -25,8 +25,6 @@ esac
 if [ "$layout" = shared ] && [ "$arch" = arm ]; then
     config=virt-arm-cli
     suffix=-shared
-    startup=crt0
-    staged=-DSTAGED_UNCHECKED   # no MMU: staged Pexec modes unchecked (#1018)
 elif [ "$layout" != private ]; then
     echo 'only ARM supports the optional shared layout' >&2
     exit 2

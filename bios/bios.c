@@ -24,7 +24,7 @@
 #include "bios.h"
 #include "shells.h"
 #include "../bdos/bdosstub.h"
-#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
 #include "../lib/ldso/startup.h"
 #endif
 #if CONF_WITH_BINFMT
@@ -116,7 +116,7 @@ extern void x86_64_memtest_run(void);
 #define DEF_PATH    "A:\\"      /* default value for path */
 
 static char default_env[ENV_SIZE];  /* default environment area */
-#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
 static char boot_path[] = "PATH=" DEF_PATH;
 static const char *boot_env[] = { default_env, boot_path };
 
@@ -136,7 +136,7 @@ static LONG boot_exec_vectors(WORD mode, const char *path, char role, BOOL shell
 
 static LONG boot_exec(WORD mode, const char *path, char role)
 {
-#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
     return boot_exec_vectors(mode, path, role, FALSE);
 #else
     char tail[] = { role ? 1 : 0, role, 0 };
@@ -346,7 +346,7 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
  */
 static LONG try_shell(const char *path, void *env)
 {
-#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
     UNUSED(env);
     return boot_exec_vectors(PE_LOADGO, path, 0, TRUE);
 #else
@@ -987,7 +987,7 @@ static void init_default_environment(void)
     p += sizeof(PATH_ENV);              /* point to first byte of path string */
     strcpy(p,DEF_PATH);
     *p += bootdev;                      /* fix up drive letter */
-#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
     boot_path[sizeof("PATH=") - 1] = *p;
 #endif
     p += sizeof(DEF_PATH);

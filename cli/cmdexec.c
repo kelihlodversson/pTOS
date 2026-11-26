@@ -18,7 +18,7 @@ static UWORD old_stdout;
  *  function prototypes
  */
 PRIVATE WORD add_to_path(char *path,const char *name);
-#if !CLI_VECTOR_EXEC
+#if !CLI_VECTOR_EXEC && !CLI_ARM_BUILTIN_EXEC
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv);
 #endif
 PRIVATE WORD check_user_path(char *path,const char *name);
@@ -28,10 +28,54 @@ PRIVATE LONG redirect_stdout(char *redir);
 PRIVATE void restore_stdout(char *redir);
 
 
+#if CLI_ARM_BUILTIN_EXEC
+#include "pexecve.h"
+
+/* The resident console's line buffer and stack are in the kernel image.
+ * Put the syscall inputs in a normal GEMDOS allocation before launching. */
+static LONG launch_from_resident_cli(const char *path, WORD argc, char **argv)
+{
+    char *entry, *text, *copy_path;
+    char **arguments, **envp;
+    ULONG size = strlen(path) + 1, envc = 0, i;
+    LONG rc;
+
+    for (entry = environment; *entry; entry += strlen(entry) + 1)
+        envc++;
+    if (envc + argc > PEXECVE_MAX_ENTRIES)
+        return CMDLINE_LENGTH;
+    for (i = 0; i < (ULONG)argc; i++)
+        size += strlen(argv[i]) + 1;
+    arguments = (char **)Malloc((argc + envc + 2) * sizeof(*arguments) + size);
+    if (!arguments)
+        return ENSMEM;
+    envp = arguments + argc + 1;
+    copy_path = (char *)(envp + envc + 1);
+    strcpy(copy_path, path);
+    text = copy_path + strlen(copy_path) + 1;
+    for (i = 0; i < (ULONG)argc; i++) {
+        arguments[i] = text;
+        strcpy(text, argv[i]);
+        text += strlen(text) + 1;
+    }
+    arguments[argc] = NULL;
+    entry = environment;
+    for (i = 0; i < envc; i++) {
+        envp[i] = entry;
+        entry += strlen(entry) + 1;
+    }
+    envp[envc] = NULL;
+
+    rc = trap1_pexecve(0, copy_path, arguments, envp);
+    Mfree(arguments);
+    return rc;
+}
+#endif
+
 LONG exec_program(WORD argc,char **argv,char *redir)
 {
 char path[MAXPATHLEN];
-#if !CLI_VECTOR_EXEC
+#if !CLI_VECTOR_EXEC && !CLI_ARM_BUILTIN_EXEC
 char cmdline[CMDLINELEN];
 #endif
 LONG rc;
@@ -41,7 +85,7 @@ LONG rc;
 
 #if CLI_VECTOR_EXEC
     (void)argc;
-#else
+#elif !CLI_ARM_BUILTIN_EXEC
     if (build_cmdline(cmdline,argc,argv) < 0)
         return CMDLINE_LENGTH;
 #endif
@@ -59,9 +103,8 @@ LONG rc;
         (void)Cursconf(0,0);
 #if CLI_VECTOR_EXEC
     rc = Pexecve(0,path,argv,environ);
-#elif defined(STANDALONE_CONSOLE) && defined(__arm__)
-    /* The non-scheduled ARM console still launches basepage-entry programs. */
-    rc = trap_1_wwlll(0x4b,0,(long)path,(long)cmdline,0);
+#elif CLI_ARM_BUILTIN_EXEC
+    rc = launch_from_resident_cli(path,argc,argv);
 #else
     rc = Pexec(0,path,cmdline,NULL);
 #endif
@@ -93,7 +136,7 @@ WORD separator = len && path[len-1] != PATHSEP;
  *
  *  returns -1 iff the line is too long
  */
-#if !CLI_VECTOR_EXEC
+#if !CLI_VECTOR_EXEC && !CLI_ARM_BUILTIN_EXEC
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv)
 {
 char *p, *q;

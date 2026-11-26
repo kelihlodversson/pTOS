@@ -99,7 +99,18 @@ C_SYM(enter):
 
         // now switch to fs stack
         ldr     sp,=fstrt
-        bl      C_SYM(osif)
+        // The internal veneer is the only ARM caller of the staged ABI.
+        // Match the saved SVC return PC and require a privileged caller.
+        ldr     ip, =C_SYM(arm_kernel_exec_return)
+        cmp     lr, ip
+        bne     4f
+        mrs     ip, spsr
+        and     ip, ip, #0x1f
+        teq     ip, #0x10
+        beq     4f
+        bl      C_SYM(arm_kernel_exec)
+        b       C_SYM(gouser)
+4:      bl      C_SYM(osif)
 
 //...fall into gouser....
 

@@ -233,7 +233,7 @@ LONG rc;
             return 1;
     }
     else {
-        if (CLI_VECTOR_EXEC)
+        if (CLI_VECTOR_EXEC || CLI_ARM_BUILTIN_EXEC)
             strip_quotes(argc,argv);
         rc = exec_program(argc,argv,redir);
     }

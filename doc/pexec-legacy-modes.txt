@@ -4,33 +4,21 @@ Historical Pexec modes (#1018)
 The staged-execution Pexec modes are 68k TOS/FreeMiNT compatibility, not a
 native launch API. pTOS has not released 1.0 and makes a clean break:
 
-  mode               m68k                       non-MMU ARM      MMU ARM / x32
-  ----------------   ------------------------   --------------   -------------
-  0 / 100 / 200      PRG and ELF launch and     retained         retained (#1008
-                     replacement                                 moves them to
-                                                                 Pexecve later)
-  3  (PE_LOAD)       loads a PRG only; an ELF   unchecked,       EINVFN
-                     target, or a binfmt        unchanged
-                     outcome that would stage
-                     one, is EPLFMT before any
-                     allocation
-  5 / 7 (basepage)   platform gate only         unchecked        EINVFN
-  4 / 6 / 104 / 106  platform gate only; the    unchecked        EINVFN
-                     classic PRG entry. With    (4/6; no
-                     the native scheduler       104/106)
-                     (virt-m68k-aspace): 4/104
-                     start a distinct PROCESS
-                     sharing the caller's
-                     address space
-                     (CONF_WITH_SHARED_VM_PEXEC,
-                     production), 106 is the
-                     async GO. ROM/non-MMU:
-                     4/6 in place as on TOS,
-                     104/106 EINVFN as upstream.
-                     MMU without the scheduler
-                     (amiga-aspace): ring-3 4
-                     and 104/106 are EINVFN
-  50 (PE_RELOCATE)   kernel only (NatFeats bootstrap)
+  mode               m68k                       ARM / x32
+  ----------------   ------------------------   -------------
+  0 / 100 / 200      PRG and ELF launch and     EINVFN
+                     replacement
+  3  (PE_LOAD)       PRG-only staging           EINVFN
+  5 / 7 (basepage)   platform gate only         EINVFN
+  4 / 6 / 104 / 106  classic PRG entry          EINVFN
+  50 (PE_RELOCATE)   kernel NatFeats bootstrap
+
+On m68k with the scheduler, 4/104 start a distinct PROCESS sharing the
+caller's address space (CONF_WITH_SHARED_VM_PEXEC), and 106 is async GO.
+ROM and non-MMU m68k run 4/6 in place and return EINVFN for 104/106. An
+MMU build without the scheduler also refuses ring-3 mode 4. Mode 3
+refuses an ELF target or a binfmt outcome that would stage an ELF before
+allocating any process memory.
 
 Targetless modes (5/7/4/6/104/106) carry no executable pathname, so neither
 the caller's format nor the content of the basepage decides whether they are
@@ -41,9 +29,9 @@ remains is ordinary runtime safety: the basepage must be one the caller made
 or loaded and still owns, not launched, stale or foreign, and every
 allocation is rolled back on failure.
 
-On MMU ARM and x32 the staged modes are refused with EINVFN before the
-arguments are read (bdos/uaccess.c) and again at the GEMDOS entry
-(xexec()), so no image is allocated and no ownership moves.
+ARM and x32 return EINVFN from the public GEMDOS function 0x4b before
+reading any arguments. Pexecve supplies the native pathname API
+(doc/pexecve-migration.txt).
 
 FreeMiNT (sys/k_exec.c, sys_pexec() and exec_region()) is the reference
 for how 4/6/104/106 start a basepage. Every start enters at p_tbase with
@@ -72,31 +60,19 @@ child, so a second 4/104 of it is refused (EIMBA), as is the caller's own
 basepage or a running one. Each start forking a new PROCESS from a
 caller-owned basepage, as FreeMiNT does, is #1032.
 
-Non-MMU ARM is to be deprecated and is left unchecked: it has no user/kernel
-boundary, so it keeps the staged modes exactly as before and does not tell
-the kernel's requests from a program's. CONF_WITH_STAGED_PEXEC says where
-the public staged modes exist (m68k, and kernels without user address
-spaces).
 
 Kernel-internal requests
 ------------------------
 The kernel itself still creates basepages for, and starts, code it carries:
 the ROM shell (exec_os), the built-in and early EmuCON, ROM programs the AES
 runs (aes_run_rom_program()) and the NatFeats bootstrap; and the AES loads
-desk accessories with a load-only request (pgmld()). On m68k and ARM these
-requests must enter through the GEMDOS trap, whose return delivers a
-reentrant launch's exit code to the right call site. They therefore use the
-same dispatcher with PE_KERNEL set in the mode (include/bdosdefs.h). A
-process with a user address space can never make such a request (refused in
-uaccess.c and xexec()); a kernel without address spaces has no user/kernel
-boundary to enforce, so there the bit is never put in the mode word
-(PE_KERNEL_TAG, include/config.h): FreeMiNT, Hatari's GEMDOS hook and other
-trap #1 filters see the TOS modes they know, and a program setting the bit
-gets EINVFN as before. The one consequence is that the AES accessory load is
-then an ordinary mode 3, PRG-only on m68k. PE_KERNEL requests never stage into a caller's heap and
-never move ownership to a user caller: the caller has no address space. On an
-address-space kernel a PE_KERNEL load (the x86-64 self-test harness) stages
-the image into the new process's own address space.
+desk accessories with a load-only request (pgmld()). On m68k and ARM these requests need a reentrant entry frame to deliver
+the child's exit status to the launcher. On shared ARM the kernel's SVC
+veneer reaches the internal dispatcher from supervisor code. The public
+0x4b entry always returns EINVFN. Classic m68k retains its trap calling
+convention for FreeMiNT and emulator hooks. Kernels with private address
+spaces identify internal requests with PE_KERNEL and refuse user-supplied
+instances.
 
 Inventory at dde5e08b (classification)
 ---------------------------------------
@@ -122,7 +98,7 @@ B  68k compatibility, kept and isolated to m68k
      _TEST option), PRG staged images only.
 
 C  obsolete, deleted
-   - MMU ARM / x32 public 3/5/7/4/6/104/106 (non-MMU ARM unchanged).
+   - ARM / x32 public 3/5/7/4/6/104/106.
    - ELF PE_LOAD into the caller's heap: elf_set_load_into_caller(), the
      caller-heap placement in elfld.c, kproc_load_alloc(),
      kproc_load_release(), kproc_set_moved_image(), the UH_LOADED / UH_IMAGE

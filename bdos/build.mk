@@ -33,17 +33,20 @@ endif
 obj-$(CONF_WITH_KPROC) += mintproc.o
 obj-$(CONF_WITH_MULTITHREADING) += clone.o clone_args.o
 obj-$(CONF_WITH_FORK_CORE) += fork_parent.o
-obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o launch_args.o proc_clone.o process_observer.o thread_startup.o
+obj-$(CONF_WITH_USER_ASPACE) += fsclose.o kaspace.o kthread.o proc_clone.o process_observer.o thread_startup.o
 obj-$(CONF_WITH_PROCESS_FILES) += process_files.o
 obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 
 # The kernel shares only load-plan validation and stack construction with
 # ld.so, never its metadata resolver, relocation engine or dependency graph.
 obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o
-ifeq ($(CONF_WITH_USER_ASPACE),y)
+ifneq ($(CONF_WITH_USER_ASPACE)$(CONF_WITH_ARM_SHARED_EXEC),)
+obj-y += launch_args.o
 obj-$(CONF_WITH_ELF_LOADER) += elfstartup.o
 endif
-obj-$(CONF_WITH_ELF_SHARED) += argv_legacy.o
+ifneq ($(CONF_WITH_ELF_SHARED)$(CONF_WITH_ARM_SHARED_EXEC),)
+obj-y += argv_legacy.o
+endif
 
 obj/elfimage.o: lib/ldso/image_plan.c lib/ldso/image.h $(AUTOCONF_H)
 	$(CC) $(CFLAGS) -Ilib/ldso -MMD -MP -c $< -o $@

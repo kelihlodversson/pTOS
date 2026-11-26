@@ -202,7 +202,7 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
         if (r != 1)
             break;
 #endif
-#if CONF_WITH_USER_ASPACE
+#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
         r = elf_pgmld(h, p, filename, vectors);
 #else
         r = vectors ? EINVFN : elf_pgmld(h, p);

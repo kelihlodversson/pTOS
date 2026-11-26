@@ -436,7 +436,7 @@ static const FND funcs[] =
     { F(xmalloc),  0, W_N(1,RL) },     /* 0x48 */
     { F(xmfree),   0, W_N(1,P) },      /* 0x49 */
     { F(xsetblk),  0, W_N(3,WPL) },    /* 0x4A */
-#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+#if ARCH_ARM || (CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE)
     { NI,          0, W_N(0,V) },      /* 0x4B: historical Pexec */
 #else
     { F(xexec),    0, W_N(4,WLLL) },   /* 0x4B */
@@ -733,7 +733,7 @@ long osif(short *pw)
 restrt:
     fn = pw[0];
 
-#if CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI)
+#if CONF_WITH_ARM_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
     if (fn == GEMDOS_PEXECVE) {
 #if CONF_WITH_NATIVE_ABI
         /* The mode is a signed WORD. Keep the pointer slots full width

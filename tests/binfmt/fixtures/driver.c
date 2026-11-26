@@ -1,12 +1,9 @@
-/* Native boot driver, testing public Pexec and inherited launch state. */
+/* Native boot driver, exercising launch arguments and inherited state. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <mint/osbind.h>
 #include <mint/basepage.h>
-#ifndef NATIVE_VECTOR_FIXTURE
-#include "../../legacy-pexec.h"
-#endif
 #ifdef PROCESS_DIRECTORY_TEST
 #include <mint/mintbind.h>
 #include "../../../include/process_exec.h"
@@ -165,7 +162,7 @@ static int run(const char *name, const char *kind, int mode, int classic, long e
     return 0;
 }
 
-#if !defined(NATIVE_VECTOR_FIXTURE) && !defined(STAGED_UNCHECKED)
+#ifndef NATIVE_VECTOR_FIXTURE
 /* #1018: mode 3 names an executable and stages a 68k PRG only; everything
  * that would stage an ELF (a foreign ELF, an interpreter) is EPLFMT before
  * anything is allocated, and MMU ARM/x32 have no mode 3 at all. */
@@ -209,7 +206,7 @@ int main(void)
 {
     char path[80];
     long handle;
-    int i, mode;
+    int i;
     puts("binfmt boot: BEGIN");
     boot = Dgetdrv();
     if (boot < 0 || boot >= 26) goto failed;
@@ -225,32 +222,24 @@ int main(void)
     shared = Fcreate(path, 0);
     if (shared < 0) goto failed;
     (void)Dsetdrv(0);
-#if defined(STAGED_UNCHECKED)
-    /* non-MMU ARM (to be deprecated) keeps the staged modes unchecked */
-    for (mode = 0; mode <= 6; mode += 6)
-#else
-    mode = 0;
-#endif
-    {
-        if (run("SUB\\DEMO.FMT", "FORMAT", mode, 0, 37, 1) ||
-            run("SUB\\SIMPLE.TOS", "SHEBANG", mode, 0, 37, 1) ||
-            run("SUB\\CHAIN.TOS", "CHAIN", mode, 0, 37, 1) ||
-            run("SUB\\D0.TOS", "DEPTH4", mode, 0, 37, 1) ||
-            run("SUB\\FOREIGN.ELF", "ELF", mode, 0, 37, 1) ||
-            run("SUB\\DEMO.FMT", "CLASSIC", mode, 1, 37, 1) ||
-            run("SUB\\DEMO.FMT", "CLASSIC", mode, 2, 37, 1) ||
-            run("SUB\\DEMO.FMT", "STALE", mode, 3, 37, 1) ||
-            run("SUB\\DEMO.FMT", "QUOTED", mode, 0, 37, 1) ||
-            run("SUB\\DEMO.FMT", "SHORT", mode, 0, 37, 1) ||
-            run("SUB\\D0.TOS", "SHORTCHAIN", mode, 0, 37, 1) ||
-            run("SUB\\DEMO.FMT", "LONG", mode, 0, 37, 1) ||
-            run("BIN\\INTERP.TOS", "NATIVE", mode, 0, 37, 1)) goto failed;
+    if (run("SUB\\DEMO.FMT", "FORMAT", 0, 0, 37, 1) ||
+        run("SUB\\SIMPLE.TOS", "SHEBANG", 0, 0, 37, 1) ||
+        run("SUB\\CHAIN.TOS", "CHAIN", 0, 0, 37, 1) ||
+        run("SUB\\D0.TOS", "DEPTH4", 0, 0, 37, 1) ||
+        run("SUB\\FOREIGN.ELF", "ELF", 0, 0, 37, 1) ||
+        run("SUB\\DEMO.FMT", "CLASSIC", 0, 1, 37, 1) ||
+        run("SUB\\DEMO.FMT", "CLASSIC", 0, 2, 37, 1) ||
+        run("SUB\\DEMO.FMT", "STALE", 0, 3, 37, 1) ||
+        run("SUB\\DEMO.FMT", "QUOTED", 0, 0, 37, 1) ||
+        run("SUB\\DEMO.FMT", "SHORT", 0, 0, 37, 1) ||
+        run("SUB\\D0.TOS", "SHORTCHAIN", 0, 0, 37, 1) ||
+        run("SUB\\DEMO.FMT", "LONG", 0, 0, 37, 1) ||
+        run("BIN\\INTERP.TOS", "NATIVE", 0, 0, 37, 1)) goto failed;
 #if defined(__m68k__)
-        if (run("SUB\\RAW.TOS", "PRG", mode, 0, 37, 0)) goto failed;
+    if (run("SUB\\RAW.TOS", "PRG", 0, 0, 37, 0)) goto failed;
 #else
-        if (run("SUB\\RAW.TOS", "PRG", mode, 0, 37, 1)) goto failed;
+    if (run("SUB\\RAW.TOS", "PRG", 0, 0, 37, 1)) goto failed;
 #endif
-    }
 #if defined(__m68k__)
     /* the classic staged launch of a real PRG, then the refused ELF stagings */
     if (run("SUB\\RAW.TOS", "PRG", 6, 0, 37, 0) || !interpreted_expectation() ||
@@ -259,8 +248,6 @@ int main(void)
         staged("BIN\\INTERP.TOS", interpreted_expectation())) goto failed;
 #elif defined(NATIVE_VECTOR_FIXTURE)
     if (trap_1_wwlll(0x193, 3, 0, 0, 0) != -32) goto failed;
-#elif !defined(STAGED_UNCHECKED)
-    if (staged("SUB\\RAW.TOS", -32) || staged("SUB\\DEMO.FMT", -32)) goto failed;
 #endif
     for (i = 0; i < 12; i++) {
         if (run("SUB\\MISSING.TOS", "ERROR", 0, 0, -33, 0) ||
