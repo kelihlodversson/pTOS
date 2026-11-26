@@ -61,6 +61,7 @@ static int test_syscalls(const char *path)
     {
         char prg_path[] = "A:\\VEC.PRG";
         const char *const prg_env[] = {variable, "FLAG=", 0};
+        const char *const classic_argv[] = {"", "one", "two", 0};
 
         prg_path[0] = path[0];
         status = pexecve(0, prg_path, argv, envp);
@@ -68,6 +69,9 @@ static int test_syscalls(const char *path)
             return 110 - status;
         status = pexecve(0, prg_path, argv, prg_env);
         if (status != 77)
+            return status < 0 ? 160 - status : status;
+        status = pexecve(0, prg_path, classic_argv, prg_env);
+        if (status != 78)
             return status < 0 ? 160 - status : status;
     }
 #endif

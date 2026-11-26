@@ -202,15 +202,49 @@ static LONG write_argument(void *context, const char *s, ULONG n, ULONG index)
     return E_OK;
 }
 
+static LONG finish_environment(WRITER *w)
+{
+    LONG rc = append(w, "\0", w->used ? 1 : 2);
+
+    if (!rc)
+        w->storage[w->used] = 0; /* even-size padding for alloc_env() */
+    return rc;
+}
+
 static LONG finish_arguments(WRITER *w)
 {
-    LONG rc = append(w, "", 1);
+    LONG rc = finish_environment(w);
 
     if (rc)
         return rc;
-    w->storage[w->used] = 0; /* even-size padding for alloc_env() */
     w->tail[0] = w->quoted || w->tail_size > 126 ? 127 : (char)w->tail_size;
     return E_OK;
+}
+
+static BOOL pack_classic_tail(const DL_START_VECTORS *vectors, char tail[128])
+{
+    ULONG i, used = 0;
+
+    /* A classic PRG runtime supplies an empty argv[0]. A caller-selected
+     * name needs the extended environment even for simple operands. */
+    if (vectors->argv[0][0])
+        return FALSE;
+    for (i = 1; i < vectors->argc; i++) {
+        const char *arg = vectors->argv[i];
+
+        if (!*arg || used == 126)
+            return FALSE;
+        if (i > 1)
+            tail[++used] = ' ';
+        for (; *arg; arg++) {
+            if (used == 126 || whitespace((UBYTE)*arg) || *arg == '\'' || *arg == '"')
+                return FALSE;
+            tail[++used] = *arg;
+        }
+    }
+    tail[0] = (char)used;
+    memset(tail + used + 1, 0, 127 - used);
+    return TRUE;
 }
 
 LONG legacy_pack_vectors(const DL_START_VECTORS *vectors, char *storage, char tail[128])
@@ -224,7 +258,6 @@ LONG legacy_pack_vectors(const DL_START_VECTORS *vectors, char *storage, char ta
     if (!vectors->argc)
         return ERANGE;
     memset(&writer, 0, sizeof(writer));
-    memset(tail, 0, 128);
     writer.storage = storage;
     writer.tail = tail;
     for (i = 0; i < vectors->envc; i++) {
@@ -236,6 +269,9 @@ LONG legacy_pack_vectors(const DL_START_VECTORS *vectors, char *storage, char ta
         if (rc)
             return rc;
     }
+    if (pack_classic_tail(vectors, tail))
+        return finish_environment(&writer);
+    memset(tail, 0, 128);
     rc = append(&writer, "ARGV=", 5);
     if (rc)
         return rc;

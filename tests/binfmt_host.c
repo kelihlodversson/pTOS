@@ -119,6 +119,7 @@ static void dynamic_arguments(const char *const *expected, UWORD count)
 {
     static unsigned char stack[8192];
     static const char *slots[LEGACY_START_SLOTS(BINFMT_ENV)];
+    const char *filename = *expected[0] ? expected[0] : "APP.TOS";
     LEGACY_START_ARGS arguments;
     DL_START_INFO info;
     uint32_t rsp, used, argc, offset, address, i, size;
@@ -129,10 +130,10 @@ static void dynamic_arguments(const char *const *expected, UWORD count)
     memset(&info, 0, sizeof(info));
     info.pagesz = 4096;
     info.phent = 32;
-    assert(legacy_start_vectors(&arguments, expected[0], (const unsigned char *)tail,
+    assert(legacy_start_vectors(&arguments, filename, (const unsigned char *)tail,
                                 sizeof(tail), (const unsigned char *)storage, size + 2,
                                 slots, sizeof(slots) / sizeof(slots[0])) == DL_OK);
-    assert(dl_start_stack(stack, sizeof(stack), top, expected[0], strlen(expected[0]) + 1,
+    assert(dl_start_stack(stack, sizeof(stack), top, filename, strlen(filename) + 1,
                           &arguments.vectors, &info, NULL, &rsp, &used) == DL_OK);
     assert(rsp + used == top && !(rsp & 15));
     offset = rsp - base;
@@ -242,9 +243,77 @@ static void chained_arguments(void)
     assert(binfmt_arguments(env, input_tail, redirects, BINFMT_DEPTH + 1, storage, tail) == EINVAL);
 }
 
+static void prg_vectors(void)
+{
+    const char *args[] = { "", "one", "C:\\FILE.PRG" };
+    const char *env[] = { "X=1" };
+    const char *const extended[] = { "", "", "two words", "literal\"quote" };
+    const char *const ambiguous[] = { "", "two words", "a\tb", "a\nb", "it's", "a\"b" };
+    DL_START_VECTORS vectors = {0};
+    char operand[128];
+    static char limit[BINFMT_ENV];
+    unsigned int i;
+
+    vectors.argv = args;
+    vectors.argc = 3;
+    vectors.envp = env;
+    vectors.envc = 1;
+    memset(storage, 0xff, sizeof(storage));
+    memset(tail, 0xff, sizeof(tail));
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(tail[0] == 15 && !strcmp(tail + 1, "one C:\\FILE.PRG") && !tail[127]);
+    assert(!memcmp(storage, "X=1\0\0", 6));
+
+    vectors.argc = 1;
+    vectors.envc = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(!tail[0] && !tail[1] && !storage[0] && !storage[1]);
+
+    vectors.argc = 2;
+    args[1] = operand;
+    memset(operand, 'a', 126);
+    operand[126] = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(tail[0] == 126 && !tail[127] && !memcmp(tail + 1, operand, 126));
+    operand[126] = 'a';
+    operand[127] = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+    dynamic_arguments(args, 2);
+
+    for (i = 0; i < sizeof(ambiguous) / sizeof(ambiguous[0]); i++) {
+        args[1] = ambiguous[i];
+        assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+        dynamic_arguments(args, 2);
+    }
+    args[0] = "caller name";
+    args[1] = "one";
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+    dynamic_arguments(args, 2);
+    vectors.argv = extended;
+    vectors.argc = sizeof(extended) / sizeof(extended[0]);
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+    dynamic_arguments(extended, vectors.argc);
+
+    memset(limit, 'x', sizeof(limit));
+    limit[sizeof(limit) - 2] = 0;
+    env[0] = limit;
+    args[0] = "";
+    vectors.argv = args;
+    vectors.argc = 2;
+    vectors.envc = 1;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(!storage[BINFMT_ENV - 2] && !storage[BINFMT_ENV - 1]);
+    args[0] = "caller name";
+    assert(legacy_pack_vectors(&vectors, storage, tail) == ERANGE);
+    args[0] = "";
+    limit[sizeof(limit) - 2] = 'x';
+    limit[sizeof(limit) - 1] = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == ERANGE);
+}
+
 int main(void)
 {
-    rules(); shebangs(); arguments(); chained_arguments();
+    rules(); shebangs(); arguments(); chained_arguments(); prg_vectors();
     puts("binfmt parser and arguments: PASS");
     return 0;
 }
