@@ -25,7 +25,7 @@
  * segments may not share a page, and the entry point must lie in an
  * executable one; anything else is refused before a page is mapped.
  */
-typedef struct {
+typedef struct prog_image {
     const UBYTE *data;
     ULONG size;
 } PROG_IMAGE;

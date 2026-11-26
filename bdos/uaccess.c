@@ -214,7 +214,7 @@ static long curdta_ok(void)
 #endif
 }
 
-#if !CONF_WITH_NATIVE_ABI
+#if !(CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE)
 #if CONF_WITH_USER_ASPACE
 /*
  * alloc_env() copies the environment rounded up to an even size: when the
@@ -451,7 +451,7 @@ long bdos_check_user_args(const long *pw)
     UWORD i;
     long rc;
 
-#if !CONF_WITH_NATIVE_ABI
+#if !(CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE)
     if (fn == 0x4B)
         return pexec_ok(pw);
 #endif
