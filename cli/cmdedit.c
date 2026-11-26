@@ -83,11 +83,13 @@ WORD width, first = 0, column = 0;
     message(prompt);
     message(">");
 #if CLI_VECTOR_EXEC
-    width = screen_cols > 1 ? screen_cols - (strlen(prompt)+1) % screen_cols - 1 : 1;
-    if (width < 2) {
+    width = screen_cols > 1 ? screen_cols-1 : 1;
+    /* VT52 may discard characters at the right edge. Start fresh when
+     * the prompt leaves insufficient space, regardless of the wrap mode. */
+    if (strlen(prompt)+2 >= (size_t)width)
         messagenl("");
-        width = screen_cols > 1 ? screen_cols-1 : 1;
-    }
+    else
+        width -= strlen(prompt)+1;
 #endif
     while(1) {
         charcode = conin();

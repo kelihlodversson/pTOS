@@ -12,10 +12,6 @@
 #include "cmd.h"
 #include "string.h"
 
-#if CLI_VECTOR_EXEC
-extern char **environ;
-#endif
-
 static UWORD old_stdout;
 
 /*

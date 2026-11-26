@@ -125,6 +125,16 @@ WORD argc, rc;
 
     {
         /* Setup path from the PATH environment variable */
+#if CLI_VECTOR_EXEC
+        char *path;
+        find_envvar(&path,"PATH=");
+        if (path) {
+            if (strlen(path) < sizeof(user_path))
+                strcpy(user_path,path);
+            else
+                errmsg(EPTHNF);
+        }
+#else
         char *largv[2];
         find_envvar(&largv[1],"PATH=");
         if (largv[1]) {
@@ -136,6 +146,7 @@ WORD argc, rc;
                 execute(2,largv,redir_name);
             }
         }
+#endif
     }
 
     while(1) {
@@ -168,11 +179,13 @@ WORD argc, rc;
 }
 
 #ifdef STANDALONE_CONSOLE
+#if !CLI_VECTOR_EXEC
 #include <mint/basepage.h>
 
 char *environment;      /* cmdasm.S's removed _coma_start used to set
                             this from the basepage directly; libcmini's
                             _base gives us the same basepage here */
+#endif
 
 /*
  * libcmini's own crt0/minicrt0 provides _start and expects a normal
@@ -182,7 +195,9 @@ char *environment;      /* cmdasm.S's removed _coma_start used to set
  */
 int main(void)
 {
+#if !CLI_VECTOR_EXEC
     environment = _base->p_env;
+#endif
     cmdmain();
     return 0;
 }
@@ -283,21 +298,28 @@ int i;
  *  psrch: variable name followed by '=', e.g. "PATH="
  *  ppath: returned address of the first character after the found
  *         variable, or NULL if variable was not found.
- *  Note:  the implementation is the same as that of the AES sh_envrn
- *         which we can't use because EmuCON is not a GEM app.
  */
 PRIVATE void find_envvar(char **ppath, const char *psrch)
 {
-    /* The implementation is the same as that of the AES sh_envrn */
+#if CLI_VECTOR_EXEC
+    char **entry;
+#else
     char *p;
+#endif
     WORD len;
 
     len = strlen(psrch);
     *ppath = NULL;
 
-    /*
-     * scan environment string until double nul
-     */
+#if CLI_VECTOR_EXEC
+    for (entry = environ; entry && *entry; entry++) {
+        if (strncmp(*entry, psrch, len) == 0) {
+            *ppath = *entry + len;
+            break;
+        }
+    }
+#else
+    /* Scan the classic environment block until the double NUL. */
     for (p = environment; *p; ) {
         if (strncmp(p, psrch, len) == 0) {
             *ppath = p + len;
@@ -306,6 +328,7 @@ PRIVATE void find_envvar(char **ppath, const char *psrch)
         while(*p++) /* skip to end of current env variable */
             ;
     }
+#endif
 }
 
 /*
