@@ -48,7 +48,9 @@ printf '%s\n' 'Acquire::Retries "5";' \
 # image lacks, as the last run on this image downloaded them: no index to
 # fetch and nothing to download.
 if compgen -G "$dir/*.deb" >/dev/null; then
-  if sudo dpkg -i "$dir"/*.deb && installed; then
+  # Resolve the whole dependency set before unpacking. A cached set may
+  # rely on packages that were present on the runner that filled it.
+  if sudo apt-get install -y --no-download ${opts[@]+"${opts[@]}"} "$dir"/*.deb && installed; then
     echo "installed from the cache: ${pkgs[*]}"
     exit 0
   fi

@@ -4,7 +4,7 @@
 #
 # The runners' mirror is sometimes slow (57 kB/s was seen: minutes for the
 # 20 MB of a toolchain), and which job gets it is luck.  With the files in the
-# cache a job installs them with dpkg, without fetching an index or anything
+# cache a job asks apt to install them offline, without fetching an index or anything
 # else; without, it fetches from the mirror, retrying a stalled one, and the
 # files go to the cache for the next job.  The key has the image version of
 # the runner, as the files are what it lacked, and the package list.  Each
