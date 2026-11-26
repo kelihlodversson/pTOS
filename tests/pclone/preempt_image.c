@@ -1,6 +1,7 @@
 /* A small independently loaded PROCESS for authentic timer GPR/FPU proof.
  * Its root is created by the loader, including on ROM-window MMU backends
  * whose existing private-clone operation deliberately returns EINVFN. */
+#include "../entry_args.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
@@ -12,9 +13,9 @@ extern long clone_preempt_registers(long),clone_preempt_registers_alt(long);
 #else
 extern long clone_preempt_registers(void),clone_preempt_registers_alt(void);
 #endif
-int main(void)
+int main(int argc, char **argv)
 {
-    unsigned role=(unsigned char)_base->p_cmdlin[1]=='1',attempt=0,cycle;
+    unsigned role=test_entry_argument(argc, argv)[0] == '1',attempt=0,cycle;
     long report[3],fd,error=0;
 #if defined(__mc68000__)
     long fpu=0;

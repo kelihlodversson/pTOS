@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Normal GEM source interfaces across isolated, dynamically linked clients. */
 #include <gem.h>
 #include "portab.h"
@@ -21,9 +22,8 @@ static BOOL equal(const UBYTE *a, const UBYTE *b, ULONG length)
 static LONG spawn(char role)
 {
     char tail[3] = { 1, 0, 0 };
-    static const char environment[] = { 0, 0 };
     tail[1] = role;
-    return process(0x4b, 100, (uintptr_t)"C:\\GEMPEER.TOS", (uintptr_t)tail, (uintptr_t)environment);
+    return x32_exec_argument(100, "C:\\GEMPEER.TOS", tail + 1, 0);
 }
 int main(int argc, char **argv, char **envp)
 {

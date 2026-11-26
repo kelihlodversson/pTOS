@@ -2,10 +2,10 @@
 #include "config.h"
 #include "pclone.h"
 #include "threadcalls.h"
+#include "exec.h"
 #if CONF_WITH_MULTITHREADING
 typedef long long S64;
 extern S64 x32_probe_call(unsigned long long,S64,S64,S64);
-extern S64 x32_probe_run_elf(const char *, const char *);
 extern unsigned x32_thread_registers(unsigned seed);
 extern long clone_irq_registers(void);
 #define CALL(n,a,b,c) x32_probe_call(n,(S64)(unsigned long)(a),(S64)(unsigned long)(b),(S64)(unsigned long)(c))
@@ -75,7 +75,7 @@ static void worker(void *argument)
     }
 #endif
     if (w->kind==6) {
-        if(x32_probe_run_elf("C:\\X32HELLO.TOS",0)!=0) finish(94);
+        if(x32_exec_argument(0,"C:\\X32HELLO.TOS",0,0)!=0) finish(94);
         if(create(&workers[1],CONF_WITH_PREEMPTION ? 9 : 3,
                   CLONE_VM|CLONE_SAME_PROCESS)<=0) finish(93);
         finish(0x44);

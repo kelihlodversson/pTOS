@@ -120,18 +120,29 @@ static char default_env[ENV_SIZE];  /* default environment area */
 static char boot_path[] = "PATH=" DEF_PATH;
 static const char *boot_env[] = { default_env, boot_path };
 
-static LONG boot_exec(WORD mode, const char *path, const char *argument)
+static LONG boot_exec_vectors(WORD mode, const char *path, char role, BOOL shell)
 {
+    char argument[] = { role, 0 };
     const char *argv[] = { path, argument };
     DL_START_VECTORS vectors = {0};
 
     vectors.argv = argv;
-    vectors.argc = argument ? 2 : 1;
+    vectors.argc = role ? 2 : 1;
     vectors.envp = boot_env;
-    vectors.envc = ARRAY_SIZE(boot_env);
+    vectors.envc = shell ? ARRAY_SIZE(boot_env) : 0;
     return proc_exec_kernel_vectors(mode, path, &vectors);
 }
 #endif
+
+static LONG boot_exec(WORD mode, const char *path, char role)
+{
+#if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
+    return boot_exec_vectors(mode, path, role, FALSE);
+#else
+    char tail[] = { role ? 1 : 0, role, 0 };
+    return Pexec(mode, path, tail, NULL);
+#endif
+}
 
 /*==== External declarations ==============================================*/
 
@@ -335,7 +346,7 @@ static LONG try_shell(const char *path, void *env)
 {
 #if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
     UNUSED(env);
-    return boot_exec(PE_LOADGO, path, NULL);
+    return boot_exec_vectors(PE_LOADGO, path, 0, TRUE);
 #else
     return Pexec(PE_LOADGO, path, "", (char *)env);
 #endif
@@ -1076,13 +1087,13 @@ static void test_first_anchor(void)
 #if CONF_WITH_MULTITHREADING
     /* The first disk executable on the regression image starts with the
      * ordinary mode 0 call from AUTO's still-unmanaged boot controller. */
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     if (status != FIRST_ANCHOR_STATUS || ksched_active())
         fail_first_anchor("boot Pexec(0)", status);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1m", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 'm');
     if (status != FIRST_ANCHOR_STATUS || ksched_active())
         fail_first_anchor("managed Pexec(0)", status);
-    pid = Pexec(PE_ASYNC_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    pid = boot_exec(PE_ASYNC_LOADGO, FIRST_ANCHOR_PATH, 0);
     if (pid <= 0)
         fail_first_anchor("boot Pexec(100)", pid);
     status = ksched_wait((WORD)pid, 0, 0);
@@ -1098,7 +1109,7 @@ static void test_first_anchor(void)
          * is explicitly selected to keep the THREAD-less carrier, even
          * when the public Pclone or Pthjoin gates are disabled. */
         ksched_test_nested(0x20);
-        status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1u", NULL);
+        status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 'u');
         if (status != FIRST_ANCHOR_STATUS || ksched_active() || ksched_test_nested(7) != untracked + 1)
             fail_first_anchor("untracked Pexec(0)", status);
     }
@@ -1109,19 +1120,19 @@ static void test_first_anchor(void)
         fail_first_anchor("launch ownership accounting", 0);
 #if CONF_WITH_MULTITHREADING
     kproc_test_fail_kernel_stack(TRUE);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     kproc_test_fail_kernel_stack(FALSE);
     if (status != ENSMEM || ksched_active())
         fail_first_anchor("syscall-stack rollback", status);
     kproc_test_fail_thread_space(TRUE);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     kproc_test_fail_thread_space(FALSE);
     if (status != ENSMEM || ksched_active())
         fail_first_anchor("THREAD address-space retain rollback", status);
     first_anchor_counts(after);
     if (memcmp(before, after, sizeof(before)))
         fail_first_anchor("rollback ownership accounting", 0);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     first_anchor_counts(after);
     if (status != FIRST_ANCHOR_STATUS || ksched_active() || memcmp(before, after, sizeof(before)))
         fail_first_anchor("Pexec(0) after rollback", status);
@@ -1148,21 +1159,21 @@ static void run_auto_program(const char* filename)
 #if (CONF_WITH_MULTITHREADING) || CONF_WITH_EXIT_HANDOFF_TEST
         test_first_anchor();
 #endif
-        pid=Pexec(PE_ASYNC_LOADGO,path,"",NULL);
+        pid=boot_exec(PE_ASYNC_LOADGO, path, 0);
         if(pid<=0) panic("native global async admission failed");
         result=ksched_wait((WORD)pid,0,0);
         if((ULONG)result!=((ULONG)pid<<16)) panic("native global async wait failed");
         /* Separate completed synchronous admission, bounded detached pump,
          * then a fresh user launcher whose PD may reuse the first one's. */
-        if(Pexec(PE_LOADGO,"C:\\GLBSRC.TOS","",NULL)) panic("native global launcher failed");
+        if(boot_exec(PE_LOADGO, "C:\\GLBSRC.TOS", 0)) panic("native global launcher failed");
         if(!ksched_active()) panic("native global child lost after launcher return");
         ksched_yield();
         if(!ksched_active()) panic("native global blocked child lost across park");
-        if(Pexec(PE_LOADGO,"C:\\GLBCHK.TOS","",NULL)) panic("native global later entry failed");
+        if(boot_exec(PE_LOADGO, "C:\\GLBCHK.TOS", 0)) panic("native global later entry failed");
         if(ksched_active()) panic("native global records survived final wait");
     } else
 #endif
-    Pexec(PE_LOADGO, path, "", NULL);
+    boot_exec(PE_LOADGO, path, 0);
 #if CONF_WITH_MULTITHREADING
     /* AUTO launches are synchronous, but independently admitted children are
      * not their lifetime dependents. One bounded cooperative opportunity. */
@@ -1374,7 +1385,7 @@ void biosmain(void)
          * Pexec a program called COMMAND.PRG
          * like Atari TOS, it inherits an empty environment
          */
-        Pexec(PE_LOADGO, "COMMAND.PRG", "", NULL);
+        boot_exec(PE_LOADGO, "COMMAND.PRG", 0);
     }
 #if CONF_WITH_CUIS && CONF_EXTERNAL_DESK
     else if (CONF_WITH_CUIS && CONF_EXTERNAL_DESK) {

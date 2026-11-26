@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Standard GEM source calls, with raw process/queue probes kept test-only. */
 #include <gem.h>
 #include "cuis.h"
@@ -125,9 +126,8 @@ int main(int argc, char **argv, char **envp)
     AESGLOBAL globals = { 0 };
     LONG pid, handle, child, status, sender;
     ULONG w[4], i;
-    char tail[128] = { 1, 'c', 0 };
-    static const char environment[] = "SHELLTEST=value\0PATH=C:\\BAD;C:\\RPATH,C:\\LOOKUP\0\0";
-    static const char argv_environment[] = "SHELLTEST=value\0ARGV=\0fake-name\0c\0PATH=C:\\FROM_ARG\0\0";
+    const char *const environment[] = { "SHELLTEST=value", "PATH=C:\\BAD;C:\\RPATH,C:\\LOOKUP", 0 };
+    const char *const no_path[] = { "SHELLTEST=value", 0 };
     (void)envp;
     if (argc > 1 && (argv[1][0] == 'a' || argv[1][0] == 'r'))
         return gem_argv_child(argc,argv,envp);
@@ -191,8 +191,13 @@ int main(int argc, char **argv, char **envp)
     for (i = 0; i < 3; i++) {
         w[0]=11; w[1]=22; w[2]=33; w[3]=44;
         GEM_TEST_CHECK(raw(CUIS_SERVICE_CLASS, CUIS_STREAM_WRITE, handle, (uintptr_t)w, sizeof(w), 0, 0, 0) == sizeof(w));
-        tail[0] = i == 2 ? 127 : 1; tail[1] = i == 1 ? 'x' : 'c';
-        child = PROC(0x4b, 100, (uintptr_t)"APPS\\GEMSHELL.TOS", (uintptr_t)tail, (uintptr_t)(i == 2 ? argv_environment : environment));
+        {
+            const char *const arguments[] = { i == 2 ? "fake-name" : "GEMSHELL.TOS",
+                                              i == 1 ? "x" : "c",
+                                              i == 2 ? "PATH=C:\\FROM_ARG" : 0, 0 };
+            child = x32_exec_vectors(100, "APPS\\GEMSHELL.TOS", arguments,
+                                     i == 2 ? no_path : environment);
+        }
         GEM_TEST_CHECK(child > 0 && child != pid);
         GEM_TEST_CHECK(evnt_timer(20) == 1 && appl_yield() == 1);
         status = PROC(0x13a, child, 0, 0, 0);

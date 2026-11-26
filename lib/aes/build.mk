@@ -159,7 +159,7 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/CUISCHED.TOS
 endif
 
-obj/libaes/ASYNC.TOS: tests/cuis/async.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so tests/cuis/native_probe.h tests/cuis/stream_probe.h include/libaes.h include/aesglobal.h
+obj/libaes/ASYNC.TOS: tests/cuis/async.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so tests/cuis/native_probe.h tests/cuis/stream_probe.h include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -167,7 +167,7 @@ all: obj/libaes/ASYNC.TOS
 endif
 
 obj/libaes/GEM.TOS: GEM_TEST_FLAGS = $(LDSO_APP_LDFLAGS)
-obj/libaes/GEM.TOS: tests/cuis/gem_explicit.c tests/cuis/gem_explicit.h obj/libaes/EXPLICIT.PRG tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEM.TOS: tests/cuis/gem_explicit.c tests/cuis/gem_explicit.h obj/libaes/EXPLICIT.PRG tests/cuis/gem_lifecycle.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/libaes/GEMLIFE.PRG obj/libaes/GEMLIFE.ACC tests/cuis/gem_argv.c tests/cuis/gem_argv.h tests/cuis/gem.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/libaes/CHAIN.PRG obj/libaes/FIXED.PRG tests/cuis/gem_exit.c tests/cuis/gem_exit.h tests/cuis/gem_launch.c tests/cuis/gem_launch.h tests/cuis/gem_metadata.c tests/cuis/gem_metadata.h tests/cuis/gem_buffer.c tests/cuis/gem_buffer.h tests/cuis/gem_shell.c tests/cuis/gem_shell.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(GEM_TEST_FLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -192,35 +192,35 @@ obj/libaes/LAUNCH.TOS: tests/x32_desktop/launch_context.c obj/ldso/dyncrt.o obj/
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) \
 	  -o $@ $(filter %.c %.o,$^) -Lobj/ldso -lptos
 
-obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEMMSG.TOS: tests/cuis/gem_messages.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMMSG.TOS
 endif
 
-obj/libaes/GEMEVNT.TOS: tests/cuis/gem_events.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEMEVNT.TOS: tests/cuis/gem_events.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMEVNT.TOS
 endif
 
-obj/libaes/GEMWIN.TOS: tests/cuis/control_message.h tests/cuis/gem_windows.c tests/cuis/window_api.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEMWIN.TOS: tests/cuis/control_message.h tests/cuis/gem_windows.c tests/cuis/window_api.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter-out tests/cuis/window_api.c,$(filter %.c %.o,$^)) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMWIN.TOS
 endif
 
-obj/libaes/GEMUPD.TOS: tests/cuis/control_message.h tests/cuis/gem_update.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEMUPD.TOS: tests/cuis/control_message.h tests/cuis/gem_update.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMUPD.TOS
 endif
 
-obj/libaes/GEMFOC.TOS: tests/cuis/gem_focus.c obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEMFOC.TOS: tests/cuis/gem_focus.c obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -234,7 +234,7 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEMINP.TOS
 endif
 
-obj/libaes/GEMMCTL.TOS: tests/cuis/control_message.h tests/cuis/gem_mouse.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEMMCTL.TOS: tests/cuis/control_message.h tests/cuis/gem_mouse.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -244,7 +244,7 @@ endif
 obj/libaes/gem_draw_probe.o: tests/cuis/gem_draw_probe.c tests/cuis/gem_draw_probe.h tests/cuis/native_probe.h tests/cuis/stream_probe.h include/libaes.h include/aesglobal.h include/vdi_service.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
-obj/libaes/GEMDRAW.TOS: tests/cuis/gem_selector.c tests/cuis/gem_selector.h tests/cuis/box_animations.c tests/cuis/box_animations.h tests/cuis/gem_tracking.c tests/cuis/gem_tracking.h tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/GEMDRAW.TOS: tests/cuis/gem_selector.c tests/cuis/gem_selector.h tests/cuis/box_animations.c tests/cuis/box_animations.h tests/cuis/gem_tracking.c tests/cuis/gem_tracking.h tests/cuis/gem_menubar.c tests/cuis/gem_menubar.h tests/cuis/popup_menu.c tests/cuis/popup_menu.h tests/cuis/menu_items.c tests/cuis/menu_items.h tests/cuis/three_d.c tests/cuis/three_d.h tests/cuis/colour_objects.c tests/cuis/colour_objects.h tests/cuis/gem_resources.c tests/cuis/gem_resources.h tests/cuis/gem_forms.c tests/cuis/gem_forms.h tests/cuis/gem_draw.c tests/cuis/gem_buttons.c tests/cuis/gem_buttons.h tests/cuis/form_keys.c tests/cuis/form_keys.h tests/cuis/gem_layout.c tests/cuis/gem_layout.h tests/cuis/mono_objects.c tests/cuis/mono_objects.h tests/cuis/gem_draw_probe.h obj/libaes/gem_draw_probe.o obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
@@ -341,7 +341,7 @@ obj/libaes/FIXED.PRG: tests/cuis/fixed_child.c
 	@mkdir -p $(@D)
 	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Os -fno-stack-protector -Wl,-e,_start -o $@ $<
 
-obj/libaes/CHAIN.PRG: tests/cuis/chain_client.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/CHAIN.PRG: tests/cuis/chain_client.c tests/cuis/gem_chain.c tests/cuis/gem_chain.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h tests/x32_probe/exec.h
 	@mkdir -p $(@D)
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 

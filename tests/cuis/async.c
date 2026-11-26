@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Exercise standard MiNT process calls; no custom scheduling syscall. */
 #include "config.h"
 #include "stream_probe.h"
@@ -29,7 +30,6 @@ static LONG call(ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
         : "rcx", "r11", "memory", "cc");
     return (LONG)ax;
 }
-static const char environment[] = { 0, 0 };
 static const char digits[] = "0123456789abcdef";
 static void hex(char *out, ULONG value)
 {
@@ -50,7 +50,7 @@ static void tail(char *buffer, char mode, LONG session, LONG pid)
 }
 static LONG spawn(const char *path, char *command)
 {
-    return call(0x4b, 100, (uintptr_t)path, (uintptr_t)command, (uintptr_t)environment);
+    return x32_exec_argument(100, path, command + 1, 0);
 }
 static LONG waitpid(LONG pid, LONG flags, UQUAD usage)
 {
@@ -174,8 +174,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_packet_read(session, &packet) == sizeof(PROBE_PACKET));
     }
     {
-        static const char nested_tail[] = { 1, 'o', 0 };
-        CHECK(call(0x4b, 0, (uintptr_t)argv[0], (uintptr_t)nested_tail, (uintptr_t)environment) == 0);
+        CHECK(x32_exec_argument(0, argv[0], "o", 0) == 0);
         CHECK(call(0xff, 0, 0, 0, 0) == E_OK);
         CHECK(probe_packet_wait(session, 10) == CUIS_READY_TIMER);
     }

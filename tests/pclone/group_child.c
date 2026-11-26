@@ -1,5 +1,6 @@
 /* Small real nested-Pexec child: avoid recursively reserving the full test
  * driver's TPA in the bounded legacy m68k process-memory window. */
+#include "../entry_args.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
 #include <mint/basepage.h>
@@ -16,12 +17,13 @@ static int exists(const char *path)
     (void)Fclose(h);
     return 1;
 }
-int main(void)
+int main(int argc, char **argv)
 {
-    int depth = _base->p_cmdlin[1] - '0';
+    char role = test_entry_argument(argc, argv)[0];
+    int depth = role - '0';
     char tail[] = "\1" "0";
     char result[] = "C:\\GRET0.ON";
-    if (_base->p_cmdlin[1] == 'C') {
+    if (role == 'C') {
         while (!exists("C:\\CLOSEGO.ON")) (void)Syield();
         return 19;
     }

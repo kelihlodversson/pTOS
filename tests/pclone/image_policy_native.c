@@ -1,5 +1,6 @@
 /* Actual user-trap image-policy controls in a small companion. The complete
  * self-reloading regression image still fits the unchanged classic window. */
+#include "../entry_args.h"
 #include "test.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
@@ -191,17 +192,17 @@ static void phase1_entry(void *argument)
 #include "staged_policy.h"
 #include "anchored_probe.h"
 
-int main(void)
+int main(int argc, char **argv)
 {
     int failures;
     ptest_log_append();
-    if(ANCHORED_PROBE_REQUESTED(_base->p_cmdlin)) {
+    if (!strcmp(test_entry_argument(argc, argv), "--abi-anchored")) {
         long status=anchored_probe();
         Pterm((short)status);
         return (int)status;
     }
-    if((unsigned char)_base->p_cmdlin[0]==15 && !memcmp(_base->p_cmdlin+1,"--abi-unmanaged",15)) test_unmanaged();
-    else if((unsigned char)_base->p_cmdlin[0]==12 && !memcmp(_base->p_cmdlin+1,"--abi-staged",12)) phase1_run_staged();
+    if(!strcmp(test_entry_argument(argc, argv), "--abi-unmanaged")) test_unmanaged();
+    else if(!strcmp(test_entry_argument(argc, argv), "--abi-staged")) phase1_run_staged();
     else {test_image_policy();test_private_image();}
     failures=ptest_failures();
     ptest_log_flush();

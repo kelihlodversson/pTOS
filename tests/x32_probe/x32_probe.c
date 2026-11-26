@@ -72,7 +72,8 @@
 
 #include "../../include/mman.h"
 #include "../../include/pclone.h"
-#include "../../include/pexecve.h"
+#include "exec.h"
+#include "startup.h"
 #include "config.h"
 
 typedef unsigned long long u64;
@@ -135,18 +136,15 @@ static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
 
 static s64 run_elf_vectors(const char *path, const char *const *argv, const char *const *envp)
 {
-    return sys4(GEMDOS, GEMDOS_PEXECVE, 0, (unsigned long)path,
-                (unsigned long)argv, (unsigned long)envp);
+    return x32_exec_vectors(0, path, argv, envp);
 }
 
 static s64 run_loader(const char *path, const char *argument, const char *const *envp)
 {
-    const char *argv[] = { path, argument, 0 };
-    return run_elf_vectors(path, argv, envp);
+    return x32_exec_argument(0, path, argument, envp);
 }
 
-s64 x32_probe_run_elf(const char *path, const char *argument);
-s64 x32_probe_run_elf(const char *path, const char *argument)
+static s64 run_elf(const char *path, const char *argument)
 {
     const char *const envp[] = { 0 };
     return run_loader(path, argument, envp);
@@ -370,8 +368,17 @@ extern int callback_roundtrip_checks(const char *tail);
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 {
-    const char *tail = (const char *)(unsigned long)(basepage + 0x80);
+    const char *tail;
     int bad = 0;
+
+    if (basepage) {
+        tail = (const char *)(unsigned long)(basepage + 0x80);
+    } else {
+        const uint32_t *initial = (const uint32_t *)(unsigned long)entry_rsp;
+
+        basepage = x32_probe_basepage(initial);
+        tail = *initial > 1 ? (const char *)(unsigned long)initial[2] : "";
+    }
 
     switch (tail[0]) {
 #if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_MULTITHREADING
@@ -422,7 +429,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 #endif
 #if CONF_WITH_LIBAES
     case ':': {
-        s64 child = x32_probe_run_elf("C:\\CUIS.TOS", 0);
+        s64 child = run_elf("C:\\CUIS.TOS", 0);
         pterm(child == 77 ? 0 : 0x100 | ((int)child & 0xff));
         break;
     }
@@ -508,7 +515,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             sys(GEMDOS, GEMDOS_MPROT, PTOS_MMAP_BASE, 4096, PROT_READ) != EINVFN ||
             gemdos(GEMDOS_MUNMAP, PTOS_MMAP_BASE, 4096) != EINVFN)
             pterm(1);
-        rc = x32_probe_run_elf("C:\\DYNTEST.TOS", 0);
+        rc = run_elf("C:\\DYNTEST.TOS", 0);
         if (rc != -66 && rc != -33)
             pterm(2);                  /* PT_INTERP never enters the static fallback */
         pterm(0);
@@ -619,11 +626,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         int i;
 
         for (i = 0; i < 3; i++) {
-            rc = x32_probe_run_elf(files[i], 0);
+            rc = run_elf(files[i], 0);
 #if CONF_WITH_X32_VDI
             if (rc != 0)
                 pterm(0x100 + i);
-            if (x32_probe_run_elf(files[i], 0) != 0)
+            if (run_elf(files[i], 0) != 0)
                 pterm(0x110 + i);
 #else
             if (rc != -66)             /* EPLFMT: optional import unavailable */
@@ -632,7 +639,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         }
         for (i = 0; i < 7; i++) {
             bad_file[6] = '1' + i;
-            if (x32_probe_run_elf(bad_file, 0) != -66)
+            if (run_elf(bad_file, 0) != -66)
                 pterm(0x130 + i);
         }
         pterm(0);
@@ -733,7 +740,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * on its own stack, which a launcher resuming on the wrong stack
          * would not survive */
         for (run_no = 0; run_no < 2; run_no++) {
-            s64 rc = x32_probe_run_elf("X32HELLO.TOS", 0);
+            s64 rc = run_elf("X32HELLO.TOS", 0);
 
             if (rc == -33)              /* EFILNF: not on the boot drive */
                 pterm(0x100);
@@ -749,7 +756,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         int run_no;
 
         for (run_no = 0; run_no < 10; run_no++) {
-            s64 rc = x32_probe_run_elf("X32HELLO.TOS", "r");
+            s64 rc = run_elf("X32HELLO.TOS", "r");
 
             if (rc == -33)
                 pterm(0x100);
@@ -762,7 +769,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'm': {
-        s64 rc = x32_probe_run_elf("X32HELLO.TOS", "f");
+        s64 rc = run_elf("X32HELLO.TOS", "f");
 
         if (rc == -33)
             pterm(0x100);
@@ -774,10 +781,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'g': {
-        /* #1018: the staged and basepage modes are not part of the x32 ABI.
+        /* #1008: no legacy Pexec mode is part of the x32 ABI.
          * Each is refused with EINVFN before any argument is read: the
          * pointers below are unmapped and must never be dereferenced. */
-        static const int modes[] = { 3, 4, 5, 6, 7, 104, 106 };
+        static const int modes[] = { 0, 3, 4, 5, 6, 7, 100, 104, 106, 200 };
         const s64 unmapped = 0x1000;
         unsigned i;
 
@@ -1249,7 +1256,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 'B': {
         /* a program bigger than the image window (a 6 MiB bss) is loaded
          * whole and runs: both ends of its bss are there and zero (#434) */
-        s64 rc = x32_probe_run_elf("X32BIG.TOS", "B");
+        s64 rc = run_elf("X32BIG.TOS", "B");
 
         if (rc == -33)
             pterm(0x100);
@@ -1264,12 +1271,12 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         static volatile u32 mine;
         s64 rc, rc2, rc3, rc4;
 
-        rc = x32_probe_run_elf("X32TRUNC.TOS", "i");
+        rc = run_elf("X32TRUNC.TOS", "i");
         if (rc == -33)
             pterm(0x100);
         mine = 0x1234;
-        rc2 = x32_probe_run_elf("X32TRUNC.TOS", "i");
-        rc3 = x32_probe_run_elf("X32HELLO.TOS", "i");
+        rc2 = run_elf("X32TRUNC.TOS", "i");
+        rc3 = run_elf("X32HELLO.TOS", "i");
         rc4 = (mine == 0x1234) ? gemdos(0x48, 4096, 0) : 0;
         pterm((rc < 0 ? 0 : 1) | (rc2 < 0 ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
               (rc4 > 0 ? 0 : 8));
@@ -1287,7 +1294,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
             pterm(1);
         for (k = 0; k < 8; k++)
             free_argument[1 + k] = "0123456789abcdef"[(bpa >> (28 - 4 * k)) & 15];
-        rc = x32_probe_run_elf("X32HELLO.TOS", free_argument);
+        rc = run_elf("X32HELLO.TOS", free_argument);
         if (rc == -33)
             pterm(0x100);
         if (rc != 0)
@@ -1301,7 +1308,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(walk_ancestors(basepage));
         break;
     case 'v': {
-        s64 rc = x32_probe_run_elf("X32HELLO.TOS", "w");
+        s64 rc = run_elf("X32HELLO.TOS", "w");
 
         if (rc == -33)
             pterm(0x100);
@@ -1335,14 +1342,14 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * instruction included (#433) */
         s64 rc;
 
-        rc = x32_probe_run_elf("X32RELOC.TOS", "a");
+        rc = run_elf("X32RELOC.TOS", "a");
         if (rc == -33)
             pterm(0x100);
         if (rc != 0)
             pterm(1);
         /* linked for another address without its relocations: refused, with
          * EPLFMT, instead of run with every absolute address wrong */
-        rc = x32_probe_run_elf("X32NOREL.TOS", "a");
+        rc = run_elf("X32NOREL.TOS", "a");
         if (rc == -33)
             pterm(0x100);
         pterm(rc == -66 ? 0 : 8);
@@ -1354,16 +1361,16 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * the limits of the launcher passed on to a child */
         s64 rc, rc2, rc3, rc4, rc5, rc6;
 
-        rc = x32_probe_run_elf("X32HELLO.TOS", "l");
+        rc = run_elf("X32HELLO.TOS", "l");
         if (rc == -33)
             pterm(0x100);
-        rc2 = x32_probe_run_elf("X32HELLO.TOS", "D");
-        rc3 = x32_probe_run_elf("X32HELLO.TOS", "E");
-        rc5 = x32_probe_run_elf("X32HELLO.TOS", "G");
-        rc6 = x32_probe_run_elf("X32HELLO.TOS", "R");
+        rc2 = run_elf("X32HELLO.TOS", "D");
+        rc3 = run_elf("X32HELLO.TOS", "E");
+        rc5 = run_elf("X32HELLO.TOS", "G");
+        rc6 = run_elf("X32HELLO.TOS", "R");
         sys4(GEMDOS, 0x11f, 0x100, 0x2000000, 0, 0);
         sys4(GEMDOS, 0x11f, 3, 0x300000, 0, 0);
-        rc4 = x32_probe_run_elf("X32HELLO.TOS", "Q");
+        rc4 = run_elf("X32HELLO.TOS", "Q");
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
               (rc4 == 0 ? 0 : 8) | (rc5 == 0xffff ? 0 : 16) | (rc6 == 0 ? 0 : 32));
         break;
@@ -1374,7 +1381,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * that can be */
         s64 rc;
 
-        rc = x32_probe_run_elf("X32HELLO.TOS", "?");
+        rc = run_elf("X32HELLO.TOS", "?");
         if (rc == -33)
             pterm(0x100);
         pterm((int)rc);
@@ -1386,22 +1393,22 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * pages than there are ends the process that does it, not the kernel */
         s64 rc, rc2, rc3, rc4, rc5;
 
-        rc = x32_probe_run_elf("X32HELLO.TOS", "z");
+        rc = run_elf("X32HELLO.TOS", "z");
         if (rc == -33)
             pterm(0x100);
-        rc2 = x32_probe_run_elf("X32HELLO.TOS", "Z");
-        rc3 = x32_probe_run_elf("X32HELLO.TOS", "X");
+        rc2 = run_elf("X32HELLO.TOS", "Z");
+        rc3 = run_elf("X32HELLO.TOS", "X");
         /* the same when it is the kernel that touches the pages */
-        rc5 = x32_probe_run_elf("X32HELLO.TOS", "Y");
+        rc5 = run_elf("X32HELLO.TOS", "Y");
         /* and the system still works */
-        rc4 = x32_probe_run_elf("X32HELLO.TOS", "z");
+        rc4 = run_elf("X32HELLO.TOS", "z");
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
               (rc4 == 0 ? 0 : 8) | (rc5 == 0xffff ? 0 : 16));
         break;
     }
     case 'h': {
         /* a child loaded from a file gets Malloc() memory of its own (#434) */
-        s64 rc = x32_probe_run_elf("X32HELLO.TOS", "h");
+        s64 rc = run_elf("X32HELLO.TOS", "h");
 
         if (rc == -33)
             pterm(0x100);
@@ -1414,15 +1421,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * (0xffff) */
         s64 rc, rc2, rc3, rc4;
 
-        rc = x32_probe_run_elf("X32HELLO.TOS", "i");
+        rc = run_elf("X32HELLO.TOS", "i");
         if (rc == -33)
             pterm(0x100);
-        rc2 = x32_probe_run_elf("X32RELOC.TOS", "i");
+        rc2 = run_elf("X32RELOC.TOS", "i");
         if (rc2 == -33)
             pterm(0x100);
-        rc3 = x32_probe_run_elf("X32HELLO.TOS", "T");
+        rc3 = run_elf("X32HELLO.TOS", "T");
         /* and the startup area after it holds what the C startup code builds */
-        rc4 = x32_probe_run_elf("X32HELLO.TOS", "S");
+        rc4 = run_elf("X32HELLO.TOS", "S");
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
               (rc4 == 0 ? 0 : 8));
         break;

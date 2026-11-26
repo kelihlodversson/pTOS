@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Standard GEM messages and globally visible stack metadata in isolated apps. */
 #include <gem.h>
 #include "portab.h"
@@ -67,7 +68,6 @@ int main(int argc, char **argv, char **envp)
     BOOL graphics;
     LONG child, status;
     char tail[3] = { 1, 'c', 0 };
-    static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_find(0,0) == -1 && mt_wind_find(0,0,NULL) == -1);
     id = appl_init(); VERIFY(id > 0);
@@ -122,7 +122,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_find(130,129) == 0 && wind_find(129,130) == 0 && wind_find(131,131) == 0);
     VERIFY(mt_wind_get(0, WF_TOP, &top, &owner, &below, &spare, &global) == 1 && top == b && owner == id && below == a);
     VERIFY(wind_set(-1,WF_DCOLOR,W_NAME,0x1172,0x1174,0) == 1);
-    child = process(0x4b, 100, (uintptr_t)"C:\\GEMFOC.TOS", (uintptr_t)tail, (uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMFOC.TOS", tail + 1, 0);
     VERIFY(child > 0 && control(message) && message[0] == 900); foreign = message[3];
     peer = message[1];
     VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);

@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Classic GEM handoff over isolated native processes and standard GEM calls. */
 #include <stddef.h>
 #include <gem.h>
@@ -136,7 +137,7 @@ int gem_chain_client(int argc, char **argv)
 int gem_chain_checks(AESGLOBAL *global)
 {
     static const char roles[] = { 's','r','c','f','x','d','j','e','o','p','q','z','n' };
-    static const char environment[] = "CHAIN_ENV=original\0\0";
+    const char *const environment[] = { "CHAIN_ENV=original", 0 };
     char tail[128] = { 17 }, contents[9];
     short source, source_client, helper_client, message[8], helpers[5];
     unsigned i, j;
@@ -144,8 +145,7 @@ int gem_chain_checks(AESGLOBAL *global)
     for (i = 0; i < sizeof(roles); i++) {
         tail[1] = roles[i]; encode(tail+2,(uint32_t)global->ap_id);
         encode(tail+10,0); /* expected logical PPID after creator retirement */
-        status = call(1,0x4b,roles[i] == 'd' ? 0 : 100,(uintptr_t)"APPS\\CHAIN.PRG",
-                      (uintptr_t)tail,(uintptr_t)environment);
+        status = x32_exec_argument(roles[i] == 'd' ? 0 : 100, "APPS\\CHAIN.PRG", tail + 1, environment);
         if (roles[i] == 'd') {
             VERIFY(status == 37);
             VERIFY(receive(message,2000,global) & MU_MESAG);
@@ -162,7 +162,7 @@ int gem_chain_checks(AESGLOBAL *global)
             if (roles[i] == 'e') {
                 tail[1] = 'h';
                 for (j = 0; j < 5; j++) {
-                    status = call(1,0x4b,100,(uintptr_t)"APPS\\CHAIN.PRG",(uintptr_t)tail,(uintptr_t)environment);
+                    status = x32_exec_argument(100, "APPS\\CHAIN.PRG", tail + 1, environment);
                     VERIFY(status > 0); helpers[j] = (short)status;
                 }
             }

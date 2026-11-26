@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Standard GEM mouse-control ownership across isolated shared-DSO clients. */
 #include <gem.h>
 #include "portab.h"
@@ -27,7 +28,6 @@ int main(int argc, char **argv, char **envp)
     AESGLOBAL global = { 0 };
     LONG child, status;
     char tail[3] = { 1, 'c', 0 };
-    static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     id = appl_init(); VERIFY(id > 0);
     global.ap_3resv = aes_global.ap_3resv;
@@ -53,7 +53,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_update(END_MCTRL) == 0);
     VERIFY(wind_update(BEG_MCTRL|NO_BLOCK) == 1 && mt_wind_update(BEG_MCTRL,&global) == 1);
     VERIFY(input(&global)); /* No window is required to receive modal input. */
-    child = process(0x4b,100,(uintptr_t)"C:\\GEMMCTL.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMMCTL.TOS", tail + 1, 0);
     VERIFY(child > 0 && control_message(message) == 1 && message[0] == 900);
     peer = message[1];
     VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);

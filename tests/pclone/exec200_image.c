@@ -101,23 +101,24 @@ static void verify_irq_replacement(void)
 #define EXEC200_IMAGE_NAME "EXEC200B.TOS"
 #endif
 
-int main(void)
+int main(int argc, char **argv)
 {
+    const char *argument = test_entry_argument(argc, argv);
     EXEC200_TAIL t;
     long result;
 #if defined(__mc68000__) && defined(TEST_WITH_SHARED_VM_PEXEC) && !defined(EXEC200_PRG)
-    if (_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='L') {
+    if (!strcmp(argument, "L")) {
         exec200_elf_legacy();
         return 0;
     }
 #endif
 #if defined(EXEC200_VFORK_CASE) && !defined(EXEC200_PRG)
-    if (_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='V') {
+    if (!strcmp(argument, "V")) {
         exec200_vfork_source("EXEC200P.TOS");
         return 0;
     }
 #endif
-    exec200_verify("image", &t);
+    exec200_verify("image", argument, &t);
 #ifdef EXEC200_VFORK_CASE
     if (t.nested==EXEC200_VFORK_CASE) {
         unsigned long start=(unsigned long)Ssystem(S_GETLVAL,0x4baL,0L);

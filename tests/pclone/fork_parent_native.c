@@ -1,5 +1,6 @@
 /* Real user-trap COW parent-policy controls, kept small so the classic
  * two-MiB procmem window can still run the full self-Pexec ABI fixture. */
+#include "../entry_args.h"
 #include "test.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
@@ -332,11 +333,11 @@ static void test_public_fork(void)
 #endif
 }
 #endif
-int main(void)
+int main(int argc, char **argv)
 {
     int failures;
 #if defined(TEST_WITH_EXEC_REPLACE)
-    if((unsigned char)_base->p_cmdlin[0]>=1 && _base->p_cmdlin[1]=='W') {
+    if(test_entry_argument(argc, argv)[0] == 'W') {
         /* The image a Pvfork child replaced itself with. */
         while(Fsfirst("C:\\FORKGO.TMP",0)) (void)Syield();
         Pterm(76);

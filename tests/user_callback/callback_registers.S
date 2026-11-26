@@ -34,11 +34,11 @@ callback_badstack:
         jmp 5b
         .globl callback_lazy_exec
 callback_lazy_exec:
-        movl %esi,%edx          /* Pexec tail */
-        movl %edi,%esi          /* Pexec file */
+        movl %edx,%r10d         /* envp */
+        movl %esi,%edx          /* argv */
+        movl %edi,%esi          /* path */
         xorl %edi,%edi          /* PE_LOADGO */
-        xorl %r10d,%r10d
-        movabsq $0x10000004b,%rax
+        movabsq $0x100000193,%rax
         movl $0x7ffff040,%esp   /* callback frame falls in the lazy page below */
         syscall
         ud2                    /* the quarantined parent must never resume */

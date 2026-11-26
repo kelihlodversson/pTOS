@@ -22,6 +22,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "../entry_args.h"
 #include <mint/osbind.h>
 #include <mint/basepage.h>
 #include "include/mmapcall.h"
@@ -72,17 +73,23 @@ static int own_page(unsigned long a, unsigned long v)
 }
 #endif
 
-int main(void)
+int main(int argc, char **argv)
 {
-    /* the tail is a Pascal string: its length, then the text */
-    const char *t = (const char *)_base->p_cmdlin + 1;
+    const char *t = test_entry_argument(argc, argv);
     char op = t[0];
     unsigned long a, v;
     volatile unsigned long *p;
 
-    t++;
+#ifdef TEST_NATIVE_ELF_ENTRY
+    t = argc > 2 ? argv[2] : "";
+    a = hex(&t);
+    t = argc > 3 ? argv[3] : "";
+    v = hex(&t);
+#else
+    if (*t) t++;
     a = hex(&t);
     v = hex(&t);
+#endif
     p = (volatile unsigned long *)a;
 
     switch (op)

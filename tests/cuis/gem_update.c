@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* GEM update semantics and rectangle coverage across isolated processes. */
 #include <gem.h>
 #include "portab.h"
@@ -44,7 +45,6 @@ int main(int argc, char **argv, char **envp)
     LONG child, status;
     int result;
     char tail[3] = { 1, 'c', 0 };
-    static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_update(BEG_UPDATE) == 0);
     id = appl_init(); VERIFY(id > 0);
@@ -90,7 +90,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1);
     VERIFY(x == 0 && y == 0 && w == 9 && h == 9);
     VERIFY(wind_set(window, WF_CURRXYWH, 0, 0, 20, 20) == 1);
-    child = process(0x4b, 100, (uintptr_t)"C:\\GEMUPD.TOS", (uintptr_t)tail, (uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMUPD.TOS", tail + 1, 0);
     VERIFY(child > 0 && appl_yield() == 1);
     VERIFY(control_message(message) == 1 && message[0] == 900);
     VERIFY(control_message(message) == 1 && message[0] == 901);
@@ -104,7 +104,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_get(window, WF_FIRSTXYWH, &x, &y, &w, &h) == 1 && w == 18 && h == 18);
     VERIFY(wind_update(END_UPDATE) == 1);
     tail[1] = 'o';
-    child = process(0x4b, 100, (uintptr_t)"C:\\GEMUPD.TOS", (uintptr_t)tail, (uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMUPD.TOS", tail + 1, 0);
     VERIFY(child > 0 && control_message(message) == 1 && message[0] == 900);
     peer = message[1];
     VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);

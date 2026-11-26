@@ -968,7 +968,7 @@ x32-vdi: obj/x32/libptos-vdi.so.1
 obj/x32/vdi-import-reloc.elf: X32_IMPORT_LINK_BASE = -Wl,-Ttext-segment=0x20000000
 obj/x32/vdi-import-plt.elf: X32_IMPORT_FLAGS = -DVDI_IMPORT_PLT
 obj/x32/vdi-import.elf obj/x32/vdi-import-reloc.elf obj/x32/vdi-import-plt.elf: \
-  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S tests/x32_probe/startup.h lib/ldso/startup.h \
+  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S tests/x32_probe/startup.h tests/x32_probe/exec.h lib/ldso/startup.h \
   tests/vdi_contract/vdi_roundtrip.c obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DVDI_IMPORT_TEST $(X32_IMPORT_FLAGS) -Iinclude -Iobj \
 	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
@@ -1036,6 +1036,7 @@ endif
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 obj/x32/x32probe.elf: tests/pclone/irq_registers.S tests/x32_probe/receipt_fault.c tests/x32_probe/clone_threads.c tests/x32_probe/clone_registers.S tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
                     tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
+                    tests/x32_probe/exec.h tests/x32_probe/startup.h lib/ldso/startup.h \
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
                     include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
@@ -1956,7 +1957,8 @@ endif
 # independently loader-created roots rather than advertising private-fork tests.
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
-              $(if $(or $(ARCH_ARM),$(ARCH_X86_64)),-include tests/legacy-pexec.h) \
+              $(if $(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))),-DTEST_NATIVE_ELF_ENTRY) \
+              $(if $(and $(ARCH_ARM),$(if $(CONF_WITH_USER_ASPACE),,y)),-include tests/legacy-pexec.h) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_FAT_FILE_LIFETIMES),-DTEST_WITH_FAT_FILE_LIFETIMES) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
@@ -2023,7 +2025,12 @@ obj/run_tests.o: tests/run_tests.c $(AUTOCONF_H) | obj
 obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-TEST_STARTUP = $(LIBCMINI_CRT0)
+TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
+
+$(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
+	@$(LIBCMINI_MAKE) $@
+
+TEST_STARTUP = $(if $(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
 
 # Each test suite object depends on its source and the generated run_tests.c.
 define test-suite-rule
@@ -2223,13 +2230,8 @@ $(TEST_DESK_INF): tests/emudesk.inf
 endif
 
 # The native desktop and vector-enabled CLI share the ELF test binaries.
-# Keep runtests.tos for callers that exercise the historical Pexec ABI.
 ifneq ($(filter y,$(CONF_WITH_CLI_VECTOR_EXEC))$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
-TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
 TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos
-
-$(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
-	@$(LIBCMINI_MAKE) $@
 
 runvec.tos: $(TEST_VECTOR_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
@@ -2617,8 +2619,8 @@ ifdef ARCH_ARM
 obj/arm_acc_probe.o: tests/arm_acc_probe.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-ACCPROBE.ACC: $(TEST_STARTUP) obj/arm_acc_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+ACCPROBE.ACC: $(LIBCMINI_CRT0) obj/arm_acc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(LIBCMINI_CRT0) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
 .PHONY: arm-acc-probe
 arm-acc-probe: ACCPROBE.ACC

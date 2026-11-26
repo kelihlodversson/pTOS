@@ -25,7 +25,18 @@ static void shell_preinit(unsigned argc, char **argv, char **envp)
     preinit_seen = 1;
     if (!basepage) return;
     if (argc > 1 && argv[1][0] == 'c' && appl_init() <= 0) return;
-    for (i = 0; i < 128; i++) launch_tail[i] = basepage->p_cmdlin[i];
+    if (argc > 1) {
+        unsigned used = 1;
+
+        for (i = 1; i < argc; i++) {
+            const char *arg = argv[i];
+            if (i > 1) launch_tail[used++] = ' ';
+            while (*arg && used < sizeof(launch_tail))
+                launch_tail[used++] = (UBYTE)*arg++;
+            if (used == sizeof(launch_tail)) return;
+        }
+        launch_tail[0] = used - 1;
+    }
     if (argc > 1) {
         /* The default DTA aliases p_cmdlin: this deliberately overwrites it. */
         if ((LONG)file_call(0x4e,(uintptr_t)"C:\\ROOT.DAT",0) != 0 ||

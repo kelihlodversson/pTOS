@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Real ring-3 VDI entry, boundary and ownership checks. */
 #include "vdipb.h"
 #include "vdi_service.h"
@@ -445,7 +446,7 @@ int vdi_roundtrip_checks(WORD inherited_handle, BOOL fault_after_open)
         char tail[5] = { '@', (char)('0' + handle / 100),
                          (char)('0' + (handle / 10) % 10), (char)('0' + handle % 10), 0 };
 
-        CHECK(raw_call(1, 0x4b, PE_LOADGO, (uintptr_t)"X32VDI.TOS", (uintptr_t)tail, 0) == 0);
+        CHECK(x32_exec_argument(PE_LOADGO, "X32VDI.TOS", tail, 0) == 0);
         CHECK(raw_service(VDI_SERVICE_CHECK, handle, 0, 0, 0) == E_OK);
     }
     CHECK(call(&pb, 8, 0, 0) == EINVAL); /* wrong text shape never reaches legacy VDI */
