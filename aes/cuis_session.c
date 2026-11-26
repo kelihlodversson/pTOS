@@ -3502,12 +3502,15 @@ static LONG attach_launch_owned(UQUAD session, UQUAD authorization, UQUAD path,
     KPROC *owner;
     UQUAD flags, key=0;
     LONG result, right;
-    BOOL console, observe, need_table=FALSE, need_stream=FALSE;
-    if (session > 0x7fffffffULL || !authorization || (authorization & ~(CUIS_LAUNCH_CONSOLE | CUIS_LAUNCH_OBSERVE)) ||
+    BOOL console, observe, vectors, need_table=FALSE, need_stream=FALSE;
+    if (session > 0x7fffffffULL || !(authorization & (CUIS_LAUNCH_CONSOLE | CUIS_LAUNCH_OBSERVE)) ||
+        (authorization & ~(CUIS_LAUNCH_CONSOLE | CUIS_LAUNCH_OBSERVE | CUIS_LAUNCH_VECTORS)) ||
         path > 0xffffffffULL || tail > 0xffffffffULL ||
         environment > 0xffffffffULL || directory > 0xffffffffULL) return EINVAL;
     console = (authorization & CUIS_LAUNCH_CONSOLE) != 0;
     observe = (authorization & CUIS_LAUNCH_OBSERVE) != 0;
+    vectors = (authorization & CUIS_LAUNCH_VECTORS) != 0;
+    if (vectors && (tail != sizeof(request) || environment || directory)) return EINVAL;
     flags = cuis_input_lock();
     client = *find_owner(run);
     if (!client || client->handle != session) { cuis_input_unlock(flags); return EACCDN; }
@@ -3530,11 +3533,18 @@ static LONG attach_launch_owned(UQUAD session, UQUAD authorization, UQUAD path,
     }
     cuis_input_unlock(flags);
     owner = kproc_retain(run);
-    request.path = (ULONG)path;
-    request.tail = (ULONG)tail;
-    request.environment = (ULONG)environment;
-    request.directory = (ULONG)directory;
-    right = proc_exec_prepare_user_args(owner,&request);
+    right = E_OK;
+    if (vectors) {
+        right = proc_exec_copy_request(path,tail,&request);
+        if (!right && (request.operation != PROCESS_EXEC_PREPARE || request.policy ||
+                       request.flags != PROCESS_EXEC_VECTOR_ARGS)) right = EINVAL;
+    } else {
+        request.path = (ULONG)path;
+        request.tail = (ULONG)tail;
+        request.environment = (ULONG)environment;
+        request.directory = (ULONG)directory;
+    }
+    if (!right) right = proc_exec_prepare_user_args(owner,&request);
     result = right;
     if (right > 0) result = proc_exec_retain_observer(owner,(ULONG)right,TRUE,&observer);
     if (!result && observe) {

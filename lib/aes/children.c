@@ -13,17 +13,6 @@ static LONG process_request(PROCESS_EXEC_REQUEST *request)
     return (LONG)aes_gemdos_call(0x154,(UQUAD)(QUAD)PROCESS_EXEC_SSYSTEM,
                                   (uintptr_t)request,sizeof(*request));
 }
-static LONG direct_launch(ULONG operation, const char *path, const char *tail,
-                          const char *environment, const char *directory)
-{
-    PROCESS_EXEC_REQUEST request = {0};
-    request.operation = operation;
-    request.path = (ULONG)(uintptr_t)path;
-    request.tail = (ULONG)(uintptr_t)tail;
-    request.environment = (ULONG)(uintptr_t)environment;
-    request.directory = (ULONG)(uintptr_t)directory;
-    return process_request(&request);
-}
 static LONG receipt_call(LONG session, ULONG action, CUIS_RECEIPT_RECORD *receipt)
 {
     return cuis_call6(CUIS_STREAM_RECEIPT,session,action,(uintptr_t)receipt,sizeof(*receipt),0,0);
@@ -113,26 +102,25 @@ LONG aes_child_messages(LONG session)
     return E_OK;
 }
 
-/* Inputs are prepared by shel_write; the caller keeps ownership of its
- * environment until the synchronous transport call has copied it. */
-LONG aes_child_launch(LONG session, const char *path, const char *tail,
-                      const char *environment, const char *directory, BOOL console, BOOL observed)
+/* Both attaches and unobserved launches use the generic PROCESS decoder. */
+LONG aes_child_launch(LONG session, PROCESS_EXEC_REQUEST *request, BOOL console, BOOL observed)
 {
-    UQUAD authorization = console ? CUIS_LAUNCH_CONSOLE : 0;
+    UQUAD authorization = CUIS_LAUNCH_VECTORS | (console ? CUIS_LAUNCH_CONSOLE : 0);
     if (!observed && !console) {
-        if (directory) return direct_launch(PROCESS_EXEC_START,path,tail,environment,directory);
-        return (LONG)aes_gemdos_call4(0x4b,PE_ASYNC_LOADGO,(uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment);
+        request->operation = PROCESS_EXEC_START;
+        return process_request(request);
     }
     if (observed) {
         LONG result = aes_child_messages(session);
         if (result < 0) return result;
         authorization |= CUIS_LAUNCH_OBSERVE;
     }
+    request->operation = PROCESS_EXEC_PREPARE;
     return cuis_call6(CUIS_LAUNCH_ATTACH,session,authorization,
-                      (uintptr_t)path,(uintptr_t)tail,(uintptr_t)environment,(uintptr_t)directory);
+                      (uintptr_t)request,sizeof(*request),0,0);
 }
-LONG aes_child_defer(const char *path, const char *tail,
-                     const char *environment, const char *directory)
+LONG aes_child_defer(PROCESS_EXEC_REQUEST *request)
 {
-    return direct_launch(PROCESS_EXEC_DEFER,path,tail,environment,directory);
+    request->operation = PROCESS_EXEC_DEFER;
+    return process_request(request);
 }

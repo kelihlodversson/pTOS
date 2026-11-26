@@ -1,6 +1,7 @@
 /* Bind the native AES query/search core to per-context startup and per-call DTA. */
 #include "shell_context.h"
 #include "resource_context.h"
+#include "shell_arguments.h"
 #define sh_read aes_shell_read_core
 #define sh_name aes_shell_name
 #define sh_envrn aes_shell_env_core
@@ -9,6 +10,7 @@
 #define SH_TAIL (aes_shell->state->tail)
 #define SH_ENVIRONMENT (aes_shell->state->environment)
 #define SH_ENV_ENTRY(p) (strncmp(p,"ARGV=",5) != 0)
+#define SH_ENV_VECTOR (aes_shell->state->vectors ? aes_shell_environ() : NULL)
 #define SH_APPDIR (aes_shell->state->directory)
 #define SH_WORK (aes_shell->work)
 #define SH_DTA (*aes_shell->dta)

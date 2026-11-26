@@ -24,6 +24,7 @@ PD *run = &parent;
 
 static const char config[] = "[binfmt.test]\nmagic=4d46\ninterpreter=A:/INTERP.TOS\n";
 static const UBYTE foreign[] = "MFpayload", native[] = "\177ELFpayload";
+static const UBYTE shebang[] = "#!A:\\INTERP.TOS\n";
 static struct { const UBYTE *data; long size, at; int kind; BOOL open; } files[16];
 static int allocations, handles, interpreter_opens, source_opens, scenario;
 static int allocation_fail_after = -1;
@@ -80,6 +81,8 @@ long xopen(char *path, WORD mode)
     else if (!strcmp(path, "C:\\APP.TOS") || !strcmp(path, "APP.TOS") ||
              !strcmp(path, "\\APP.TOS") || !strcmp(path, "D:APP.TOS") || !strcmp(path, "D:\\APP.TOS")) {
         data = foreign; size = sizeof(foreign) - 1; kind = 1; source_opens++;
+    } else if (!strcmp(path, "C:\\NOOPT.SHE")) {
+        data = shebang; size = sizeof(shebang) - 1; kind = 1; source_opens++;
     } else if (!strcmp(path, "A:\\INTERP.TOS")) {
         interpreter_opens++;
         if (scenario == MEDIA_LOOKUP && !changed) disk_error(E_CHNG, 0);
@@ -244,25 +247,30 @@ static void rewrite_failure(void)
 
 static void redirect_vectors(void)
 {
+    static const char *const names[] = {"C:\\APP.TOS", "C:\\NOOPT.SHE"};
     static const char *const argv[] = {"chosen zero", "", "two words", NULL};
     static const char *const envp[] = {"X=1", "", NULL};
-    const DL_START_VECTORS input = {argv, envp, 3, 2};
+    const DL_START_VECTORS input = {.argv = argv, .envp = envp, .argc = 3, .envc = 2};
     BINFMT_LAUNCH launch;
     PGMHDR01 header;
     FH handle;
+    unsigned int i;
 
-    reset(NORMAL);
-    assert(binfmt_load_header("C:\\APP.TOS", NULL, NULL, &header,
-                              &handle, &launch, FALSE, &input) == 0);
-    assert(!launch.environment && !launch.tail && !launch.path);
-    assert(launch.vectors.argc == 4 && !launch.vectors.argv[4]);
-    assert(!strcmp(launch.vectors.argv[0], "A:\\INTERP.TOS"));
-    assert(!strcmp(launch.vectors.argv[1], "C:\\APP.TOS"));
-    assert(launch.vectors.argv[2] == argv[1] && launch.vectors.argv[3] == argv[2]);
-    assert(launch.vectors.envp == envp && launch.vectors.envc == 2);
-    assert(xclose(handle) == 0);
-    binfmt_release(&launch);
-    assert(!launch.vectors.argv && !allocations && !handles);
+    for (i = 0; i < sizeof(names)/sizeof(names[0]); i++) {
+        reset(NORMAL);
+        assert(binfmt_load_header((char *)names[i], NULL, NULL, &header,
+                                  &handle, &launch, FALSE, &input) == 0);
+        assert(!launch.environment && !launch.tail && !launch.path);
+        assert(launch.vectors.argc == 4 && !launch.vectors.argv[4]);
+        assert(!strcmp(launch.vectors.argv[0], "A:\\INTERP.TOS"));
+        assert(!strcmp(launch.vectors.argv[1], names[i]));
+        assert(launch.vectors.argv[2] == argv[1] && launch.vectors.argv[3] == argv[2]);
+        assert(launch.vectors.envp == envp && launch.vectors.envc == 2);
+        assert(launch.vectors.original == &input && launch.vectors.direct_redirect == (i == 0));
+        assert(xclose(handle) == 0);
+        binfmt_release(&launch);
+        assert(!launch.vectors.argv && !allocations && !handles);
+    }
 }
 
 int main(void)

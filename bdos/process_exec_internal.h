@@ -9,8 +9,11 @@ struct process_exec_handle;
  * its existing finalizer, never a GUI session, PID lookup, THREAD exit or reaper.
  * Trusted input strings remain valid for the synchronous preparation call. */
 LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy);
+struct pexecve_args;
+LONG proc_exec_handle_prepare_vectors(KPROC *owner, const struct pexecve_args *args, char *directory, ULONG policy);
 /* Prepare from zero-extended user addresses using the ordinary request decoder. */
 LONG proc_exec_prepare_user_args(KPROC *owner, const PROCESS_EXEC_REQUEST *request);
+LONG proc_exec_copy_request(UQUAD address, UQUAD size, PROCESS_EXEC_REQUEST *request);
 LONG proc_exec_handle_commit(KPROC *owner, ULONG handle);
 LONG proc_exec_handle_snapshot(KPROC *owner, ULONG handle, PROCESS_COMPLETION *out);
 LONG proc_exec_handle_close(KPROC *owner, ULONG handle);

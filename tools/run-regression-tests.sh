@@ -57,9 +57,13 @@ disk_image=
 results=$work/results       # "name|PASS" or "name|FAIL" per line, in order
 logs=$work/logs             # the console logs, in order
 autorun=false
+vector_autorun=false
 [ "$machine" != raspi2b ] || autorun=true
 if [ "$machine" = pc-x86_64 ] && grep -q '^#define CONF_EXTERNAL_DESK 1' "$top/obj/autoconf.h"; then
     autorun=true
+    if grep -q '^#define CONF_WITH_LIBAES 1' "$top/obj/autoconf.h"; then
+        vector_autorun=true
+    fi
 fi
 suite_program=runtests.tos
 poweroff_program=poweroff.tos
@@ -228,7 +232,9 @@ start_vm() {
     mkdir -p "$disk"
     cp -R "$top/test-dir/." "$disk/"
     if [ "$label" = cuis ]; then
-        cp "$disk/runtests.tos" "$disk/RUNTESTS.PRG"
+        harness=runtests.tos
+        [ "$vector_autorun" != true ] || harness=runvec.tos
+        cp "$disk/$harness" "$disk/RUNTESTS.PRG"
         : > "$disk/HISTGUI.ON"
     fi
     if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
@@ -240,6 +246,15 @@ start_vm() {
         poweroff | reboot | coldboot | halt) program=$(printf '%s.TOS' "$label" | tr '[:lower:]' '[:upper:]') ;;
         *) die "unknown autorun label $label" "never started" ;;
         esac
+        if [ "$vector_autorun" = true ]; then
+            case $label in
+            suite | sysfont) program=RUNVEC.TOS ;;
+            poweroff) program=PWROFFV.TOS ;;
+            reboot) program=REBOOTV.TOS ;;
+            coldboot) program=COLDBTV.TOS ;;
+            halt) program=HALTV.TOS ;;
+            esac
+        fi
         python3 - "$disk/emudesk.inf" "$program" <<'PY'
 from pathlib import Path
 import sys

@@ -12,11 +12,14 @@
 #define PROCESS_EXEC_START 6UL
 #define PROCESS_EXEC_ASYNC 0UL
 #define PROCESS_EXEC_DEFER_REPLACEMENT 1UL
+#define PROCESS_EXEC_VECTOR_ARGS 1UL
 /* Size is a separate Ssystem argument. All current user ABIs have 32-bit
  * addresses; kernel decoding zero-extends these fields, never kernel pointers.
  * PREPARE supplies path/tail/env/CWD and policy. DEFER and START supply
- * the same launch inputs with zero policy and handle. Other operations supply only
- * operation/handle and zero other inputs. Reserved fields must be zero.
+ * the same launch inputs with zero policy and handle. With VECTOR_ARGS, the
+ * tail and environment slots carry argv and envp, respectively. classic_tail
+ * is an optional address of a 128-byte short tail for legacy shel_read.
+ * Other operations supply only operation/handle. Reserved fields must be zero.
  * PREPARE returns a positive owned handle as its scalar syscall result, COMMIT
  * returns PID and keeps the handle as observer. Neither operation copies out.
  * CANCEL_DEFERRED has no handle/arguments: cancel the calling PROCESS's
@@ -32,17 +35,17 @@
  * SNAPSHOT alone copies a retryable non-consuming snapshot; a copy fault may
  * partially modify user memory but cannot consume the handle/completion. */
 typedef struct {
-    ULONG operation, handle, policy, reserved;
+    ULONG operation, handle, policy, flags;
     ULONG path, tail, environment, directory;
     PROCESS_COMPLETION completion;
-    ULONG reserved_tail[2];
+    ULONG classic_tail, reserved;
 } __attribute__((aligned(4))) PROCESS_EXEC_REQUEST;
 typedef char PROCESS_EXEC_REQUEST_LAYOUT[
     sizeof(PROCESS_EXEC_REQUEST)==72 && __alignof__(PROCESS_EXEC_REQUEST)==4 &&
     offsetof(PROCESS_EXEC_REQUEST,operation)==0 && offsetof(PROCESS_EXEC_REQUEST,handle)==4 &&
-    offsetof(PROCESS_EXEC_REQUEST,policy)==8 && offsetof(PROCESS_EXEC_REQUEST,reserved)==12 &&
+    offsetof(PROCESS_EXEC_REQUEST,policy)==8 && offsetof(PROCESS_EXEC_REQUEST,flags)==12 &&
     offsetof(PROCESS_EXEC_REQUEST,path)==16 && offsetof(PROCESS_EXEC_REQUEST,tail)==20 &&
     offsetof(PROCESS_EXEC_REQUEST,environment)==24 && offsetof(PROCESS_EXEC_REQUEST,directory)==28 &&
     offsetof(PROCESS_EXEC_REQUEST,completion)==32 &&
-    offsetof(PROCESS_EXEC_REQUEST,reserved_tail)==64 ? 1 : -1];
+    offsetof(PROCESS_EXEC_REQUEST,classic_tail)==64 && offsetof(PROCESS_EXEC_REQUEST,reserved)==68 ? 1 : -1];
 #endif

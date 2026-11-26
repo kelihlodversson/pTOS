@@ -245,12 +245,7 @@ LONG proc_exec_replace(char *path, char *tail, char *env)
 
 LONG proc_exec_replace_vectors(PEXECVE_ARGS **args)
 {
-    DL_START_VECTORS vectors;
-
-    vectors.argv = (*args)->argv;
-    vectors.envp = (*args)->envp;
-    vectors.argc = (*args)->argc;
-    vectors.envc = (*args)->envc;
+    DL_START_VECTORS vectors = pexecve_start_vectors(*args);
     return exec_replace((char *)(*args)->path, NULL, NULL, &vectors, args);
 }
 #endif

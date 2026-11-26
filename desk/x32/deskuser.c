@@ -69,8 +69,6 @@ long trap1(WORD function, ...)
     case 0x3f: case 0x40: case 0x42: case 0x43: case 0x4a: case 0x56:
     case 0x57: case 0x154:
         n = 3; break;
-    case 0x4b:
-        n = 4; break;
     default:
         return -32;
     }

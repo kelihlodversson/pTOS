@@ -1,38 +1,31 @@
-/* Standard AES4 command parsing and process-local environment staging. */
+/* Standard GEM command syntax is parsed once, at the libaes boundary. */
 #include "shell_arguments.h"
-#include "shell_context.h"
 #include "resource_context.h"
+#include "pexecve.h"
+#include "../ldso/client/ptos.h"
 #include "string.h"
-#define ENV_LIMIT 32766UL
-typedef struct { ULONG bytes, nulls, count; } SPLIT;
 
-static BOOL put(char *out, ULONG *at, ULONG capacity, char value)
+#define FLAT_ENV_LIMIT 32766UL
+
+typedef struct {
+    ULONG bytes, count;
+} SPLIT;
+
+static BOOL split(const char *text, ULONG length, char *strings,
+                  const char **slots, const SPLIT *capacity, SPLIT *result)
 {
-    if (*at >= capacity) return FALSE;
-    if (out) out[*at] = value;
-    (*at)++;
-    return TRUE;
-}
-static BOOL number(char *out, ULONG *at, ULONG capacity, ULONG value)
-{
-    char digits[10];
-    ULONG n = 0;
-    do { digits[n++] = '0'+value%10; value /= 10; } while (value);
-    while (n) if (!put(out,at,capacity,digits[--n])) return FALSE;
-    return TRUE;
-}
-static BOOL split(const char *text, ULONG length, char *args, ULONG capacity,
-                   char *nulls, ULONG null_capacity, SPLIT *result)
-{
-    ULONG at = 0, begin;
-    char quote, c;
-    memset(result,0,sizeof(*result));
+    ULONG at = 0;
+
+    result->bytes = result->count = 0;
     while (at < length) {
+        char quote = 0;
         while (at < length && (text[at] == ' ' || text[at] == '\t')) at++;
         if (at == length) break;
-        quote = 0; begin = result->bytes;
+        if (result->count >= PEXECVE_MAX_ENTRIES - 1) return FALSE;
+        if (capacity && result->count == capacity->count) return FALSE;
+        if (slots) slots[result->count] = strings + result->bytes;
         while (at < length) {
-            c = text[at++];
+            char c = text[at++];
             if (!c) return FALSE;
             if (quote) {
                 if (c == quote) {
@@ -41,71 +34,82 @@ static BOOL split(const char *text, ULONG length, char *args, ULONG capacity,
                 }
             } else if (c == '\'' || c == '"') { quote = c; continue; }
             else if (c == ' ' || c == '\t') break;
-            if (!put(args,&result->bytes,capacity,c)) return FALSE;
+            if (capacity && result->bytes == capacity->bytes) return FALSE;
+            if (strings) strings[result->bytes] = c;
+            result->bytes++;
         }
         if (quote) return FALSE;
-        if (begin == result->bytes) {
-            if ((result->nulls && !put(nulls,&result->nulls,null_capacity,',')) ||
-                !number(nulls,&result->nulls,null_capacity,result->count+1) ||
-                !put(args,&result->bytes,capacity,' ')) return FALSE;
-        }
-        if (!put(args,&result->bytes,capacity,0)) return FALSE;
+        if (capacity && result->bytes == capacity->bytes) return FALSE;
+        if (strings) strings[result->bytes] = 0;
+        result->bytes++;
         result->count++;
     }
     return TRUE;
 }
 
-BOOL aes_shell_arguments(const char *path, const char *tail, BOOL parse,
-                         const char *environment, ULONG limit, SHELL_ARGUMENTS *out, AESGLOBAL *global)
+static BOOL flat_environment(const char *environment, ULONG *count)
 {
-    ULONG size, prefix, at, n, command, header, null_at, arg_at;
-    SPLIT measured, written;
-    char *staged;
-    memset(out,0,sizeof(*out));
-    if (!tail || (UBYTE)tail[0] > 127) return FALSE;
-    n = (UBYTE)tail[0];
-    if (!parse) memcpy(out->tail,tail,n == 127 ? 1 : n+1);
-    if (!parse && !environment) return n != 127;
-    if (!environment || limit < 2) return FALSE;
+    ULONG pos, length;
+    *count = 0;
+    if (!environment) return TRUE;
     if (!environment[0] && environment[1]) return FALSE;
-    if (limit > ENV_LIMIT) limit = ENV_LIMIT;
-    for (size = 0; size+1 < limit; size++)
-        if (!environment[size] && !environment[size+1]) break;
-    if (size+1 == limit) return FALSE;
-    size += 2;
-    prefix = 0;
-    while (prefix < size && environment[prefix]) {
-        if (!strncmp(environment+prefix,"ARGV=",5)) break;
-        prefix += strlen(environment+prefix)+1;
+    for (length = 0; length+1 < FLAT_ENV_LIMIT; length++)
+        if (!environment[length] && !environment[length+1]) break;
+    if (length+1 == FLAT_ENV_LIMIT) return FALSE;
+    for (pos = 0; environment[pos] && strncmp(environment+pos,"ARGV=",5);
+         pos += strlen(environment+pos)+1) {
+        if (*count == PEXECVE_MAX_ENTRIES) return FALSE;
+        (*count)++;
     }
-    if (!parse) {
-        if (n == 127 && (prefix == size-1 || !environment[prefix] ||
-            !environment[prefix+strlen(environment+prefix)+1])) return FALSE;
-        staged = aes_temporary_alloc(size+1,global);
-        if (!staged) return FALSE;
-        memcpy(staged,environment,size); staged[size] = 0;
-        out->environment = staged; return TRUE;
+    return TRUE;
+}
+
+const char *const *aes_shell_environ(void)
+{
+    static const char *const empty[] = { NULL };
+    return environ ? (const char *const *)environ : empty;
+}
+
+BOOL aes_shell_arguments(const char *path, const char *tail, BOOL parse,
+                         const char *environment, SHELL_ARGUMENTS *out, AESGLOBAL *global)
+{
+    SPLIT measured, written;
+    ULONG length = (UBYTE)tail[0], envc, i;
+    const char **slots;
+    char *strings;
+
+    if (length > 127 || (length == 127 && !parse)) return FALSE;
+    if (length == 127) {
+        for (length = 0; length < PEXECVE_ARG_MAX && tail[length+1]; length++) ;
+        if (length == PEXECVE_ARG_MAX) return FALSE;
     }
-    if (n == 127) {
-        for (n = 0; n < ENV_LIMIT && tail[n+1]; n++) ;
-        if (n == ENV_LIMIT) return FALSE;
+    if (!split(tail+1,length,NULL,NULL,NULL,&measured) ||
+        !flat_environment(environment,&envc) ||
+        measured.count+1+envc > PEXECVE_MAX_ENTRIES) return FALSE;
+    slots = aes_temporary_alloc((measured.count+2+envc+1)*sizeof(*slots)+measured.bytes,global);
+    if (!slots) return FALSE;
+    out->storage = slots;
+    strings = (char *)(slots+measured.count+2+envc+1);
+    slots[0] = path;
+    if (!split(tail+1,length,strings,slots+1,&measured,&written) ||
+        written.count != measured.count || written.bytes != measured.bytes) {
+        (void)aes_resource_discard(slots);
+        out->storage = NULL;
+        return FALSE;
     }
-    if (!split(tail+1,n,NULL,ENV_LIMIT,NULL,ENV_LIMIT,&measured)) return FALSE;
-    header = measured.nulls ? 10+measured.nulls : 5;
-    command = strlen(path)+1;
-    if (prefix+header+1+command+measured.bytes+1 > ENV_LIMIT) return FALSE;
-    staged = aes_temporary_alloc(prefix+header+1+command+measured.bytes+2,global);
-    if (!staged) return FALSE;
-    memcpy(staged,environment,prefix);
-    memcpy(staged+prefix,measured.nulls ? "ARGV=NULL:" : "ARGV=",measured.nulls ? 10 : 5);
-    null_at = prefix+(measured.nulls ? 10 : 5);
-    at = prefix+header; staged[at++] = 0;
-    memcpy(staged+at,path,command); at += command; arg_at = at;
-    if (!split(tail+1,n,staged+arg_at,measured.bytes,staged+null_at,measured.nulls,&written) ||
-        written.bytes != measured.bytes || written.nulls != measured.nulls || written.count != measured.count) {
-        (void)aes_resource_discard(staged); return FALSE;
+    slots[measured.count+1] = NULL;
+    out->argv = slots;
+    slots += measured.count+2;
+    if (environment) {
+        for (i = 0; i < envc; i++) {
+            slots[i] = environment;
+            environment += strlen(environment)+1;
+        }
+        slots[envc] = NULL;
+        out->envp = slots;
+    } else {
+        out->envp = aes_shell_environ();
     }
-    staged[arg_at+written.bytes] = staged[arg_at+written.bytes+1] = 0;
-    out->tail[0] = 127; out->environment = staged;
+    if (!parse) memcpy(out->classic_tail,tail,length+1);
     return TRUE;
 }

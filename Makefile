@@ -1659,7 +1659,7 @@ TEST_FONT_FILES = $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF $(TEST_FONT_STAGE)/FONTS
 TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 
 # libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
-# startup code (minicrt0) for the standalone test harness.
+# startup code for the standalone test harness.
 #
 # Its own Makefile defaults BUILDDIR to "build" inside itself, which would
 # leave build output sitting in the lib/libcmini submodule's working tree
@@ -2213,21 +2213,20 @@ $(eval $(call shutdown-prog,coldboot,2,cold booting))
 $(eval $(call shutdown-prog,halt,3,halting))
 TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
 
-ifdef CONF_WITH_CLI_VECTOR_EXEC
-# The CLI enters ELF with argv/envp. Keep the basepage startup in runtests.tos
-# and the other legacy fixtures for callers that still exercise Pexec(0x4b).
-TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
-TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos cliargs.tos
+TEST_DESK_INF = tests/emudesk.inf
+ifeq ($(ARCH_X86_64)$(CONF_WITH_LIBAES),yy)
+TEST_DESK_INF = obj/vector-tests/emudesk.inf
 
-ifdef ARCH_X86_64
-ifneq ($(CONF_EXTERNAL_CLI),y)
-# An embedded image also needs a disk copy for the nested console regression.
-TEST_VECTOR_FILES += obj/x32/test-cli/EMUCON.TOS
-obj/x32/test-cli/EMUCON.TOS: obj/x32/emucon.elf
-	@mkdir -p $(dir $@)
-	@cp $< $@
+$(TEST_DESK_INF): tests/emudesk.inf
+	@mkdir -p $(@D)
+	sed 's/RUNTESTS\.TOS/RUNVEC.TOS/' $< > $@
 endif
-endif
+
+# The native desktop and vector-enabled CLI share the ELF test binaries.
+# Keep runtests.tos for callers that exercise the historical Pexec ABI.
+ifneq ($(filter y,$(CONF_WITH_CLI_VECTOR_EXEC))$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
+TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
+TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos
 
 $(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
 	@$(LIBCMINI_MAKE) $@
@@ -2242,11 +2241,24 @@ haltv.tos: obj/halt.o
 pwroffv.tos rebootv.tos coldbtv.tos haltv.tos: $(TEST_VECTOR_STARTUP) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
 
+ifeq ($(CONF_WITH_CLI_VECTOR_EXEC),y)
+TEST_VECTOR_FILES += cliargs.tos
+
 obj/cliargs.o: tests/emucon/arguments.c $(AUTOCONF_H) $(LIBCMINI_LIB) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 cliargs.tos: $(TEST_VECTOR_STARTUP) obj/cliargs.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+ifdef ARCH_X86_64
+ifneq ($(CONF_EXTERNAL_CLI),y)
+# An embedded image also needs a disk copy for the nested console regression.
+TEST_VECTOR_FILES += obj/x32/test-cli/EMUCON.TOS
+obj/x32/test-cli/EMUCON.TOS: obj/x32/emucon.elf
+	@mkdir -p $(@D)
+	@cp $< $@
+endif
+endif
+endif
 endif
 
 # ISOPROBE.TOS: the payload of the isolation suite (tests/isolation/isoprobe.c),
@@ -2545,8 +2557,7 @@ $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO: obj/ldso/test/libdyn.so
 endif
 endif
 
-TEST_HD_FILES = $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
-TEST_HD_FILES += $(TEST_VECTOR_FILES)
+TEST_HD_FILES = $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) $(TEST_VECTOR_FILES) $(TEST_DESK_INF) $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2562,8 +2573,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_VECTOR_FILES)
-test-hd.img: $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) $(TEST_VECTOR_FILES) $(TEST_DESK_INF) $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2630,6 +2640,7 @@ endif
 # lib/libcmini/build/ behind.
 TOCLEAN += runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos cliargs.tos
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
+           runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos \
            halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \

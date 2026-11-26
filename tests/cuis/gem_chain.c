@@ -89,11 +89,13 @@ int gem_chain_client(int argc, char **argv)
     program = role == 'j' ? "DELETED.PRG" : "CHAIN.PRG";
     if (role == 'z' || role == 'n') {
         SHELW extended = { "C:\\APPS\\CHAIN.PRG",0,0,role == 'z' ? "C:\\WORK" : NULL,(char *)1,0,0 };
+        char *chain_args[] = { "deferred child", target+1, NULL };
         if (role == 'z') target[1] = 'k';
         else VERIFY(call(1,0x3b,(uintptr_t)"C:\\WORK",0,0,0) == 0);
-        VERIFY(shel_write(SWM_LAUNCHNOW|SW_DEFDIR,GEMAPP,SHW_CHAIN,&extended,target) == 1);
+        VERIFY(shel_writeve(SWM_LAUNCHNOW|SW_DEFDIR,GEMAPP,SHW_CHAIN,&extended,chain_args,NULL) == 1);
         extended.defdir = "C:\\MISSING";
         VERIFY(!shel_write(SWM_LAUNCHNOW|SW_DEFDIR,GEMAPP,SHW_CHAIN,&extended,target));
+        target[1] = 'X';
     } else VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_CHAIN,program,target) == 1);
     if (role == 'o' || role == 'q') VERIFY(call(1,0x3e,output,0,0,0) == 0);
     if (role == 'r') {

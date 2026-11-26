@@ -85,6 +85,7 @@ int legacy_start_vectors(LEGACY_START_ARGS *out, const char *filename,
                          const unsigned char *env, uint32_t envsize,
                          const char **slots, uint32_t capacity)
 {
+    static const DL_START_VECTORS empty = {0};
     uint32_t pos, n, envc = 0, argc = 0;
     const unsigned char *digits = 0, *end = 0;
     uint32_t extended = 0;
@@ -149,6 +150,7 @@ int legacy_start_vectors(LEGACY_START_ARGS *out, const char *filename,
             return status;
     }
     argv[argc] = 0;
+    out->vectors = empty;
     out->vectors.argv = argv;
     out->vectors.argc = argc;
     out->vectors.envp = slots;
