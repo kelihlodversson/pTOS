@@ -25,8 +25,6 @@
 #include "shells.h"
 #include "../bdos/bdosstub.h"
 #if CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE
-#include "../bdos/fs.h"
-#include "../bdos/proc.h"
 #include "../lib/ldso/startup.h"
 #endif
 #if CONF_WITH_BINFMT

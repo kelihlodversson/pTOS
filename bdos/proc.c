@@ -39,7 +39,7 @@
 #include "biosbind.h"
 #include "string.h"
 #include "biosext.h"
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+#if CONF_WITH_USER_ASPACE || (CONF_WITH_PROCMEM && CONF_WITH_KCALL)
 #include "bdosstub.h"
 #endif
 #include "asm.h"
@@ -617,6 +617,8 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 long proc_exec_kernel_vectors(WORD mode, const char *path,
                               const DL_START_VECTORS *vectors)
 {
+    if (!vectors || (mode != PE_LOADGO && mode != PE_ASYNC_LOADGO))
+        return EINVFN;
     return DISK_CALL(exec_common(mode|PE_KERNEL,(char *)path,NULL,NULL,
                                   FALSE,NULL,NULL,NULL,NULL,vectors));
 }

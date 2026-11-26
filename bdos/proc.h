@@ -25,11 +25,6 @@
 
 long xexec(WORD, char *, char *, char *);
 struct dl_start_vectors;
-#if CONF_WITH_USER_ASPACE
-/* Trusted kernel launch. The loader consumes the vectors before entry. */
-long proc_exec_kernel_vectors(WORD mode, const char *path,
-                              const struct dl_start_vectors *vectors);
-#endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 long xexec_selftest(WORD, char *, char *, char *);
 #if CONF_WITH_ELF_VECTOR_ENTRY_TEST

@@ -46,6 +46,13 @@ long kdos_fseek(long offset, long h, long mode);
 long kdos_fsfirst_at(long name, long att, DTA *dta);
 long kdos_fsnext_at(DTA *dta);
 
+#if CONF_WITH_USER_ASPACE
+struct dl_start_vectors;
+/* Trusted kernel launch. The loader consumes the vectors before entry. */
+long proc_exec_kernel_vectors(WORD mode, const char *path,
+                              const struct dl_start_vectors *vectors);
+#endif
+
 /* BDOS current date/time.
  * Declared here because also updated by XBIOS Settime() */
 extern UWORD current_date, current_time;

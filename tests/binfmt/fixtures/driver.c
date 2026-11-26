@@ -14,10 +14,10 @@
 
 long _stksize = 16384;
 static char large[1001];
-#ifndef NATIVE_VECTOR_FIXTURE
-static char environment[32768];
 static int boot;
 static long shared;
+#ifndef NATIVE_VECTOR_FIXTURE
+static char environment[32768];
 
 static char *append(char *at, const char *s)
 {
