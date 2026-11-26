@@ -143,7 +143,7 @@ LDSO_RUNTIME_FILES += $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 $(LDSO_RUNTIME_DIR): $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 all: $(LDSO_RUNTIME_DIR)/LIB/X32/LIBAES.SO
 
-obj/libaes/CUIS.TOS: tests/cuis/program.c tests/cuis/objects.c tests/cuis/drawing.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
+obj/libaes/CUIS.TOS: tests/cuis/program.c tests/cuis/objects.c tests/cuis/drawing.c tests/x32_probe/exec.h obj/ldso/dyncrt.o \
                      obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so tests/cuis/native_probe.h tests/cuis/stream_probe.h include/libaes.h include/aesglobal.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.S %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
@@ -151,7 +151,7 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/CUIS.TOS
 endif
 
-obj/libaes/CUISCHED.TOS: tests/cuis/scheduled.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
+obj/libaes/CUISCHED.TOS: tests/cuis/scheduled.c tests/x32_probe/exec.h obj/ldso/dyncrt.o \
                          obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so tests/cuis/native_probe.h tests/cuis/stream_probe.h include/libaes.h include/aesglobal.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.S %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos

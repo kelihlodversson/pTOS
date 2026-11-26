@@ -456,7 +456,7 @@ void kproc_static_elf_selftest(void)
         LONG status;
 
         path[0] += bootdev;
-        status = proc_exec_vector_test(path, &vectors);
+        status = proc_exec_kernel_vectors(PE_LOADGO, path, &vectors);
         /* Only native suites staging the fixture request this probe. */
         if (status != EFILNF) {
             if (status != 79)
@@ -467,7 +467,7 @@ void kproc_static_elf_selftest(void)
                 const char *const syscall_argv[] = {"check-syscalls", path, NULL};
                 const DL_START_VECTORS syscall_vectors = {.argv = syscall_argv, .envp = envp, .argc = 2, .envc = 3};
 
-                status = proc_exec_vector_test(path, &syscall_vectors);
+                status = proc_exec_kernel_vectors(PE_LOADGO, path, &syscall_vectors);
                 if (status != 78)
                     kcprintf("native Pexecve syscall: status %ld\n", (long)status);
                 REQUIRE(status == 78);

@@ -27,9 +27,6 @@ long xexec(WORD, char *, char *, char *);
 struct dl_start_vectors;
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 long xexec_selftest(WORD, char *, char *, char *);
-#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
-long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors);
-#endif
 #endif
 #if CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI)
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);

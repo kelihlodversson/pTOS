@@ -724,12 +724,6 @@ long xexec_selftest(WORD flag, char *path, char *tail, char *env)
 {
     return exec_common(flag|PE_KERNEL,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL);
 }
-#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
-long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors)
-{
-    return proc_exec_kernel_vectors(PE_LOADGO, path, vectors);
-}
-#endif
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,
