@@ -96,6 +96,10 @@ endif
 # ARM one does.
 CLI_SSYSTEM ?= 0
 ifeq ($(CLI_SSYSTEM),1)
+ifeq ($(M68K_ELF),y)
+# ELF on a private-address-space kernel starts at argc, with the basepage in auxv.
+LIBCMINI_CRT0 = $(LIBCMINI_OBJDIR)/elfcrt0.o
+endif
 CLI_DEFS = -DCLI_FORCE_SSYSTEM
 OBJECTS = cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o cmdgetwh.o version.o
 else
@@ -227,9 +231,10 @@ $(LIBCMINI_BUILDDIR)/.config: $(LIBCMINI_DIR)/configs/$(LIBCMINI_DEFCONFIG) | $(
 # Only the library and the startup object emucon.tos links, not "libs startups"
 # (every multilib variant the toolchain offers).
 $(LIBCMINI_LIB): $(LIBCMINI_BUILDDIR)/.config $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBCMINI_DIR)/sources/arch/$(ARCH)/*.S)
-	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB) $(LIBCMINI_CRT0)
+	@$(LIBCMINI_MAKE) $(LIBCMINI_LIB)
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
+	@$(LIBCMINI_MAKE) $@
 
 $(TARGET): $(CLI_STARTUP) $(OBJECTS) $(LIBCMINI_LIB)
 	$(CC) -nostartfiles -nostdlib $(CLI_STARTUP) $(OBJECTS) -L$(dir $(LIBCMINI_LIB)) -lcmini -lgcc $(LDFLAGS) -o $@
