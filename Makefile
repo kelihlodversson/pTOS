@@ -1957,8 +1957,7 @@ endif
 # independently loader-created roots rather than advertising private-fork tests.
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
-              $(if $(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))),-DTEST_NATIVE_ELF_ENTRY) \
-              $(if $(and $(ARCH_ARM),$(if $(CONF_WITH_USER_ASPACE),,y)),-include tests/legacy-pexec.h) \
+              $(if $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64)))),-DTEST_NATIVE_ELF_ENTRY) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_FAT_FILE_LIFETIMES),-DTEST_WITH_FAT_FILE_LIFETIMES) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
@@ -2030,7 +2029,7 @@ TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
 $(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
 	@$(LIBCMINI_MAKE) $@
 
-TEST_STARTUP = $(if $(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
+TEST_STARTUP = $(if $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64)))),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
 
 # Each test suite object depends on its source and the generated run_tests.c.
 define test-suite-rule
@@ -2230,7 +2229,8 @@ $(TEST_DESK_INF): tests/emudesk.inf
 endif
 
 # The native desktop and vector-enabled CLI share the ELF test binaries.
-ifneq ($(filter y,$(CONF_WITH_CLI_VECTOR_EXEC))$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
+TEST_VECTOR_CONSOLE = $(or $(CONF_WITH_CLI_VECTOR_EXEC),$(and $(CONF_WITH_CLI),$(CONF_WITH_ARM_SHARED_EXEC)))
+ifneq ($(TEST_VECTOR_CONSOLE)$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
 TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos
 
 runvec.tos: $(TEST_VECTOR_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
@@ -2243,7 +2243,7 @@ haltv.tos: obj/halt.o
 pwroffv.tos rebootv.tos coldbtv.tos haltv.tos: $(TEST_VECTOR_STARTUP) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
 
-ifeq ($(CONF_WITH_CLI_VECTOR_EXEC),y)
+ifeq ($(TEST_VECTOR_CONSOLE),y)
 TEST_VECTOR_FILES += cliargs.tos
 
 obj/cliargs.o: tests/emucon/arguments.c $(AUTOCONF_H) $(LIBCMINI_LIB) | obj

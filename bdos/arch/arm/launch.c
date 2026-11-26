@@ -48,15 +48,25 @@ void proc_launch_prepare(PD *p, void *super_sp)
 {
     struct gouser_stack *sp;
 
-    /* create a stack at the end of the TPA */
-    sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
+    UBYTE *user_sp = p->p_hitpa;
+    LONG entry_arg = (LONG)p;
+
+#if CONF_WITH_ARM_SHARED_EXEC
+    /* The loader may have prepared the ELF initial SP in the slot that
+     * will hold the saved exception SP once this process has entered. */
+    if (p->p_areg[7-3]) {
+        user_sp = (UBYTE *)(uintptr_t)p->p_areg[7-3];
+        entry_arg = 0;  /* no interpreter finalizer for a static image */
+    }
+#endif
+    sp = (struct gouser_stack *)(user_sp - sizeof(*sp));
 
 #if FPU_ALL_BYTES
     /* the process starts with the FPU registers cleared and the FPSCR as it is now */
     bzero(sp->fpu, sizeof sp->fpu);
     __asm__ volatile ("vmrs %0, fpscr" : "=r" (sp->fpu[0]));
 #endif
-    p->p_dreg[0] = (LONG)p;  /* base page is passed in r0 */
+    p->p_dreg[0] = entry_arg;
     sp->regs[1] = ARM_ENTRY_PROGRAM;
     sp->spsr = ((get_cpsr() & ~0x1f) | 0x10); /* the process will start in user mode, same interrupts */
     sp->retaddr = (long)p->p_tbase; /* return address is text start */

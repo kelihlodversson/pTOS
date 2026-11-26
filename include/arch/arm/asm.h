@@ -54,6 +54,9 @@
 extern long trap1(int, ...);
 extern long trap1_pexec(short mode, const char * path,
   const char * tail, const char * env);
+#if CONF_WITH_ARM_SHARED_EXEC
+long trap1_pexecve(short mode, const char *path, char *const argv[], char *const envp[]);
+#endif
 #endif
 
 /* External function doing nothing */

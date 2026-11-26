@@ -11,6 +11,9 @@
 #include "test.h"
 #include <mint/osbind.h>
 #include <string.h>
+#if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE) && !defined(TEST_WITH_FAT_FILE_LIFETIMES)
+int test_open_unlink_inherited(int foreign);
+#endif
 #if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 void pclone_run_managed_tests(void);
 void pclone_run_unmanaged_tests(void);
@@ -45,6 +48,12 @@ int main(int argc, char **argv)
     int failures;
 
     (void)role;
+#if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE) && !defined(TEST_WITH_FAT_FILE_LIFETIMES)
+    if (!strcmp(role, "--inherit-fat"))
+        return test_open_unlink_inherited(0);
+    if (!strcmp(role, "--inherit-9p"))
+        return test_open_unlink_inherited(1);
+#endif
 #if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_MULTITHREADING)
     if (!strcmp(role, "--shared-vm")) {
         ptest_log_append();

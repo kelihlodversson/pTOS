@@ -24,7 +24,28 @@
         .text
 
 C_SYM(deskstart):
-        // our basepage address is in r0.
+#if CONF_EXTERNAL_DESK && CONF_WITH_ARM_SHARED_EXEC
+        // Standard ELF argc/argv/envp followed by the auxiliary vector.
+        ldr     r0, [sp]
+        add     r2, sp, #8
+        add     r2, r2, r0, lsl #2
+        ldr     r1, =C_SYM(desk_environment)
+        str     r2, [r1]
+1:      ldr     r1, [r2], #4
+        cmp     r1, #0
+        bne     1b
+2:      ldmia   r2!, {r0, r1}
+        cmp     r0, #0x5000            // AT_PTOS_BASEPAGE
+        moveq   r0, r1
+        beq     3f
+        cmp     r0, #0
+        bne     2b
+        mov     r0, #0x4c
+        mov     r1, #1
+        svc     1
+3:
+#endif
+        // The basepage is in r0.
 #if CONF_EXTERNAL_DESK
         ldr     r1, =C_SYM(desk_basepage)       // for the environment (LANG)
         str     r0, [r1]
@@ -33,6 +54,7 @@ C_SYM(deskstart):
         // set our temporary user stack
         ldr     sp, =deskustack
 
+#if !(CONF_EXTERNAL_DESK && CONF_WITH_ARM_SHARED_EXEC)
         // mshrink to the needed size for TEXT+DATA+BSS plus 256 bytes.
         ldr     r3, [r0, #PD_p_tlen]
         ldr     r2, [r0, #PD_p_dlen]
@@ -44,7 +66,7 @@ C_SYM(deskstart):
         mov     r1, #0
         mov     r0, #0x4a           // MSrink(0, basepage, newsize)
         svc     1
-
+#endif
 
         bl      C_SYM(deskmain)               // Run the desktop
 

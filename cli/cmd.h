@@ -218,6 +218,14 @@ static __inline__ long cli_supexec_(long a)
 #endif /* STANDALONE_CONSOLE */
 
 
+#if !defined(STANDALONE_CONSOLE) && CONF_WITH_ARM_SHARED_EXEC
+#define CLI_ARM_BUILTIN_EXEC 1
+#else
+#define CLI_ARM_BUILTIN_EXEC 0
+#endif
+
+#define CLI_VECTOR_ARGUMENTS (CLI_VECTOR_EXEC || CLI_ARM_BUILTIN_EXEC)
+
 /*
  * program parameters
  */

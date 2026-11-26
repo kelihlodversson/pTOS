@@ -25,7 +25,7 @@ include ../version.mk
 
 TARGET = emucon.tos
 ARCH ?= m68k
-CLI_VECTOR_EXEC ?= 0
+CLI_VECTOR_EXEC ?= $(if $(filter arm,$(ARCH)),1,0)
 M68K_LRA_FLAGS = $(if $(filter m68k-y,$(ARCH)-$(BUILD_M68K_LRA)),-mlra)
 
 # libcmini provides the C library, GEMDOS/BIOS/XBIOS bindings, and startup

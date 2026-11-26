@@ -59,7 +59,7 @@ done:
 #else
 #include <mint/basepage.h>
 
-#ifndef TEST_WITH_USER_ASPACE
+#if defined(TEST_WITH_STAGED_PEXEC) && !defined(TEST_WITH_USER_ASPACE)
 static void inherited_child(void)
 {
     char c = 0;
@@ -143,6 +143,53 @@ static void staged_foreign_handle(void)
 
 #endif
 
+#if defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE)
+/* The synchronous child runs while the parent's FAT handle is still live. */
+int test_open_unlink_inherited(int foreign);
+int test_open_unlink_inherited(int foreign)
+{
+    char c;
+
+    if (!foreign && Fdelete("C:\\INHERIT.TST") != -36L)
+        return 1;
+    return Fseek(0L, 4, 0) == 0 && Fread(4, 1L, &c) == 1 && c == 'x' ? 77 : 1;
+}
+
+static void vector_inheritance(const char *fixture, char *role)
+{
+    char *argv[] = { "runtests.tos", role, NULL };
+    char *envp[] = { NULL };
+    char c = 'x';
+    long file, saved;
+
+    file = Fcreate(fixture, 0);
+    if (file < 0) {
+        ptest_fail("cannot create inheritance fixture");
+        return;
+    }
+    ptest_assert_msg(Fwrite(file, 1L, &c) == 1, "write inheritance fixture");
+    saved = Fdup(4);
+    if (saved < 0) {
+        ptest_fail("cannot save AUX");
+    } else {
+        if (Fforce(4, file) == 0) {
+            ptest_assert_msg(Pexecve(0, "C:\\RUNTESTS.TOS", argv, envp) == 77,
+                             "vector child reads inherited AUX");
+            ptest_assert_msg(Fseek(0L, file, 0) == 0 && Fread(file, 1L, &c) == 1 && c == 'x',
+                             "child exit preserves the caller's handle and data");
+            ptest_assert_msg(Fclose(4) == 0, "close redirected AUX");
+            ptest_assert_msg(Fforce(4, saved) == 0, "restore AUX");
+        } else {
+            ptest_fail("cannot redirect AUX");
+        }
+        Fclose(saved);
+    }
+    Fclose(file);
+    ptest_assert_msg(Fdelete(fixture) == 0,
+                     "deletion succeeds after final inherited reference closes");
+}
+#endif
+
 /* Small-ROM deletion closes this process's handles before freeing backing. */
 void test_open_unlink(void)
 {
@@ -150,9 +197,13 @@ void test_open_unlink(void)
     char original[1024], buffer[1024];
 
     ptest_begin("open_unlink (traditional GEMDOS)");
-#ifndef TEST_WITH_USER_ASPACE
+#if defined(TEST_WITH_STAGED_PEXEC) && !defined(TEST_WITH_USER_ASPACE)
     staged_inheritance();
     staged_foreign_handle();
+#elif defined(__arm__) && defined(TEST_NATIVE_ELF_ENTRY) && !defined(TEST_WITH_USER_ASPACE)
+    vector_inheritance("C:\\INHERIT.TST", "--inherit-fat");
+    if (Drvmap() & (1L << 16))
+        vector_inheritance("Q:\\INHERIT.TST", "--inherit-9p");
 #endif
     memset(original, 0x5a, sizeof(original));
     a = Fcreate(FIXTURE, 0);

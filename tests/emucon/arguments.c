@@ -1,5 +1,5 @@
 /*
- * Verify the vectors inherited through the standalone EmuCON command editor.
+ * Verify the vectors inherited through the EmuCON command editor.
  * Copyright (C) 2026 The pTOS development team.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -26,7 +26,7 @@ int main(int argc, char **argv)
     unsigned int i;
 
     if (argc != 5 || argv[argc] || strcmp(argv[0],"cliargs") ||
-        strcmp(argv[1],"two words") || argv[2][0] || strcmp(argv[3],"a>b"))
+        strcmp(argv[1],"two wordssuffix") || argv[2][0] || strcmp(argv[3],"a>b"))
         return fail("unexpected argv\r\n");
     if (strlen(argv[4]) != 130)
         return fail("truncated argument\r\n");
