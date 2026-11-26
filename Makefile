@@ -1953,7 +1953,7 @@ TEST_LIBS = $(LIBS)
 TEST_CPUFLAGS = $(CPUFLAGS)
 endif
 TEST_M68K_PRIVATE_ELF = $(and $(ARCH_M68K),$(CONF_WITH_USER_ASPACE),$(CONF_WITH_ELF_LOADER))
-TEST_VECTOR_ENTRY = $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))),$(and $(TEST_M68K_PRIVATE_ELF),$(BUILD_TOOLCHAIN_ELF)))
+TEST_VECTOR_ENTRY = $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))))
 
 # ROM-window MMU backends deliberately reject private cloning in aspace_clone.
 # Phase C keeps kernel ownership counters/adapters, but its ROM user proof uses
@@ -2032,7 +2032,8 @@ TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
 $(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
 	@$(LIBCMINI_MAKE) $@
 
-TEST_STARTUP = $(if $(TEST_VECTOR_ENTRY),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
+# The m68k harness can start through ELF vectors and still exercise Pexec.
+TEST_STARTUP = $(if $(or $(TEST_VECTOR_ENTRY),$(and $(TEST_M68K_PRIVATE_ELF),$(BUILD_TOOLCHAIN_ELF))),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
 # Some m68k probes are linked as ELF even when the suite defaults to PRG.
 TEST_M68K_ELF_STARTUP = $(if $(TEST_M68K_PRIVATE_ELF),$(TEST_VECTOR_STARTUP),$(TEST_STARTUP))
 
