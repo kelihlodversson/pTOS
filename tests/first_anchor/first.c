@@ -1,7 +1,6 @@
 /* Public GEMDOS exercise used by the boot controller's ordinary Pexec(0)
  * and Pexec(100) calls, and by a managed parent's Pexec(0). */
 #include "../entry_args.h"
-#include <mint/basepage.h>
 #include <mint/mintbind.h>
 #include <mint/osbind.h>
 

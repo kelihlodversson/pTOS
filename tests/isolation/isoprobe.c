@@ -24,7 +24,6 @@
 
 #include "../entry_args.h"
 #include <mint/osbind.h>
-#include <mint/basepage.h>
 #include "include/mmapcall.h"
 
 #define SURVIVED 7

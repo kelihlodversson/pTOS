@@ -11,7 +11,6 @@
 #include "test.h"
 #include <mint/osbind.h>
 #include <string.h>
-#include <mint/basepage.h>
 #if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 void pclone_run_managed_tests(void);
 void pclone_run_unmanaged_tests(void);

@@ -4,7 +4,6 @@
 #include "../entry_args.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
 #include "../../include/pclone.h"
 #include "trap.h"
 #if defined(__mc68000__)

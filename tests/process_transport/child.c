@@ -1,7 +1,6 @@
 /* Tiny real PROCESS payload; avoid recursively launching the test driver. */
 #include "../entry_args.h"
 #include <mint/osbind.h>
-#include <mint/basepage.h>
 int main(int argc, char **argv)
 {
     if (test_entry_argument(argc, argv)[0] == 'F')

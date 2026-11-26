@@ -8,7 +8,6 @@
 #include "../../include/image_policy_test.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

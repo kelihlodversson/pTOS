@@ -3,7 +3,6 @@
 #include "../entry_args.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
 
 #if defined(__mc68000__) && defined(TEST_IS_PRG)
 /* Bounded scheduler fixture, including PD churn under simultaneous startup

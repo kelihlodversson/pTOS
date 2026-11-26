@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mint/basepage.h>
 #include "trap.h"
 
 #if defined(TEST_WITH_FORK_RETURN_TEST) && defined(TEST_WITH_PRIVATE_CLONE_TEST)
