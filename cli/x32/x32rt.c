@@ -20,7 +20,9 @@
 #include <string.h>
 #include "x32rt.h"
 
+#if CONF_WITH_DYNAMIC_CLI || !CONF_WITH_CLI_VECTOR_EXEC
 struct basepage *_base;
+#endif
 
 /* The kernel's PD (include/bdosdefs.h) puts p_env at offset 0x2c. */
 typedef char p_env_offset_is_0x2c[(__builtin_offsetof(struct basepage, p_env) == 0x2c) ? 1 : -1];
@@ -30,7 +32,7 @@ int main(void);
 #if CONF_WITH_DYNAMIC_CLI
 #include "../../lib/ldso/client/ptos.h"
 #elif CONF_WITH_CLI_VECTOR_EXEC
-char **environ;
+extern char **environ;
 #endif
 
 #if CONF_WITH_CLI_VECTOR_EXEC

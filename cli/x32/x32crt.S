@@ -12,11 +12,24 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
+#include "config.h"
+
         .text
         .globl  _start
         .type   _start, @function
 _start:
         xorl    %ebp, %ebp              /* end of the frame chain */
+#if CONF_WITH_CLI_VECTOR_EXEC
+        /* Legacy entry supplies a non-null basepage in RDI. The static
+         * ELF entry supplies its vectors on the aligned stack. */
+        testl   %edi, %edi
+        jnz     x32_start
+        movl    %esp, %edi
+        movl    %edx, %esi
+        call    __libc_start_elf
+        ud2
+#else
         jmp     x32_start
+#endif
         .size   _start, . - _start
         .section .note.GNU-stack,"",@progbits

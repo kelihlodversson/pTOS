@@ -1765,6 +1765,16 @@ $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBC
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
+ifdef ARCH_X86_64
+ifeq ($(CONF_WITH_CLI_VECTOR_EXEC),y)
+ifneq ($(CONF_WITH_DYNAMIC_CLI),y)
+# Share libcmini's standard ELF entry with the static console. Its own CRT
+# shim also accepts the basepage entry used when the kernel embeds the image.
+obj/x32/emucon.elf: $(LIBCMINI_LIB)
+endif
+endif
+endif
+
 #
 # EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
 # EmuCON, against the libcmini that is built here, and the file goes on the
@@ -2208,6 +2218,16 @@ ifdef CONF_WITH_CLI_VECTOR_EXEC
 # and the other legacy fixtures for callers that still exercise Pexec(0x4b).
 TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
 TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos cliargs.tos
+
+ifdef ARCH_X86_64
+ifneq ($(CONF_EXTERNAL_CLI),y)
+# An embedded image also needs a disk copy for the nested console regression.
+TEST_VECTOR_FILES += obj/x32/test-cli/EMUCON.TOS
+obj/x32/test-cli/EMUCON.TOS: obj/x32/emucon.elf
+	@mkdir -p $(dir $@)
+	@cp $< $@
+endif
+endif
 
 $(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
 	@$(LIBCMINI_MAKE) $@

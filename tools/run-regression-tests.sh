@@ -536,20 +536,18 @@ if [ "$suite_program" = runvec.tos ]; then
     type_line 'path c:\'
     type_line 'cd c:\tests'
     nested_console=false
-    if grep -qx '#define CONF_WITH_DYNAMIC_CLI 1' "$top/obj/autoconf.h"; then
-        # The second EmuCON starts through Pexecve with a vector environment.
-        # It must find the fixture in the inherited PATH outside its CWD.
-        type_line 'emucon'
-        n=0
-        while [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ] && [ "$n" -lt 20 ]; do
-            sleep 1
-            n=$((n + 1))
-        done
-        if [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -ge 2 ]; then
-            nested_console=true
-        else
-            record 'native nested EmuCON' FAIL 'vector-started console did not show its prompt'
-        fi
+    # The second EmuCON starts through Pexecve with a vector environment.
+    # It must find the fixture in the inherited PATH outside its CWD.
+    type_line 'emucon'
+    n=0
+    while [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ] && [ "$n" -lt 20 ]; do
+        sleep 1
+        n=$((n + 1))
+    done
+    if [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -ge 2 ]; then
+        nested_console=true
+    else
+        record 'native nested EmuCON' FAIL 'vector-started console did not show its prompt'
     fi
     long_arg=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
     type_line "cliargs \"two words\" \"\" \"a>b\" $long_arg >cliargs.out"
