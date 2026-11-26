@@ -214,6 +214,7 @@ static long curdta_ok(void)
 #endif
 }
 
+#if !(CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE)
 #if CONF_WITH_USER_ASPACE
 /*
  * alloc_env() copies the environment rounded up to an even size: when the
@@ -372,6 +373,7 @@ static long pexec_ok(const long *pw)
     return run->p_env ? E_OK : EIMBA;
 #endif
 }
+#endif
 
 /* Fdatime(buf, handle, wflag): the two words are read when setting, else written */
 static long fdatime_ok(const long *pw)
@@ -449,8 +451,10 @@ long bdos_check_user_args(const long *pw)
     UWORD i;
     long rc;
 
+#if !(CONF_WITH_NATIVE_ABI && CONF_WITH_USER_ASPACE)
     if (fn == 0x4B)
         return pexec_ok(pw);
+#endif
     if (fn == 0x57)
         return fdatime_ok(pw);
     if (fn == GEMDOS_SSYSTEM)

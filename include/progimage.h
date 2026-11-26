@@ -25,7 +25,7 @@
  * segments may not share a page, and the entry point must lie in an
  * executable one; anything else is refused before a page is mapped.
  */
-typedef struct {
+typedef struct prog_image {
     const UBYTE *data;
     ULONG size;
 } PROG_IMAGE;
@@ -57,6 +57,12 @@ BOOL image_load(ASPACE *as, const PROG_IMAGE *image, VADDR *entry);
 /* Fills *layout from the ELF bytes of an image (src points into them).  FALSE
  * if they are not an ET_EXEC x32 executable or the layout is not valid. */
 BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout);
+
+#if ARCH_X86_64 && CONF_WITH_ELF_LOADER
+struct dl_start_info;
+BOOL image_layout_start(const PROG_IMAGE *image, PROG_LAYOUT *layout,
+                        struct dl_start_info *start);
+#endif
 
 /* Whether a layout satisfies the rules above.  `strict` also forbids a segment
  * that is both writable and executable.  The built-in programs are checked

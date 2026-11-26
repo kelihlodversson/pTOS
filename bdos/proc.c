@@ -30,6 +30,7 @@
 #include "process_observer.h"
 #include "process_exec.h"
 #include "exec_replace.h"
+#include "launch_args.h"
 #if CONF_WITH_EXEC_REPLACE
 #include "exec_handoff.h"
 #endif
@@ -38,7 +39,7 @@
 #include "biosbind.h"
 #include "string.h"
 #include "biosext.h"
-#if CONF_WITH_PROCMEM && CONF_WITH_KCALL
+#if CONF_WITH_USER_ASPACE || (CONF_WITH_PROCMEM && CONF_WITH_KCALL)
 #include "bdosstub.h"
 #endif
 #include "asm.h"
@@ -51,7 +52,6 @@
 #include "ksched.h"
 #include "ksched_lifetime.h"
 #include "kthread.h"
-#include "launch_args.h"
 #include "../lib/ldso/startup.h"
 #if CONF_WITH_PRG_LOADER
 #include "binfmt.h"
@@ -613,30 +613,45 @@ long xexec(WORD flag, char *path, char *tail, char *env)
     /* exec_common() learns whether this is the kernel's own request. */
     return exec_common(flag|kernel,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL);
 }
-#if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
-static LONG exec_vector_child(const PEXECVE_ARGS *args)
+#if CONF_WITH_USER_ASPACE
+long proc_exec_kernel_vectors(WORD mode, const char *path,
+                              const DL_START_VECTORS *vectors)
 {
-    DL_START_VECTORS vectors = pexecve_start_vectors(args);
-    return DISK_CALL(exec_common(PE_ASYNC_LOADGO,(char *)args->path,NULL,NULL,
-                                  FALSE,NULL,NULL,NULL,NULL,&vectors));
+    if (!vectors || (mode != PE_LOADGO && mode != PE_ASYNC_LOADGO))
+        return EINVFN;
+    return DISK_CALL(exec_common(mode|PE_KERNEL,(char *)path,NULL,NULL,
+                                  FALSE,NULL,NULL,NULL,NULL,vectors));
 }
+#endif
 
+#if CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI)
 static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
                          const PEXECVE_GUEST_REQUEST *guest)
 {
+#if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE cleanup = {0};
+    BOOL wait_for_child = FALSE;
+#endif
     PEXECVE_ARGS *args = NULL;
+    WORD launch_mode = mode;
     LONG rc;
 
     switch (mode) {
     case PE_LOADGO:
-        if (!ksched_anchor_launch_allowed())
+#if CONF_WITH_MULTITHREADING
+        if (ksched_anchor_launch_allowed()) {
+            wait_for_child = TRUE;
+            launch_mode = PE_ASYNC_LOADGO;
+        } else if (!CONF_WITH_NATIVE_ABI || guest)
             return EACCDN;
+#endif
         break;
+#if CONF_WITH_MULTITHREADING
     case PE_ASYNC_LOADGO:
         if (!ksched_async_allowed())
             return EACCDN;
         break;
+#endif
 #if CONF_WITH_EXEC_REPLACE
     case PE_EXEC_REPLACE:
         break;
@@ -647,7 +662,9 @@ static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
     if (!kproc_user_aspace(run))
         return EACCDN;
 
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_begin(&cleanup);
+#endif
     rc = guest ? pexecve_guest_args_capture(guest, &args) :
         pexecve_args_capture(mode, path, argv, envp, &args);
 #if CONF_WITH_EXEC_REPLACE
@@ -658,17 +675,23 @@ static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
         return proc_exec_replace_vectors(&args);
     }
 #endif
-    if (rc == E_OK)
-        rc = exec_vector_child(args);
+    if (rc == E_OK) {
+        DL_START_VECTORS vectors = pexecve_start_vectors(args);
+
+        rc = DISK_CALL(exec_common(launch_mode,(char *)args->path,NULL,NULL,
+                                    FALSE,NULL,NULL,NULL,NULL,&vectors));
+    }
     pexecve_args_release(&args);
+#if CONF_WITH_MULTITHREADING
     ksched_cleanup_end(&cleanup);
-    if (mode == PE_LOADGO && rc >= 0) {
+    if (wait_for_child && rc >= 0) {
         LONG status;
         if (!rc)
             return EINTRN;
         rc = ksched_wait_exact((WORD)rc, &status);
         return rc < 0 ? rc : status;
     }
+#endif
     return rc;
 }
 
@@ -677,7 +700,7 @@ LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
     return exec_vectors(mode, path, argv, envp, NULL);
 }
 
-#if CONF_WITH_BINFMT
+#if CONF_WITH_BINFMT && CONF_WITH_MULTITHREADING
 LONG xpexecve_guest(UQUAD address, UQUAD size)
 {
     PEXECVE_GUEST_REQUEST request;
@@ -701,15 +724,6 @@ long xexec_selftest(WORD flag, char *path, char *tail, char *env)
 {
     return exec_common(flag|PE_KERNEL,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL);
 }
-#if CONF_WITH_ELF_VECTOR_ENTRY_TEST
-long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors)
-{
-    static char empty[2];
-
-    return DISK_CALL(exec_common(PE_LOADGO|PE_KERNEL,path,empty,empty,
-                                 FALSE,NULL,NULL,NULL,NULL,vectors));
-}
-#endif
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 long proc_exec_observe(char *path, char *tail, char *env, char *directory,

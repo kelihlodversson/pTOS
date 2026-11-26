@@ -72,6 +72,8 @@
 
 #include "../../include/mman.h"
 #include "../../include/pclone.h"
+#include "exec.h"
+#include "startup.h"
 #include "config.h"
 
 typedef unsigned long long u64;
@@ -130,6 +132,17 @@ s64 x32_probe_clone_stack(void)
 static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
 {
     return sys6(class, func, a, b, c, d, 0, 0);
+}
+
+static s64 run_loader(const char *path, const char *argument, const char *const *envp)
+{
+    return x32_exec_argument(0, path, argument, envp);
+}
+
+static s64 run_elf(const char *path, const char *argument)
+{
+    const char *const envp[] = { 0 };
+    return run_loader(path, argument, envp);
 }
 
 static s64 sys(u64 class, u64 func, s64 a, s64 b, s64 c)
@@ -350,8 +363,17 @@ extern int callback_roundtrip_checks(const char *tail);
 
 void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 {
-    const char *tail = (const char *)(unsigned long)(basepage + 0x80);
+    const char *tail;
     int bad = 0;
+
+    if (basepage) {
+        tail = (const char *)(unsigned long)(basepage + 0x80);
+    } else {
+        const uint32_t *initial = (const uint32_t *)(unsigned long)entry_rsp;
+
+        basepage = x32_probe_basepage(initial);
+        tail = *initial > 1 ? (const char *)(unsigned long)initial[2] : "";
+    }
 
     switch (tail[0]) {
 #if CONF_WITH_CUIS_RECEIPT_TEST && CONF_WITH_MULTITHREADING
@@ -402,9 +424,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 #endif
 #if CONF_WITH_LIBAES
     case ':': {
-        static const char empty[] = { 0, 0 };
-        s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\CUIS.TOS",
-                         (s64)(unsigned long)empty, (s64)(unsigned long)empty);
+        s64 child = run_elf("C:\\CUIS.TOS", 0);
         pterm(child == 77 ? 0 : 0x100 | ((int)child & 0xff));
         break;
     }
@@ -415,8 +435,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 #endif
 #if CONF_WITH_ELF_SHARED
     case '1': {
-        static const char empty_tail[] = { 0, 0 };
-        static const char env[] = "CHECK=660\0\0";
+        const char *const envp[] = { "CHECK=660", 0 };
         static const char *const bad_files[] = {
             "C:\\SOMISS.TOS", "C:\\SOSYM.TOS", "C:\\SOBOOT.TOS"
         };
@@ -426,44 +445,33 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         unsigned int k;
         int cycle;
         for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
-            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)bad_files[k],
-                             (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
+            s64 child = run_loader(bad_files[k], 0, envp);
             if (child != 127) pterm(0x200 | (k << 8) | ((int)child & 0xff));
         }
         for (cycle = 0; cycle < 2; cycle++) {
             for (k = 0; k < sizeof(good_files) / sizeof(good_files[0]); k++) {
-                s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)good_files[k],
-                                 (s64)(unsigned long)empty_tail, (s64)(unsigned long)env);
+                s64 child = run_loader(good_files[k], 0, envp);
                 if (child != 77) pterm(0x100 | (k << 8) | ((int)child & 0xff));
             }
         }
         for (cycle = 0; cycle < 2; cycle++) {
-            static const char return_tail[] = { 6, 'r', 'e', 't', 'u', 'r', 'n', 0 };
-            static const char exit_tail[] = { 4, 'e', 'x', 'i', 't', 0 };
-            static const char raw_tail[] = { 5, '_', 'E', 'x', 'i', 't', 0 };
-            static const char nested_tail[] = { 4, 'n', 'e', 's', 't', 0 };
             const char *path = cycle ? "C:\\CLIENTP.TOS" : "C:\\CLIENT.TOS";
-            s64 child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
-                             (s64)(unsigned long)return_tail, (s64)(unsigned long)env);
+            s64 child = run_loader(path, "return", envp);
             if (child != 77) pterm(0x400 | ((int)child & 0xff));
-            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
-                         (s64)(unsigned long)exit_tail, (s64)(unsigned long)env);
+            child = run_loader(path, "exit", envp);
             if (child != 88) pterm(0x500 | ((int)child & 0xff));
-            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
-                         (s64)(unsigned long)raw_tail, (s64)(unsigned long)env);
+            child = run_loader(path, "_Exit", envp);
             if (child != 89) pterm(0x600 | ((int)child & 0xff));
-            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
-                         (s64)(unsigned long)nested_tail, (s64)(unsigned long)env);
+            child = run_loader(path, "nest", envp);
             if (child != 77) pterm(0x700 | ((int)child & 0xff));
         }
         pterm(0);
         break;
     }
     case '2': {
-        static char args[] = "!\"hello world\" \"\" C:\\tmp";
-        static const char env[] = "CHECK=660\0SECOND=value\0\0";
-        static const char extended[] = "CHECK=660\0SECOND=value\0ARGV=\0custom-name\0hello world\0C:\\tmp\0\0";
-        static const unsigned char argv_tail[] = { 127, 0 };
+        const char *const envp[] = { "CHECK=660", "SECOND=value", 0 };
+        const char *const args[] = { "custom-name", "hello world", "C:\\tmp", 0 };
+        const char *const pie_args[] = { "C:\\DYNPIE.TOS", "hello world", "", "C:\\tmp", 0 };
         const char *path = "C:\\DYNTEST.TOS";
         s64 child;
         int cycle;
@@ -474,35 +482,20 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         };
         unsigned int k;
 
-        child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\STATICPH.TOS",
-                     (s64)(unsigned long)"", (s64)(unsigned long)env);
+        child = run_loader("C:\\STATICPH.TOS", 0, envp);
         if (child != 0) pterm(0x800 | ((int)child & 0xff));
-        args[0] = sizeof(args) - 2;
         for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
-            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)bad_files[k],
-                         (s64)(unsigned long)args, (s64)(unsigned long)env);
+            child = x32_exec_vectors(0, bad_files[k], args, envp);
             if (child != (k == 0 ? -33 : -66))
                 pterm(0x200 | (k << 4) | ((int)child & 15));
         }
-        child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\DYNPIE.TOS",
-                     (s64)(unsigned long)args, (s64)(unsigned long)env);
+        child = x32_exec_vectors(0, "C:\\DYNPIE.TOS", pie_args, envp);
         if (child != 37)
             pterm(0x300 | ((int)child & 0xff));
-        /* #1018: the staged modes are not part of the x32 ABI. They are
-         * refused before any argument is read. */
-        if (sys4(GEMDOS, 0x4b, 3, (s64)(unsigned long)path,
-                 (s64)(unsigned long)args, (s64)(unsigned long)env) != EINVFN ||
-            sys4(GEMDOS, 0x4b, 6, 0, 0x1000, 0) != EINVFN)
-            pterm(5);
         for (cycle = 0; cycle < 2; cycle++) {
-            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
-                         (s64)(unsigned long)args, (s64)(unsigned long)env);
+            child = x32_exec_vectors(0, path, args, envp);
             if (child != 37)
                 pterm(0x100 | ((int)child & 0xff));
-            child = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)path,
-                         (s64)(unsigned long)argv_tail, (s64)(unsigned long)extended);
-            if (child != 37)
-                pterm(2);
         }
         pterm(0);
         break;
@@ -513,13 +506,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 #endif
     case '4': {
         s64 rc;
-        static const char empty_tail[] = { 0, 0 };
         if (mmap_private(0, 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, 0) != EINVFN ||
             sys(GEMDOS, GEMDOS_MPROT, PTOS_MMAP_BASE, 4096, PROT_READ) != EINVFN ||
             gemdos(GEMDOS_MUNMAP, PTOS_MMAP_BASE, 4096) != EINVFN)
             pterm(1);
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(unsigned long)"C:\\DYNTEST.TOS",
-                  (s64)(unsigned long)empty_tail, 0);
+        rc = run_elf("C:\\DYNTEST.TOS", 0);
         if (rc != -66 && rc != -33)
             pterm(2);                  /* PT_INTERP never enters the static fallback */
         pterm(0);
@@ -630,11 +621,11 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         int i;
 
         for (i = 0; i < 3; i++) {
-            rc = sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0);
+            rc = run_elf(files[i], 0);
 #if CONF_WITH_X32_VDI
             if (rc != 0)
                 pterm(0x100 + i);
-            if (sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)files[i], (u32)(unsigned long)"", 0) != 0)
+            if (run_elf(files[i], 0) != 0)
                 pterm(0x110 + i);
 #else
             if (rc != -66)             /* EPLFMT: optional import unavailable */
@@ -643,7 +634,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         }
         for (i = 0; i < 7; i++) {
             bad_file[6] = '1' + i;
-            if (sys4(GEMDOS, 0x4b, 0, (u32)(unsigned long)bad_file, (u32)(unsigned long)"", 0) != -66)
+            if (run_elf(bad_file, 0) != -66)
                 pterm(0x130 + i);
         }
         pterm(0);
@@ -744,8 +735,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * on its own stack, which a launcher resuming on the wrong stack
          * would not survive */
         for (run_no = 0; run_no < 2; run_no++) {
-            s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                          (s64)(int)(unsigned long)"", 0);
+            s64 rc = run_elf("X32HELLO.TOS", 0);
 
             if (rc == -33)              /* EFILNF: not on the boot drive */
                 pterm(0x100);
@@ -758,12 +748,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'q': {
-        static const char resident_tail[] = { 1, 'r', 0 };
         int run_no;
 
         for (run_no = 0; run_no < 10; run_no++) {
-            s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                          (s64)(int)(unsigned long)resident_tail, 0);
+            s64 rc = run_elf("X32HELLO.TOS", "r");
 
             if (rc == -33)
                 pterm(0x100);
@@ -776,9 +764,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'm': {
-        static const char fault_tail[] = { 1, 'f', 0 };
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                      (s64)(int)(unsigned long)fault_tail, 0);
+        s64 rc = run_elf("X32HELLO.TOS", "f");
 
         if (rc == -33)
             pterm(0x100);
@@ -790,10 +776,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         break;
     }
     case 'g': {
-        /* #1018: the staged and basepage modes are not part of the x32 ABI.
+        /* #1008: no legacy Pexec mode is part of the x32 ABI.
          * Each is refused with EINVFN before any argument is read: the
          * pointers below are unmapped and must never be dereferenced. */
-        static const int modes[] = { 3, 4, 5, 6, 7, 104, 106 };
+        static const int modes[] = { 0, 3, 4, 5, 6, 7, 100, 104, 106, 200 };
         const s64 unmapped = 0x1000;
         unsigned i;
 
@@ -1084,8 +1070,10 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
 #define ERANGE (-64)
         static char buf[256];
         static char longstr[2000];
-        static char tail128[128];
-        static char bigenv[40000];
+        static char large_arg[PEXECVE_ARG_MAX];
+        const char *const empty[] = { 0 };
+        const char *const large[] = { large_arg, 0 };
+        const char *const bad_slot[] = { (const char *)0x30000000UL, 0 };
         const s64 unmapped = 0x30000000, lowvec = 0x84, kern = (s64)(int)0x80000000;
         const s64 ro = 0x0fff0000;          /* the ancestors page: read-only */
         const s64 stack_end = 0x7ffffff8;   /* 64 bytes from here cross the top */
@@ -1153,86 +1141,26 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (sys4(GEMDOS, 0x80000000ULL, 0, 0, 0, 0) != EINVFN)
             bad |= 64;
 
-        /* Pexec: the pointers depend on the mode */
-        if (sys4(GEMDOS, 0x4b, 0, unmapped, P(""), 0) != EIMBA) bad |= 128;
-        if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), unmapped, 0) != EIMBA) bad |= 128;
-        if (sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), P(""), unmapped) != EIMBA) bad |= 128;
-        /* #1018: the basepage modes are not part of the x32 ABI; refused
-         * before the (unmapped) arguments are read */
-        if (sys4(GEMDOS, 0x4b, 5, unmapped, unmapped, unmapped) != EINVFN) bad |= 128;
-        if (sys4(GEMDOS, 0x4b, 4, 0, 0, 0) != EINVFN) bad |= 128;
-        if (sys4(GEMDOS, 0x4b, 6, 0, 0, 0) != EINVFN) bad |= 128;
-        /* the tail must end within 128 bytes (the kernel adds a NUL after the
-         * copy); an empty environment is two NULs, and both must be readable.
-         * An accepted launch runs X32HELLO.TOS's plain entry check (exit 0);
-         * EFILNF also shows the arguments passed validation. */
-#define LAUNCH(tail, env) sys4(GEMDOS, 0x4b, 0, P("X32HELLO.TOS"), (tail), (env))
-#define ACCEPTED(rc) ((rc) == 0 || (rc) == -33)
-        for (k = 0; k < (int)sizeof(tail128); k++)
-            tail128[k] = 'A';
-        if (LAUNCH(P(tail128), 0) != ERANGE) bad |= 512;
-        if (LAUNCH(P(""), ro + 0xfff) != EIMBA) bad |= 512;
-        /* an environment too long for envsize()'s WORD count */
-        for (k = 0; k < (int)sizeof(bigenv); k++)
-            bigenv[k] = 'A';
-        if (LAUNCH(P(""), P(bigenv)) != ERANGE) bad |= 512;
-        /* the limit: 32766 bytes including the two NULs that end it */
-        bigenv[32764] = 0;
-        bigenv[32765] = 0;                  /* 32766 bytes: just fits */
-        rc = LAUNCH(P(""), P(bigenv));
-        if (!ACCEPTED(rc)) bad |= 512;
-        bigenv[32764] = 'A';
-        bigenv[32765] = 0;
-        bigenv[32766] = 0;                  /* 32767 bytes: one too many */
-        if (LAUNCH(P(""), P(bigenv)) != ERANGE) bad |= 512;
-        /* a leading NUL is not the end of an environment: envsize() goes on
-         * until two NULs in a row, so the bytes after it must be readable
-         * (here "\0X" at the very end of the stack mapping) */
-        {
-            volatile unsigned char *top = (volatile unsigned char *)0x7ffffffeUL;
-
-            top[0] = 0;
-            top[1] = 'X';
-            if (LAUNCH(P(""), 0x7ffffffeLL) != EIMBA) bad |= 512;
-            /* ... and a valid empty environment ("\0\0") on the last two
-             * bytes of the mapping is accepted: nothing past it is read */
-            top[1] = 0;
-            rc = LAUNCH(P(""), 0x7ffffffeLL);
-            if (!ACCEPTED(rc)) bad |= 512;
-        }
-        /* an odd-sized environment is copied rounded up to an even size: the
-         * byte after its last NUL is read too ("A\0\0" ends the mapping) */
-        {
-            volatile unsigned char *top = (volatile unsigned char *)0x7ffffffdUL;
-
-            top[0] = 'A';
-            top[1] = 0;
-            top[2] = 0;
-            if (LAUNCH(P(""), 0x7ffffffdLL) != EIMBA) bad |= 512;
-            /* the same, with the byte after it inside the mapping: accepted */
-            top = (volatile unsigned char *)0x7ffffff0UL;
-            top[0] = 'A';
-            top[1] = 0;
-            top[2] = 0;
-            rc = LAUNCH(P(""), 0x7ffffff0LL);
-            if (!ACCEPTED(rc)) bad |= 512;
-        }
-        /* no environment given: the caller's own is inherited through its
-         * basepage's p_env, which it can have rewritten */
-        {
-            volatile u32 *me = (volatile u32 *)(unsigned long)basepage;
-            u32 saved = me[11];
-
-            me[11] = 0x30000000u;
-            if (LAUNCH(P(""), 0) != EIMBA) bad |= 512;
-            me[11] = 0x84u;
-            if (LAUNCH(P(""), 0) != EIMBA) bad |= 512;
-            me[11] = saved;
-        }
-        rc = LAUNCH(P(""), 0);
-        if (!ACCEPTED(rc)) bad |= 256;
+        /* Every pointer, including the vector slots, is checked by Pexecve.
+         * High x32 bits are rejected even if the low address is valid. */
+#define LAUNCH(path, argv, envp) sys4(GEMDOS, GEMDOS_PEXECVE, 0, (path), (argv), (envp))
+        if (LAUNCH(unmapped, P(empty), P(empty)) != EIMBA ||
+            LAUNCH(P("X32HELLO.TOS"), unmapped, P(empty)) != EIMBA ||
+            LAUNCH(P("X32HELLO.TOS"), P(empty), unmapped) != EIMBA ||
+            LAUNCH(P("X32HELLO.TOS"), P(bad_slot), P(empty)) != EIMBA ||
+            LAUNCH(P("X32HELLO.TOS"), P(empty), P(bad_slot)) != EIMBA ||
+            LAUNCH((1ULL << 32) | P("X32HELLO.TOS"), P(empty), P(empty)) != EIMBA ||
+            LAUNCH(P("X32HELLO.TOS"), 0, P(empty)) != EIMBA ||
+            LAUNCH(P("X32HELLO.TOS"), P(empty), 0) != EIMBA)
+            bad |= 128;
+        for (k = 0; k < (int)sizeof(large_arg) - 1; k++)
+            large_arg[k] = 'A';
+        if (LAUNCH(P("X32HELLO.TOS"), P(large), P(empty)) != ERANGE)
+            bad |= 512;
+        rc = LAUNCH(P("X32HELLO.TOS"), P(empty), P(empty));
+        if (rc != 0 && rc != -33)
+            bad |= 256;
 #undef LAUNCH
-#undef ACCEPTED
         pterm(bad);
         break;
     }
@@ -1323,9 +1251,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 'B': {
         /* a program bigger than the image window (a 6 MiB bss) is loaded
          * whole and runs: both ends of its bss are there and zero (#434) */
-        static const char big_tail[] = { 1, 'B', 0 };
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32BIG.TOS",
-                      (s64)(int)(unsigned long)big_tail, 0);
+        s64 rc = run_elf("X32BIG.TOS", "B");
 
         if (rc == -33)
             pterm(0x100);
@@ -1337,19 +1263,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
          * with the new process's address space in use: the Pexec() is refused,
          * this process is back in its own and goes on, twice over, and a good
          * program still launches (#434) */
-        static const char link_tail[] = { 1, 'i', 0 };
         static volatile u32 mine;
         s64 rc, rc2, rc3, rc4;
 
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32TRUNC.TOS",
-                  (s64)(int)(unsigned long)link_tail, 0);
+        rc = run_elf("X32TRUNC.TOS", "i");
         if (rc == -33)
             pterm(0x100);
         mine = 0x1234;
-        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32TRUNC.TOS",
-                   (s64)(int)(unsigned long)link_tail, 0);
-        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)link_tail, 0);
+        rc2 = run_elf("X32TRUNC.TOS", "i");
+        rc3 = run_elf("X32HELLO.TOS", "i");
         rc4 = (mine == 0x1234) ? gemdos(0x48, 4096, 0) : 0;
         pterm((rc < 0 ? 0 : 1) | (rc2 < 0 ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
               (rc4 > 0 ? 0 : 8));
@@ -1358,7 +1280,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
     case 'y': {
         /* a child must not free what its parent holds: the child (tail F and
          * the address in hex) tries to Mfree a block this process holds */
-        static char ftail[12] = { 9, 'F' };
+        static char free_argument[10] = "F";
         s64 bpa = gemdos(0x48, 4096, 0);    /* Malloc() */
         s64 rc;
         int k;
@@ -1366,10 +1288,8 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         if (bpa <= 0)
             pterm(1);
         for (k = 0; k < 8; k++)
-            ftail[2 + k] = "0123456789abcdef"[(bpa >> (28 - 4 * k)) & 15];
-        ftail[10] = 0;
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                  (s64)(int)(unsigned long)ftail, 0);
+            free_argument[1 + k] = "0123456789abcdef"[(bpa >> (28 - 4 * k)) & 15];
+        rc = run_elf("X32HELLO.TOS", free_argument);
         if (rc == -33)
             pterm(0x100);
         if (rc != 0)
@@ -1383,9 +1303,7 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         pterm(walk_ancestors(basepage));
         break;
     case 'v': {
-        static const char walk_tail[] = { 1, 'w', 0 };
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                      (s64)(int)(unsigned long)walk_tail, 0);
+        s64 rc = run_elf("X32HELLO.TOS", "w");
 
         if (rc == -33)
             pterm(0x100);
@@ -1417,19 +1335,16 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* a program linked for another address is moved into the image
          * window and relocated, an unaligned absolute address in an
          * instruction included (#433) */
-        static const char reloc_tail[] = { 1, 'a', 0 };
         s64 rc;
 
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
-                  (s64)(int)(unsigned long)reloc_tail, 0);
+        rc = run_elf("X32RELOC.TOS", "a");
         if (rc == -33)
             pterm(0x100);
         if (rc != 0)
             pterm(1);
         /* linked for another address without its relocations: refused, with
          * EPLFMT, instead of run with every absolute address wrong */
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32NOREL.TOS",
-                  (s64)(int)(unsigned long)reloc_tail, 0);
+        rc = run_elf("X32NOREL.TOS", "a");
         if (rc == -33)
             pterm(0x100);
         pterm(rc == -66 ? 0 : 8);
@@ -1439,30 +1354,18 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* Psetlimit() (#450): the defaults and the modes in a child, a deep
          * stack that faults without a bigger limit and does not with one, and
          * the limits of the launcher passed on to a child */
-        static const char l_tail[] = { 1, 'l', 0 };
-        static const char d_tail[] = { 1, 'D', 0 };
-        static const char e_tail[] = { 1, 'E', 0 };
-        static const char q_tail[] = { 1, 'Q', 0 };
-        static const char g_tail[] = { 1, 'G', 0 };
-        static const char r_tail[] = { 1, 'R', 0 };
         s64 rc, rc2, rc3, rc4, rc5, rc6;
 
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                  (s64)(int)(unsigned long)l_tail, 0);
+        rc = run_elf("X32HELLO.TOS", "l");
         if (rc == -33)
             pterm(0x100);
-        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)d_tail, 0);
-        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)e_tail, 0);
-        rc5 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)g_tail, 0);
-        rc6 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)r_tail, 0);
+        rc2 = run_elf("X32HELLO.TOS", "D");
+        rc3 = run_elf("X32HELLO.TOS", "E");
+        rc5 = run_elf("X32HELLO.TOS", "G");
+        rc6 = run_elf("X32HELLO.TOS", "R");
         sys4(GEMDOS, 0x11f, 0x100, 0x2000000, 0, 0);
         sys4(GEMDOS, 0x11f, 3, 0x300000, 0, 0);
-        rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)q_tail, 0);
+        rc4 = run_elf("X32HELLO.TOS", "Q");
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0 ? 0 : 4) |
               (rc4 == 0 ? 0 : 8) | (rc5 == 0xffff ? 0 : 16) | (rc6 == 0 ? 0 : 32));
         break;
@@ -1471,11 +1374,9 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* without demand paging (#562): the child's memory and stack are
          * backed when they are handed out, and Malloc(-1) says no more than
          * that can be */
-        static const char o_tail[] = { 1, '?', 0 };
         s64 rc;
 
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                  (s64)(int)(unsigned long)o_tail, 0);
+        rc = run_elf("X32HELLO.TOS", "?");
         if (rc == -33)
             pterm(0x100);
         pterm((int)rc);
@@ -1485,35 +1386,24 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* demand paging (#450): address space far beyond the machine's memory,
          * touched sparsely; freed memory is not lazy any more; touching more
          * pages than there are ends the process that does it, not the kernel */
-        static const char lazy_tail[] = { 1, 'z', 0 };
-        static const char freed_tail[] = { 1, 'Z', 0 };
-        static const char all_tail[] = { 1, 'X', 0 };
-        static const char kern_tail[] = { 1, 'Y', 0 };
         s64 rc, rc2, rc3, rc4, rc5;
 
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                  (s64)(int)(unsigned long)lazy_tail, 0);
+        rc = run_elf("X32HELLO.TOS", "z");
         if (rc == -33)
             pterm(0x100);
-        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)freed_tail, 0);
-        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)all_tail, 0);
+        rc2 = run_elf("X32HELLO.TOS", "Z");
+        rc3 = run_elf("X32HELLO.TOS", "X");
         /* the same when it is the kernel that touches the pages */
-        rc5 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)kern_tail, 0);
+        rc5 = run_elf("X32HELLO.TOS", "Y");
         /* and the system still works */
-        rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)lazy_tail, 0);
+        rc4 = run_elf("X32HELLO.TOS", "z");
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0xffff ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
               (rc4 == 0 ? 0 : 8) | (rc5 == 0xffff ? 0 : 16));
         break;
     }
     case 'h': {
         /* a child loaded from a file gets Malloc() memory of its own (#434) */
-        static const char heap_tail[] = { 1, 'h', 0 };
-        s64 rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                      (s64)(int)(unsigned long)heap_tail, 0);
+        s64 rc = run_elf("X32HELLO.TOS", "h");
 
         if (rc == -33)
             pterm(0x100);
@@ -1524,24 +1414,17 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         /* a new process has its image in the image window, linked for it or
          * not, and its text is read-only: a child that writes to it faults
          * (0xffff) */
-        static const char link_tail[] = { 1, 'i', 0 };
-        static const char text_tail[] = { 1, 'T', 0 };
-        static const char area_tail[] = { 1, 'S', 0 };
         s64 rc, rc2, rc3, rc4;
 
-        rc = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                  (s64)(int)(unsigned long)link_tail, 0);
+        rc = run_elf("X32HELLO.TOS", "i");
         if (rc == -33)
             pterm(0x100);
-        rc2 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32RELOC.TOS",
-                   (s64)(int)(unsigned long)link_tail, 0);
+        rc2 = run_elf("X32RELOC.TOS", "i");
         if (rc2 == -33)
             pterm(0x100);
-        rc3 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)text_tail, 0);
+        rc3 = run_elf("X32HELLO.TOS", "T");
         /* and the startup area after it holds what the C startup code builds */
-        rc4 = sys4(GEMDOS, 0x4b, 0, (s64)(int)(unsigned long)"X32HELLO.TOS",
-                   (s64)(int)(unsigned long)area_tail, 0);
+        rc4 = run_elf("X32HELLO.TOS", "S");
         pterm((rc == 0 ? 0 : 1) | (rc2 == 0 ? 0 : 2) | (rc3 == 0xffff ? 0 : 4) |
               (rc4 == 0 ? 0 : 8));
         break;

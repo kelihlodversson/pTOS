@@ -7,7 +7,10 @@
         .type   _start, @function
 _start:
         movq    %rsp, %rdx
+        testq   %rdi, %rdi
+        jz      .Lcall
         subq    $8, %rsp
+.Lcall:
         call    x32_entry_probe
 .Lhalt:
         jmp     .Lhalt

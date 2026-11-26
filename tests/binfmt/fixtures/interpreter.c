@@ -14,6 +14,12 @@ static int failure(int line)
 }
 #define CHECK(c) do { if (!(c)) return failure(__LINE__); } while (0)
 
+#ifdef NATIVE_VECTOR_FIXTURE
+#define TAIL_EQ(n) (_base->p_cmdlin[0] == 0)
+#else
+#define TAIL_EQ(n) ((unsigned char)_base->p_cmdlin[0] == (n))
+#endif
+
 int main(int argc, char **argv)
 {
     const char *kind = getenv("CASE"), *boot = getenv("BOOT"), *fd = getenv("FD");
@@ -69,7 +75,7 @@ int main(int argc, char **argv)
             start = 0;
         } else if (!strcmp(kind, "QUOTED")) {
             CHECK(argc == 4 && !strcmp(argv[2], "it's") && !strcmp(argv[3], "literal\"quote") &&
-                  (unsigned char)_base->p_cmdlin[0] == 127);
+                  TAIL_EQ(127));
             start = 0;
         } else if (!strcmp(kind, "SHORT")) {
             CHECK(argc == 3 && !strcmp(argv[2], "plain") && (unsigned char)_base->p_cmdlin[0] < 127);
@@ -79,7 +85,7 @@ int main(int argc, char **argv)
                   !*argv[4] && !strcmp(argv[5], "it's"));
             start = 0;
         } else if (!strcmp(kind, "LONG")) {
-            CHECK(argc == 3 && strlen(argv[2]) == 1000 && (unsigned char)_base->p_cmdlin[0] == 127);
+            CHECK(argc == 3 && strlen(argv[2]) == 1000 && TAIL_EQ(127));
             for (i = 0; i < 1000; i++) CHECK(argv[2][i] == 'a');
             start = 0;
         } else {

@@ -4392,6 +4392,43 @@ done:
     return rc;
 }
 
+#if ARCH_X86_64
+LONG kproc_set_embedded_elf(PD *pd, const PROG_IMAGE *image, const char *filename,
+                           const DL_START_VECTORS *vectors)
+{
+    KPROC *process = kproc_find(pd);
+    DL_START_INFO start;
+    KASPACE *owner;
+    ASPACE *as;
+    LONG rc;
+
+    if (!process || process->started || process->pending_space || process->aspace ||
+        process->legacy || process->has_image ||
+        !image_layout_start(image, &process->layout, &start))
+        return EPLFMT;
+    as = aspace_create();
+    if (!as)
+        return ENSMEM;
+    owner = kaspace_adopt(as);
+    if (!owner) {
+        aspace_destroy(as);
+        return ENSMEM;
+    }
+    process->pending_as = as;
+    process->pending_space = owner;
+    rc = layout_load(as, &process->layout) ?
+        set_elf_stack(process, filename, vectors, start) : ENSMEM;
+    if (rc == E_OK) {
+        process->has_image = TRUE;
+    } else {
+        process->pending_as = NULL;
+        process->pending_space = NULL;
+        kaspace_put(owner);
+    }
+    return rc;
+}
+#endif
+
 LONG kproc_set_static_elf_entry(PD *pd, const char *filename,
                                const DL_START_VECTORS *vectors, const DL_START_INFO *info)
 {

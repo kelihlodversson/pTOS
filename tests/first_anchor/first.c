@@ -1,6 +1,6 @@
 /* Public GEMDOS exercise used by the boot controller's ordinary Pexec(0)
  * and Pexec(100) calls, and by a managed parent's Pexec(0). */
-#include <mint/basepage.h>
+#include "../entry_args.h"
 #include <mint/mintbind.h>
 #include <mint/osbind.h>
 
@@ -96,12 +96,12 @@ static int check_unmanaged(void)
 }
 #endif
 
-int main(void)
+int main(int argc, char **argv)
 {
-    const char *tail = (const char *)_base->p_cmdlin;
+    const char *argument = test_entry_argument(argc, argv);
 
-    if (tail[0] == 1) {
-        switch (tail[1]) {
+    if (argument[0] && !argument[1]) {
+        switch (argument[0]) {
 #if defined(TEST_WITH_MULTITHREADING)
         case 'm':
             return Pexec(0, FIRST_ANCHOR_PATH, "", 0);

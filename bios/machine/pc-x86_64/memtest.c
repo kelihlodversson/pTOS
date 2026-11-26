@@ -6217,7 +6217,7 @@ static void test_ring3(void)
         int before = failures;
         ULONG shared_before;
         probe_expect('3', 0, "ring-3 shared objects: relocations, GOT/PLT, constructor, private data");
-        probe_expect('2', 0, "PT_INTERP initial stack/auxv, ARGV, staged modes refused, repeated cleanup");
+        probe_expect('2', 0, "PT_INTERP initial stack, auxv and argument vectors with repeated cleanup");
         test_interpreter_failures();
         shared_before = aspace_file_cross_shares();
         probe_expect('1', 0, "filesystem LD.SO: binding, preinit/init/fini order, repeated cleanup");
@@ -6406,7 +6406,7 @@ static void test_ring3(void)
     probe_expect('s', 0, "ring 3 cannot install kernel callbacks or write the kernel variables");
 
     /* basepages a ring-3 process can use, and launches it cannot forge (#416) */
-    probe_expect('g', 0, "the staged and basepage Pexec modes are refused with EINVFN (#1018)");
+    probe_expect('g', 0, "the retired Pexec syscall returns EINVFN for every mode (#1008)");
 
     /* the ancestors' basepages: one (this launcher's), read-only */
     probe_expect('w', 0x101, "a ring-3 process sees its launcher's basepage as a scrubbed copy");

@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 #include "ptos.h"
 #include <stdlib.h>
 #include <string.h>
@@ -5,7 +6,6 @@
 #undef strlen
 #undef strcmp
 extern void client_exit(void);
-extern int64_t client_pexec(const char *path, const char *tail, const char *env);
 int lifecycle;
 static int late_registered, late_calls;
 static void handler(void)
@@ -46,10 +46,9 @@ int main(int argc, char **argv, char **envp)
     if (!atexit(extra_handler) || !atexit(0)) return 100;
     lifecycle = 3;
     if (!strcmp(argv[1], "nest")) {
-        static const char tail[] = { 6, 'r', 'e', 't', 'u', 'r', 'n', 0 };
-        static const char env[] = "CHECK=660\0\0";
+        const char *const env[] = { "CHECK=660", 0 };
         uint32_t basepage = ptos_basepage;
-        if (client_pexec(argv[0], tail, env) != 77 || lifecycle != 3 ||
+        if (x32_exec_argument(0, argv[0], "return", env) != 77 || lifecycle != 3 ||
             ptos_basepage != basepage || strcmp(getenv("CHECK"), "660")) _Exit(103);
         return 77;
     }

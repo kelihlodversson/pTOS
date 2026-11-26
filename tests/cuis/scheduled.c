@@ -1,8 +1,8 @@
+#include "../x32_probe/exec.h"
 /* Isolated native clients exercise scheduling through active byte streams. */
 #include "stream_probe.h"
 #include "gemerror.h"
 #include "ptos.h"
-extern int64_t client_pexec(const char *, const char *, const char *);
 #undef CHECK
 #define CHECK(c) do { if (!(c)) return 0x5000 | __LINE__; } while (0)
 static volatile ULONG private_state;
@@ -31,7 +31,6 @@ int main(int argc, char **argv, char **envp)
     ULONG i, expected;
     BOOL first;
     static const char label_a[] = "SCHED-A ", label_b[] = "SCHED-B ";
-    static const char nested_tail[] = { 1, 'n', 0 }, environment[] = { 0, 0 };
     (void)envp;
     CHECK(argc == 2);
     session = probe_session_open(); CHECK(session >= 0);
@@ -69,7 +68,7 @@ int main(int argc, char **argv, char **envp)
         CHECK(probe_packet_read(session,&packet) == sizeof(packet) && packet.word[0] == 66);
     }
     CHECK(probe_window_destroy(window) == E_OK);
-    if (first) CHECK(client_pexec(argv[0],nested_tail,environment) == 0);
+    if (first) CHECK(x32_exec_argument(0, argv[0], "n", 0) == 0);
     CHECK(probe_packet_wait(session,first ? 10 : 15) == CUIS_READY_TIMER);
     CHECK(private_state == expected);
     if (!first && argv[1][1] == '1') __asm__ volatile ("ud2");

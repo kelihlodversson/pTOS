@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 #include "box_animations.h"
 #include "gem_tracking.h"
 /* Standard GEM source, real VDI pixel checks, and a userspace object demo. */
@@ -110,7 +111,7 @@ static int graphics_checks(void)
     VERIFY(graf_mouse(M_PREVIOUS,NULL) == 1 && gem_probe_pixel(physical,x,y) == color);
     {
         char child_tail[3] = { 1,'g',0 };
-        VERIFY(process(0x4b,0,(uintptr_t)"\\GEMDRAW.TOS",(uintptr_t)child_tail,0) == 0);
+        VERIFY(x32_exec_argument(0, "\\GEMDRAW.TOS", child_tail + 1, 0) == 0);
         VERIFY(graf_handle(NULL,NULL,NULL,NULL) == physical);
         VERIFY(gem_probe_pixel(physical,x,y) == color);
     }
@@ -468,7 +469,6 @@ int main(int argc, char **argv, char **envp)
     LONG child, status, update;
     short control[8] = { 0 };
     char tail[3] = { 1,'f',0 };
-    static const char environment[] = { 0,0 };
     (void)argv; (void)envp;
     VERIFY(appl_init() > 0);
     global.ap_3resv = aes_global.ap_3resv;
@@ -624,7 +624,7 @@ int main(int argc, char **argv, char **envp)
                     VERIFY(window > 0 && wind_open(window,20,100,100,80) == 1);
                     VERIFY(gem_menubar_install(handle,2) == 1);
                     tail[1] = 'm';
-                    child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+                    child = x32_exec_argument(100, "GEMDRAW.TOS", tail + 1, 0);
                     VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7020);
                     VERIFY(gem_probe_pixel(handle,130,5) == 3);
                     VERIFY(wind_set(window,WF_TOP,0,0,0,0) == 1 && evnt_timer(0) == 1);
@@ -649,12 +649,12 @@ int main(int argc, char **argv, char **envp)
     }
     VERIFY(gem_probe_cell(handle,&cellw,&cellh) == 0);
     {
-        static const char resource_env[] = "PATH=C:\\NONE;C:\\RPATH\0ARGV=\0WRONG\\NAME.TOS\0p\0\0";
-        char argv_tail[2] = { 127,0 };
-        VERIFY(process(0x4b,0,(uintptr_t)"APPS\\GEMPATH.TOS", (uintptr_t)argv_tail,(uintptr_t)resource_env) == 0);
+        const char *const resource_env[] = { "PATH=C:\\NONE;C:\\RPATH", 0 };
+        const char *const resource_args[] = { "WRONG\\NAME.TOS", "p", 0 };
+        VERIFY(x32_exec_vectors(0, "APPS\\GEMPATH.TOS", resource_args, resource_env) == 0);
     }
     tail[1] = 'r';
-    child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    child = x32_exec_argument(100, "GEMDRAW.TOS", tail + 1, 0);
     VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7010);
     status = gem_resource_checks(1,cellw,cellh); if (status) return status;
     status = gem_resource_native(1,cellw,cellh); if (status) return status;
@@ -663,7 +663,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(appl_write(process_client(child),16,control) == 1);
     VERIFY(process(0x13a,child,0,0,0) == (LONG)((ULONG)child<<16));
     tail[1] = 'R';
-    child = process(0x4b,100,(uintptr_t)"GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    child = x32_exec_argument(100, "GEMDRAW.TOS", tail + 1, 0);
     VERIFY(child > 0 && process(0x13a,child,0,0,0) == (LONG)(((ULONG)child<<16)|0xb00));
     tail[1] = 'f';
     {
@@ -726,12 +726,12 @@ int main(int argc, char **argv, char **envp)
     user.ub_code = callback; user.ub_parm = 123;
     VERIFY(objc_draw(&box,0,0,20,20,10,10) == 1 && gem_probe_pixel(handle,23,23) == 3);
     VERIFY(wind_update(END_UPDATE) == 1);
-    child = process(0x4b,100,(uintptr_t)"C:\\GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMDRAW.TOS", tail + 1, 0);
     VERIFY(child > 0);
     status = process(0x13a,child,0,0,0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 0x0b00));
     tail[1] = 'b';
-    child = process(0x4b,100,(uintptr_t)"C:\\GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMDRAW.TOS", tail + 1, 0);
     VERIFY(child > 0);
     status = process(0x13a,child,0,0,0);
     VERIFY(status == (LONG)(((ULONG)child << 16) | 0x0b00));
@@ -740,7 +740,7 @@ int main(int argc, char **argv, char **envp)
      * display and blocks for mouse, then parent attempts tracking redraws. */
     VERIFY(wind_update(BEG_MCTRL) == 1);
     tail[1] = 'l';
-    child = process(0x4b,100,(uintptr_t)"C:\\GEMDRAW.TOS",(uintptr_t)tail,(uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMDRAW.TOS", tail + 1, 0);
     VERIFY(child > 0 && control_message(control) == 1 && control[0] == 0x7001);
     VERIFY(wind_update(BEG_UPDATE|NO_BLOCK) == 0);
     object(&box,G_BOX,10,10,20,20); box.ob_spec.index = 0x1172;

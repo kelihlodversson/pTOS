@@ -98,10 +98,10 @@ static void injected(unsigned kind, unsigned stage, long expected)
     injected_target(EXEC200_TARGET, kind, stage, expected);
 }
 /* The last program of the chain, after the companion execs the subject. */
-static void final_program(void)
+static void final_program(const char *argument)
 {
     EXEC200_TAIL t;
-    exec200_verify("final", &t);
+    exec200_verify("final", argument, &t);
     if (t.generation != 3) exec200_fail("final", "generation", (long)t.generation);
     if (Fsnext() == 0) exec200_fail("final", "search survived the exec", 0);
     if (Fclose((short)t.descriptor)) exec200_fail("final", "descriptor close", t.descriptor);
@@ -228,22 +228,22 @@ static void clone_case(void)
     snapshot(&before);
 }
 #endif
-int main(void)
+int main(int argc, char **argv)
 {
     /* 'N': a nested carrier execution; 'A': an anchored Pexec(0) child (#1015). */
-    int nested = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'N' ? 1 :
-                 (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'A' ? 3 : 0;
+    const char *argument = test_entry_argument(argc, argv);
+    int nested = argument[0] == 'N' ? 1 : argument[0] == 'A' ? 3 : 0;
     int prg = 0;
 #ifdef TEST_IS_PRG
-    prg = (unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'P';
+    prg = argument[0] == 'P';
 #endif
 #ifdef EXEC200_VFORK_CASE
-    if (_base->p_cmdlin[0]==1 && _base->p_cmdlin[1]=='V') {
+    if (!strcmp(argument, "V")) {
         exec200_vfork_source("EXEC200B.TOS");
         return 0;
     }
 #endif
-    if ((unsigned char)_base->p_cmdlin[0] >= 1 && _base->p_cmdlin[1] == 'F') final_program();
+    if (argument[0] == 'F') final_program(argument);
     if (exec200_probe(&original, EXEC_REPLACE_QUERY)) fail("initial query", 0);
     if (original.generation[0] || original.generation[1]) fail("initial generation", 1);
     if (original.pid != (unsigned long)Pgetpid()) fail("initial PID", Pgetpid());

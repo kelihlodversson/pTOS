@@ -1,5 +1,6 @@
 /* Actual user-trap image-policy controls in a small companion. The complete
  * self-reloading regression image still fits the unchanged classic window. */
+#include "../entry_args.h"
 #include "test.h"
 #include "../../include/pclone.h"
 #include "../../include/threadcalls.h"
@@ -7,7 +8,6 @@
 #include "../../include/image_policy_test.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,13 +115,24 @@ static void *private_original_dta;
 static char *private_original_environment;
 static void private_image_entry(void *argument)
 {
+#ifdef TEST_NATIVE_ELF_ENTRY
+    static const char path[] = "C:\\GLOBALCH.TOS";
+    char *const argv[] = { (char *)path, "w", NULL };
+    char *const invalid_env[] = { (char *)0xffff0000UL, NULL };
+    char *const envp[] = { NULL };
+#endif
     long expected=(long)argument;
     int bad=private_image_value!=0x13579 || Pgetpid()==expected;
     if((void *)Fgetdta()!=private_original_dta) bad=1;
     Fsetdta(private_dta);
     if((void *)Fgetdta()!=private_dta || (void *)_base->p_dta!=private_dta) bad=1;
     _base->p_env=(char *)0xffff0000UL;
+#ifdef TEST_NATIVE_ELF_ENTRY
+    if (Pexecve(0, path, argv, invalid_env) != -40L ||
+        Pexecve(0, path, argv, envp) != 23L) bad=1;
+#else
     if(Pexec(0,"C:\\GLOBALCH.TOS","\1w",0)!=-40L) bad=1;
+#endif
     _base->p_env=private_original_environment;
     private_image_value=0x24680;
     (void)Pterm(bad?79:72);
@@ -191,17 +202,17 @@ static void phase1_entry(void *argument)
 #include "staged_policy.h"
 #include "anchored_probe.h"
 
-int main(void)
+int main(int argc, char **argv)
 {
     int failures;
     ptest_log_append();
-    if(ANCHORED_PROBE_REQUESTED(_base->p_cmdlin)) {
+    if (!strcmp(test_entry_argument(argc, argv), "--abi-anchored")) {
         long status=anchored_probe();
         Pterm((short)status);
         return (int)status;
     }
-    if((unsigned char)_base->p_cmdlin[0]==15 && !memcmp(_base->p_cmdlin+1,"--abi-unmanaged",15)) test_unmanaged();
-    else if((unsigned char)_base->p_cmdlin[0]==12 && !memcmp(_base->p_cmdlin+1,"--abi-staged",12)) phase1_run_staged();
+    if(!strcmp(test_entry_argument(argc, argv), "--abi-unmanaged")) test_unmanaged();
+    else if(!strcmp(test_entry_argument(argc, argv), "--abi-staged")) phase1_run_staged();
     else {test_image_policy();test_private_image();}
     failures=ptest_failures();
     ptest_log_flush();

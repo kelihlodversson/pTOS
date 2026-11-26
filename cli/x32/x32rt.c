@@ -31,11 +31,10 @@ int main(void);
 
 #if CONF_WITH_DYNAMIC_CLI
 #include "../../lib/ldso/client/ptos.h"
-#elif CONF_WITH_CLI_VECTOR_EXEC
-extern char **environ;
 #endif
 
-#if CONF_WITH_CLI_VECTOR_EXEC
+#if !CONF_WITH_ELF_LOADER && CONF_WITH_CLI_VECTOR_EXEC
+extern char **environ;
 /* The historical block may carry a name ending in '=' and its value as
  * two strings. Import a private vector and leave the basepage untouched. */
 static int init_environment(const char *block)
@@ -80,14 +79,8 @@ static int init_environment(const char *block)
 __attribute__((constructor)) static void console_init(void)
 {
     _base = (struct basepage *)(uintptr_t)ptos_basepage;
-#if CONF_WITH_CLI_VECTOR_EXEC
-    /* Vector launches leave the compatibility block empty. Their live
-     * envp already has standard ELF semantics and is used verbatim. */
-    if (_base->p_env && *_base->p_env && !init_environment(_base->p_env))
-        _Exit(ENSMEM);
-#endif
 }
-#else
+#elif !CONF_WITH_ELF_LOADER
 /* Entered from x32crt.S with the process-entry contract's registers. */
 void x32_start(struct basepage *bp, long entry_type) __attribute__((noreturn));
 

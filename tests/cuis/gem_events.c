@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Standard GEM combined waits across ordinary isolated dynamic processes. */
 #include <gem.h>
 #include "portab.h"
@@ -27,9 +28,8 @@ static BOOL state_valid(const short state[6])
 static LONG spawn(char role)
 {
     char tail[3] = { 1, 0, 0 };
-    static const char environment[] = { 0, 0 };
     tail[1] = role;
-    return process(0x4b, 100, (uintptr_t)"C:\\GEMEVPE.TOS", (uintptr_t)tail, (uintptr_t)environment);
+    return x32_exec_argument(100, "C:\\GEMEVPE.TOS", tail + 1, 0);
 }
 int main(int argc, char **argv, char **envp)
 {

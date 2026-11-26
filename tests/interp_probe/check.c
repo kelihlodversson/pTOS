@@ -63,17 +63,15 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         const DL_LAUNCH *saved = (const DL_LAUNCH *)(uintptr_t)launch;
         const DL_LAUNCH_VECTORS *vectors = (const DL_LAUNCH_VECTORS *)(uintptr_t)snapshot;
         const uint32_t *args;
-        static const char short_tail[] = "\"hello world\" \"\" C:\\tmp";
+        static const char short_tail[] = "'hello world' '' C:\\tmp";
+        static const char custom_tail[] = "'hello world' C:\\tmp";
+        const char *tail = extended ? custom_tail : short_tail;
         if ((launch & 3) || launch < (uintptr_t)stack ||
-            launch > 0x80000000U-sizeof(*saved) || saved->ready || !saved->environment ||
-            saved->environment_size < 2 || saved->environment_size > 32768) return 9;
-        if (extended) {
-            if (saved->tail[0] != 127) return 9;
-        } else {
-            if (saved->tail[0] != sizeof(short_tail)-1) return 9;
-            for (i = 0; i < sizeof(short_tail)-1; i++)
-                if (saved->tail[i+1] != (unsigned char)short_tail[i]) return 9;
-        }
+            launch > 0x80000000U-sizeof(*saved) || saved->ready ||
+            saved->environment || saved->environment_size) return 9;
+        for (i = 0; tail[i]; i++)
+            if (saved->tail[i+1] != (unsigned char)tail[i]) return 9;
+        if (saved->tail[0] != i) return 9;
         if ((snapshot & 3) || snapshot < (uintptr_t)stack ||
             snapshot > 0x80000000U-sizeof(*vectors) || vectors->path == execfn ||
             !equal((const char *)(uintptr_t)vectors->path,(const char *)(uintptr_t)execfn)) return 10;
@@ -82,6 +80,10 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
             if (args[i] == stack[i+1] ||
                 !equal((const char *)(uintptr_t)args[i],(const char *)(uintptr_t)stack[i+1])) return 10;
         if (args[argc]) return 10;
+        args = (const uint32_t *)(uintptr_t)vectors->envp;
+        if (!equal((const char *)(uintptr_t)args[0], "CHECK=660") ||
+            !equal((const char *)(uintptr_t)args[1], "SECOND=value") || args[2])
+            return 10;
     }
     for (i = 0; i < phnum; i++) {
         const uint32_t *ph = (const uint32_t *)(uintptr_t)(phdr + i * 32);

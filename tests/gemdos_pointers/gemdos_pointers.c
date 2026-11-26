@@ -48,6 +48,18 @@ void test_gemdos_pointers(void)
     ptest_assert_msg(Frename(0, (const char *)0, "X") == EIMBA, "Frename(old NULL) was not refused");
     ptest_assert_msg(Frename(0, "X", (const char *)0) == EIMBA, "Frename(new NULL) was not refused");
 
+#ifdef TEST_NATIVE_ELF_ENTRY
+    {
+        const char *args[] = { 0 };
+        const short modes[] = { 0, 100, 200 };
+        unsigned i;
+        for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
+            ptest_assert_msg(trap_1_wwlll(0x4b, modes[i], 1, 1, 1) == -32L,
+                             "raw Pexec must return EINVFN before inspecting pointers");
+        ptest_assert_msg(trap_1_wwlll(0x193, 0, 0, (long)args, (long)args) == EIMBA,
+                         "Pexecve(path NULL) was not refused");
+    }
+#else
     /* Pexec(mode, path, tail, env): the path of mode 0, the tail of mode 5 */
     ptest_assert_msg(Pexec(0, (void *)0, "", (void *)0) == EIMBA, "Pexec(path NULL) was not refused");
 #ifdef TEST_WITH_STAGED_PEXEC
@@ -55,6 +67,8 @@ void test_gemdos_pointers(void)
 #else
     /* #1018: MMU ARM and x32 have no staged modes: refused before a pointer is read */
     ptest_assert_msg(Pexec(5, (void *)0, (void *)0, (void *)0) == -32L, "Pexec(5) was not refused with EINVFN");
+#endif
+
 #endif
 
     /* and a good pointer still works */

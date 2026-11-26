@@ -13,7 +13,7 @@
 static BASEPAGE base;
 BASEPAGE *_base = &base;
 static const char *program;
-int ptest_harness_main(void);
+int ptest_harness_main(int argc, char **argv);
 
 long Fcreate(const char *name, int attributes)
 {
@@ -70,5 +70,5 @@ int main(int argc, char **argv)
         base.p_cmdlin[0] = 7;
         memcpy(base.p_cmdlin + 1, "--clone", 7);
     }
-    return ptest_harness_main();
+    return ptest_harness_main(0, NULL);
 }

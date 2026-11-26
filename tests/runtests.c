@@ -7,10 +7,10 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "entry_args.h"
 #include "test.h"
 #include <mint/osbind.h>
 #include <string.h>
-#include <mint/basepage.h>
 #if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
 void pclone_run_managed_tests(void);
 void pclone_run_unmanaged_tests(void);
@@ -39,35 +39,39 @@ void shared_vm_run_managed_tests(void);
 long _stksize = 32L * 1024;
 #endif
 
-int main(void)
+int main(int argc, char **argv)
 {
+    const char *role = test_entry_argument(argc, argv);
     int failures;
+
+    (void)role;
 #if defined(TEST_WITH_SHARED_VM_PEXEC) && defined(TEST_WITH_MULTITHREADING)
-    if ((unsigned char)_base->p_cmdlin[0]==11 && !memcmp(_base->p_cmdlin+1,"--shared-vm",11)) {
+    if (!strcmp(role, "--shared-vm")) {
         ptest_log_append();
         shared_vm_run_managed_tests();
         failures=ptest_failures();ptest_log_flush();Pterm(failures);return failures;
     }
 #endif
 #if defined(TEST_WITH_MULTITHREADING) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
-    int worker = (unsigned char)_base->p_cmdlin[0] == 7 &&
-                 !memcmp(_base->p_cmdlin + 1, "--clone", 7);
-    int unmanaged = (unsigned char)_base->p_cmdlin[0] == 15 &&
-                    !memcmp(_base->p_cmdlin + 1,"--abi-unmanaged",15);
-    int staged = (unsigned char)_base->p_cmdlin[0] == 12 &&
-                 !memcmp(_base->p_cmdlin + 1,"--abi-staged",12);
+    int worker = !strcmp(role, "--clone");
+    int unmanaged = !strcmp(role, "--abi-unmanaged");
+    int staged = !strcmp(role, "--abi-staged");
     if (worker || unmanaged || staged)
         ptest_log_append();
     /* #1015: run as a managed THREAD's Pexec(0) child, an anchor. */
-    if ((unsigned char)_base->p_cmdlin[0] == 14 && !memcmp(_base->p_cmdlin + 1, "--abi-anchored", 14)) {
+    if (!strcmp(role, "--abi-anchored")) {
         long status = pclone_run_anchored_probe();
         Pterm((short)status);
         return (int)status;
     }
 #if defined(TEST_WITH_IRQ_RESTART)
-    if ((unsigned char)_base->p_cmdlin[0]==7 && !memcmp(_base->p_cmdlin+1,"--irq ",6) &&
-        _base->p_cmdlin[7] && strchr("ARNO",_base->p_cmdlin[7])) {
-        long status=pclone_run_irq_image(_base->p_cmdlin[7]);
+#ifdef TEST_NATIVE_ELF_ENTRY
+    const char *irq_mode = !strcmp(role, "--irq") && argc == 3 ? argv[2] : "";
+#else
+    const char *irq_mode = !strncmp(role, "--irq ", 6) ? role + 6 : "";
+#endif
+    if (irq_mode[0] && !irq_mode[1] && strchr("ARNO", irq_mode[0])) {
+        long status = pclone_run_irq_image(irq_mode[0]);
         Pterm((short)status);
         return (int)status;
     }

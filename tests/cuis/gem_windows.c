@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Standard window metadata calls in isolated clients, using GEM headers. */
 #include <gem.h>
 #include "portab.h"
@@ -35,7 +36,6 @@ int main(int argc, char **argv, char **envp)
     BOOL graphics;
     LONG child, status;
     char tail[3] = { 1, 'c', 0 };
-    static const char environment[] = { 0, 0 };
     (void)argv; (void)envp;
     VERIFY(wind_create(0, 0, 0, 10, 10) == -1 && wind_get(1, WF_KIND, &x, 0, 0, 0) == 0 && x == 99);
     id = appl_init(); VERIFY(id > 0);
@@ -61,7 +61,7 @@ int main(int argc, char **argv, char **envp)
     VERIFY(wind_set_str(window,WF_INFO,"Shared native frame") == 1);
     VERIFY(wind_open(window,10,20,100,80) == 1);
     VERIFY(appl_init() == id && wind_get(window, WF_CURRXYWH, &x, &y, &w, &h) == 1);
-    child = process(0x4b, 100, (uintptr_t)"C:\\GEMWIN.TOS", (uintptr_t)tail, (uintptr_t)environment);
+    child = x32_exec_argument(100, "C:\\GEMWIN.TOS", tail + 1, 0);
     VERIFY(child > 0 && control_message(message) == 1 && message[0] == 899);
     peer = message[1];
     VERIFY(peer > 0 && appl_find((const char *)(uintptr_t)(0xfffe0000UL | (UWORD)peer)) == child);

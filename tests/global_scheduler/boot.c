@@ -1,8 +1,8 @@
 /* Actual user-mode AUTO launch/child/check programs.
  * The kernel AUTO caller returns between these programs; no test syscall. */
+#include "../entry_args.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
 
 #if defined(__mc68000__) && defined(TEST_IS_PRG)
 /* Bounded scheduler fixture, including PD churn under simultaneous startup
@@ -47,14 +47,15 @@ static void write_log(void)
 #endif
     REQUIRE(fd>=0,3); n=Fwrite(fd,sizeof(data),data); (void)Fclose(fd); REQUIRE(n==sizeof(data),4);
 }
-int main(void)
+int main(int argc, char **argv)
 {
+    char argument = test_entry_argument(argc, argv)[0];
     long pid,fd,result;
     unsigned long start;
     char tail[]={0,0};
-    if(_base->p_cmdlin[0] && _base->p_cmdlin[1]=='w') { Pterm(23); return 99; }
-    if(_base->p_cmdlin[0] && _base->p_cmdlin[1]=='n') { (void)Syield(); (void)Syield(); Pterm(19); return 99; }
-    if(_base->p_cmdlin[0] && _base->p_cmdlin[1]=='g') {
+    if(argument == 'w') { Pterm(23); return 99; }
+    if(argument == 'n') { (void)Syield(); (void)Syield(); Pterm(19); return 99; }
+    if(argument == 'g') {
         start=Ssystem(S_GETLVAL,0x4baL,0L);
         do { read_log(); if(!data[5]) (void)Syield(); REQUIRE(((unsigned long)Ssystem(S_GETLVAL,0x4baL,0L)-start)<1000UL,28); } while(!data[5]);
         Pterm(29); return 99;

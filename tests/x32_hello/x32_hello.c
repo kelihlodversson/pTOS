@@ -38,6 +38,8 @@
  * option any later version.  See doc/license.txt for details.
  */
 
+#include "../x32_probe/startup.h"
+
 typedef unsigned long long u64;
 typedef long long s64;
 typedef unsigned int u32;
@@ -169,39 +171,50 @@ static int deep_stack(int n)
 void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 {
     int bad = 0;
-    /* command tail, TOS style: a length byte, then the text.  "f" makes this
-     * program fault, "r" to terminate and stay resident (the boot self-test's
-     * nested cases run it that way); no tail is the ordinary entry check below. */
-    const volatile char *cmdline = (const volatile char *)(unsigned long)(basepage + 0x80);
     static u32 *volatile null_pointer;
+    const char *argument;
+    unsigned length = 0;
+    int standard_entry = !basepage;
 
-    if (cmdline[0] == 2 && cmdline[1] == 'O') {
+    if (standard_entry) {
+        const uint32_t *initial = (const uint32_t *)(unsigned long)stack;
+        argument = *initial > 1 ? (const char *)(unsigned long)initial[2] : "";
+        while (argument[length])
+            length++;
+        basepage = x32_probe_basepage(initial);
+    } else {
+        const unsigned char *tail = (const unsigned char *)(unsigned long)(basepage + 0x80);
+        length = tail[0];
+        argument = (const char *)(tail + 1);
+    }
+
+    if (length == 2 && argument[0] == 'O') {
         int i;
-        if (cmdline[2]=='y') gemdos0(0xff); /* Nested cleanup-guard identity probe. */
-        if (cmdline[2]=='f') __asm__ volatile ("ud2");
-        if (cmdline[2]=='p') {
+        if (argument[1]=='y') gemdos0(0xff); /* Nested cleanup-guard identity probe. */
+        if (argument[1]=='f') __asm__ volatile ("ud2");
+        if (argument[1]=='p') {
             for (i=0;i<4;i++) gemdos0(0xff);
             gemdos1(0x4c,0x1357);
         }
         gemdos1(0x4c,0xffff);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'f')
+    if (length == 1 && argument[0] == 'f')
         *null_pointer = 1;              /* a page fault in ring 3 */
-    if (cmdline[0] == 9 && cmdline[1] == 'F') {
+    if (length == 9 && argument[0] == 'F') {
         /* Mfree() of the address given in hex: must be refused */
         u64 addr = 0;
         int k;
 
         for (k = 0; k < 8; k++) {
-            char c = cmdline[2 + k];
+            char c = argument[1 + k];
 
             addr = (addr << 4) | (u64)(c <= '9' ? c - '0' : c - 'a' + 10);
         }
         gemdos1(0x4c, gemdos1r(0x49, addr) == 0 ? 1 : 0);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'w')
+    if (length == 1 && argument[0] == 'w')
         gemdos1(0x4c, walk_ancestors(basepage));
-    if (cmdline[0] == 1 && cmdline[1] == 'a') {
+    if (length == 1 && argument[0] == 'a') {
         /* an absolute address as an instruction's immediate: the
          * R_X86_64_32 slot is not 4-byte aligned, and must still have been
          * relocated, i.e. equal the same address taken PC-relative (#433) */
@@ -211,12 +224,12 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         __asm__ ("leal x32_reloc_target(%%rip), %0" : "=r" (relative));
         gemdos1(0x4c, absolute == relative ? 0 : 1);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'm') {
+    if (length == 1 && argument[0] == 'm') {
         /* a block left allocated at the exit: the heap table has it below the
          * image if the launcher left a gap there (#434) */
         gemdos1(0x4c, gemdos1r(0x48, 4096) > 0 ? 0 : 1);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'h') {
+    if (length == 1 && argument[0] == 'h') {
         /* Malloc() memory is private pages in the heap range, usable, zeroed
          * and given back by Mfree() and Mshrink() (#434) */
         volatile u32 *p, *q;
@@ -269,7 +282,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             bad_heap |= 4096;
         gemdos1(0x4c, bad_heap);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'z') {
+    if (length == 1 && argument[0] == 'z') {
         /* demand paging (#450): Malloc() hands out address space and a page
          * gets its physical page when it is touched.  1.5 GiB is more than the
          * test machine has; touched here and there it costs a few pages.  A
@@ -318,7 +331,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             bad_lazy |= 256;
         gemdos1(0x4c, bad_lazy);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'Z') {
+    if (length == 1 && argument[0] == 'Z') {
         /* a page of a block that was freed is no longer lazy: touching it
          * faults, which ends this process as Pterm(-1) (#450) */
         volatile unsigned char *p = (volatile unsigned char *)(unsigned long)gemdos1r(0x48, 8192);
@@ -328,7 +341,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         p[0] = 2;
         gemdos1(0x4c, 0);               /* not reached */
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'Y') {
+    if (length == 1 && argument[0] == 'Y') {
         /* the same, but it is the kernel that touches the pages: Dgetpath()
          * writes into one untouched page after the other.  Running out of
          * physical pages ends the process, it is not a bad pointer (#450) */
@@ -341,7 +354,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
                 gemdos1(0x4c, 0x66);    /* an error code: the process survived */
         gemdos1(0x4c, 0x55);            /* the machine has more memory than that */
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'X') {
+    if (length == 1 && argument[0] == 'X') {
         /* touch every page of all the address space there is: the machine has
          * less memory, and the process that finds none left ends as Pterm(-1)
          * without the kernel running out (#450) */
@@ -353,7 +366,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             p[k] = 1;
         gemdos1(0x4c, 0x55);            /* the machine has more memory than that */
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'l') {
+    if (length == 1 && argument[0] == 'l') {
         /* Psetlimit() (#450): the defaults, MiNT's modes 2 and 3 and the stack
          * (0x100), with a negative value only asking */
         s64 a, rc;
@@ -411,7 +424,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         gemdos1r(0x49, (u64)a);
         gemdos1(0x4c, bad_lim);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'R') {
+    if (length == 1 && argument[0] == 'R') {
         /* a limit that is not a whole number of pages: Malloc(-1) reports what
          * Malloc() will give, a whole number of pages (#450) */
         u64 a;
@@ -423,7 +436,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         a = (u64)gemdos1r(0x48, a);
         gemdos1(0x4c, a > 0 ? 0 : 2);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'G') {
+    if (length == 1 && argument[0] == 'G') {
         /* the heap ends one guard page below the stack's address space: the
          * largest block ends there, and the guard page is neither (#450) */
         u64 all = (u64)gemdos1r(0x48, 0xffffffffULL);
@@ -434,11 +447,11 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         *(volatile unsigned char *)(unsigned long)(p + all) = 1;   /* faults */
         gemdos1(0x4c, 0);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'D') {
+    if (length == 1 && argument[0] == 'D') {
         /* 20 MiB of stack is more than the default 16: the process faults */
         gemdos1(0x4c, deep_stack(320) & 1);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'E') {
+    if (length == 1 && argument[0] == 'E') {
         /* ... with a stack limit of 64 MiB it is fine, and the limit cannot
          * then be put below what the stack has grown to */
         if (gemdos2(0x11f, PSETLIMIT_STACK, 0x4000000) != 0x1000000)
@@ -448,7 +461,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
             gemdos1(0x4c, 2);
         gemdos1(0x4c, 0);
     }
-    if (cmdline[0] == 1 && cmdline[1] == '?') {
+    if (length == 1 && argument[0] == '?') {
         /* without demand paging (CONF_WITH_DEMAND_PAGING off, #562): the
          * default stack is 256 KiB and all there, Malloc(-1) reports only what
          * can be backed and a block that size is given and usable, and a
@@ -476,13 +489,13 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         deep_stack(8);                  /* 512 KiB, more than the default */
         gemdos1(0x4c, bad_eager);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'Q') {
+    if (length == 1 && argument[0] == 'Q') {
         /* the limits of the launcher are this process's (what Psetlimit()
          * set before the launch) */
         gemdos1(0x4c, gemdos2(0x11f, PSETLIMIT_STACK, (u64)-1LL) == 0x2000000 &&
                       gemdos2(0x11f, PSETLIMIT_DATA, (u64)-1LL) == 0x300000 ? 0 : 1);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'i') {
+    if (length == 1 && argument[0] == 'i') {
         /* the code runs in the image window, wherever the program was linked
          * for: at its link address if that lies there, else moved into it and
          * relocated (#434) */
@@ -490,7 +503,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
 
         gemdos1(0x4c, here >= 0x400000UL && here < 0x800000UL ? 0 : 1);
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'S') {
+    if (length == 1 && argument[0] == 'S') {
         /* the startup area: the bss is advertised as running to a page
          * boundary, and 0x10800 bytes (the biggest environment a caller may
          * give is 16383 four-byte environ slots) can be written from
@@ -506,7 +519,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         gemdos1(0x4c, 0);
     }
 #ifdef X32_BIG
-    if (cmdline[0] == 1 && cmdline[1] == 'B') {
+    if (length == 1 && argument[0] == 'B') {
         /* a program with a 6 MiB bss (x32big.elf), loaded whole: both ends
          * of it are there and zero (#434) */
         if (big_bss[0] || big_bss[sizeof big_bss - 1])
@@ -516,13 +529,13 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         gemdos1(0x4c, big_bss[0] == 1 && big_bss[sizeof big_bss - 1] == 2 ? 0 : 2);
     }
 #endif
-    if (cmdline[0] == 1 && cmdline[1] == 'T') {
+    if (length == 1 && argument[0] == 'T') {
         /* the text is read-only: writing to it faults, which ends this
          * process as Pterm(-1) (#434) */
         *(volatile unsigned char *)(unsigned long)&x32_entry_probe = 0x90;
         gemdos1(0x4c, 0);               /* not reached unless the text is writable */
     }
-    if (cmdline[0] == 1 && cmdline[1] == 'r')
+    if (length == 1 && argument[0] == 'r')
         gemdos2(0x31, 0x100, 0);        /* Ptermres(0x100, 0): stay resident */
 
     /* a GEMDOS round trip with a result the kernel must get right: select
@@ -533,7 +546,7 @@ void x32_entry_probe(u64 basepage, u64 entry_type, u64 stack)
         bad = 1;
     if (!(basepage && basepage <= 0xffffffffULL &&
           *(const u32 *)(unsigned long)basepage == (u32)basepage &&
-          entry_type == 0 && (stack & 15) == 8))
+          entry_type == 0 && (stack & 15) == (standard_entry ? 0 : 8)))
         bad = 1;
     gemdos1(0x4c, bad);                 /* Pterm(bad) */
 }

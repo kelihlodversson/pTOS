@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* AES4 launch and CH_EXIT through the normal GEM source API. */
 #include <mint/basepage.h>
 #include <stddef.h>
@@ -102,7 +103,7 @@ int gem_exit_checks(AESGLOBAL *global)
     }
     tail[1] = 'n';
     /* An ordinary Pexec child is not observed or reaped by libaes. */
-    pid = (short)process(0x4b,100,(uintptr_t)"APPS\\GEMCHILD.PRG",(uintptr_t)tail,0);
+    pid = (short)x32_exec_argument(100, "APPS\\GEMCHILD.PRG", tail + 1, 0);
     VERIFY(pid > 0 && pid != process(0x10b,0,0,0,0));
     VERIFY(receive(message,20,global) == MU_TIMER);
     VERIFY(process(0x13a,pid,0,0,0) == (int32_t)(((uint32_t)pid << 16) | 0x34));
