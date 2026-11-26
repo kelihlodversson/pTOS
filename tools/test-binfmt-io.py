@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="binfmt-io-") as temp:
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
                 "-iquote", temp, "-iquote", "include", "-iquote", "include/arch/x86_64",
                 "-iquote", "bdos", "bdos/binfmt.c", "bdos/binfmt_rules.c",
-                "bdos/binfmt_args.c", "bdos/kpgmld.c", "bdos/kfile.c", "tests/binfmt_io.c",
+                "bdos/binfmt_args.c", "bdos/exec_path.c", "bdos/kpgmld.c", "bdos/kfile.c", "tests/binfmt_io.c",
                 "-o", str(work / "io-test")]
     if os.environ.get("BINFMT_SANITIZE") == "1":
         command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]

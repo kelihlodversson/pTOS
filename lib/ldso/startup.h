@@ -12,6 +12,7 @@ typedef struct dl_start_info {
     uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias;
     uint32_t phent;
     const void *phdr_copy; /* when the table isn't covered by a PT_LOAD */
+    const char *launch_path; /* qualified path for the launch snapshot */
 } DL_START_INFO;
 
 typedef struct dl_start_vectors {
@@ -22,7 +23,7 @@ typedef struct dl_start_vectors {
     const unsigned char *guest_tail;
     const char *guest_environment;
     uint32_t guest_environment_size;
-    uint32_t direct_redirect; /* entry argv[1] names the original program */
+    uint32_t direct_redirect; /* single registry-rule hop, argv[1] is the program */
 } DL_START_VECTORS;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
@@ -33,7 +34,8 @@ typedef struct dl_start_vectors {
  * entries of phent bytes for which AT_PHDR points to a child-owned copy.
  * The optional launch record is copied into
  * the stack and reachable via AT_PTOS_LAUNCH. A separate auxv tag supplies
- * private copies of the requested path and vectors. All inputs are immutable and
+ * private copies of the qualified launch path (when supplied) and vectors.
+ * All inputs are immutable and
  * disjoint from the buffer and outputs. RSP is 16-byte aligned. On error,
  * outputs are zero and buffer contents are unspecified. No allocation. */
 int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,

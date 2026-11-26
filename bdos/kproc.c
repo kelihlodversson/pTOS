@@ -59,6 +59,10 @@
 #elif CONF_WITH_ELF_LOADER
 #include "../lib/ldso/startup.h"
 #endif
+#if CONF_WITH_ELF_LOADER && (CONF_WITH_BINFMT || CONF_WITH_LIBAES)
+#include "exec_path.h"
+#include "pexecve.h"
+#endif
 
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
@@ -4287,7 +4291,8 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
                           const DL_START_VECTORS *vectors, DL_START_INFO info)
 {
     ULONG fnsize = 0;
-    const ULONG capacity = CONF_WITH_LIBAES || (vectors && vectors->original) ? DL_START_CAPACITY : 131072UL;
+    BOOL capture_path = CONF_WITH_LIBAES || (vectors && vectors->original);
+    const ULONG capacity = capture_path ? DL_START_CAPACITY : 131072UL;
     ULONG bytes = capacity;
     uint32_t rsp, used;
     VADDR first;
@@ -4315,9 +4320,25 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
         bytes += slots * sizeof(char *);
     }
 #endif
+#if CONF_WITH_BINFMT || CONF_WITH_LIBAES
+    if (capture_path)
+        bytes += PEXECVE_PATH_MAX;
+#endif
     stack = kalloc(bytes);
     if (!stack)
         return ENSMEM;
+#if CONF_WITH_BINFMT || CONF_WITH_LIBAES
+    if (capture_path) {
+        char *qualified = (char *)(stack + bytes - PEXECVE_PATH_MAX);
+
+        /* run is still the launcher. The child's optional directory
+         * override happens after the image and its stack are prepared. */
+        rc = exec_qualify_path(filename, qualified, PEXECVE_PATH_MAX, NULL);
+        if (rc < 0)
+            goto done;
+        info.launch_path = qualified;
+    }
+#endif
 #if CONF_WITH_ELF_SHARED
     if (!vectors) {
         status = legacy_start_vectors(&arguments, filename,

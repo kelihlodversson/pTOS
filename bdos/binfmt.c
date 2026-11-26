@@ -12,6 +12,7 @@
 #include "kheap.h"
 #include "tosvars.h"
 #include "binfmt.h"
+#include "exec_path.h"
 #include "pexecve.h"
 #include "string.h"
 
@@ -131,38 +132,6 @@ static BOOL same_path(const char *a, const char *b)
     }
 }
 
-/* Directory overrides must not change which original script the interpreter
- * opens. Resolve against the parent's drive/per-drive cwd before the override.
- * Scratch storage belongs to the resolver, keeping legacy stacks small. */
-static LONG qualify_program(const char *path, char *out, char *cwd, DISK_ERROR *error)
-{
-    WORD drive = run->p_curdrv;
-    ULONG used = 3, n, i;
-    LONG rc;
-    if (path[0] && path[1] == ':') {
-        int c = (UBYTE)path[0];
-        if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
-        drive = c - 'A'; path += 2;
-    }
-    if (drive < 0 || drive >= 26) return EDRIVE;
-    out[0] = 'A' + drive; out[1] = ':'; out[2] = '\\';
-    if (*path == '\\' || *path == '/') path++;
-    else {
-        rc = DISK_CALL_ERROR(xgetdir(cwd, drive + 1), error);
-        if (rc < 0) return rc;
-        while (*cwd == '\\' || *cwd == '/') cwd++;
-        n = strlen(cwd);
-        if (n >= BINFMT_PATH - used - 1) return ERANGE;
-        memcpy(out + used, cwd, n); used += n;
-        if (out[used - 1] != '\\' && out[used - 1] != '/') out[used++] = '\\';
-    }
-    n = strlen(path);
-    if (n >= BINFMT_PATH - used) return ERANGE;
-    memcpy(out + used, path, n + 1);
-    for (i = 2; i < used + n; i++) if (out[i] == '/') out[i] = '\\';
-    return E_OK;
-}
-
 void binfmt_release_environment(BINFMT_LAUNCH *launch)
 {
     release(launch->environment);
@@ -215,7 +184,7 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         rc = binfmt_select(&registry, work->header, rc, &work->selection);
         if (rc) { if (rc > 0) rc = EPLFMT; break; }
         if (!depth && qualify) {
-            rc = qualify_program(path, work->visited[0], (char *)work->header, &error);
+            rc = exec_qualify_path(path, work->visited[0], BINFMT_PATH, &error);
             if (rc < 0 || error.code) break;
         }
         if (depth == BINFMT_DEPTH) { rc = EPLFMT; break; }
@@ -235,7 +204,7 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
     if (!rc && !error.code && depth && vectors) {
         const char **slots = (const char **)(work + 1);
         ULONG count = 0;
-        BOOL direct = depth == 1 && !work->redirects[0].argument;
+        BOOL direct = depth == 1 && work->selection.registry_rule;
 
         slots[count++] = path;
         while (depth) {

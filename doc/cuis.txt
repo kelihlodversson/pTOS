@@ -2541,9 +2541,10 @@ and fit in 126 bytes. Other launches return 0 without changing either output.
 
 The ELF startup stack provides AT_PTOS_LAUNCH and AT_PTOS_LAUNCH_VECTORS on
 libaes configurations. LD.SO qualifies the resource lookup path before
-executable preinitializers. The kernel saves an independent copy of the
-original launch path, argv and envp before user entry. Binfmt can give the
-interpreter its own argv while the saved copy retains the caller's argv[0].
+executable preinitializers. The kernel resolves the requested path against
+the launcher's drive and working directory and saves it with independent
+copies of argv and envp before user entry. Binfmt can give the interpreter
+its own argv while the saved copy retains the caller's argv[0].
 mt_shel_readve returns borrowed read-only pointers from this snapshot.
 They remain valid through repeated reads and aliases until appl_exit retires
 the context. Missing metadata, invalid registration or a NULL output return

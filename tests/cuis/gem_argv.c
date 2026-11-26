@@ -36,6 +36,12 @@ static int32_t launch_direct(const char *path, char *const argv[], char *const e
                       "d"((uintptr_t)argv), "r"(env) : "rcx","r11","memory","cc");
     return (int32_t)ax;
 }
+static int32_t set_directory(const char *path)
+{
+    register uint64_t ax __asm__("rax") = (1ULL << 32) | 0x3b;
+    __asm__ volatile ("syscall" : "+a"(ax) : "D"((uintptr_t)path) : "rcx","r11","memory","cc");
+    return (int32_t)ax;
+}
 int gem_argv_child(int argc, char **argv, char **envp)
 {
     unsigned i;
@@ -52,6 +58,7 @@ int gem_argv_child(int argc, char **argv, char **envp)
         for (j = 0; j < 400; j++) VERIFY(argv[3][j] == 'y');
         VERIFY(!argv[3][400]);
         VERIFY(empty ? !envp[0] : (envp[0] && equal(envp[0],"ONLY=child") && !envp[1]));
+        if (empty) VERIFY(set_directory("C:\\WORK") == 0);
         VERIFY(appl_init() > 0);
         alias = aes_global;
         VERIFY(shel_readve(&path,&saved_argv,&saved_envp));
@@ -139,7 +146,9 @@ int gem_argv_checks(AESGLOBAL *global, char **envp)
     VERIFY(pid > 0 && completed(pid,0x68,global) == 0);
     long_arg[0] = 'y'; only[5] = 'c';
     custom_args[1] = "read-empty";
-    pid = launch_direct(command,custom_args,no_env);
+    VERIFY(set_directory("C:\\APPS") == 0);
+    pid = launch_direct("GEMCHILD.PRG",custom_args,no_env);
+    VERIFY(set_directory("C:\\") == 0);
     if (pid <= 0) (void)failure((uint16_t)pid);
     VERIFY(pid > 0 && gem_wait_child_flags(pid,0) == (int32_t)(((uint32_t)pid << 16) | 0x68));
     (void)ptos_write(1,"x32 GEM shell vectors: PASS\r\n",29);

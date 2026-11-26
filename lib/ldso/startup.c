@@ -128,9 +128,13 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     if (launch || vectors->original) {
         DL_LAUNCH_VECTORS saved;
         const DL_START_VECTORS *original = vectors->original ? vectors->original : vectors;
+        const char *path = info->launch_path ? info->launch_path : filename;
+        uint32_t path_chars = info->launch_path ? length(path, 1024) : n;
 
+        if (!path_chars || path_chars == 1024)
+            return DL_BAD_ELF;
         if ((launch && !aligned_copy(&s, launch, sizeof(*launch), &record)) ||
-            !string(&s, filename, n, &saved.path))
+            !string(&s, path, path_chars, &saved.path))
             return DL_NO_SPACE;
         status = save_vector(&s, original->argv, original->argc, &saved.argv);
         if (status != DL_OK)

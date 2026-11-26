@@ -100,7 +100,7 @@ class Image(C.Structure):
 
 class StartInfo(C.Structure):
     _fields_ = [(n, C.c_uint32) for n in ("phdr", "phnum", "entry", "base", "pagesz", "basepage", "bootdrive", "load_bias", "phent")]
-    _fields_ += [("phdr_copy", C.c_void_p)]
+    _fields_ += [("phdr_copy", C.c_void_p), ("launch_path", C.c_char_p)]
 
 
 class StartVectors(C.Structure):
@@ -614,7 +614,8 @@ class Metadata(unittest.TestCase):
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
                 capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False,
-                explicit=None, phdr_copy=None, original=None, direct=False, guest=None):
+                explicit=None, phdr_copy=None, original=None, direct=False, guest=None,
+                launch_path=None):
         tail = bytes([len(args)]) + args if tail is None else tail
         record = None
         if capture:
@@ -651,6 +652,7 @@ class Metadata(unittest.TestCase):
                 request.guest_environment = C.addressof(guest_env)
                 request.guest_environment_size = len(guest[1])
         info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, 32)
+        info.launch_path = launch_path
         if phdr_copy is not None:
             self.assertEqual(len(phdr_copy), info.phent * info.phnum)
             headers = C.create_string_buffer(phdr_copy)
@@ -716,7 +718,7 @@ class Metadata(unittest.TestCase):
         if capture or original is not None:
             original_args, original_env = original if original is not None else (argv, envp)
             saved = aux[0x5004]
-            self.assertEqual(string(word(saved)), filename)
+            self.assertEqual(string(word(saved)), launch_path or filename)
             for slots, entries in ((word(saved+4), original_args), (word(saved+8), original_env)):
                 self.assertEqual(slots & 3, 0)
                 self.assertEqual([string(word(slots+4*i)) for i in range(len(entries))], entries)
@@ -755,6 +757,11 @@ class Metadata(unittest.TestCase):
         self.assertEqual(result[:2], forwarded)
         self.assertEqual(self.startup(explicit=forwarded, original=original, capture=True,
                                       capacity=131072)[0], -4)
+
+    def test_qualified_launch_path_is_separate_from_execfn(self):
+        rc, _ = self.startup(explicit=([b'alias'], []), filename=b'APP.ELF',
+                             launch_path=b'C:\\APPS\\APP.ELF', capture=True)
+        self.assertEqual(rc, 0)
 
     def test_guest_metadata_is_separate_from_live_native_vectors(self):
         original = ([b'original guest name', b'plain', b'again'], [b'KEY=guest'])
