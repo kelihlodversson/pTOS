@@ -68,8 +68,10 @@
         mt_shel_put;
         mt_shel_rdef;
         mt_shel_read;
+        mt_shel_readve;
         mt_shel_wdef;
         mt_shel_write;
+        mt_shel_writeve;
         mt_wind_calc;
         mt_wind_calc_grect;
         mt_wind_close;

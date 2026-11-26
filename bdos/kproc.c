@@ -59,6 +59,10 @@
 #elif CONF_WITH_ELF_LOADER
 #include "../lib/ldso/startup.h"
 #endif
+#if CONF_WITH_ELF_LOADER && (CONF_WITH_BINFMT || CONF_WITH_LIBAES)
+#include "exec_path.h"
+#include "pexecve.h"
+#endif
 
 #define KPROC_BORROWS 16       /* two per child a ring-3 process holds */
 #define KPROC_DTAS    8        /* directory searches it can have going at once */
@@ -4241,11 +4245,55 @@ BOOL kproc_standard_entry(PD *pd)
 }
 
 #if CONF_WITH_ELF_LOADER
+#if CONF_WITH_LIBAES
+/* Provide a classic shell view when the vector arguments fit exactly. */
+static void shell_tail(UBYTE tail[128], const DL_START_VECTORS *vectors)
+{
+    ULONG i, at = 1;
+
+    for (i = 1; i < vectors->argc; i++) {
+        const char *arg = vectors->argv[i], *p;
+        BOOL quote = !*arg;
+        for (p = arg; *p; p++) {
+            if (*p == '\r' || *p == '\n') goto unavailable;
+            if (*p == ' ' || *p == '\t' || *p == '\'' || *p == '"') quote = TRUE;
+        }
+        if (i > 1) {
+            if (at == 127) goto unavailable;
+            tail[at++] = ' ';
+        }
+        if (quote) {
+            if (at == 127) goto unavailable;
+            tail[at++] = '\'';
+        }
+        for (; *arg; arg++) {
+            if (at == 127) goto unavailable;
+            tail[at++] = *arg;
+            if (quote && *arg == '\'') {
+                if (at == 127) goto unavailable;
+                tail[at++] = '\'';
+            }
+        }
+        if (quote) {
+            if (at == 127) goto unavailable;
+            tail[at++] = '\'';
+        }
+    }
+    tail[0] = at-1;
+    return;
+unavailable:
+    tail[0] = 128; /* internal sentinel, not a GEMDOS tail */
+}
+#endif
+
 /* Both ELF entry paths publish only the copied stack in the pending root. */
 static LONG set_elf_stack(KPROC *process, const char *filename,
                           const DL_START_VECTORS *vectors, DL_START_INFO info)
 {
-    ULONG fnsize = 0, bytes = DL_START_CAPACITY;
+    ULONG fnsize = 0;
+    BOOL capture_path = CONF_WITH_LIBAES || (vectors && vectors->original);
+    const ULONG capacity = capture_path ? DL_START_CAPACITY : 131072UL;
+    ULONG bytes = capacity;
     uint32_t rsp, used;
     VADDR first;
     UBYTE *stack;
@@ -4253,9 +4301,9 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
 #if CONF_WITH_ELF_SHARED
     ULONG envsize = 0, slots = 0;
     LEGACY_START_ARGS arguments;
-#if CONF_WITH_LIBAES
-    DL_LAUNCH compat;
 #endif
+#if CONF_WITH_LIBAES
+    DL_LAUNCH compat = {0};
 #endif
     LONG rc;
     int status;
@@ -4272,33 +4320,56 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
         bytes += slots * sizeof(char *);
     }
 #endif
+#if CONF_WITH_BINFMT || CONF_WITH_LIBAES
+    if (capture_path)
+        bytes += PEXECVE_PATH_MAX;
+#endif
     stack = kalloc(bytes);
     if (!stack)
         return ENSMEM;
+#if CONF_WITH_BINFMT || CONF_WITH_LIBAES
+    if (capture_path) {
+        char *qualified = (char *)(stack + bytes - PEXECVE_PATH_MAX);
+
+        /* run is still the launcher. The child's optional directory
+         * override happens after the image and its stack are prepared. */
+        rc = exec_qualify_path(filename, qualified, PEXECVE_PATH_MAX, NULL);
+        if (rc < 0)
+            goto done;
+        info.launch_path = qualified;
+    }
+#endif
 #if CONF_WITH_ELF_SHARED
     if (!vectors) {
         status = legacy_start_vectors(&arguments, filename,
                            (const UBYTE *)process->pd->p_cmdlin, sizeof(process->pd->p_cmdlin),
                            process->env_start, envsize,
-                           (const char **)(stack + DL_START_CAPACITY), slots);
+                           (const char **)(stack + capacity), slots);
         if (status != DL_OK) {
             rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;
             goto done;
         }
         vectors = &arguments.vectors;
 #if CONF_WITH_LIBAES
-        memset(&compat, 0, sizeof(compat));
         compat.environment = (ULONG)(uintptr_t)process->env_start;
         compat.environment_size = envsize;
         memcpy(compat.tail, process->pd->p_cmdlin, sizeof(compat.tail));
-        launch = &compat;
 #endif
     }
+#endif
+#if CONF_WITH_LIBAES
+    if (!compat.environment) {
+        if (vectors->classic_tail)
+            memcpy(compat.tail, vectors->classic_tail, sizeof(compat.tail));
+        else
+            shell_tail(compat.tail, vectors->original ? vectors->original : vectors);
+    }
+    launch = &compat;
 #endif
     info.pagesz = USER_PAGE_SIZE;
     info.basepage = (ULONG)(uintptr_t)process->pd;
     info.bootdrive = bootdev;
-    status = dl_start_stack(stack, DL_START_CAPACITY, USER_STACK_TOP, filename, fnsize + 1,
+    status = dl_start_stack(stack, capacity, USER_STACK_TOP, filename, fnsize + 1,
                             vectors, &info, launch, &rsp, &used);
     if (status != DL_OK) {
         rc = status == DL_NO_SPACE ? ENSMEM : EPLFMT;
@@ -4307,7 +4378,7 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
     first = rsp & ~(VADDR)(USER_PAGE_SIZE - 1);
     if (!aspace_load_private(process->pending_as, first, USER_STACK_TOP - first,
                              ASPACE_PROT_USER | ASPACE_PROT_WRITE,
-                             stack + DL_START_CAPACITY - (USER_STACK_TOP - first),
+                             stack + capacity - (USER_STACK_TOP - first),
                              (ULONG)(USER_STACK_TOP - first))) {
         rc = ENSMEM;
         goto done;

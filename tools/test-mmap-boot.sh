@@ -218,6 +218,7 @@ if grep -q '^CONF_WITH_LIBAES *= *y' obj/auto.conf; then
     grep -q 'x32 GEM lifecycle/timers: PASS' "$log"
     grep -q 'x32 AES explicit contexts and shared CUIS boundary: PASS' "$log"
     grep -q 'x32 GEM shell queries: PASS' "$log"
+    grep -q 'x32 GEM shell vectors: PASS' "$log"
     grep -q 'x32 GEM accessory registration: PASS' "$log"
     grep -q 'x32 GEM discovery/control/shutdown: PASS' "$log"
     grep -q 'x32 GEM shared shell buffer: PASS' "$log"

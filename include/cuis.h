@@ -63,6 +63,9 @@
 #define CUIS_STREAM_RECEIPT 94UL
 #define CUIS_LAUNCH_CONSOLE 1UL
 #define CUIS_LAUNCH_OBSERVE 2UL
+/* LAUNCH_ATTACH takes a PROCESS_EXEC_REQUEST address and size in the next
+ * two slots when this flag is present. The final two slots must be zero. */
+#define CUIS_LAUNCH_VECTORS 4UL
 #define CUIS_KEYMAP_LOOKUP 71UL
 #define CUIS_ENTRY_PUBLISH 72UL
 #define CUIS_ENTRY_OWNER 73UL

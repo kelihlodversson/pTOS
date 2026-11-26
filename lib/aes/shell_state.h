@@ -13,6 +13,7 @@ typedef struct shell_search {
 typedef struct {
     SHELL_SEARCH search;
     char command[AES_SHELL_PATH], tail[128], directory[AES_SHELL_PATH];
+    const struct dl_launch_vectors *vectors;
     char *environment;
     ULONG environment_bytes;
     BOOL startup_ready, capture_pending;

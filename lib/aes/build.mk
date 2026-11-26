@@ -174,7 +174,7 @@ ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 all: obj/libaes/GEM.TOS
 endif
 
-obj/libaes/GEM.TOS: lib/aes/app_context.h
+obj/libaes/GEM.TOS: lib/aes/app_context.h include/process_exec.h
 
 obj/libaes/DESKGEM.PRG: tests/x32_desktop/cuis_client.c obj/x32/libptos-vdi.a obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \

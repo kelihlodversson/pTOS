@@ -616,17 +616,13 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #if CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE
 static LONG exec_vector_child(const PEXECVE_ARGS *args)
 {
-    DL_START_VECTORS vectors;
-
-    vectors.argv = args->argv;
-    vectors.envp = args->envp;
-    vectors.argc = args->argc;
-    vectors.envc = args->envc;
+    DL_START_VECTORS vectors = pexecve_start_vectors(args);
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,(char *)args->path,NULL,NULL,
                                   FALSE,NULL,NULL,NULL,NULL,&vectors));
 }
 
-LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
+static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
+                         const PEXECVE_GUEST_REQUEST *guest)
 {
     KSCHED_CLEANUP_SCOPE cleanup = {0};
     PEXECVE_ARGS *args = NULL;
@@ -652,7 +648,8 @@ LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
         return EACCDN;
 
     ksched_cleanup_begin(&cleanup);
-    rc = pexecve_args_capture(mode, path, argv, envp, &args);
+    rc = guest ? pexecve_guest_args_capture(guest, &args) :
+        pexecve_args_capture(mode, path, argv, envp, &args);
 #if CONF_WITH_EXEC_REPLACE
     if (rc == E_OK && mode == PE_EXEC_REPLACE) {
         /* Replacement has its own cleanup receipt. Transfer the allocation
@@ -674,6 +671,27 @@ LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
     }
     return rc;
 }
+
+LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
+{
+    return exec_vectors(mode, path, argv, envp, NULL);
+}
+
+#if CONF_WITH_BINFMT
+LONG xpexecve_guest(UQUAD address, UQUAD size)
+{
+    PEXECVE_GUEST_REQUEST request;
+    LONG rc;
+
+    if (size != sizeof(request) || (address & 3)) return EINVAL;
+    if (!address || address > 0xffffffffULL - (sizeof(request) - 1)) return EIMBA;
+    if (!kproc_user_aspace(run)) return EACCDN;
+    rc = kproc_copy_from_user_checked(&request, address, sizeof(request));
+    if (rc != E_OK) return rc;
+    if (request.mode > 32767UL) return EINVFN;
+    return exec_vectors((WORD)request.mode, request.path, request.argv, request.envp, &request);
+}
+#endif
 #endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 /* The region self-test is kernel code running on behalf of a managed process
@@ -701,11 +719,11 @@ long proc_exec_observe(char *path, char *tail, char *env, char *directory,
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,FALSE,directory,out,NULL,NULL,NULL));
 }
 long proc_exec_prepare(char *path, char *tail, char *env, char *directory, ULONG policy,
-                       PROCESS_OBSERVER **out, void **prepared)
+                       PROCESS_OBSERVER **out, void **prepared, const DL_START_VECTORS *vectors)
 {
     if (!out || *out || !prepared || *prepared || policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
     return DISK_CALL(exec_common(PE_ASYNC_LOADGO,path,tail,env,
-                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL,NULL));
+                     policy == PROCESS_EXEC_DEFER_REPLACEMENT,directory,out,prepared,NULL,vectors));
 }
 #endif
 #if CONF_WITH_EXEC_REPLACE

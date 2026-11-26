@@ -33,6 +33,9 @@ long proc_exec_vector_test(char *path, const struct dl_start_vectors *vectors);
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
+#if CONF_WITH_BINFMT
+LONG xpexecve_guest(UQUAD address, UQUAD size);
+#endif
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
  * Kernel-owned empty output handle; acquired before scheduler publication.
@@ -45,7 +48,7 @@ long proc_exec_observe(char *path, char *tail, char *environment, char *director
  * must publish or cancel it exactly once; output references are kernel-owned.
  * Failure leaves both outputs empty and reclaims the unstarted image. */
 long proc_exec_prepare(char *path, char *tail, char *environment, char *directory, ULONG policy,
-                       struct kproc **observer, void **prepared);
+                       struct kproc **observer, void **prepared, const struct dl_start_vectors *vectors);
 #endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
