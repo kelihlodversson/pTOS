@@ -50,7 +50,7 @@ PRIVATE void redraw_input(const char *line,WORD pos,WORD len,WORD width,
         --*column;
     }
     if (pos < *start || pos >= *start+width) {
-        *start = pos-width/2;
+        *start = pos-(width+1)/2;
         if (*start < 0)
             *start = 0;
     }
@@ -84,9 +84,9 @@ WORD width, first = 0, column = 0;
     message(">");
 #if CLI_VECTOR_EXEC
     width = screen_cols > 1 ? screen_cols - (strlen(prompt)+1) % screen_cols - 1 : 1;
-    if (width < 1) {
+    if (width < 2) {
         messagenl("");
-        width = screen_cols-1;
+        width = screen_cols > 1 ? screen_cols-1 : 1;
     }
 #endif
     while(1) {

@@ -29,36 +29,63 @@ int main(void);
 
 #if CONF_WITH_DYNAMIC_CLI
 #include "../../lib/ldso/client/ptos.h"
-__attribute__((constructor)) static void console_init(void)
-{
-    _base = (struct basepage *)(uintptr_t)ptos_basepage;
-}
-#else
-#if CONF_WITH_CLI_VECTOR_EXEC
+#elif CONF_WITH_CLI_VECTOR_EXEC
 char **environ;
+#endif
 
-/* Static EmuCON still enters with a basepage. Import its environment once. */
-static int init_environment(char *block)
+#if CONF_WITH_CLI_VECTOR_EXEC
+/* The historical block may carry a name ending in '=' and its value as
+ * two strings. Import a private vector and leave the basepage untouched. */
+static int init_environment(const char *block)
 {
-    char *entry;
-    size_t count = 0;
+    const char *entry, *next;
+    char *dest;
+    size_t count = 0, bytes = 0, len;
     size_t i;
 
     for (entry = block; entry && *entry && strncmp(entry,"ARGV=",5) != 0;
-         entry += strlen(entry)+1)
+         entry += len+1) {
+        len = strlen(entry);
+        bytes += len+1;
         count++;
-    environ = x32_malloc((count+1)*sizeof(*environ));
+    }
+    environ = x32_malloc((count+1)*sizeof(*environ)+bytes);
     if (!environ)
         return 0;
-    for (i = 0; i < count; i++) {
-        environ[i] = block;
-        block += strlen(block)+1;
+    dest = (char *)(environ+count+1);
+    for (i = 0; count; count--) {
+        len = strlen(block);
+        next = block+len+1;
+        environ[i++] = dest;
+        memcpy(dest,block,len);
+        dest += len;
+        if (block[len-1] == '=' && count > 1 && !strchr(next,'=')) {
+            len = strlen(next);
+            memcpy(dest,next,len);
+            dest += len;
+            next += len+1;
+            count--;
+        }
+        *dest++ = '\0';
+        block = next;
     }
-    environ[count] = NULL;
+    environ[i] = NULL;
     return 1;
 }
 #endif
 
+#if CONF_WITH_DYNAMIC_CLI
+__attribute__((constructor)) static void console_init(void)
+{
+    _base = (struct basepage *)(uintptr_t)ptos_basepage;
+#if CONF_WITH_CLI_VECTOR_EXEC
+    /* Vector launches leave the compatibility block empty. Their live
+     * envp already has standard ELF semantics and is used verbatim. */
+    if (_base->p_env && *_base->p_env && !init_environment(_base->p_env))
+        _Exit(ENSMEM);
+#endif
+}
+#else
 /* Entered from x32crt.S with the process-entry contract's registers. */
 void x32_start(struct basepage *bp, long entry_type) __attribute__((noreturn));
 

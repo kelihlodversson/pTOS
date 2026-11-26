@@ -22,6 +22,7 @@ int main(int argc, char **argv)
     static const char digits[] = "0123456789";
     char cwd[256];
     const char *lang = getenv("LANG");
+    const char *path = getenv("PATH");
     unsigned int i;
 
     if (argc != 5 || argv[argc] || strcmp(argv[0],"cliargs") ||
@@ -34,6 +35,8 @@ int main(int argc, char **argv)
             return fail("incorrect long argument\r\n");
     if (!lang || !*lang)
         return fail("missing inherited LANG\r\n");
+    if (!path || strcasecmp(path,"C:\\"))
+        return fail("incorrect inherited PATH\r\n");
     if (Dgetdrv() != 2 || Dgetpath(cwd,0) < 0 ||
         strcasecmp(cwd + (cwd[0] == '\\'),"tests"))
         return fail("incorrect inherited CWD\r\n");
