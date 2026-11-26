@@ -1327,7 +1327,7 @@ static void native_resume_peer(void *argument)
         if (!(buttons&1)) (void)Syield();
     } while (!(buttons&1));
     native_resume.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
-    native_resume.child=launch_observed_input_child(native_resume.session);
+    native_resume.child=launch_observed_input_child(native_resume.session, "3");
     if (native_resume.child<=0) { native_resume.error=1; return; }
     do {
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
@@ -1597,7 +1597,7 @@ static void native_cancel_peer(void *argument)
     } while (!(buttons&1));
     native_cancel.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
     if (native_cancel.mode) {
-        launched=launch_observed_input_child(native_cancel.session);
+        launched=launch_observed_input_child(native_cancel.session, "3");
         if (launched<=0) {
             native_cancel.error=launched?launched:1;
             printf("resume observer launch result=%ld\r\n",launched); return;
