@@ -3,21 +3,24 @@
 
 /* The optional record was reserved by the startup stack builder. Its tail
  * is already independent of the default DTA in the writable basepage. */
-void dl_capture_launch(DL_LAUNCH *launch, const char *name)
+void dl_capture_launch(DL_LAUNCH *launch, const DL_LAUNCH_VECTORS *vectors,
+                       const char *name)
 {
     char cwd[DL_LAUNCH_PATH];
     uint32_t n = 0, at = 0, i, prefix = 0;
     int64_t drive;
     if (!launch) return;
     launch->ready = 0;
+    /* The kernel qualified the original path in the launcher. The child
+     * may already have a different drive or directory at ELF startup. */
+    if (vectors) name = (const char *)(uintptr_t)vectors->path;
     if (!name) return;
     while (n < DL_LAUNCH_PATH && name[n]) n++;
     if (!n || n == DL_LAUNCH_PATH) return;
-    drive = dl_syscall(0x19,0,0,0,0,0,0);
     if (n >= 2 && name[1] == ':') {
         drive = name[0] >= 'a' && name[0] <= 'z' ? name[0]-'a' : name[0]-'A';
         prefix = 2;
-    }
+    } else drive = dl_syscall(0x19,0,0,0,0,0,0);
     if (drive < 0 || drive > 25) return;
     launch->command[at++] = 'A'+drive; launch->command[at++] = ':';
     if (name[prefix] != '\\' && name[prefix] != '/') {

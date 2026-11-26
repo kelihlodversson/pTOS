@@ -191,7 +191,7 @@ static void capture(void)
     memcpy(launch.tail,basepage.p_cmdlin,128);
     launch.environment = basepage.p_env;
     launch.environment_size = basepage.p_env ? sizeof(environment) : 0;
-    dl_capture_launch(&launch,executable);
+    dl_capture_launch(&launch,NULL,executable);
     aes_shell_init(aes_app_context(&aes_global));
     environ = mock_environment;
 }

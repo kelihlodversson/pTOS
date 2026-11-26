@@ -1,6 +1,7 @@
 /* Standard-header shell arguments in isolated dynamically linked children. */
 #include <gem.h>
 #include "ptos.h"
+#include "process_exec.h"
 #include "gem_argv.h"
 #include "gem_process.h"
 static int failure(unsigned line)
@@ -42,6 +43,22 @@ static int32_t set_directory(const char *path)
     __asm__ volatile ("syscall" : "+a"(ax) : "D"((uintptr_t)path) : "rcx","r11","memory","cc");
     return (int32_t)ax;
 }
+static int32_t launch_with_directory(const char *path, const char *directory,
+                                     char *const argv[], char *const envp[])
+{
+    PROCESS_EXEC_REQUEST request = { 0 };
+    register uint64_t ax __asm__("rax") = (1ULL << 32) | 0x154;
+    request.operation = PROCESS_EXEC_START;
+    request.flags = PROCESS_EXEC_VECTOR_ARGS;
+    request.path = (uintptr_t)path;
+    request.directory = (uintptr_t)directory;
+    request.tail = (uintptr_t)argv;
+    request.environment = (uintptr_t)envp;
+    __asm__ volatile ("syscall" : "+a"(ax) : "D"((uint64_t)(int64_t)PROCESS_EXEC_SSYSTEM),
+                      "S"((uintptr_t)&request), "d"(sizeof(request))
+                      : "rcx","r11","memory","cc");
+    return (int32_t)ax;
+}
 int gem_argv_child(int argc, char **argv, char **envp)
 {
     unsigned i;
@@ -54,6 +71,18 @@ int gem_argv_child(int argc, char **argv, char **envp)
         char command[260], tail[128], *live;
         int empty = equal(argv[1],"read-empty");
         unsigned j;
+        if (argc == 2 && equal(argv[1],"read-short")) {
+            char resource[260] = "SHELL.DAT", current[260] = "CURRENT.DAT";
+
+            VERIFY(appl_init() > 0 && shel_readve(&path,&saved_argv,&saved_envp));
+            VERIFY(equal(path,"C:\\APPS\\GEMCHILD.PRG") && equal(saved_argv[0],"alias"));
+            VERIFY(shel_read(command,tail) && equal(command,path) && tail[0] == 10 &&
+                   equal(tail+1,"read-short"));
+            VERIFY(shel_find(resource) && equal(resource,"C:\\APPS\\SHELL.DAT"));
+            VERIFY(shel_find(current) && equal(current,"CURRENT.DAT"));
+            VERIFY(appl_exit());
+            return 0x69;
+        }
         VERIFY(argc == 4 && equal(argv[0],"alias") && !*argv[2]);
         for (j = 0; j < 400; j++) VERIFY(argv[3][j] == 'y');
         VERIFY(!argv[3][400]);
@@ -110,6 +139,7 @@ int gem_argv_checks(AESGLOBAL *global, char **envp)
     char *custom_envp[] = { "ARGVCUSTOM=child","KEEP=still",NULL };
     char only[] = "ONLY=child", long_arg[401];
     char *custom_args[] = { "alias", "read", "", long_arg, NULL };
+    char *short_args[] = { "alias", "read-short", NULL };
     char *only_env[] = { only, NULL }, *no_env[] = { NULL };
     volatile uintptr_t invalid_vector = 1;
     const char *digits = "0123456789abcdef", *arguments = " '' \"two words\" 'can''t' C:\\test ";
@@ -151,6 +181,10 @@ int gem_argv_checks(AESGLOBAL *global, char **envp)
     VERIFY(set_directory("C:\\") == 0);
     if (pid <= 0) (void)failure((uint16_t)pid);
     VERIFY(pid > 0 && gem_wait_child_flags(pid,0) == (int32_t)(((uint32_t)pid << 16) | 0x68));
+    VERIFY(set_directory("C:\\APPS") == 0);
+    pid = launch_with_directory("GEMCHILD.PRG","C:\\WORK",short_args,no_env);
+    VERIFY(set_directory("C:\\") == 0);
+    VERIFY(pid > 0 && gem_wait_child_flags(pid,0) == (int32_t)(((uint32_t)pid << 16) | 0x69));
     (void)ptos_write(1,"x32 GEM shell vectors: PASS\r\n",29);
     return 0;
 }
