@@ -59,7 +59,7 @@ static int init_environment(const char *block)
         environ[i++] = dest;
         memcpy(dest,block,len);
         dest += len;
-        if (block[len-1] == '=' && count > 1 && !strchr(next,'=')) {
+        if (count > 1 && strchr(block,'=') == block+len-1 && !strchr(next,'=')) {
             len = strlen(next);
             memcpy(dest,next,len);
             dest += len;
