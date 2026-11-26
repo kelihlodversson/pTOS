@@ -1505,7 +1505,8 @@ LONG elf_pgmld(FH h, PD *p)
  * asked for it, and the process's kernel record owns the pages from the
  * moment they exist: the caller destroys the record if this fails.
  */
-LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vectors)
+LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vectors,
+               BOOL legacy_elf_vectors)
 {
     PROG_LAYOUT layout;
     ELFPLACE place = {0};
@@ -1524,7 +1525,7 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
         KDEBUG(("BDOS elf_pgmld: image refused\n"));
         return EPLFMT;
     }
-    if (vectors) {
+    if (vectors || legacy_elf_vectors) {
         void *headers = NULL;
         DISK_ERROR error = {0};
 

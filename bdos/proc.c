@@ -1301,7 +1301,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 
     /* now, load the rest of the program, perform relocation, close the file */
-    rc = kpgmld(cur_p, fh, &hdr, path, vectors);
+    rc = kpgmld(cur_p, fh, &hdr, path, vectors,
+               CONF_WITH_LEGACY_PEXEC && (flag != PE_LOAD || replacement));
 #if CONF_WITH_BINFMT
     binfmt_release(&interpreter);
 #endif

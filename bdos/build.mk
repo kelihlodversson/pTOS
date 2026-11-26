@@ -44,7 +44,7 @@ ifneq ($(CONF_WITH_USER_ASPACE)$(CONF_WITH_ARM_SHARED_EXEC),)
 obj-y += launch_args.o
 obj-$(CONF_WITH_ELF_LOADER) += elfstartup.o
 endif
-ifneq ($(CONF_WITH_ELF_SHARED)$(CONF_WITH_ARM_SHARED_EXEC),)
+ifneq ($(CONF_WITH_LEGACY_ELF_ARGS)$(CONF_WITH_ARM_SHARED_EXEC),)
 obj-y += argv_legacy.o
 endif
 

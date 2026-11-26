@@ -100,16 +100,20 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
                        PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch,
                        BOOL qualify, const DL_START_VECTORS *vectors);
 #endif
-/* A trusted vector input selects the standard ELF process entry. */
+/* Use standard ELF entry for trusted vectors or a legacy m68k ELF launch.
+ * Internal load-only callers can still prepare the classic entry. */
 LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
-            const struct dl_start_vectors *vectors);
+            const struct dl_start_vectors *vectors, BOOL legacy_elf_vectors);
 
 #if CONF_WITH_ELF_LOADER
 /*
  * in elfld.c
  */
 LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign);
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE
+LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors,
+               BOOL legacy_elf_vectors);
+#elif CONF_WITH_ARM_SHARED_EXEC
 LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors);
 #else
 LONG elf_pgmld(FH h, PD *p);

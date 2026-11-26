@@ -213,9 +213,10 @@ LONG kpgmhdrld(char *path, PGMHDR01 *header, FH *handle)
     return header_error;
 }
 LONG kpgmld(PD *p, FH handle, PGMHDR01 *header, const char *path,
-            const struct dl_start_vectors *vectors)
+            const struct dl_start_vectors *vectors, BOOL legacy_elf_vectors)
 {
     CHECK(p == &image && records == 1 && handle == NUMSTD+2 && !vectors);
+    CHECK(!legacy_elf_vectors);
     return load_error;
 }
 BOOL ksched_spawn_allowed(void) { return !deny_start; }

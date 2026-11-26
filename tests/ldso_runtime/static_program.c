@@ -33,6 +33,61 @@ static int32_t wait_child(int32_t pid, unsigned int flags)
     return dl_syscall(0x13a, pid, flags, 0, 0, 0, 0);
 }
 
+#if defined(__m68k__)
+static int32_t pexec(unsigned int mode, const char *path,
+                     const char *tail, const char *environment)
+{
+    return dl_syscall(0x4b, mode, (uintptr_t)path, (uintptr_t)tail,
+                      (uintptr_t)environment, 0, 0);
+}
+
+#if PTOS_TEST_EXEC_REPLACE
+static int legacy_replace(const char *path)
+{
+    char environment[] = "KEY=two words\0FLAG=\0ARGV=NULL:1\0legacy name\0"
+                         "placeholder\0two words\0literal\"quote\0" "000000\0";
+    char *digits = environment + sizeof(environment) - sizeof("000000\0");
+    uint32_t pid = process_id();
+    unsigned int i;
+
+    for (i = 6; i > 0; i--) {
+        digits[i - 1] = '0' + pid % 10;
+        pid /= 10;
+    }
+    (void)pexec(200, path, "\177", environment);
+    return 96;
+}
+#endif
+
+static int test_legacy_launches(const char *path)
+{
+    char tail[] = "\0\"\" \"two words\" 'literal\"quote'";
+    const char environment[] = "KEY=two words\0FLAG=\0ARGV=\0unused\0";
+    const char extended[] = "KEY=two words\0FLAG=\0ARGV=NULL:1\0legacy name\0"
+                            "placeholder\0two words\0literal\"quote\0";
+    int32_t pid;
+
+    tail[0] = sizeof(tail) - 2;
+    if (pexec(0, path, tail, environment) != 79 ||
+        pexec(0, path, "\177", "FLAG=\0") != EPLFMT)
+        return 94;
+    pid = pexec(100, path, "\177", extended);
+    if (pid <= 0 || (uint32_t)wait_child(pid, 0) != ((uint32_t)pid << 16 | 79U) ||
+        wait_child(pid, 1) != EFILNF)
+        return 95;
+#if PTOS_TEST_EXEC_REPLACE
+    {
+        const char *const argv[] = {"check-legacy-exec", path, 0};
+        const char *const envp[] = {0};
+
+        if (pexecve(0, path, argv, envp) != 78)
+            return 96;
+    }
+#endif
+    return 0;
+}
+#endif
+
 static int test_syscalls(const char *path)
 {
     char arg[] = "two words", variable[] = "KEY=two words";
@@ -45,6 +100,11 @@ static int test_syscalls(const char *path)
         return 86;
     if (pexecve(0, path, argv, envp) != 79 || wait_child(-1, 1) != EFILNF)
         return 87;
+#if defined(__m68k__)
+    status = test_legacy_launches(path);
+    if (status)
+        return status;
+#endif
     {
 #if defined(__x86_64__)
         char dynamic_path[] = "A:\\SOAPP.TOS";
@@ -112,17 +172,32 @@ int app_main(uint32_t argc, const char **argv, const char **envp, uintptr_t fina
 {
     const uint32_t *aux, *headers, *basepage;
     uint32_t phdr = 0, phent = 0, phnum = 0, entry = 0, base = 1, pd = 0, execfn = 0, bias = 0;
-    unsigned int i;
+    unsigned int i, envc = 3;
 
     if (argc == 2 && equal(argv[0], "check-syscalls"))
         return test_syscalls(argv[1]);
-    if (bss || finalizer || (argc != 4 && argc != 5) || argv[argc] || !equal(argv[0], "custom name") ||
+#if defined(__m68k__) && PTOS_TEST_EXEC_REPLACE
+    if (argc == 2 && equal(argv[0], "check-legacy-exec"))
+        return legacy_replace(argv[1]);
+#endif
+    if (bss || finalizer || (argc != 4 && argc != 5) || argv[argc] ||
         argv[1][0] || !equal(argv[2], "two words") || !equal(argv[3], "literal\"quote"))
         return 81;
-    if (!envp[0] || !envp[1] || !envp[2] || envp[3] ||
-        !equal(envp[0], "KEY=two words") || envp[1][0] || !equal(envp[2], "FLAG="))
+    if (equal(argv[0], "custom name")) {
+        if (!envp[1] || envp[1][0])
+            return 82;
+#if defined(__m68k__)
+    } else if (equal(argv[0], "legacy name") ||
+               (argv[0][0] >= 'A' && argv[0][0] <= 'Z' && equal(argv[0] + 1, ":\\STKVEC.ELF"))) {
+        envc = 2;
+#endif
+    } else {
+        return 81;
+    }
+    if (!envp[0] || !envp[envc - 1] || envp[envc] ||
+        !equal(envp[0], "KEY=two words") || !equal(envp[envc - 1], "FLAG="))
         return 82;
-    for (aux = (const uint32_t *)(envp + 4), i = 0; i < 20 && *aux; aux += 2, i++) {
+    for (aux = (const uint32_t *)(envp + envc + 1), i = 0; i < 20 && *aux; aux += 2, i++) {
         switch (aux[0]) {
         case 3: phdr = aux[1]; break;
         case 4: phent = aux[1]; break;

@@ -2,7 +2,7 @@ Process entry contract
 ======================
 
 This document defines the register and stack state at the first instruction
-of a loaded user process.  It applies to the ARM and x32 ports.  It is not
+of a loaded user process.  It applies to the ARM, x32 and m68k ports. It is not
 the syscall ABI; the x32 syscall ABI is a separate contract.
 
 The launcher supplies an explicit entry type.  Startup code must not infer
@@ -17,9 +17,12 @@ dynamic interpreter transfers to AT_ENTRY with a finalizer callback for
 the application CRT. On x32 that callback is in RDX and is zero at static
 vector entry.
 
-Static launches through the existing Pexec interface use the entry below
-until the coordinated CRT and public vector launch migration in #1008.
-Built-in images and classic 68k PRGs use their established entry conventions.
+On m68k with private user address spaces, Pexec modes 0, 100 and 200
+derive the ELF vectors from the supplied GEMDOS command tail and environment,
+using the same conversion for static and PT_INTERP images. Classic PRGs,
+staged GO modes, and ELF on shared-address-space m68k keep basepage entry.
+Built-in images and internal staged accessories use their established entry
+conventions.
 
     ENTRY_PROGRAM = 0
     ENTRY_ACCESSORY = 1
@@ -57,8 +60,8 @@ the filename, or an unspecified register value.
 m68k
 ----
 
-The established m68k conventions are unchanged and remain distinct.  An
-ordinary program receives its basepage at 4(sp), with A0 cleared.  gotopgm()
+With basepage entry an ordinary program receives its basepage at 4(sp),
+with A0 cleared. gotopgm()
 supplies a desk accessory's basepage in A0.  No entry-type register is added
 to the m68k ABI; startup code must use the launch convention selected by the
 existing launcher.

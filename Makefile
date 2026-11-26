@@ -1952,12 +1952,15 @@ TEST_CC = $(CC)
 TEST_LIBS = $(LIBS)
 TEST_CPUFLAGS = $(CPUFLAGS)
 endif
+TEST_M68K_PRIVATE_ELF = $(and $(ARCH_M68K),$(CONF_WITH_USER_ASPACE),$(CONF_WITH_ELF_LOADER))
+TEST_VECTOR_ENTRY = $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))),$(and $(TEST_M68K_PRIVATE_ELF),$(BUILD_TOOLCHAIN_ELF)))
+
 # ROM-window MMU backends deliberately reject private cloning in aspace_clone.
 # Phase C keeps kernel ownership counters/adapters, but its ROM user proof uses
 # independently loader-created roots rather than advertising private-fork tests.
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
-              $(if $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64)))),-DTEST_NATIVE_ELF_ENTRY) \
+              $(if $(TEST_VECTOR_ENTRY),-DTEST_NATIVE_ELF_ENTRY) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_FAT_FILE_LIFETIMES),-DTEST_WITH_FAT_FILE_LIFETIMES) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
@@ -2029,7 +2032,9 @@ TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
 $(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
 	@$(LIBCMINI_MAKE) $@
 
-TEST_STARTUP = $(if $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64)))),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
+TEST_STARTUP = $(if $(TEST_VECTOR_ENTRY),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
+# Some m68k probes are linked as ELF even when the suite defaults to PRG.
+TEST_M68K_ELF_STARTUP = $(if $(TEST_M68K_PRIVATE_ELF),$(TEST_VECTOR_STARTUP),$(TEST_STARTUP))
 
 # Each test suite object depends on its source and the generated run_tests.c.
 define test-suite-rule
@@ -2171,9 +2176,9 @@ obj/exec200_prg.o: tests/pclone/exec200_image.c $(AUTOCONF_H) | obj
 endif
 ifdef CONF_WITH_ELF_LOADER
 TEST_EXEC200_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
-EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+EXEC200B.TOS: $(TEST_M68K_ELF_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
-	  $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  $(TEST_M68K_ELF_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
 	  -L$(TEST_EXEC200_LIBGCC_DIR) -lgcc -o $@
 else
 TEST_EXEC200_FILES := $(filter-out EXEC200B.TOS,$(TEST_EXEC200_FILES))
@@ -2194,9 +2199,9 @@ ifdef CONF_WITH_MULTITHREADING
 ifdef CONF_WITH_ELF_LOADER
 TEST_CLONE_ABI_FILES = CLNABI.TOS
 TEST_CLONE_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
-CLNABI.TOS: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
+CLNABI.TOS: $(TEST_M68K_ELF_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
-	  $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  $(TEST_M68K_ELF_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
 	  -L$(TEST_CLONE_LIBGCC_DIR) -lgcc -o $@
 endif
 endif
@@ -2283,9 +2288,9 @@ obj/high_probe.o: tests/broad_va/high_probe.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 ifdef ARCH_M68K
-HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
+HIIMAGE.TOS: $(TEST_M68K_ELF_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld -m m68kelf -Ttext-segment=0x41000000 -e _start \
-	  $(TEST_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+	  $(TEST_M68K_ELF_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
 else
 HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(if $(ARCH_X86_64),$(X32_LDFLAGS_NOQ)) -Wl,-Ttext-segment=0x41000000,-e_start \
@@ -2340,9 +2345,9 @@ ifdef ARCH_M68K
 # The compiler driver's default m68k link is a PRG ("-pie not supported"):
 # ask the linker for its ELF emulation directly.  libgcc is not needed by the
 # probe.
-pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
+pieprobe.tos: $(TEST_M68K_ELF_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
-	  $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+	  $(TEST_M68K_ELF_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
 else
 pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
@@ -2437,9 +2442,9 @@ endif
 
 ifdef ARCH_M68K
 # (the driver's default m68k link is a PRG: "-pie not supported")
-relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+relocprobe-unpacked.tos: $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
-	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 else
 relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
@@ -2450,9 +2455,9 @@ ifneq ($(ARCH_ARM)$(ARCH_X86_64),)
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
-relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+relocprobe2-unpacked.tos: $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld $(if $(BUILD_TOOLCHAIN_PTOS),-m m68kmintelf) --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
-	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 endif
 
