@@ -17,8 +17,10 @@ static UWORD old_stdout;
 /*
  *  function prototypes
  */
-PRIVATE void add_to_path(char *path,const char *name);
+PRIVATE WORD add_to_path(char *path,const char *name);
+#if !CLI_VECTOR_EXEC
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv);
+#endif
 PRIVATE WORD check_user_path(char *path,const char *name);
 PRIVATE WORD find_executable(char *fullname,const char *name);
 PRIVATE WORD is_graphical(const char *name);
@@ -29,14 +31,20 @@ PRIVATE void restore_stdout(char *redir);
 LONG exec_program(WORD argc,char **argv,char *redir)
 {
 char path[MAXPATHLEN];
+#if !CLI_VECTOR_EXEC
 char cmdline[CMDLINELEN];
+#endif
 LONG rc;
 
-    if (has_wildcard(argv[0]))
+    if (!argv[0][0] || has_wildcard(argv[0]))
         return EPTHNF;
 
+#if CLI_VECTOR_EXEC
+    (void)argc;
+#else
     if (build_cmdline(cmdline,argc,argv) < 0)
         return CMDLINE_LENGTH;
+#endif
 
     if (find_executable(path,argv[0]) == 0)
         ;
@@ -49,8 +57,10 @@ LONG rc;
 
     if (is_graphical(path))
         (void)Cursconf(0,0);
-#if defined(STANDALONE_CONSOLE) && defined(__arm__)
-    /* Standalone ARM EmuCON still launches basepage-entry programs. */
+#if CLI_VECTOR_EXEC
+    rc = Pexecve(0,path,argv,environ);
+#elif defined(STANDALONE_CONSOLE) && defined(__arm__)
+    /* The non-scheduled ARM console still launches basepage-entry programs. */
     rc = trap_1_wwlll(0x4b,0,(long)path,(long)cmdline,0);
 #else
     rc = Pexec(0,path,cmdline,NULL);
@@ -65,20 +75,17 @@ LONG rc;
 /*
  *  add filename to path
  */
-PRIVATE void add_to_path(char *path,const char *name)
+PRIVATE WORD add_to_path(char *path,const char *name)
 {
-char *p;
-const char *q;
+size_t len = strlen(path);
+WORD separator = len && path[len-1] != PATHSEP;
 
-    for (p = path; *p; p++)
-        ;
-    if (*(p-1) != PATHSEP)
-        *p++ = PATHSEP;
-
-    for (q = name; *q; )
-        *p++ = *q++;
-
-    *p = '\0';
+    if (len+separator+strlen(name) >= MAXPATHLEN)
+        return -1;
+    if (separator)
+        path[len++] = PATHSEP;
+    strcpy(path+len,name);
+    return 0;
 }
 
 /*
@@ -86,6 +93,7 @@ const char *q;
  *
  *  returns -1 iff the line is too long
  */
+#if !CLI_VECTOR_EXEC
 PRIVATE WORD build_cmdline(char *cmdline,WORD argc,char **argv)
 {
 char *p, *q;
@@ -108,6 +116,7 @@ WORD i, len;
 
     return 0;
 }
+#endif
 
 /*
  *  check user_path[] directories for matching filename
@@ -122,8 +131,7 @@ const char *p;
     for (p = user_path; *p; ) {
         if (get_path_component(&p,temp) == 0)
             return -1;
-        add_to_path(temp,name);
-        if (find_executable(path,temp) == 0)
+        if (add_to_path(temp,name) == 0 && find_executable(path,temp) == 0)
             return 0;
     }
 
@@ -155,6 +163,8 @@ LONG rc;
         *p++ = *q++;
     }
     if (!dot) {
+        if (p-fullname+2 >= MAXPATHLEN)
+            return -1;
         dot = p;
         *p++ = '.';
         *p++ = '*';
@@ -166,7 +176,7 @@ LONG rc;
      */
     for (rc = Fsfirst(fullname,0x07); rc == 0; rc = Fsnext()) {
         q = program_extension(dta);
-        if (q) {
+        if (q && (size_t)(dot+1-fullname)+strlen(q) < MAXPATHLEN) {
             strcpy(dot+1,q);
             return 0;
         }

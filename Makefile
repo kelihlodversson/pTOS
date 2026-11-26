@@ -1002,7 +1002,7 @@ $(X32_CLI_OBJ): $(AUTOCONF_H)
 # EmuCON's own sources use cmd.h's standalone definitions and the cli/x32
 # headers; util/ and the generated version use the kernel's.
 X32_CLI_INC = -DSTANDALONE_CONSOLE -DX32_USERLAND -Icli/x32 -Icli/x32/include \
-              -Iinclude -Iobj -Icli
+              -DCLI_VECTOR_EXEC=$(if $(CONF_WITH_CLI_VECTOR_EXEC),1,0) -Iinclude -Iobj -Icli
 X32_UTIL_INC = -Iinclude/arch/x86_64 -Iinclude -Iobj -Iutil
 obj/x32/doprintf.o obj/x32/string.o obj/x32/version.o: X32_CLI_INC = $(X32_UTIL_INC)
 
@@ -1765,6 +1765,16 @@ $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBC
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
+ifdef ARCH_X86_64
+ifeq ($(CONF_WITH_CLI_VECTOR_EXEC),y)
+ifneq ($(CONF_WITH_DYNAMIC_CLI),y)
+# Share libcmini's standard ELF entry with the static console. Its own CRT
+# shim also accepts the basepage entry used when the kernel embeds the image.
+obj/x32/emucon.elf: $(LIBCMINI_LIB)
+endif
+endif
+endif
+
 #
 # EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
 # EmuCON, against the libcmini that is built here, and the file goes on the
@@ -1782,6 +1792,7 @@ else
 EMUCON_MAKE = $(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) \
     BUILD_M68K_LRA=$(if $(M68K_LRA_FLAGS),y,n) \
     CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) \
+    CLI_VECTOR_EXEC=$(if $(CONF_WITH_CLI_VECTOR_EXEC),1,0) \
     M68K_ELF=$(BUILD_TOOLCHAIN_ELF) \
     M68K_PRG_FLAGS="$(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf)" \
     CROSS_COMPILE=$(CROSS_COMPILE) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) \
@@ -2204,11 +2215,18 @@ TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
 
 TEST_DESK_INF = tests/emudesk.inf
 ifeq ($(ARCH_X86_64)$(CONF_WITH_LIBAES),yy)
-# The desktop enters ELF with argv/envp. Keep the basepage startup in
-# runtests.tos for workers that exercise the historical Pexec ABI.
+TEST_DESK_INF = obj/vector-tests/emudesk.inf
+
+$(TEST_DESK_INF): tests/emudesk.inf
+	@mkdir -p $(@D)
+	sed 's/RUNTESTS\.TOS/RUNVEC.TOS/' $< > $@
+endif
+
+# The native desktop and vector-enabled CLI share the ELF test binaries.
+# Keep runtests.tos for callers that exercise the historical Pexec ABI.
+ifneq ($(filter y,$(CONF_WITH_CLI_VECTOR_EXEC))$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
 TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
 TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos
-TEST_DESK_INF = obj/vector-tests/emudesk.inf
 
 $(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
 	@$(LIBCMINI_MAKE) $@
@@ -2223,9 +2241,24 @@ haltv.tos: obj/halt.o
 pwroffv.tos rebootv.tos coldbtv.tos haltv.tos: $(TEST_VECTOR_STARTUP) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
 
-$(TEST_DESK_INF): tests/emudesk.inf
+ifeq ($(CONF_WITH_CLI_VECTOR_EXEC),y)
+TEST_VECTOR_FILES += cliargs.tos
+
+obj/cliargs.o: tests/emucon/arguments.c $(AUTOCONF_H) $(LIBCMINI_LIB) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+cliargs.tos: $(TEST_VECTOR_STARTUP) obj/cliargs.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+ifdef ARCH_X86_64
+ifneq ($(CONF_EXTERNAL_CLI),y)
+# An embedded image also needs a disk copy for the nested console regression.
+TEST_VECTOR_FILES += obj/x32/test-cli/EMUCON.TOS
+obj/x32/test-cli/EMUCON.TOS: obj/x32/emucon.elf
 	@mkdir -p $(@D)
-	sed 's/RUNTESTS\.TOS/RUNVEC.TOS/' $< > $@
+	@cp $< $@
+endif
+endif
+endif
 endif
 
 # ISOPROBE.TOS: the payload of the isolation suite (tests/isolation/isoprobe.c),
@@ -2605,6 +2638,7 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
+TOCLEAN += runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos cliargs.tos
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
            runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos \
            halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \

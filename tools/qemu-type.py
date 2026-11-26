@@ -6,14 +6,17 @@
 #
 # Sends the characters as key presses (sendkey) followed by Return.  Only
 # the characters a command line needs are known: letters, digits, space,
-# '.', '\' and ':'.
+# shell punctuation used by the regression commands.
 #
 
 import socket
 import sys
 import time
 
-KEYS = {'.': 'dot', ' ': 'spc', '\\': 'backslash', ':': 'shift-semicolon'}
+KEYS = {
+    '.': 'dot', ' ': 'spc', '\\': 'backslash', ':': 'shift-semicolon',
+    '"': 'shift-apostrophe', '>': 'shift-dot',
+}
 
 
 def key(c):

@@ -65,6 +65,18 @@ if [ "$machine" = pc-x86_64 ] && grep -q '^#define CONF_EXTERNAL_DESK 1' "$top/o
         vector_autorun=true
     fi
 fi
+suite_program=runtests.tos
+poweroff_program=poweroff.tos
+reboot_program=reboot.tos
+coldboot_program=coldboot.tos
+halt_program=halt.tos
+if [ "$autorun" = false ] && grep -q '^#define CONF_WITH_CLI_VECTOR_EXEC 1' "$top/obj/autoconf.h"; then
+    suite_program=runvec.tos
+    poweroff_program=pwroffv.tos
+    reboot_program=rebootv.tos
+    coldboot_program=coldbtv.tos
+    halt_program=haltv.tos
+fi
 : >"$results"
 : >"$logs"
 
@@ -195,7 +207,17 @@ type_line() {
     [ "$autorun" != true ] || return 0
     case $machine in
     pc-x86_64) python3 "$tools/qemu-type.py" "$work/mon.sock" "$1" ;;
-    *) printf '%s\r' "$1" >&3 ;;
+    *)
+        if [ "${#1}" -gt 80 ]; then
+            # Let the guest drain its UART while the editor redraws a long line.
+            python3 -c 'import sys, time
+for character in sys.argv[1] + "\r":
+    print(character, end="", flush=True)
+    time.sleep(0.02)' "$1" >&3
+        else
+            printf '%s\r' "$1" >&3
+        fi
+        ;;
     esac
 }
 
@@ -525,7 +547,37 @@ finish_cuis_input() {
 # -- machine 1: the suite, then the power off ---------------------------------
 
 start_vm suite
-type_line 'runtests.tos'
+if [ "$suite_program" = runvec.tos ]; then
+    type_line 'path c:\'
+    type_line 'cd c:\tests'
+    nested_console=false
+    # The second EmuCON starts through Pexecve with a vector environment.
+    # It must find the fixture in the inherited PATH outside its CWD.
+    type_line 'emucon'
+    n=0
+    while [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -lt 2 ] && [ "$n" -lt 20 ]; do
+        sleep 1
+        n=$((n + 1))
+    done
+    if [ "$(grep -ac 'Type HELP for builtin commands' "$log")" -ge 2 ]; then
+        nested_console=true
+    else
+        record 'native nested EmuCON' FAIL 'vector-started console did not show its prompt'
+    fi
+    long_arg=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+    type_line "cliargs \"two words\" \"\" \"a>b\" $long_arg >cliargs.out"
+    type_line 'type cliargs.out'
+    if wait_for 'native EmuCON argv/envp/CWD: PASS' 30; then
+        record 'native EmuCON vectors and stdout redirection' PASS
+    else
+        record 'native EmuCON vectors and stdout redirection' FAIL 'argument probe did not pass'
+    fi
+    if [ "$nested_console" = true ]; then
+        type_line 'exit'
+    fi
+    type_line 'cd c:\'
+fi
+type_line "$suite_program"
 
 # The harness ends with one of two lines.
 n=0
@@ -541,17 +593,17 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ]; then
         start_vm poweroff
     fi
-    type_line 'poweroff.tos'
+    type_line "$poweroff_program"
     shutdown_check poweroff "powering off"
 
     # -- the machines of the other modes --------------------------------------
 
-    reboot_run reboot reboot.tos "rebooting"
-    reboot_run coldboot coldboot.tos "cold booting"
+    reboot_run reboot "$reboot_program" "rebooting"
+    reboot_run coldboot "$coldboot_program" "cold booting"
 
     # halt: the message, the machine still there, and the file on the disk
     start_vm halt
-    type_line 'halt.tos'
+    type_line "$halt_program"
     if ! wait_for 'safe to turn off your computer' 60; then
         record "shutdown (halt)" FAIL "no message"
     else
@@ -585,7 +637,7 @@ if [ "$machine" = pc-x86_64 ] && [ "$autorun" = true ] &&
    grep -q '^#define CONF_WITH_CUIS 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h"; then
     start_vm cuis
-    type_line 'runtests.tos'
+    type_line "$suite_program"
     n=0
     while [ "$n" -lt "$limit" ]; do
         grep -aqE 'All tests passed\.|Some tests FAILED\.' "$log" && break
@@ -612,7 +664,7 @@ if [ "$machine" != raspi2b ] && [ "$machine" != raspi2b-aspace ] && grep -aq 'Al
     system_font=DJVUMONO.TTF
     start_vm sysfont
     system_font=
-    type_line 'runtests.tos'
+    type_line "$suite_program"
     n=0
     while [ "$n" -lt "$limit" ]; do
         grep -aqE 'All tests passed\.|Some tests FAILED\.' "$log" && break

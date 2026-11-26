@@ -25,6 +25,7 @@ include ../version.mk
 
 TARGET = emucon.tos
 ARCH ?= m68k
+CLI_VECTOR_EXEC ?= 0
 M68K_LRA_FLAGS = $(if $(filter m68k-y,$(ARCH)-$(BUILD_M68K_LRA)),-mlra)
 
 # libcmini provides the C library, GEMDOS/BIOS/XBIOS bindings, and startup
@@ -44,6 +45,7 @@ LIBCMINI_MAKE     = $(MAKE) -C $(LIBCMINI_DIR) BUILDDIR=$(LIBCMINI_BUILDDIR) CRO
 LIBCMINI_OBJDIR   = $(LIBCMINI_BUILDDIR)/./objs
 LIBCMINI_CRT0     = $(LIBCMINI_OBJDIR)/minicrt0.o
 LIBCMINI_LIB      = $(LIBCMINI_BUILDDIR)/./libcmini.a
+CLI_STARTUP       = $(LIBCMINI_CRT0)
 
 ifeq ($(ARCH),arm)
 CROSS_COMPILE ?= arm-unknown-ptos-elf-
@@ -64,6 +66,9 @@ LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
 # ARM at all) -- cmdgetwh.c's STANDALONE_CONSOLE branch provides
 # getwh()/getht() instead, via Ssystem(S_CONSOLE_DIM, ...).
 OBJECTS = cmdmain.o cmdedit.o cmdexec.o cmdint.o cmdparse.o cmdutil.o cmdgetwh.o version.o
+ifeq ($(CLI_VECTOR_EXEC),1)
+CLI_STARTUP = armcrt.o
+endif
 else ifeq ($(ARCH),m68k)
 CROSS_COMPILE ?= m68k-unknown-ptos-prgelf-
 CC = $(CROSS_COMPILE)gcc
@@ -109,7 +114,8 @@ endif
 # for the couple of headers libcmini doesn't have, e.g. version.h,
 # scancode.h), which would otherwise shadow libcmini's <string.h> since
 # both provide one.
-CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE $(CLI_DEFS)
+CPPFLAGS = -I$(LIBCMINI_INC) -I../include -DUSE_STATIC_INLINES=0 -DSTANDALONE_CONSOLE \
+           -DCLI_VECTOR_EXEC=$(CLI_VECTOR_EXEC) $(CLI_DEFS)
 # -fno-tree-loop-distribute-patterns: matches the kernel's own OTHERFLAGS
 # (see ../Makefile) for the same reason -- GCC can silently rewrite an
 # ordinary loop (e.g. cmdutil.c's convulong()) into a call to memset()/
@@ -155,8 +161,8 @@ HEADERS = cmd.h
 # up to date, and creating it must force them to be rebuilt.  Only objects go:
 # the generated sources in ml/ do not depend on any of the three, and removing
 # them while a parallel make has already looked at their times would break it.
-STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)$(if $(filter 1,$(CLI_SSYSTEM)),-ss)$(if $(M68K_LRA_FLAGS),-lra)
-$(OBJECTS) version.c: $(STAMP)
+STAMP = .arch-$(ARCH)-$(NLS)-$(if $(filter y,$(M68K_ELF)),elf,prg)$(if $(filter 1,$(CLI_SSYSTEM)),-ss)$(if $(M68K_LRA_FLAGS),-lra)$(if $(filter 1,$(CLI_VECTOR_EXEC)),-vectors)
+$(OBJECTS) $(filter armcrt.o,$(CLI_STARTUP)) version.c: $(STAMP)
 $(STAMP):
 	-rm -f ml/*.o *.o version.c $(TARGET) .arch-*
 	touch $@
@@ -225,8 +231,8 @@ $(LIBCMINI_LIB): $(LIBCMINI_BUILDDIR)/.config $(wildcard $(LIBCMINI_DIR)/sources
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
-$(TARGET): $(LIBCMINI_CRT0) $(OBJECTS) $(LIBCMINI_LIB)
-	$(CC) -nostartfiles -nostdlib $(LIBCMINI_CRT0) $(OBJECTS) -L$(dir $(LIBCMINI_LIB)) -lcmini -lgcc $(LDFLAGS) -o $@
+$(TARGET): $(CLI_STARTUP) $(OBJECTS) $(LIBCMINI_LIB)
+	$(CC) -nostartfiles -nostdlib $(CLI_STARTUP) $(OBJECTS) -L$(dir $(LIBCMINI_LIB)) -lcmini -lgcc $(LDFLAGS) -o $@
 
 clean:
 	-rm -rf ml *.o version.c .arch-*

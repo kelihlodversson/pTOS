@@ -38,6 +38,32 @@ PRIVATE WORD previous_word_count(const char *line,WORD pos);
 PRIVATE WORD replace_line(char *line,WORD num);
 PRIVATE char *start_of_current_word(char *line,WORD pos);
 
+#if CLI_VECTOR_EXEC
+/* Keep the cursor and the visible portion of the command on the prompt row. */
+PRIVATE void redraw_input(const char *line,WORD pos,WORD len,WORD width,
+                          WORD *start,WORD *column)
+{
+    WORD end;
+
+    while (*column > 0) {
+        cursor_left();
+        --*column;
+    }
+    if (pos < *start || pos >= *start+width) {
+        *start = pos-(width+1)/2;
+        if (*start < 0)
+            *start = 0;
+    }
+    end = *start;
+    while (end < len && end < *start+width)
+        conout(line[end++]);
+    escape('K');
+    while (end-- > pos)
+        cursor_left();
+    *column = pos-*start;
+}
+#endif
+
 WORD read_line(char *line)
 {
 LONG charcode;
@@ -46,20 +72,37 @@ UWORD save_history_num;
 WORD scancode, prevcode = 0;
 WORD pos = 0, len = 0;
 char prompt[MAXPATHLEN];
+#if CLI_VECTOR_EXEC
+WORD width, first = 0, column = 0;
+#endif
 
     save_history_num = history_num;     /* so that edit_line() can play with it */
+    line[0] = '\0';
 
     get_path(prompt,0);
     message(prompt);
     message(">");
+#if CLI_VECTOR_EXEC
+    width = screen_cols > 1 ? screen_cols-1 : 1;
+    /* VT52 may discard characters at the right edge. Start fresh when
+     * the prompt leaves insufficient space, regardless of the wrap mode. */
+    if (strlen(prompt)+2 >= (size_t)width)
+        messagenl("");
+    else
+        width -= strlen(prompt)+1;
+#endif
     while(1) {
         charcode = conin();
         scancode = ((charcode >> 8) | charcode) & 0xffff;
 
         /* check for line-editing key & handle if so */
         prevcode = edit_line(line,&pos,&len,scancode,prevcode);
-        if (prevcode >= 0)
+        if (prevcode >= 0) {
+#if CLI_VECTOR_EXEC
+            redraw_input(line,pos,len,width,&first,&column);
+#endif
             continue;
+        }
 
         /* if any other non-ASCII key, ignore */
         c = LOBYTE(charcode);
@@ -86,16 +129,26 @@ char prompt[MAXPATHLEN];
             continue;
 
         /* if other ASCII key but line is full, ignore */
-        if (len >= linesize-2)
+        if (len >= linesize-(CLI_VECTOR_EXEC ? 1 : 2))
             continue;
 
         /* handle normal ASCII key */
-        conout(c);
+        if (!CLI_VECTOR_EXEC)
+            conout(c);
         if (pos < len)
             insert_char(line,pos,len,c);
         else line[len] = c;
         pos++;
         len++;
+        line[len] = '\0';
+#if CLI_VECTOR_EXEC
+        if (pos == len && column+1 < width) {
+            conout(c);
+            column++;
+        } else {
+            redraw_input(line,pos,len,width,&first,&column);
+        }
+#endif
     }
 
     history_num = save_history_num;
@@ -114,6 +167,9 @@ char *p;
     for (p = line+len; p > line+pos; p--)
         *p = *(p-1);
     *p++ = c;
+
+    if (CLI_VECTOR_EXEC)
+        return;
 
     /* display characters after insertion point */
     while(p <= line+len)
@@ -134,6 +190,10 @@ ULONG n;
     n = getwh();                    /* get max cell number for x and y */
     screen_cols = HIWORD(n) + 1;
     screen_rows = LOWORD(n) + 1;
+    if (CLI_VECTOR_EXEC) {
+        linesize = MAX_LINE_SIZE;
+        return;
+    }
     linesize = screen_cols + 1 - 3; /* allow for trailing NUL and prompt */
     if (linesize > MAX_LINE_SIZE)
         linesize = MAX_LINE_SIZE;
@@ -206,6 +266,7 @@ void save_history(const char *line)
 PRIVATE WORD edit_line(char *line,WORD *pos,WORD *len,WORD scancode,WORD prevcode)
 {
 char *start, *p, *q;
+char saved;
 LONG rc;
 WORD n, word = 0;
 
@@ -230,7 +291,8 @@ WORD n, word = 0;
             n = word ? previous_word_count(line,*pos) : 1;
             while (n-- > 0) {
                 (*pos)--;
-                cursor_left();
+                if (!CLI_VECTOR_EXEC)
+                    cursor_left();
             }
         }
         break;
@@ -242,7 +304,8 @@ WORD n, word = 0;
             n = word ? next_word_count(line,*pos,*len) : 1;
             while (n-- > 0) {
                 (*pos)++;
-                cursor_right();
+                if (!CLI_VECTOR_EXEC)
+                    cursor_right();
             }
         }
         break;
@@ -260,11 +323,13 @@ WORD n, word = 0;
         }
         break;
     case TAB:           /* tab completion */
+        saved = line[*pos];
         line[*pos] = '\0';  /* terminate line so we don't see residual data */
         start = start_of_current_word(line,*pos);
         if (prevcode != TAB)
             insert = insertion_point(start);    /* where we insert the names */
-        if (insert+sizeof(dta->d_fname)-line >= linesize)
+        line[*pos] = saved;
+        if ((size_t)(insert-line)+sizeof(dta->d_fname) >= (size_t)linesize)
             break;
         if (prevcode == TAB) {
             rc = getnextfile(start==line);
@@ -282,7 +347,8 @@ WORD n, word = 0;
         if (rc == 0L) {
             erase_line(insert,*pos-(insert-line));
             for (q = insert, p = dta->d_fname; *p; ) {
-                conout(*p);
+                if (!CLI_VECTOR_EXEC)
+                    conout(*p);
                 *q++ = *p++;
             }
             *q = '\0';
@@ -316,6 +382,9 @@ char *p;
     for (p = line+pos; p < line+len; p++)
         *p = *(p+1);
 
+    if (CLI_VECTOR_EXEC)
+        return;
+
     if (backspace)
         cursor_left();      /* adjust cursor */
 
@@ -336,9 +405,11 @@ PRIVATE void erase_line(char *start,WORD len)
 {
 WORD i;
 
-    for (i = 0; i < len; i++)
-        cursor_left();
-    escape('K');
+    if (!CLI_VECTOR_EXEC) {
+        for (i = 0; i < len; i++)
+            cursor_left();
+        escape('K');
+    }
 
     *start = '\0';
 }
@@ -373,7 +444,8 @@ PRIVATE WORD replace_line(char *line,WORD num)
 char *p, *q;
 
     for (p = line, q = history_line[num]; *q; ) {
-        conout(*q);
+        if (!CLI_VECTOR_EXEC)
+            conout(*q);
         *p++ = *q++;
     }
     *p = '\0';
