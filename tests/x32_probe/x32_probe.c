@@ -134,11 +134,6 @@ static s64 sys4(u64 class, u64 func, s64 a, s64 b, s64 c, s64 d)
     return sys6(class, func, a, b, c, d, 0, 0);
 }
 
-static s64 run_elf_vectors(const char *path, const char *const *argv, const char *const *envp)
-{
-    return x32_exec_vectors(0, path, argv, envp);
-}
-
 static s64 run_loader(const char *path, const char *argument, const char *const *envp)
 {
     return x32_exec_argument(0, path, argument, envp);
@@ -490,15 +485,15 @@ void x32_probe_main(u64 basepage, u64 entry_type, u64 entry_rsp, u64 cs, u64 ss)
         child = run_loader("C:\\STATICPH.TOS", 0, envp);
         if (child != 0) pterm(0x800 | ((int)child & 0xff));
         for (k = 0; k < sizeof(bad_files) / sizeof(bad_files[0]); k++) {
-            child = run_elf_vectors(bad_files[k], args, envp);
+            child = x32_exec_vectors(0, bad_files[k], args, envp);
             if (child != (k == 0 ? -33 : -66))
                 pterm(0x200 | (k << 4) | ((int)child & 15));
         }
-        child = run_elf_vectors("C:\\DYNPIE.TOS", pie_args, envp);
+        child = x32_exec_vectors(0, "C:\\DYNPIE.TOS", pie_args, envp);
         if (child != 37)
             pterm(0x300 | ((int)child & 0xff));
         for (cycle = 0; cycle < 2; cycle++) {
-            child = run_elf_vectors(path, args, envp);
+            child = x32_exec_vectors(0, path, args, envp);
             if (child != 37)
                 pterm(0x100 | ((int)child & 0xff));
         }
