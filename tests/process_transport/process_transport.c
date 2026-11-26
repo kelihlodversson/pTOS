@@ -21,11 +21,33 @@ typedef struct {
     unsigned long order_low,order_high;
 } __attribute__((aligned(4))) COMPLETION;
 typedef struct {
-    unsigned long operation,handle,policy,reserved;
+    unsigned long operation,handle,policy,flags;
     unsigned long path,tail,environment,directory;
     COMPLETION completion;
     unsigned long reserved_tail[2];
 } __attribute__((aligned(4))) REQUEST;
+#ifdef TEST_WITH_PROCESS_EXEC_DISPATCH
+static void request_launch(REQUEST *request, const char *path, int fault)
+{
+#ifdef TEST_NATIVE_ELF_ENTRY
+    static const char *const vectors[][3] = {
+        { "PROCXIT.TOS", 0, 0 }, { "PROCXIT.TOS", "F", 0 }
+    };
+    static const char *const environment[] = { 0 };
+
+    request->flags = 1; /* PROCESS_EXEC_VECTOR_ARGS */
+    request->tail = (unsigned long)vectors[fault];
+#else
+    static const char tails[][3] = { { 0 }, { 1, 'F', 0 } };
+    static const char environment[] = { 0, 0 };
+
+    request->tail = (unsigned long)tails[fault];
+#endif
+    request->path = (unsigned long)path;
+    request->environment = (unsigned long)environment;
+}
+#endif
+
 void test_process_transport(void);
 void test_process_transport(void)
 {
@@ -45,7 +67,6 @@ void test_process_transport(void)
         REQUEST r;
         long handle,pid,result;
         unsigned i;
-        char tail[]={0},env[]={0,0};
         ptest_assert_msg(sizeof(r)==72 && sizeof(r.completion)==32,"PROCESS transport wire layout");
         memset(&r,0,sizeof(r)); r.operation=3;
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,71L)==EINVAL,"short native request size");
@@ -55,7 +76,7 @@ void test_process_transport(void)
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r+1,72L)==EINVAL,"misaligned native request pointer");
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==EIHNDL,"zero owned handle must be rejected");
         memset(&r,0,sizeof(r));
-        r.path=(unsigned long)"C:\\NOEXEC.TOS"; r.tail=(unsigned long)tail; r.environment=(unsigned long)env;
+        request_launch(&r, "C:\\NOEXEC.TOS", 0);
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==EFILNF,"PREPARE preserves missing-file constructor error");
         r.path=(unsigned long)"C:\\PROCXIT.TOS";
         handle=Ssystem(PROCEXEC,(long)&r,72L);
@@ -67,8 +88,8 @@ void test_process_transport(void)
         r.operation=3;
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0 &&
                          Ssystem(PROCEXEC,(long)&r,72L)==EIHNDL,"CLOSE consumes preparation exactly once");
-        memset(&r,0,sizeof(r)); r.path=(unsigned long)"C:\\PROCXIT.TOS";
-        r.tail=(unsigned long)tail; r.environment=(unsigned long)env;
+        memset(&r,0,sizeof(r));
+        request_launch(&r, "C:\\PROCXIT.TOS", 0);
         handle=Ssystem(PROCEXEC,(long)&r,72L);
         ptest_assert_msg(handle>0,"prepare runnable PROCESS");
         if(handle<=0) { ptest_pass(); return; }
@@ -91,11 +112,9 @@ void test_process_transport(void)
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0,"CLOSE completed observation");
         /* Reverse the consumption order and distinguish normal ffff from
          * an actual fatal fault: public Pwait first, then retained snapshot. */
-        tail[0]=0;
         {
-            char fault_tail[]={1,'F',0};
-            memset(&r,0,sizeof(r)); r.path=(unsigned long)"C:\\PROCXIT.TOS";
-            r.tail=(unsigned long)fault_tail; r.environment=(unsigned long)env;
+            memset(&r,0,sizeof(r));
+            request_launch(&r, "C:\\PROCXIT.TOS", 1);
             handle=Ssystem(PROCEXEC,(long)&r,72L);
             ptest_assert_msg(handle>0,"prepare faulting PROCESS");
             if(handle<=0) { ptest_pass(); return; }
@@ -114,8 +133,7 @@ void test_process_transport(void)
             ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0,"CLOSE faulted observation");
         }
         memset(&r,0,sizeof(r)); r.operation=5;
-        r.path=(unsigned long)"C:\\PROCXIT.TOS";
-        r.tail=(unsigned long)tail; r.environment=(unsigned long)env;
+        request_launch(&r, "C:\\PROCXIT.TOS", 0);
         ptest_assert_msg(Ssystem(PROCEXEC,(long)&r,72L)==0,
                          "schedule a detached successor without a GUI registration");
         Syield();

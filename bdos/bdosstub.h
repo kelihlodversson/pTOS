@@ -51,6 +51,11 @@ struct dl_start_vectors;
 /* Trusted kernel launch. The loader consumes the vectors before entry. */
 long proc_exec_kernel_vectors(WORD mode, const char *path,
                               const struct dl_start_vectors *vectors);
+#if ARCH_X86_64 && CONF_WITH_ELF_LOADER
+#include "progimage.h"
+LONG kproc_set_embedded_elf(PD *pd, const PROG_IMAGE *image, const char *filename,
+                           const struct dl_start_vectors *vectors);
+#endif
 #endif
 
 /* BDOS current date/time.

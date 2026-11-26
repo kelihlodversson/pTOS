@@ -159,7 +159,9 @@ static void start_external_cli(char *env);
 #elif CONF_WITH_CLI
 #if CONF_WITH_USER_ASPACE
 #include "progimage.h"
-extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);    /* bdos/kproc.c */
+#if !CONF_WITH_ELF_LOADER
+extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);
+#endif
 void start_builtin_cli(char *env);
 extern void set_owner(void *addr, PD *p);           /* bdos/mem.c */
 extern void proc_free_owned(PD *p);               /* bdos/proc.c */
@@ -374,35 +376,36 @@ static void start_external_cli(char *env)
 #endif
 
 #if CONF_WITH_USER_ASPACE && CONF_WITH_CLI && !CONF_EXTERNAL_CLI
-/*
- * Runs the built-in EmuCON, an x32 program embedded in this image
- * (cli/arch/x86_64/emucon_image.c), as an ordinary ring-3 process: a
- * basepage and environment from Pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS), the image
- * attached to its kernel record so launching maps its segments as private
- * pages of the process's own address space, then the normal launch.  It
- * enters at the image's own entry point with RDI = basepage and RSI =
- * ENTRY_PROGRAM (doc/process-entry.txt), talks to the kernel only through
- * `syscall`, and returns here, with its exit code, when it calls Pterm().
- */
+/* Start the embedded x32 console without a boot-volume dependency. */
 void start_builtin_cli(char *env)
 {
-    PD *pd = (PD *) trap1_pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
+    PD *pd;
     long rc;
+#if CONF_WITH_ELF_LOADER
+    const char *const argv[] = { "EMUCON.TOS" };
+    const DL_START_VECTORS vectors = {
+        .argv = argv, .argc = ARRAY_SIZE(argv),
+        .envp = boot_env, .envc = ARRAY_SIZE(boot_env)
+    };
+#endif
 
-    if ((long)pd <= 0 && (long)pd >= -256) {    /* a GEMDOS error code */
+    pd = (PD *)Pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
+    if ((long)pd <= 0 && (long)pd >= -256) {
         kcprintf("EmuCON: cannot create its basepage (%ld)\n", (long)pd);
         return;
     }
-    if (!kproc_set_image(pd, emucon_image())) {
-        kcprintf("EmuCON: its x32 image is not valid\n");
-        rc = ENSMEM;
-    } else {
+#if CONF_WITH_ELF_LOADER
+    rc = kproc_set_embedded_elf(pd, emucon_image(), argv[0], &vectors);
+#else
+    rc = kproc_set_image(pd, emucon_image()) ? E_OK : EPLFMT;
+#endif
+    if (rc == E_OK) {
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         kcprintf("EmuCON: starting the x32 image in ring 3\n");
         rc = Pexec(PE_KERNEL_TAG|PE_GOTHENFREE, "", (char *)pd, env);
-        if (rc < 0)
-            kcprintf("EmuCON: cannot start (%ld)\n", rc);
     }
+    if (rc < 0)
+        kcprintf("EmuCON: cannot start (%ld)\n", rc);
     if (rc < 0) {
         /* a basepage that was never launched (or whose launch was refused)
          * stays with the launcher: release it, its environment and its

@@ -58,6 +58,12 @@ BOOL image_load(ASPACE *as, const PROG_IMAGE *image, VADDR *entry);
  * if they are not an ET_EXEC x32 executable or the layout is not valid. */
 BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout);
 
+#if ARCH_X86_64 && CONF_WITH_ELF_LOADER
+struct dl_start_info;
+BOOL image_layout_start(const PROG_IMAGE *image, PROG_LAYOUT *layout,
+                        struct dl_start_info *start);
+#endif
+
 /* Whether a layout satisfies the rules above.  `strict` also forbids a segment
  * that is both writable and executable.  The built-in programs are checked
  * strict (image_layout(), so kproc_set_image()), and are refused

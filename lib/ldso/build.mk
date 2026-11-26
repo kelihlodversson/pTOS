@@ -266,7 +266,7 @@ obj/ldso/test/libuse.so: tests/ldso_client/library.c obj/ldso/libptos.so lib/lds
 	  -o $@ $< -Lobj/ldso -lptos
 obj/ldso/test/client.elf: LDSO_CLIENT_LINK = -no-pie
 obj/ldso/test/clientpie.elf: LDSO_CLIENT_LINK = -pie
-obj/ldso/test/client.elf obj/ldso/test/clientpie.elf: tests/ldso_client/program.c tests/ldso_client/nested.S obj/ldso/dyncrt.o \
+obj/ldso/test/client.elf obj/ldso/test/clientpie.elf: tests/ldso_client/program.c tests/x32_probe/exec.h obj/ldso/dyncrt.o \
                         obj/ldso/test/libuse.so obj/ldso/libptos.so lib/ldso/client/ptos.h
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -nostdlib $(LDSO_CLIENT_LINK) \
 	  -Wl,--export-dynamic,--hash-style=sysv,-z,now,-e,_start,--dynamic-linker,/GEMSYS/LIB/X32/LD.SO \
