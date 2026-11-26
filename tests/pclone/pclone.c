@@ -1089,7 +1089,7 @@ static void test_joins(void)
 }
 #endif
 #if defined(TEST_WITH_MULTITHREADING)
-#ifndef TEST_NATIVE_ELF_ENTRY
+#if !defined(TEST_NATIVE_ELF_ENTRY) || defined(__x86_64__)
 static const char group_env[2]={0,0};
 #endif
 static struct {
@@ -1806,6 +1806,56 @@ out:
 #endif
 
 #endif
+static void group_nested(void *arg);
+static void group_target(void *arg)
+{
+    (void)arg; group_ready_bit(1);
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+    if (group.mode>=5) {
+        long rc;
+        group.session=native_cuis(0,0,0);
+        if (group.session<0) group.error=1;
+        if (group.mode>=10) {group.wait_entering=1;rc=native_cuis5(32,group.session,0,group.mode==13?16:group.mode==10?8:10,group.mode==12?100:0,0);}
+        else if (group.mode==5) {group.wait_entering=1;rc=native_cuis(24,group.session,3600000UL); }
+        else if (group.mode==7 || group.mode==8) {
+            group.window=group_window(3,1,1,32,32,0);
+            if (group.window<0 || group_window(6,group.window,0,0,0,0)) group.error=1;
+            group.wait_entering=1;rc=native_cuis5(20,group.window,16,-1,0,0); /* retained window/control wait */
+        } else {group.wait_entering=1;rc=native_cuis5(32,group.session,1,1,0,0); } /* pending stream readiness */
+        if (group.mode==12 && rc==2) {
+            group.wait_done=1; /* rejected legacy outcome: pending cancellation must win */
+            (void)native_cuis5(32,group.session,0,8,0,0);
+            group.returned=1; /* pending cancellation must stop before new admission */
+        }
+        else if ((group.mode==8 || group.mode==9 || group.mode==10 || group.mode==11) && rc==-36L) group.wait_done=1;
+        else {
+            printf("group wait mode=%ld result=%ld session=%ld window=%ld\r\n",group.mode,rc,group.session,group.window);
+            group.returned=1; /* cancellation must not return to user */
+        }
+    }
+#endif
+    if (group.mode==1 || group.mode==2) group_nested(arg);
+    for (;;) (void)Syield();
+}
+static void group_joiner(void *arg)
+{
+    (void)arg; group_ready_bit(2);
+#if defined(__x86_64__) && defined(TEST_WITH_CUIS)
+    if (group.mode==12) {
+#if defined(TEST_WITH_PREEMPTION) && defined(TEST_WITH_CUIS_WAIT_TEST)
+        if(!group_wait_admitted())group.error=2;
+#endif
+        *(volatile long *)0=1; /* sibling fault cannot abandon the active sampler */
+        group.error=1;
+    }
+#endif
+#if defined(TEST_WITH_MULTITHREADING)
+    if (join_tid(group.target,0)==0) group.error=1;
+    group.returned=1;
+#else
+    for (;;) (void)Syield();
+#endif
+}
 static void group_nested(void *arg)
 {
     static const char path[] = "C:\\GROUPCH.TOS";
