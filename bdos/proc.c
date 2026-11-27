@@ -711,9 +711,8 @@ LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
     pexecve_args_release(&args);
     return shared_enter_loaded(loaded);
 }
-#endif
 
-#if CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI)
+#elif CONF_WITH_PEXECVE
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
 {
 #if CONF_WITH_MULTITHREADING

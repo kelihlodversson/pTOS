@@ -32,7 +32,7 @@ long xexec_selftest(WORD, char *, char *, char *);
 /* Called only from the kernel's reentrant ARM launch veneer. */
 long arm_kernel_exec(const long *args);
 #endif
-#if CONF_WITH_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
+#if CONF_WITH_PEXECVE
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
