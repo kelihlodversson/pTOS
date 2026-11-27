@@ -568,32 +568,29 @@ long xsnext(void)
  */
 long xgsdtof(DOSTIME *buf, WORD h, WORD wrt)
 {
-    OFD *f;
+    FS_HANDLE handle;
     DFD *dfd;
+    LONG error = fs_handle_lookup(h, &handle);
 
+    if (error != E_OK)
+        return error;
+    if (handle.bios)
+        return EIHNDL;
 #if CONF_WITH_PLUGGABLE_FS
+    if (handle.slot->f_pfs.fs)
     {
-        FTAB *slot = getpfsslot(h);
-        if (slot)
-        {
-            UWORD time, date;   /* DOSTIME is packed */
-            long rc = pfs_handle_datime(&slot->f_pfs, &time, &date, wrt);
+        UWORD time, date;   /* DOSTIME is packed */
+        long rc = pfs_handle_datime(&handle.slot->f_pfs, &time, &date, wrt);
 
-            if (rc == E_OK)
-            {
-                buf->time = time;
-                buf->date = date;
-            }
-            return rc;
+        if (rc == E_OK)
+        {
+            buf->time = time;
+            buf->date = date;
         }
+        return rc;
     }
 #endif
-
-    f = getofd(h);
-    if (!f)
-        return EIHNDL;
-
-    dfd = f->o_dfd;
+    dfd = handle.slot->f_ofd->o_dfd;
 
     if (wrt)
     {
