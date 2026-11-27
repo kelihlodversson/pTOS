@@ -26,8 +26,12 @@ esac
 if [ "$layout" = shared ] && [ "$arch" = arm ]; then
     config=virt-arm-cli
     suffix=-shared
+elif [ "$layout" = shared ] && [ "$arch" = m68k ]; then
+    config=virt-m68k-cli-elf
+    suffix=-shared
+    vector_args='-DNATIVE_VECTOR_FIXTURE -DSHARED_M68K_VECTOR_FIXTURE'
 elif [ "$layout" != private ]; then
-    echo 'only ARM supports the optional shared layout' >&2
+    echo 'only ARM and m68k support the optional shared layout' >&2
     exit 2
 fi
 make "${config}_defconfig"
@@ -57,15 +61,28 @@ make -C lib/libcmini BUILDDIR="$libc" CROSSPREFIX="$prefix" ONLY_68K=y \
 includes=$(${prefix}gcc -print-file-name=include)
 for fixture in driver interpreter; do
     link='-Wl,--emit-relocs,--build-id=none'
+    fixture_startup=$startup
     if [ "$arch" != m68k ]; then
         address=0x00400000
         if [ "$fixture" = interpreter ]; then address=0x41000000; fi
         link="$link -Wl,-Ttext-segment=$address,-z,max-page-size=0x1000,-z,noseparate-code,-z,noexecstack"
+    elif [ "$layout:$fixture" = shared:driver ]; then
+        # The boot shell still uses legacy Pexec on non-MMU m68k.
+        fixture_startup=crt0
+        link='-mmintelf -Wl,-e_start'
+        make -C lib/libcmini BUILDDIR="$libc" CROSSPREFIX="$prefix" ONLY_68K=y \
+            ARCH_CFLAGS="$flags $common" "$libc/./objs/crt0.o"
     fi
     ${prefix}gcc $flags $common $vector_args $process_directory -std=gnu90 -Os -Wall -Wextra -Werror \
         -Wdeclaration-after-statement -ffreestanding -fno-builtin -nostdinc \
         -isystem lib/libcmini/include -isystem "$includes" \
-        -nostdlib -static -no-pie $link "$libc/objs/$startup.o" \
+        -nostdlib -static -no-pie $link "$libc/objs/$fixture_startup.o" \
         "tests/binfmt/fixtures/$fixture.c" "$libc/libcmini.a" $libs -o "$build/$fixture.tos"
 done
+if [ "$arch:$layout" = m68k:shared ]; then
+    ${prefix}gcc $flags $common -std=gnu90 -Os -Wall -Wextra -Werror \
+        -ffreestanding -fno-builtin -isystem lib/libcmini/include \
+        -nostdlib -static -no-pie -mmintelf -Wl,-e_start "$libc/objs/crt0.o" \
+        tests/ldso_runtime/pexecve_prg.c "$libc/libcmini.a" $libs -o "$build/vectors.tos"
+fi
 python3 tools/run-binfmt-tests.py "$arch" "$build"

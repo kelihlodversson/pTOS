@@ -12,11 +12,11 @@
 #include "launch_args.h"
 #include "procmem.h"
 #include "string.h"
-#if CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_SHARED_EXEC
 #include "mem.h"
 
-/* Shared ARM has no private page tables. Bound reads to allocations in
- * the existing GEMDOS pools, including valid pointers into a shared block. */
+/* Bound shared-address-space reads to allocations in the existing GEMDOS
+ * pools, including valid pointers into a shared block. */
 static BOOL allocation_contains(const MPB *pool, VADDR address, ULONG size)
 {
     const MD *block;
@@ -62,7 +62,7 @@ LONG launch_copy_user_string(UQUAD address, char *buffer, ULONG capacity,
         return EIMBA;
     for (i = 0; i < capacity;) {
         UQUAD source = address + i;
-#if CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_SHARED_EXEC
         ULONG count = 64;      /* launch_copy checks the allocation bounds. */
 #else
         ULONG count = USER_PAGE_SIZE - (source & (USER_PAGE_SIZE - 1));

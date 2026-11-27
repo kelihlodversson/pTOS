@@ -34,7 +34,7 @@
 #include "exec_handoff.h"
 #endif
 #endif
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
 #include "launch_args.h"
 #endif
 #if CONF_WITH_ARM_SHARED_EXEC
@@ -59,12 +59,14 @@
 #include "ksched_lifetime.h"
 #include "kthread.h"
 #include "../lib/ldso/startup.h"
-#if CONF_WITH_PRG_LOADER
-#include "binfmt.h"
-#include "kheap.h"
-#endif
 #if CONF_WITH_CUIS
 #include "bdosbind.h"
+#endif
+#endif
+#if CONF_WITH_PRG_VECTORS
+#include "binfmt.h"
+#if CONF_WITH_MULTITHREADING
+#include "kheap.h"
 #endif
 #endif
 #include "../bios/vectors.h"
@@ -336,7 +338,7 @@ static void xexec_free(void *addr)
  * carries no alignment guarantee beyond the compiler's incidental default.
  */
 static WORD    supstk[SUPSIZ] __attribute__((aligned(8))); /* common sup stack for all processes */
-#if !CONF_WITH_USER_ASPACE && !CONF_WITH_ARM_SHARED_EXEC
+#if !CONF_WITH_USER_ASPACE && !CONF_WITH_SHARED_EXEC
 /* Classic non-MMU launches reuse the supervisor stack and never participate
  * in native scheduling. Preserve their small-ROM loader implementation. */
 static jmp_buf bakbuf;
@@ -628,16 +630,16 @@ long proc_exec_kernel_vectors(WORD mode, const char *path,
 }
 #endif
 
-#if CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_SHARED_EXEC
 /* The loader returns an unstarted child. The caller frees any temporary
  * input and restores its disk-error scope before leaving the BDOS stack. */
-static LONG arm_load_vectors(const char *path, const DL_START_VECTORS *vectors)
+static LONG shared_load_vectors(const char *path, const DL_START_VECTORS *vectors)
 {
     return DISK_CALL(exec_common(PE_LOADGO,(char *)path,NULL,NULL,
                                   FALSE,NULL,NULL,NULL,NULL,vectors));
 }
 
-static LONG arm_enter_loaded(LONG loaded)
+static LONG shared_enter_loaded(LONG loaded)
 {
     if (loaded > 0)
         proc_go((PD *)loaded, 0);
@@ -655,7 +657,7 @@ long arm_kernel_exec(const long *args)
     char *env = (char *)args[4];
 #if CONF_WITH_ARM_SHARED_EXEC
     if (mode == (PE_KERNEL | PE_LOADGO))
-        return arm_enter_loaded(arm_load_vectors(path, (const DL_START_VECTORS *)tail));
+        return shared_enter_loaded(shared_load_vectors(path, (const DL_START_VECTORS *)tail));
     if (mode == PE_LOADGO) {
         struct {
             LEGACY_START_ARGS start;
@@ -672,11 +674,11 @@ long arm_kernel_exec(const long *args)
                                       PDCLSIZE, (const UBYTE *)env, envsize(env),
                                       legacy->slots, ARRAY_SIZE(legacy->slots));
         if (status == DL_OK)
-            loaded = arm_load_vectors(path, &legacy->start.vectors);
+            loaded = shared_load_vectors(path, &legacy->start.vectors);
         else
             loaded = status == DL_NO_SPACE ? ERANGE : EPLFMT;
         xmfree(legacy);
-        return arm_enter_loaded(loaded);
+        return shared_enter_loaded(loaded);
     }
 #endif
     return DISK_CALL(exec_common(mode,path,tail,env,FALSE,NULL,NULL,NULL,NULL,NULL));
@@ -690,7 +692,9 @@ long proc_exec_kernel_vectors(WORD mode, const char *path, const DL_START_VECTOR
         return EINVFN;
     return trap1_pexec(PE_KERNEL | mode, path, (const char *)vectors, NULL);
 }
+#endif
 
+#if CONF_WITH_SHARED_EXEC
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
 {
     PEXECVE_ARGS *args = NULL;
@@ -702,10 +706,10 @@ LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
     if (loaded == E_OK) {
         DL_START_VECTORS vectors = pexecve_start_vectors(args);
 
-        loaded = arm_load_vectors(args->path, &vectors);
+        loaded = shared_load_vectors(args->path, &vectors);
     }
     pexecve_args_release(&args);
-    return arm_enter_loaded(loaded);
+    return shared_enter_loaded(loaded);
 }
 #endif
 
@@ -835,11 +839,13 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #if CONF_WITH_BINFMT
     BINFMT_LAUNCH interpreter;
 #endif
-#if CONF_WITH_PRG_LOADER && CONF_WITH_MULTITHREADING
-    char *prg_environment = NULL;
-    char prg_tail[128];
+#if CONF_WITH_PRG_VECTORS
+    char prg_tail[PDCLSIZE];
 #endif
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_SHARED_EXEC
+    BOOL vector_launch = vectors != NULL;
+#endif
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
     PD *cur_p; /* assigned before setjmp, never changed across its return */
     FS_ERROR_SCOPE loader_error;
 #endif
@@ -1108,34 +1114,41 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
 
     /* allocate the environment first, depending on memory policy */
-#if CONF_WITH_PRG_LOADER && CONF_WITH_MULTITHREADING
+#if CONF_WITH_PRG_VECTORS
     if (vectors && kpgm_is_prg()) {
-        prg_environment = kalloc(BINFMT_ENV + 2);
+#if CONF_WITH_MULTITHREADING
+        char *prg_environment = kalloc(BINFMT_ENV + 2);
+#else
+        char *prg_environment = xmxalloc(BINFMT_ENV + 2, MX_PREFTTRAM);
+#endif
         rc = prg_environment ? legacy_pack_vectors(vectors, prg_environment, prg_tail) : ENSMEM;
+        env_ptr = rc ? NULL : alloc_env(hdr.h01_flags, prg_environment);
+#if CONF_WITH_MULTITHREADING
+        kfree(prg_environment);
+#else
+        if (prg_environment) xmfree(prg_environment);
+#endif
         if (rc) {
-            kfree(prg_environment);
 #if CONF_WITH_BINFMT
             binfmt_release(&interpreter);
 #endif
             xclose(fh);
             return rc;
         }
-        env = prg_environment;
         tail = prg_tail;
         vectors = NULL; /* The PRG loader consumes the staged basepage. */
-    }
+    } else
 #endif
-    if (vectors && !tail) {
-        /* The ELF entry stack carries the explicit vector environment.
-         * Its compatibility basepage still owns a valid environment block. */
-        static char empty[2];
-        tail = empty;
-        env = empty;
+    {
+        if (vectors && !tail) {
+            /* The ELF entry stack carries the explicit vector environment.
+             * Its compatibility basepage still owns a valid environment block. */
+            static char empty[2];
+            tail = empty;
+            env = empty;
+        }
+        env_ptr = alloc_env(hdr.h01_flags, env);
     }
-    env_ptr = alloc_env(hdr.h01_flags, env);
-#if CONF_WITH_PRG_LOADER && CONF_WITH_MULTITHREADING
-    kfree(prg_environment);
-#endif
     if (env_ptr == NULL) {
 #if CONF_WITH_BINFMT
         binfmt_release(&interpreter);
@@ -1175,11 +1188,11 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     }
 #endif
     if (p == NULL) {
-#if CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_SHARED_EXEC && CONF_WITH_ELF_LOADER
         if (vectors) {
             /* Keep the initial stack in the child TPA without consuming
              * all remaining GEMDOS memory before it can launch a child. */
-            max = needed + ARM_SHARED_STACK_SIZE + 15;
+            max = needed + DL_SHARED_STACK_SIZE + 15;
             p = xmxalloc(max, MX_STRAM);
         } else
 #endif
@@ -1248,7 +1261,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     cur_p = p;
 
     /* we have now allocated memory, so we need to intercept longjmp. */
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
     fs_error_scope_save(loader_error);
 #else
     memcpy(bakbuf, errbuf, sizeof(errbuf));
@@ -1269,7 +1282,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         /* we still have to jump back to bdosmain.c so that the proper error
          * handling can occur.
          */
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
         memcpy(errbuf, fs_error_scope_jump(loader_error), sizeof(errbuf));
         longjmp(errbuf, 1);
 #else
@@ -1288,7 +1301,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
 #endif
     /* No later launch/admission/cleanup may retain this loader frame as its
      * disk-error target, especially across nested synchronous Pexec. */
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
     fs_error_scope_restore(loader_error);
 #endif
     if (rc) {
@@ -1401,8 +1414,8 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         return rc;
     }
 #endif
-#if CONF_WITH_ARM_SHARED_EXEC
-    if (vectors)
+#if CONF_WITH_SHARED_EXEC
+    if (vector_launch)
         return (long)cur_p;
 #endif
     if (flag != PE_LOAD) {

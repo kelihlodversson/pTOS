@@ -35,11 +35,21 @@ void proc_align_stack(PD *p)
 void proc_launch_prepare(PD *p, void *super_sp)
 {
     struct gouser_stack *sp;
+    int i, words_to_clear = 11;
 
-    /* create a stack at the end of the TPA */
-    sp = (struct gouser_stack *) (p->p_hitpa - sizeof(struct gouser_stack));
-
-    sp->basepage = p;      /* the stack contains the basepage */
+#if CONF_WITH_M68K_SHARED_EXEC && CONF_WITH_ELF_LOADER
+    if (p->p_areg[7-3]) {
+        /* ELF startup left argc at the initial USP. The return veneer
+         * consumes the register frame immediately below that word. */
+        sp = (struct gouser_stack *)((UBYTE *)(uintptr_t)p->p_areg[7-3]
+                                     - offsetof(struct gouser_stack, fill[10]));
+        words_to_clear = 10;
+    } else
+#endif
+    {
+        sp = (struct gouser_stack *)(p->p_hitpa - sizeof(*sp));
+        sp->basepage = p;
+    }
 
     sp->retaddr = (long)p->p_tbase; /* return address a3 is text start */
     sp->sr = get_sr() & 0x0700;  /* the process will start in user mode, same IPL */
@@ -56,11 +66,9 @@ void proc_launch_prepare(PD *p, void *super_sp)
      * as a normal program or as an accessory, so we need to clear at least
      * this register!
      */
-    {   /* d1-d7/a0-a2 and dummy return address set to zero */
-        int i;
-        for(i = 0; i < 11 ; i++)
-            sp->fill[i] = 0;
-    }
+    /* Clear d1-d7/a0-a2 and the dummy return address for a classic PRG. */
+    for (i = 0; i < words_to_clear; i++)
+        sp->fill[i] = 0;
     p->p_areg[6-3] = (long) sp;    /* a6 to hold a copy of the stack */
     p->p_areg[5-3] = (long)p->p_dbase;  /* a5 to point to the DATA segt */
     p->p_areg[4-3] = (long)p->p_bbase;  /* a4 to point to the BSS segt */

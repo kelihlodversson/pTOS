@@ -26,6 +26,8 @@ def stage_disk(arch, output, root):
         (root / name).mkdir()
     shutil.copyfile(output / "driver.tos", root / "EMUCON.TOS")
     shutil.copyfile(output / "interpreter.tos", root / "BIN/INTERP.TOS")
+    if (output / "vectors.tos").is_file():
+        shutil.copyfile(output / "vectors.tos", root / "SUB/VECTORS.TOS")
     (root / "PTOS.INI").write_text("""; Registry ordering and invalid/disabled definitions
 [future]
 reserved = ignored

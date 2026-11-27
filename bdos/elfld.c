@@ -67,10 +67,10 @@
 #include "procmem.h"
 #include "userlayout.h"
 #endif
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
 #include "../lib/ldso/startup.h"
 #endif
-#if CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_SHARED_EXEC
 #include "mem.h"
 #include "tosvars.h"
 #endif
@@ -1162,7 +1162,7 @@ static LONG elf_resolve_imports(FH h, const Elf32_Phdr *ph, UBYTE *load_base,
  * relocates by the load bias.  The basepage TPA has already been allocated
  * by proc.c using the sizes returned by elf_pgmhdrld().
  */
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
 /* Metadata for the standard ELF entry. */
 typedef struct {
 #if CONF_WITH_USER_ASPACE
@@ -1176,7 +1176,7 @@ typedef struct {
 
 #if CONF_WITH_USER_ASPACE
 static LONG elf_load_image(FH h, PD *p, PROG_LAYOUT *layout, ELFPLACE *place)
-#elif CONF_WITH_ARM_SHARED_EXEC
+#elif CONF_WITH_SHARED_EXEC
 static LONG elf_load_image(FH h, PD *p, ELFPLACE *place)
 #else
 LONG elf_pgmld(FH h, PD *p)
@@ -1342,7 +1342,7 @@ LONG elf_pgmld(FH h, PD *p)
 
 #endif
 
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
     place->phoff = ehdr.e_phoff;
     place->start.phent = ehdr.e_phentsize;
     place->start.phnum = ehdr.e_phnum;
@@ -1415,7 +1415,7 @@ LONG elf_pgmld(FH h, PD *p)
                 layout->end = s->vaddr + s->memsz;
         }
 #endif
-#if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
+#if CONF_WITH_USER_ASPACE || CONF_WITH_SHARED_EXEC
         if (!place->start.phdr && (ph.p_flags & 4) && ehdr.e_phoff >= ph.p_offset) {
             ULONG offset = ehdr.e_phoff - ph.p_offset;
             ULONG vaddr = ph.p_vaddr + (ULONG)bias;
@@ -1549,7 +1549,7 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
     }
     return r;
 }
-#elif CONF_WITH_ARM_SHARED_EXEC
+#elif CONF_WITH_SHARED_EXEC
 LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vectors)
 {
     ELFPLACE place = {0};
@@ -1558,7 +1558,7 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
     ULONG image_end = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_bbase) + p->p_blen;
     void *headers = NULL;
     DISK_ERROR error = {0};
-    ULONG rsp, used;
+    uint32_t rsp, used;
     int status;
 
     if (rc != E_OK || !vectors)

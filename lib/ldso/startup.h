@@ -4,6 +4,8 @@
 #include "dynamic.h"
 #include "launch.h"
 #define DL_START_CAPACITY 196608
+/* Shared-address-space ELF stacks are fully backed in the child's TPA. */
+#define DL_SHARED_STACK_SIZE (256UL * 1024)
 #define DL_AT_PTOS_BASEPAGE 0x5000
 #define DL_AT_PTOS_BOOTDRIVE 0x5001
 #define DL_AT_PTOS_LOADBIAS 0x5002

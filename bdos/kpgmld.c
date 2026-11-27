@@ -205,7 +205,7 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
 #endif
 #if CONF_WITH_USER_ASPACE
         r = elf_pgmld(h, p, filename, vectors, legacy_elf_vectors);
-#elif CONF_WITH_ARM_SHARED_EXEC
+#elif CONF_WITH_SHARED_EXEC
         r = elf_pgmld(h, p, filename, vectors);
 #else
         r = vectors ? EINVFN : elf_pgmld(h, p);

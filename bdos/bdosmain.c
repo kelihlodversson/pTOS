@@ -733,7 +733,7 @@ long osif(short *pw)
 restrt:
     fn = pw[0];
 
-#if CONF_WITH_ARM_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
+#if CONF_WITH_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
     if (fn == GEMDOS_PEXECVE) {
 #if CONF_WITH_NATIVE_ABI
         /* The mode is a signed WORD. Keep the pointer slots full width

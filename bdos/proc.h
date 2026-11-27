@@ -32,7 +32,7 @@ long xexec_selftest(WORD, char *, char *, char *);
 /* Called only from the kernel's reentrant ARM launch veneer. */
 long arm_kernel_exec(const long *args);
 #endif
-#if CONF_WITH_ARM_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
+#if CONF_WITH_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
@@ -110,7 +110,7 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign);
 #if CONF_WITH_USER_ASPACE
 LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors,
                BOOL legacy_elf_vectors);
-#elif CONF_WITH_ARM_SHARED_EXEC
+#elif CONF_WITH_SHARED_EXEC
 LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors);
 #else
 LONG elf_pgmld(FH h, PD *p);

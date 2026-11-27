@@ -283,7 +283,7 @@ C_SYM(termuser):
         .bss
         .even
 
-#if CONF_WITH_BINFMT
+#if CONF_WITH_BINFMT || (CONF_WITH_M68K_SHARED_EXEC && CONF_WITH_ELF_LOADER)
         /* Match the native interpreter-launch stack budget on ARM. */
         .ds.b   8192
 #else

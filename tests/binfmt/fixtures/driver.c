@@ -60,6 +60,40 @@ static void make_vector_environment(const char *kind)
 }
 #endif
 
+#ifdef SHARED_M68K_VECTOR_FIXTURE
+/* Exercise the trap directly. libcmini can fall back to Pexec on m68k. */
+static long shared_execve(short mode, const char *path, char *const argv[], char *const envp[])
+{
+    return trap_1_wwlll(0x193, mode, (long)path, (long)argv, (long)envp);
+}
+
+static int shared_prg(void)
+{
+    char path[64], raw[64];
+    char *const extended[] = { "custom name", "", "two words", "literal\"quote", NULL };
+    char *const classic[] = { "", "one", "two", NULL };
+    char *const envp[] = { "KEY=two words", "FLAG=", NULL };
+    char *const reserved[] = { "ARGV=", NULL };
+    long available = Malloc(-1L), loaded;
+
+    sprintf(path, "%c:\\SUB\\VECTORS.TOS", 'A' + boot);
+    sprintf(raw, "%c:\\SUB\\RAW.TOS", 'A' + boot);
+    if (shared_execve(100, NULL, NULL, NULL) != -32 ||
+        shared_execve(200, NULL, NULL, NULL) != -32 ||
+        shared_execve(0, path, NULL, envp) != -40 ||
+        shared_execve(0, path, extended, (char **)1) != -40 ||
+        shared_execve(0, path, extended, reserved) != -64 ||
+        shared_execve(0, path, extended, envp) != 77 ||
+        shared_execve(0, path, classic, envp) != 78 ||
+        Pexec(0, raw, "", NULL) != 37)
+        return 1;
+    loaded = Pexec(3, raw, "", NULL);
+    if (loaded <= 0 || Pexec(6, "", (BASEPAGE *)loaded, NULL) != 37)
+        return 1;
+    return Malloc(-1L) != available;
+}
+#endif
+
 #ifdef PROCESS_DIRECTORY_TEST
 static int process_directory(void)
 {
@@ -139,7 +173,11 @@ static int run(const char *name, const char *kind, int mode, int classic, long e
         argv = long_args;
     else if (!strcmp(kind, "QUOTED"))
         argv = quote_args;
+#ifdef SHARED_M68K_VECTOR_FIXTURE
+    result = shared_execve((short)mode, path, argv, envp);
+#else
     result = Pexecve((short)mode, path, argv, envp);
+#endif
 #else
     char tail[128] = {127, 0};
     BASEPAGE *bp;
@@ -188,7 +226,7 @@ static int staged(const char *name, long expected)
 
 #endif
 
-#if defined(__m68k__)
+#if defined(__m68k__) && !defined(NATIVE_VECTOR_FIXTURE)
 /* What a script stages is its interpreter: allowed only if that is a PRG. */
 static long interpreted_expectation(void)
 {
@@ -249,7 +287,10 @@ int main(void)
 #else
     if (run("SUB\\RAW.TOS", "PRG", 0, 0, 37, 1)) goto failed;
 #endif
-#if defined(__m68k__)
+#ifdef SHARED_M68K_VECTOR_FIXTURE
+    if (shared_prg()) goto failed;
+    puts("m68k shared Pexecve PRG: PASS");
+#elif defined(__m68k__)
     /* the classic staged launch of a real PRG, then the refused ELF stagings */
     if (run("SUB\\RAW.TOS", "PRG", 6, 0, 37, 0) || !interpreted_expectation() ||
         staged("SUB\\DEMO.FMT", interpreted_expectation()) ||
