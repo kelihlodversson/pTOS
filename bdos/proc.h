@@ -36,9 +36,6 @@ long arm_kernel_exec(const long *args);
 LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
 #endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
-#if CONF_WITH_BINFMT
-LONG xpexecve_guest(UQUAD address, UQUAD size);
-#endif
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
  * Kernel-owned empty output handle; acquired before scheduler publication.

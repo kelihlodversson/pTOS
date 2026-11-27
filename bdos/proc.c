@@ -710,8 +710,7 @@ LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
 #endif
 
 #if CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI)
-static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
-                         const PEXECVE_GUEST_REQUEST *guest)
+LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
 {
 #if CONF_WITH_MULTITHREADING
     KSCHED_CLEANUP_SCOPE cleanup = {0};
@@ -727,7 +726,7 @@ static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
         if (ksched_anchor_launch_allowed()) {
             wait_for_child = TRUE;
             launch_mode = PE_ASYNC_LOADGO;
-        } else if (!CONF_WITH_NATIVE_ABI || guest)
+        } else if (!CONF_WITH_NATIVE_ABI)
             return EACCDN;
 #endif
         break;
@@ -750,8 +749,7 @@ static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
 #if CONF_WITH_MULTITHREADING
     ksched_cleanup_begin(&cleanup);
 #endif
-    rc = guest ? pexecve_guest_args_capture(guest, &args) :
-        pexecve_args_capture(mode, path, argv, envp, &args);
+    rc = pexecve_args_capture(mode, path, argv, envp, &args);
 #if CONF_WITH_EXEC_REPLACE
     if (rc == E_OK && mode == PE_EXEC_REPLACE) {
         /* Replacement has its own cleanup receipt. Transfer the allocation
@@ -779,27 +777,6 @@ static LONG exec_vectors(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
 #endif
     return rc;
 }
-
-LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp)
-{
-    return exec_vectors(mode, path, argv, envp, NULL);
-}
-
-#if CONF_WITH_BINFMT && CONF_WITH_MULTITHREADING
-LONG xpexecve_guest(UQUAD address, UQUAD size)
-{
-    PEXECVE_GUEST_REQUEST request;
-    LONG rc;
-
-    if (size != sizeof(request) || (address & 3)) return EINVAL;
-    if (!address || address > 0xffffffffULL - (sizeof(request) - 1)) return EIMBA;
-    if (!kproc_user_aspace(run)) return EACCDN;
-    rc = kproc_copy_from_user_checked(&request, address, sizeof(request));
-    if (rc != E_OK) return rc;
-    if (request.mode > 32767UL) return EINVFN;
-    return exec_vectors((WORD)request.mode, request.path, request.argv, request.envp, &request);
-}
-#endif
 #endif
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 /* The region self-test is kernel code running on behalf of a managed process

@@ -204,7 +204,6 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
     if (!rc && !error.code && depth && vectors) {
         const char **slots = (const char **)(work + 1);
         ULONG count = 0;
-        BOOL direct = depth == 1 && work->selection.registry_rule;
 
         slots[count++] = path;
         while (depth) {
@@ -220,7 +219,6 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         launch->vectors.argv = slots;
         launch->vectors.argc = count;
         launch->vectors.original = vectors;
-        launch->vectors.direct_redirect = direct;
         launch->vector_storage = work;
         work = NULL;
     } else if (!rc && !error.code && depth) {

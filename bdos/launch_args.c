@@ -102,7 +102,6 @@ typedef struct {
     const char *entries[PEXECVE_MAX_ENTRIES + 2];
     char path[PEXECVE_PATH_MAX];
     char strings[PEXECVE_ARG_MAX];
-    unsigned char guest_tail[DL_LAUNCH_TAIL];
 } PEXECVE_STORAGE;
 
 typedef struct {
@@ -152,8 +151,8 @@ static LONG copy_vector(VECTOR_COPY *copy, UQUAD address, const char **vector,
     }
 }
 
-static LONG capture(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
-                    const PEXECVE_GUEST_REQUEST *guest, PEXECVE_ARGS **out)
+LONG pexecve_args_capture(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
+                          PEXECVE_ARGS **out)
 {
     PEXECVE_STORAGE *storage;
     VECTOR_COPY copy;
@@ -166,7 +165,7 @@ static LONG capture(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
         return EINVAL;
     if (!path || path > LAUNCH_ADDRESS_MAX || !valid_slot(argv) || !valid_slot(envp))
         return EIMBA;
-    storage = launch_alloc(sizeof(*storage) + (guest && guest->environment ? PEXECVE_GUEST_ENV_MAX : 0));
+    storage = launch_alloc(sizeof(*storage));
     if (!storage)
         return ENSMEM;
     storage->args = (PEXECVE_ARGS){0};
@@ -191,53 +190,12 @@ static LONG capture(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
     storage->args.path = storage->path;
     storage->args.argv = storage->entries;
     storage->args.envp = environment;
-    if (guest) {
-        ULONG i;
-
-        error = EIMBA;
-        if (!guest->tail || guest->tail > LAUNCH_ADDRESS_MAX - (DL_LAUNCH_TAIL - 1))
-            goto fail;
-        error = launch_copy(storage->guest_tail, guest->tail, DL_LAUNCH_TAIL);
-        if (error != E_OK)
-            goto fail;
-        error = EINVAL;
-        if (storage->guest_tail[0] > 127 || !storage->args.argc)
-            goto fail;
-        for (i = 0; i < storage->args.envc; i++)
-            if (!strncmp(environment[i], "ARGV=", 5))
-                goto fail;
-        storage->args.guest_tail = storage->guest_tail;
-        if (guest->environment) {
-            char *raw = (char *)(storage + 1);
-
-            error = launch_copy_user_string(guest->environment, raw, PEXECVE_GUEST_ENV_MAX,
-                                            TRUE, &storage->args.guest_environment_size);
-            if (error != E_OK)
-                goto fail;
-            if (!raw[0] && raw[1]) {
-                error = EINVAL;
-                goto fail;
-            }
-            storage->args.guest_environment = raw;
-        }
-    }
     *out = &storage->args;
     return E_OK;
 
 fail:
     launch_free(storage);
     return error;
-}
-
-LONG pexecve_args_capture(WORD mode, UQUAD path, UQUAD argv, UQUAD envp,
-                          PEXECVE_ARGS **out)
-{
-    return capture(mode, path, argv, envp, NULL, out);
-}
-
-LONG pexecve_guest_args_capture(const PEXECVE_GUEST_REQUEST *request, PEXECVE_ARGS **out)
-{
-    return capture((WORD)request->mode, request->path, request->argv, request->envp, request, out);
 }
 
 void pexecve_args_release(PEXECVE_ARGS **args)

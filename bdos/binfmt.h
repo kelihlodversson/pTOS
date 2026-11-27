@@ -50,7 +50,7 @@ typedef struct {
 typedef struct {
     char interpreter[BINFMT_INTERPRETER];
     char argument[BINFMT_SHEBANG + 1];
-    BOOL has_argument, registry_rule;
+    BOOL has_argument;
 } BINFMT_SELECTION;
 
 typedef struct {
