@@ -510,16 +510,3 @@ OFD *getofd(int h)
         return NULL;
     return handle.slot->f_ofd;
 }
-
-
-#if CONF_WITH_PLUGGABLE_FS
-FTAB *getpfsslot(int h)
-{
-    FS_HANDLE handle;
-
-    if (fs_handle_lookup(h, &handle) != E_OK || !handle.slot ||
-        !handle.slot->f_pfs.fs)
-        return NULL;
-    return handle.slot;
-}
-#endif

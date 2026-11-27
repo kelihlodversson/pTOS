@@ -953,20 +953,16 @@ restrt:
         return 0;
 #endif
 
-    if (fn < 0 || fn > MAX_FNCALL)      /* a negative number from a WORD would index before funcs[] */
 #if CONF_WITH_USER_ASPACE
-    {
-        if (fn == GEMDOS_FCNTL)
+    if (fn == GEMDOS_FCNTL)
 #if CONF_WITH_NATIVE_ABI
-            return xfcntl((WORD)pw[1], (UWORD)pw[3]);
+        return xfcntl((WORD)pw[1], (UWORD)pw[3]);
 #else
-            return xfcntl(pw[1], (UWORD)pw[4]); /* descriptor.w, arg.l, command.w */
+        return xfcntl(pw[1], (UWORD)pw[4]); /* descriptor.w, arg.l, command.w */
 #endif
-        return EINVFN;
-    }
-#else
-        return EINVFN;
 #endif
+    if (fn < 0 || fn > MAX_FNCALL)      /* a negative number from a WORD would index before funcs[] */
+        return EINVFN;
 
     KDEBUG(("BDOS (fn=0x%04x)\n",fn));
 

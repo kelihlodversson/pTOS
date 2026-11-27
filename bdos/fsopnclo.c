@@ -498,9 +498,8 @@ long xclose(WORD h)
          * does for the legacy OFD path below; release() only runs once
          * the last sft[] reference to this cookie is gone (mirrors
          * sftdel() being called only when f_use reaches zero), so a
-         * duplicated handle (Fforce()-shared slot, or an xdup()-copied
-         * one) doesn't have its driver resources torn down while a
-         * sibling handle still expects them to be live.
+         * duplicated binding to the same slot keeps the driver's
+         * resources alive until the last owner releases the cookie.
          */
         rc = pfs_handle_close(&sft[h-NUMSTD].f_pfs);
 

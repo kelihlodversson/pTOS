@@ -1056,6 +1056,19 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc, UWORD mode)
     return i + NUMSTD;
 }
 
+static void pfs_close_unpublished(PFSCOOKIE *file)
+{
+    PFS_DISK_FAILURE failure;
+
+    /* Admission failed before the caller could use this open file. Flush
+     * can fail or unwind, but the unbound cookie still needs its destructor. */
+    (void)PFS_TRY(pfs_handle_close(file), &failure);
+    if (file->fs->release_file)
+        file->fs->release_file(file);
+    else if (file->fs->release)
+        file->fs->release(file);
+}
+
 LONG pfs_do_open(const char *path, WORD mode)
 {
     struct pfs_ops *fs;
@@ -1089,10 +1102,7 @@ LONG pfs_do_open(const char *path, WORD mode)
     fc.pos = 0;
     rc = pfs_alloc_handle(&fc, mode);
     if (rc < 0)
-    {
-        if (fs->close) fs->close(&fc);
-        if (fs->release) fs->release(&fc);
-    }
+        pfs_close_unpublished(&fc);
 
     return rc;
 }
@@ -1130,10 +1140,7 @@ LONG pfs_do_create(const char *path, UWORD attr)
     fc.pos = 0;
     rc = pfs_alloc_handle(&fc, RW_MODE);
     if (rc < 0)
-    {
-        if (fs->close) fs->close(&fc);
-        if (fs->release) fs->release(&fc);
-    }
+        pfs_close_unpublished(&fc);
 
     return rc;
 }

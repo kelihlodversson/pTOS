@@ -457,7 +457,8 @@ LONG fs_reference_unpin(FS_FILE_REFERENCE *reference);
 #define GEMDOS_F_GETFL 3
 LONG xfcntl(WORD descriptor, UWORD command);
 
-/* Provider-specific control with a kernel-owned argument buffer. */
+/* Provider control with a kernel-owned buffer and an installed disk-error
+ * scope. A provider may return a status or raise a normal disk error. */
 LONG fs_file_ioctl(WORD descriptor, UWORD command, void *arg, ULONG size);
 
 /* Readiness is a level check on a retained file. The caller owns the
@@ -703,9 +704,6 @@ long xsetdrv(WORD drv);
 long xgetdrv(void);
 LONG fs_handle_lookup(int h, FS_HANDLE *handle);
 OFD  *getofd(int h);
-#if CONF_WITH_PLUGGABLE_FS
-FTAB *getpfsslot(int h);
-#endif
 
 
 /*

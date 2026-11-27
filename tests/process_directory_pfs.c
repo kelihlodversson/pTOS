@@ -20,8 +20,10 @@ static unsigned acquired, released;
 static LONG lookup_error;
 static unsigned fault_kind, root_calls;
 static LONG fault_code;
+static unsigned unpublished_closes, unpublished_releases;
+static BOOL reject_open;
 FTAB sft[OPNFILES];
-BOOL fs_sft_claim(int slot) { (void)slot; __builtin_abort(); }
+BOOL fs_sft_claim(int slot) { CHECK(reject_open && slot == 0); return FALSE; }
 static void disk_fault(void)
 {
     errcode=fault_code; rwerr=0x4567; errdrv=2;
@@ -84,6 +86,29 @@ static LONG fault_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *o
 { (void)mode; (void)out; return fault_directory(dir,name); }
 static LONG fault_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out)
 { (void)attr; (void)out; return fault_directory(dir,name); }
+static LONG unpublished_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out)
+{
+    CHECK(dir->fs == &fat_pfs_ops && !strcmp(name, "A") && mode == RW_MODE);
+    return test_root(dir->fs, dir->aux, out);
+}
+static LONG unpublished_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *out)
+{
+    CHECK(!attr);
+    return unpublished_open(dir, name, RW_MODE, out);
+}
+static LONG unpublished_close(PFSCOOKIE *file)
+{
+    CHECK(live[file->index]);
+    unpublished_closes++;
+    disk_fault();
+    return EINTRN;
+}
+static LONG unpublished_release(PFSCOOKIE *file)
+{
+    unpublished_releases++;
+    release(file);
+    return EWRITF;
+}
 static LONG fault_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *attr)
 { (void)set; (void)attr; return fault_directory(dir,name); }
 static LONG fault_rename(PFSCOOKIE *dir, const char *name, PFSCOOKIE *other, const char *newname)
@@ -233,6 +258,16 @@ int main(void)
     check_disk_cleanup(14,EWRITF);
     CHECK(parent_dirs[2] == old && pfs_dirtbl[old].use == 1 && acquired-released == baseline);
     pfs_proc_exit(&parent); CHECK(acquired == released);
+    fat_pfs_ops.open = unpublished_open;
+    fat_pfs_ops.create = unpublished_create;
+    fat_pfs_ops.close = unpublished_close;
+    fat_pfs_ops.release_file = unpublished_release;
+    reject_open = TRUE;
+    fault_code = EWRITF;
+    CHECK(pfs_do_open("C:\\A", RW_MODE) == ENHNDL && acquired == released);
+    CHECK(pfs_do_create("C:\\A", 0) == ENHNDL && acquired == released);
+    CHECK(unpublished_closes == 2 && unpublished_releases == 2 && !sft[0].f_own);
+    __builtin_printf("Failed PFS file publication releases its driver cookie after nonlocal close failure: PASS\n");
     __builtin_printf("Production PFS child CWD: isolation, shared ownership, full-table rollback cookie reclamation and disk-error unwind: PASS\n");
     return 0;
 }

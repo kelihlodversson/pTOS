@@ -94,6 +94,7 @@ static WORD pfs_second(void)
 int main(void)
 {
     WORD descriptor,backend,duplicate,second;
+    FS_HANDLE opened;
     UQUAD incarnation;
     FS_CLOSE_REPORT report;
     FS_CLEANUP_TOKEN residual;
@@ -128,11 +129,13 @@ int main(void)
     duplicate=(WORD)xdup(0);CHECK(duplicate==NUMSTD+1);
     second=pfs_second();CHECK(second==NUMSTD+2);
     CHECK(process_files_resolve(&owner,duplicate,&backend,NULL)==E_OK && backend==NUMSTD);
-    CHECK(getofd(duplicate)==&file && getpfsslot(second)==&sft[1] && !getofd(second));
+    CHECK(getofd(duplicate)==&file && !getofd(second));
+    CHECK(fs_handle_lookup(second,&opened)==E_OK && opened.slot==&sft[1] && opened.slot->f_pfs.fs);
     sft[1].f_pfs.pos=29;inherit_files(PROCESS_FILES_ALL);
     CHECK(sft[0].f_use==6 && sft[1].f_use==2);
     CHECK(xclose(descriptor)==E_OK && xclose(duplicate)==E_OK && xclose(0)==E_OK && xclose(second)==E_OK);
-    run=&child_pd;CHECK(getofd(duplicate)==&file && getpfsslot(second)==&sft[1] && getpfsslot(second)->f_pfs.pos==29);
+    run=&child_pd;CHECK(getofd(duplicate)==&file && fs_handle_lookup(second,&opened)==E_OK);
+    CHECK(opened.slot==&sft[1] && opened.slot->f_pfs.pos==29);
     CHECK(xclose(descriptor)==E_OK && xclose(duplicate)==E_OK && xclose(0)==E_OK && xclose(second)==E_OK);
     CHECK(!sft[0].f_use && !sft[1].f_use);run=&owner;
     puts("Displaced local/backend numbers and ALL snapshot retain exact OFD/PFS identities and shared cursors: PASS");

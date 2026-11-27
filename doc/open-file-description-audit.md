@@ -73,7 +73,7 @@ have separate gates. PFS is optional and currently excluded on x32 because
 the pluggable FAT directory cookie stores a pointer in a 32-bit field.
 FAT works with and without PFS enabled. [bdos/Kconfig](../bdos/Kconfig) · [fs/Kconfig](../fs/Kconfig)
 
-## Current open descriptions and dispatch
+## Baseline open descriptions and dispatch
 
 | Backend | Open and cursor | Duplication and release |
 | --- | --- | --- |
@@ -171,19 +171,42 @@ borrow a retained description. The adapter preserves existing GEMDOS
 entry layouts through explicit conversions for the driver-visible types.
 [FreeMiNT fsops.h](https://github.com/freemint/freemint/blob/2afc6cd66501d6f1a959f5709626c3ffaae1ff56/sys/mint/fsops.h) · [FreeMiNT k_fds.c](https://github.com/freemint/freemint/blob/2afc6cd66501d6f1a959f5709626c3ffaae1ff56/sys/k_fds.c)
 
-## Implementation and verification boundary
+## Implementation
 
-The first code increment can add typed resolution on `FTAB`, with explicit
-empty, FAT, PFS and BIOS cases. Keep existing slot claim, publication,
-invalidation and close ownership. Migrate file and character dispatch
-through this interface one call family at a time. Keep the legacy FAT
-multi-slot alias behavior during the initial migration. Eventually a typed
-shared description must carry retention for I/O and readiness as well as
-descriptor rights. It must also account for today's separate FAT backing
-pin. Stable node identity continues to be distinct from shared open state.
-Audit the direct `sft[]` consumers in process retirement, shutdown, media
-invalidation, backing access and legacy TPA/filesystem code before removing
-any representation. [fs.h](../bdos/fs.h) · [proc.c](../bdos/proc.c) · [xshutdown.c](../bdos/xshutdown.c) · [fileback.c](../bdos/fileback.c)
+`fs_handle_lookup()` resolves a legacy number or a managed PROCESS binding
+to an SFT borrower or a BIOS device value. Legacy BIOS aliases have a
+numeric device field in the SFT. Device I/O, FAT and PFS use this lookup
+for read, write, seek and standard redirection. Close still consumes the
+admitted reference through the existing backend and cleanup protocol.
+Managed duplication and inheritance share the exact slot. The small-ROM
+path retains direct FAT, including the legacy multi-slot FAT duplicate.
+
+PFS file operations retain the admitted SFT incarnation before invoking a
+driver and keep it through the cursor update. A nested operation on the same
+PFS cursor returns `EACCDN`. A callback can consume the last descriptor
+without freeing the cookie. Dropping a temporary pin skips the flush while
+other owners exist and uses bounded final disposal otherwise. The disk-error
+guard unwinds the pin before restoring the original error continuation.
+An open or create that fails slot or binding admission releases the
+unpublished cookie even if the driver's flush raises a disk error. Its
+result remains the original admission error.
+
+`Fcntl(F_GETFL)` reports the open access mode through the native USER_ASPACE
+GEMDOS path. The mode comes from the FAT OFD, the PFS slot, or the BIOS
+device contract. The provider-specific ioctl entry takes a kernel-owned
+buffer with a defined size and runs under the same pin as regular PFS I/O.
+New user-visible ioctl commands require explicit ABI and buffer validation.
+The retained readiness query validates the SFT incarnation after a binding
+closes. FAT regular files provide a level check. PFS providers can supply a
+nonblocking query. Providers without the method return `EINVFN`. Wake
+registration and BIOS/device polling remain part of #929.
+
+FAT mapping pins still use the OFD backing lifecycle, including media
+revocation and release after an SFT slot disappears. PFS mapping remains
+unsupported. #978 will use the provider entry points to adapt a real
+FreeMiNT driver and establish the driver-visible layout and callback ABI.
+
+## Verification boundary
 
 Use `tools/test-fs-close.py` and `tools/test-process-files.py` as hosted
 controls for exact references, rollback, stale identity, reentrant close,
