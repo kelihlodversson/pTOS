@@ -297,7 +297,7 @@ LONG xfpoll_time64(UQUAD address, UQUAD nfds, QUAD timeout)
 LONG xfselect(UWORD timeout, ULONG read_mask, ULONG write_mask, ULONG except_mask)
 {
     static const UWORD event[3] = { PTOS_POLLIN, PTOS_POLLOUT, PTOS_POLLPRI };
-    const ULONG address[3] = { read_mask, write_mask, except_mask };
+    ULONG address[3] = { read_mask, write_mask, except_mask };
     KPROC_USER_COPY copy[3] = {{0}};
     ULONG masks[3] = {0}, requested;
     PTOS_POLLFD fds[32];
@@ -351,9 +351,19 @@ LONG xfselect(UWORD timeout, ULONG read_mask, ULONG write_mask, ULONG except_mas
             }
         }
     }
-    for (i = 0; i < 3; i++)
-        if (address[i] && !kproc_user_copy_write(&copy[i], &masks[i]))
+    /* Write each shared bitmap once, after counting readiness per mask. */
+    for (i = 0; i < 3; i++) {
+        if (!address[i])
+            continue;
+        for (j = i + 1; j < 3; j++) {
+            if (address[j] == address[i]) {
+                masks[i] |= masks[j];
+                address[j] = 0;
+            }
+        }
+        if (!kproc_user_copy_write(&copy[i], &masks[i]))
             result = EIMBA;
+    }
 
 done:
     for (i = 3; i; i--)

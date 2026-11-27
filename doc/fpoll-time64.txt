@@ -42,6 +42,7 @@ unsigned WORD interval of zero as indefinite. The optional input/output
 LONG masks select descriptors 0..31. The fourth argument is zero in the
 published TOS documentation. Nonzero selects the exceptional readiness
 mask used by FreeMiNT. The return count is across the supplied masks.
+Masks with the same address receive the bitwise union of their results.
 Terminal error or hangup sets the selected bits in any requested mask,
 including an exception-only wait.
 An invalid selected descriptor clears the masks and returns EIHNDL.

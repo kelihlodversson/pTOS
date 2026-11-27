@@ -190,6 +190,21 @@ static void test_poll_provider(void *stack)
         }
         ptest_assert_msg(Fclose((short)fd.fd) == 0, "close the blocked-wait provider");
     }
+#if defined(__mc68000__)
+    fd.fd = Fopen("P:\\PFSTEST.TXT", 0);
+    ptest_assert_msg(fd.fd >= 0 && fd.fd < 32, "open a read-only Fselect fixture");
+    if (fd.fd >= 0) {
+        if (fd.fd < 32) {
+            uint32_t mask = 1UL << fd.fd;
+
+            ptest_assert_msg(trap_1_wwlll(GEMDOS_FSELECT, 0, (long)&mask,
+                                         (long)&mask, (long)&mask) == 1 &&
+                             mask == (1UL << fd.fd),
+                             "shared Fselect output retains read-only readiness");
+        }
+        ptest_assert_msg(Fclose((short)fd.fd) == 0, "close the read-only Fselect fixture");
+    }
+#endif
     if (ptest_failures() == failures)
         conws("native Fpoll_time64 provider notifications and terminal events: PASS\r\n");
 }
