@@ -84,7 +84,6 @@ ASPACE *kaspace_backend(const KASPACE *space) { assert(!space); return NULL; }
 void procmem_pin(VADDR va,VADDR bytes,int delta) { (void)va;(void)bytes;(void)delta; abort(); }
 void aspace_unborrow(ASPACE *as,VADDR va,VADDR bytes) { (void)as;(void)va;(void)bytes; abort(); }
 BOOL __attribute__((weak)) fs_sft_busy(int index) { assert(index>=0 && index<OPNFILES); return FALSE; }
-OFD *__attribute__((weak)) getofd(int handle) { assert(handle==NUMSTD); return &callback_file; }
 #ifndef OBSERVER_WITH_CLOSE_FIXTURE
 static FS_ERROR_STATE observer_error;
 FS_ERROR_STATE *fs_error_current(void) { return &observer_error; }
