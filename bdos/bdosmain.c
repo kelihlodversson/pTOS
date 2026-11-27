@@ -715,9 +715,8 @@ long osif(short *pw)
 #if CONF_WITH_PROCESS_FILES
     BOOL redirected;
 #endif
-    int isptr;
-    int num, max;
-    long rc, numl;
+    int max;
+    long rc;
     const FND *f;
 
 #if CONF_WITH_USER_COPY
@@ -1118,7 +1117,8 @@ restrt:
 
     if (typ & 0x80)
     {
-        isptr = 0;      /* numl will be an sft[] pointer, not a plain handle */
+        FS_HANDLE handle;
+        LONG error;
 
 #if CONF_WITH_NATIVE_ABI
         /*
@@ -1138,69 +1138,12 @@ restrt:
             h = pw[1];
 #endif
 
-#if CONF_WITH_PROCESS_FILES
-        if (h>=0 && process_files_managed(run)) {
-            WORD backend;
-            LONG error=process_files_resolve(run,(WORD)h,&backend,NULL);
-            if (error) return error;
-            if (backend>=NUMSTD) {
-                isptr=1;numl=(long)sft[backend-NUMSTD].f_ofd;
-#if CONF_WITH_PLUGGABLE_FS
-                if (!numl) numl=(long)sft[backend-NUMSTD].f_pfs.fs;
-#endif
-            } else numl=backend;
-        } else
-#endif
-        if (h >= NUMSTD)
+        error = fs_handle_lookup(h, &handle);
+        if (error != E_OK)
+            return error;
+        if (handle.bios)
         {
-            if (h >= NUMHANDLES)
-                return EIHNDL;  /* invalid handle: out of range */
-
-            isptr = 1;
-            numl = (long) sft[h-NUMSTD].f_ofd;
-#if CONF_WITH_PLUGGABLE_FS
-            if (!numl)
-                numl = (long) sft[h-NUMSTD].f_pfs.fs;
-#endif
-        }
-        else if (h >= 0)
-        {
-            h = PD_UFT(run)[h];
-            if (h > 0)
-            {
-                if (h >= NUMHANDLES)
-                    return EIHNDL;  /* invalid handle: out of range */
-
-                isptr = 1;
-                numl = (long) sft[h-NUMSTD].f_ofd;
-#if CONF_WITH_PLUGGABLE_FS
-                if (!numl)
-                    numl = (long) sft[h-NUMSTD].f_pfs.fs;
-#endif
-            }
-            else
-                numl = h;
-        }
-        else
-            numl = h;
-
-        if (!numl)
-            return EIHNDL;  /* invalid handle: media change, etc */
-
-        /*
-         * a negative value is a BIOS handle, but only if it is a handle
-         * (h itself) or a small one from the sft: a pointer into the
-         * higher half is negative too, and is a perfectly good OFD
-         */
-        if (numl < 0 && (!isptr || IS_BIOS_HANDLE(numl)))
-        {       /* prn, aux, con */
-                /* -3   -2   -1  */
-
-            num = numl;
-
-            /*  check for valid handle  */ /* M01.01.0528.01 */
-            if (num < -3)
-                return EIHNDL;
+            WORD num = handle.bios;
 
             /* on m68k the buffer word follows the two-word long count */
 #if CONF_WITH_NATIVE_ABI

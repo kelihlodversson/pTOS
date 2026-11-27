@@ -401,21 +401,18 @@ struct _bcb
  */
 
 /*
- * f_ofd normally points at an OFD, but a standard handle that has been
- * redirected to a character device holds a small negative BIOS handle in
- * it instead (-1 prn, -2 aux, -3 con).  "Negative" does not tell the two
- * apart: a valid OFD pointer can have its sign bit set (the x86-64 kernel
- * heap is in the higher half), so a BIOS handle is only one of -1..-3.
+ * Negative BIOS handles are GEMDOS numbers. A legacy Fdup can also
+ * allocate a numbered SFT alias for one, stored separately from FAT.
  */
 #define BIOS_HANDLE_MIN (-3L)
 #define IS_BIOS_HANDLE(v) ((long)(v) < 0L && (long)(v) >= BIOS_HANDLE_MIN)
 
-/* point these at OFDs when needed */
 typedef struct
 {
     OFD *f_ofd;
     PD  *f_own;         /* file owners */
     int f_use;          /* live aliases plus kernel-owned residual references */
+    SBYTE f_bios;       /* negative device number, or zero for files */
 #if CONF_WITH_USER_ASPACE
     UQUAD f_incarnation; /* never reused, even if slot/OFD addresses are */
     ULONG f_cleanup_refs;
@@ -433,6 +430,14 @@ typedef struct
                          * or free alongside the slot itself. */
 #endif
 } FTAB;
+
+/* Borrowed lookup, valid only while the ordinary handle remains admitted.
+ * A direct BIOS number has no SFT slot. A legacy BIOS alias has both. */
+typedef struct {
+    FTAB *slot;
+    WORD bios;
+} FS_HANDLE;
+
 #include "fs_close.h"
 
 
@@ -669,6 +674,7 @@ DTAINFO *kproc_get_dta(PD *pd);
 #define RUN_XDTA() kproc_get_dta(run)
 long xsetdrv(WORD drv);
 long xgetdrv(void);
+LONG fs_handle_lookup(int h, FS_HANDLE *handle);
 OFD  *getofd(int h);
 #if CONF_WITH_PLUGGABLE_FS
 FTAB *getpfsslot(int h);

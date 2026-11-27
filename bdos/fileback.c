@@ -75,7 +75,7 @@ LONG fileback_get(LONG handle, FILE_BACKING **out)
     if (getpfsslot(handle)) return EOPNOTSUPP;
 #endif
     fd = getofd(handle);
-    if (!fd || IS_BIOS_HANDLE(fd)) return EIHNDL;
+    if (!fd) return EIHNDL;
     if ((fd->o_mod & MODE_FAC) == WO_MODE || (fd->o_dfd->o_flag & (O_MEDIA_LOST | O_CLOSING))) return EACCDN;
     if (fd->o_dfd->o_fileln < 0) return EOPNOTSUPP;
     for (b = backings; b; b = b->next)

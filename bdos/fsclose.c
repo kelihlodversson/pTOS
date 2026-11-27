@@ -221,11 +221,11 @@ static LONG reference_acquire(PD *pd,WORD descriptor,UQUAD expected,FS_FILE_REFE
     f=&sft[handle-NUMSTD];
     if (f->f_incarnation!=expected || f->f_cleanup_state==FS_CLEANUP_INVALIDATED ||
         !fs_sft_accessible(handle-NUMSTD)) return EIHNDL;
-    if (IS_BIOS_HANDLE((long)f->f_ofd) || (!f->f_ofd
+    if (!f->f_ofd
 #if CONF_WITH_PLUGGABLE_FS
         && !f->f_pfs.fs
 #endif
-        )) return EIHNDL;
+        ) return EIHNDL;
     if (descriptor>=NUMSTD
 #if CONF_WITH_PROCESS_FILES
         && !process_files_managed(pd)

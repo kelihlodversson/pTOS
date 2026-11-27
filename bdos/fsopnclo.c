@@ -409,10 +409,7 @@ void ofd_invalidate_drive(DMD *dm)
     /* A close may have detached an OFD before a later flush failed. */
     for (i = 0; i < OPNFILES; i++) {
         fd = sft[i].f_ofd;
-#if CONF_WITH_PLUGGABLE_FS
-        if (sft[i].f_pfs.fs) continue;
-#endif
-        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dmd == dm)
+        if (fd && fd->o_dmd == dm)
             invalidate_file(fd);
     }
 #if CONF_WITH_FAT_FILE_LIFETIMES
@@ -468,14 +465,14 @@ long xclose(WORD h)
     }
     else
 #endif
-    if (IS_BIOS_HANDLE(sft[h-NUMSTD].f_ofd))
+    if (sft[h-NUMSTD].f_bios)
     {
 #if CONF_WITH_USER_ASPACE
         if (sft[h-NUMSTD].f_use==1) kproc_standard_file_invalidate(h);
 #endif
         if (!(--sft[h-NUMSTD].f_use))
         {
-            sft[h-NUMSTD].f_ofd = 0;
+            sft[h-NUMSTD].f_bios = 0;
             sft[h-NUMSTD].f_own = 0;
         }
 
@@ -730,7 +727,7 @@ long ixdel(DND *dn, FCB *f, long pos)
     for (n = 0; n < OPNFILES; n++)
     {
         fd = sft[n].f_ofd;
-        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
+        if (fd && fd->o_dnode == dn && fd->o_dirbyt == pos)
         {
             if (sft[n].f_own != run || (fd->o_dfd->o_flag & O_INHERITED))
                 return EACCDN;
@@ -740,7 +737,7 @@ long ixdel(DND *dn, FCB *f, long pos)
     for (n = 0; n < OPNFILES; n++)
     {
         fd = sft[n].f_ofd;
-        if (fd && !IS_BIOS_HANDLE(fd) && fd->o_dnode == dn && fd->o_dirbyt == pos)
+        if (fd && fd->o_dnode == dn && fd->o_dirbyt == pos)
         {
             long rc;
             int h;

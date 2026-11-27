@@ -88,7 +88,7 @@ static LONG mapping_snapshot(VADDR output)
 #endif
     for (i=0;i<OPNFILES;i++) if (sft[i].f_use) {
         v[MLT_SFT_SLOTS]++;v[MLT_SFT_REFS]+=sft[i].f_use;
-        if (!sft[i].f_ofd || IS_BIOS_HANDLE(sft[i].f_ofd)) continue;
+        if (!sft[i].f_ofd) continue;
         for (j=0;j<i;j++) if (sft[j].f_use && sft[j].f_ofd==sft[i].f_ofd) break;
 #if CONF_WITH_FILE_PINS
         if (j==i) v[MLT_OFD_REFS]+=sft[i].f_ofd->o_refs;
