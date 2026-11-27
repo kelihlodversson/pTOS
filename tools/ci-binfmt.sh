@@ -6,20 +6,21 @@ cd "$(dirname "$0")/.."
 arch=${1:?usage: tools/ci-binfmt.sh arm|x32|m68k}
 layout=${2:-private}
 suffix=
-staged=
-startup=crt0
+vector_args=-DNATIVE_VECTOR_FIXTURE
+startup=elfcrt0
 case $arch in
     arm)
         config=virt-arm-aspace; prefix=arm-unknown-ptos-elf-; libc_config=ptos_arm_defconfig
         flags='-march=armv6 -marm -mfpu=vfp -mfloat-abi=hard -mword-relocations'
-        startup=elfcrt0; libs=-lgcc ;;
+        libs=-lgcc ;;
     x32)
         config=pc-x86_64; prefix=x86_64-unknown-ptos-elfx32-; libc_config=ptos_x86_64_defconfig
         flags='-mx32 -march=x86-64 -fcf-protection=none'
-        startup=elfcrt0; libs= ;;
+        libs= ;;
     m68k)
         config=virt-m68k-aspace; prefix=m68k-unknown-ptos-prgelf-; libc_config=mintelf_defconfig
-        flags=-m68000; libs=-lgcc ;;
+        # These ELF probes start with vectors and exercise the legacy calls.
+        flags=-m68000; libs=-lgcc; vector_args= ;;
     *) echo "unknown architecture: $arch" >&2; exit 2 ;;
 esac
 if [ "$layout" = shared ] && [ "$arch" = arm ]; then
@@ -29,7 +30,6 @@ elif [ "$layout" != private ]; then
     echo 'only ARM supports the optional shared layout' >&2
     exit 2
 fi
-if [ "$startup" = elfcrt0 ]; then staged=-DNATIVE_VECTOR_FIXTURE; fi
 make "${config}_defconfig"
 CONFIG_= python3 - <<'PY'
 import kconfiglib
@@ -62,7 +62,7 @@ for fixture in driver interpreter; do
         if [ "$fixture" = interpreter ]; then address=0x41000000; fi
         link="$link -Wl,-Ttext-segment=$address,-z,max-page-size=0x1000,-z,noseparate-code,-z,noexecstack"
     fi
-    ${prefix}gcc $flags $common $staged $process_directory -std=gnu90 -Os -Wall -Wextra -Werror \
+    ${prefix}gcc $flags $common $vector_args $process_directory -std=gnu90 -Os -Wall -Wextra -Werror \
         -Wdeclaration-after-statement -ffreestanding -fno-builtin -nostdinc \
         -isystem lib/libcmini/include -isystem "$includes" \
         -nostdlib -static -no-pie $link "$libc/objs/$startup.o" \

@@ -54,7 +54,7 @@
 #if CONF_WITH_PROCESS_FILES
 #include "process_files.h"
 #endif
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_LEGACY_ELF_ARGS
 #include "argv_legacy.h"
 #elif CONF_WITH_ELF_LOADER
 #include "../lib/ldso/startup.h"
@@ -4298,7 +4298,7 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
     VADDR first;
     UBYTE *stack;
     const DL_LAUNCH *launch = NULL;
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_LEGACY_ELF_ARGS
     ULONG envsize = 0, slots = 0;
     LEGACY_START_ARGS arguments;
 #endif
@@ -4311,7 +4311,7 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
     while (fnsize < 1024 && filename[fnsize]) fnsize++;
     if (fnsize == 1024)
         return ERANGE;
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_LEGACY_ELF_ARGS
     if (!vectors) {
         envsize = process->env_end - process->env_start;
         if (envsize < 2 || envsize > LEGACY_START_ENV_MAX)
@@ -4339,7 +4339,7 @@ static LONG set_elf_stack(KPROC *process, const char *filename,
         info.launch_path = qualified;
     }
 #endif
-#if CONF_WITH_ELF_SHARED
+#if CONF_WITH_LEGACY_ELF_ARGS
     if (!vectors) {
         status = legacy_start_vectors(&arguments, filename,
                            (const UBYTE *)process->pd->p_cmdlin, sizeof(process->pd->p_cmdlin),
@@ -4436,7 +4436,8 @@ LONG kproc_set_static_elf_entry(PD *pd, const char *filename,
 
     if (!process || !process->pending_as || process->aspace || process->started ||
         !process->has_image || process->legacy || process->standard_entry ||
-        !filename || !vectors || !info || info->base || info->entry != process->layout.entry)
+        !filename || (!vectors && !CONF_WITH_LEGACY_ELF_ARGS) ||
+        !info || info->base || info->entry != process->layout.entry)
         return EPLFMT;
     return set_elf_stack(process, filename, vectors, *info);
 }

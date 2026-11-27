@@ -153,6 +153,12 @@ config CONF_WITH_STAGED_PEXEC
       Public staged GEMDOS Pexec modes. ARM keeps staged ROM and accessory
       launches as internal calls only.
 
+config CONF_WITH_LEGACY_ELF_ARGS
+    def_bool CONF_WITH_ELF_SHARED || (CONF_WITH_LEGACY_PEXEC && CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER)
+    help
+      Decode a GEMDOS tail and flat environment for the standard ELF stack.
+      Static m68k ELF uses this even without the runtime linker.
+
 config CONF_WITH_ARM_SHARED_EXEC
     def_bool ARCH_ARM && !CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
     help
