@@ -39,6 +39,8 @@ LONG kproc_copy_to_user_checked(VADDR address,const void *in,ULONG size)
 }
 LONG proc_exec_handle_prepare(KPROC *o,char *p,char *t,char *e,char *d,ULONG policy)
 { (void)o;(void)p;(void)t;(void)e;(void)d;(void)policy; abort(); }
+LONG proc_exec_handle_prepare_vectors(KPROC *o,const PEXECVE_ARGS *args,char *d,ULONG policy)
+{ (void)o;(void)args;(void)d;(void)policy; abort(); }
 LONG proc_exec_handle_commit(KPROC *o,ULONG h)
 { CHECK(o==(KPROC *)&caller && h==17 && depth==2 && refs==1); pending=TRUE; return 42; }
 LONG proc_exec_handle_close(KPROC *o,ULONG h)

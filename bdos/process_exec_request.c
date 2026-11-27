@@ -5,6 +5,7 @@
 #include "ksched.h"
 #include "procmem.h"
 #include "string.h"
+#include "launch_args.h"
 #include "process_exec_internal.h"
 extern PD *run;
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
@@ -13,65 +14,79 @@ extern PD *run;
 
 static LONG copy_argument(ULONG address, ULONG capacity, BOOL environment, char **out)
 {
-    ULONG i;
     char *buffer;
     if (!address) return EIMBA;
     buffer = kalloc(capacity);
     if (!buffer) return ENSMEM;
     *out = buffer;
-    for (i = 0; i < capacity;) {
-        UQUAD source=(UQUAD)address+i;
-        ULONG count=USER_PAGE_SIZE-(source & (USER_PAGE_SIZE-1));
-        ULONG end;
-        LONG error;
-        if (count>64) count=64;
-        if (count>capacity-i) count=capacity-i;
-        /* Never back the next page before finding this page's terminator.
-         * Recorded non-ASPACE ranges may end inside a page: on error retry
-         * one byte, so memory beyond a valid terminator is not required. */
-        error=kproc_copy_from_user_checked(buffer+i,source,count);
-        if (error!=E_OK && count>1) {
-            count=1;
-            error=kproc_copy_from_user_checked(buffer+i,source,count);
-        }
-        if (error!=E_OK) return error;
-        end=i+count;
-        for (; i<end; i++)
-            if (!buffer[i] && (!environment || (i && !buffer[i-1]))) return E_OK;
-    }
-    return ERANGE;
+    return launch_copy_user_string(address,buffer,capacity,environment,NULL);
 }
 LONG proc_exec_prepare_user_args(KPROC *owner, const PROCESS_EXEC_REQUEST *request)
 {
     char *path=NULL, *tail=NULL, *environment=NULL, *directory=NULL;
+    PEXECVE_ARGS *vectors = NULL;
+    UBYTE classic_tail[PDCLSIZE];
     ULONG env_address;
     LONG result;
     if (!owner || kproc_live_pd(owner) != run) return EACCDN;
     if (request->handle || request->policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
-    result=copy_argument(request->path,EXEC_PATH_MAX,FALSE,&path);
-    if (result != E_OK) goto done;
-    result=copy_argument(request->tail,PDCLSIZE,FALSE,&tail);
-    if (result != E_OK) goto done;
-    env_address=request->environment ? request->environment :
+    if (request->flags == PROCESS_EXEC_VECTOR_ARGS) {
+        ULONG i;
+
+        result = pexecve_args_capture(PE_ASYNC_LOADGO,request->path,request->tail,
+                                      request->environment,&vectors);
+        if (result != E_OK) goto done;
+        if (!vectors->argc) { result=EINVAL; goto done; }
+        for (i = 0; i < vectors->envc; i++)
+            if (!strncmp(vectors->envp[i],"ARGV=",5)) { result=EINVAL; goto done; }
+        if (request->classic_tail) {
+            result=kproc_copy_from_user_checked(classic_tail,request->classic_tail,sizeof(classic_tail));
+            if (result != E_OK) goto done;
+            if (classic_tail[0] > 126) { result=EINVAL; goto done; }
+            memset(classic_tail+classic_tail[0]+1,0,sizeof(classic_tail)-classic_tail[0]-1);
+            vectors->classic_tail=classic_tail;
+        }
+    } else {
+        result=copy_argument(request->path,EXEC_PATH_MAX,FALSE,&path);
+        if (result != E_OK) goto done;
+        result=copy_argument(request->tail,PDCLSIZE,FALSE,&tail);
+        if (result != E_OK) goto done;
+        env_address=request->environment ? request->environment :
 #if CONF_WITH_PRIVATE_CLONE
-        (ULONG)kproc_private_environment(run);
+            (ULONG)kproc_private_environment(run);
 #else
-        (ULONG)(uintptr_t)USERPTR_TO_PTR(run->p_env);
+            (ULONG)(uintptr_t)USERPTR_TO_PTR(run->p_env);
 #endif
-    result=copy_argument(env_address,EXEC_ENV_MAX,TRUE,&environment);
-    if (result != E_OK) goto done;
+        result=copy_argument(env_address,EXEC_ENV_MAX,TRUE,&environment);
+        if (result != E_OK) goto done;
+    }
     if (request->directory) {
         result=copy_argument(request->directory,EXEC_PATH_MAX,FALSE,&directory);
         if (result != E_OK) goto done;
         if (!directory[0]) { result=EPTHNF; goto done; }
     }
-    result=proc_exec_handle_prepare(owner,path,tail,environment,directory,request->policy);
+    result=vectors ? proc_exec_handle_prepare_vectors(owner,vectors,directory,request->policy) :
+        proc_exec_handle_prepare(owner,path,tail,environment,directory,request->policy);
  done:
+    if (vectors) pexecve_args_release(&vectors);
     if (directory) kfree(directory);
     if (environment) kfree(environment);
     if (tail) kfree(tail);
     if (path) kfree(path);
     return result;
+}
+LONG proc_exec_copy_request(UQUAD address, UQUAD size, PROCESS_EXEC_REQUEST *request)
+{
+    LONG result;
+
+    if (size != sizeof(*request)) return EINVAL;
+    if (!address || address > 0xffffffffULL - (sizeof(*request)-1)) return EIMBA;
+    if (address & 3) return EINVAL;
+    result=kproc_copy_from_user_checked(request,address,sizeof(*request));
+    if (result!=E_OK) return result;
+    if (request->reserved || (request->flags & ~PROCESS_EXEC_VECTOR_ARGS) ||
+        (!request->flags && request->classic_tail)) return EINVAL;
+    return E_OK;
 }
 static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
 {
@@ -81,16 +96,12 @@ static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)
     LONG handle;
     BOOL direct, deferred;
     if (!owner || kproc_live_pd(owner) != run) return EACCDN;
-    if (size != sizeof(request)) return EINVAL;
-    if (!address || address > 0xffffffffULL - (sizeof(request)-1)) return EIMBA;
-    if (address & 3) return EINVAL;
-    result=kproc_copy_from_user_checked(&request,address,sizeof(request));
+    result=proc_exec_copy_request(address,size,&request);
     if (result!=E_OK) return result;
-    if (request.reserved || request.reserved_tail[0] || request.reserved_tail[1]) return EINVAL;
     if (request.operation > PROCESS_EXEC_START) return EINVFN;
     direct=request.operation == PROCESS_EXEC_DEFER || request.operation == PROCESS_EXEC_START;
     if (request.operation != PROCESS_EXEC_PREPARE && !direct) {
-        if (request.policy || request.path || request.tail || request.environment || request.directory) return EINVAL;
+        if (request.policy || request.flags || request.path || request.tail || request.environment || request.directory) return EINVAL;
         switch (request.operation) {
         case PROCESS_EXEC_COMMIT:
             return proc_exec_handle_commit(owner,request.handle);

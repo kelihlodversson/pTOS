@@ -14,6 +14,7 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
 {
     uint32_t argc = stack[0], i, at, phdr = 0, phnum = 0, entry = 0, base = 0;
     uint32_t pagesz = 0, execfn = 0, basepage = 0, phent = 0, bias = UINT32_MAX, launch = 0;
+    uint32_t snapshot = 0;
     const uint32_t *v = stack + 1;
     int extended;
 
@@ -31,7 +32,7 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         !v[1] || !equal((const char *)(uintptr_t)v[1], "SECOND=value") || v[2])
         return 4;
     v += 3;
-    for (i = 0; i < 12; i++, v += 2) {
+    for (i = 0; i < 16; i++, v += 2) {
         at = v[0];
         if (!at) break;
         switch (at) {
@@ -46,10 +47,11 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         case 0x5001: if (v[1] >= 26) return 5; break;
         case 0x5002: bias = v[1]; break;
         case DL_AT_PTOS_LAUNCH: launch = v[1]; break;
+        case DL_AT_PTOS_LAUNCH_VECTORS: snapshot = v[1]; break;
         default: return 5;
         }
     }
-    if (i == 12 || bias == UINT32_MAX || pagesz != 4096 || phent != 32 || !phnum || phnum > 128 ||
+    if (i == 16 || bias == UINT32_MAX || pagesz != 4096 || phent != 32 || !phnum || phnum > 128 ||
         base < 0xf000000 || base >= 0xfff0000 ||
         (uintptr_t)_start < base || (uintptr_t)_start >= 0xfff0000 ||
         entry < 0x400000 || entry >= 0x800000 || !basepage ||
@@ -59,17 +61,29 @@ uint32_t interp_check(const uint32_t *stack, uint64_t finalizer)
         return 6;
     if (launch) {
         const DL_LAUNCH *saved = (const DL_LAUNCH *)(uintptr_t)launch;
-        static const char short_tail[] = "\"hello world\" \"\" C:\\tmp";
+        const DL_LAUNCH_VECTORS *vectors = (const DL_LAUNCH_VECTORS *)(uintptr_t)snapshot;
+        const uint32_t *args;
+        static const char short_tail[] = "'hello world' '' C:\\tmp";
+        static const char custom_tail[] = "'hello world' C:\\tmp";
+        const char *tail = extended ? custom_tail : short_tail;
         if ((launch & 3) || launch < (uintptr_t)stack ||
-            launch > 0x80000000U-sizeof(*saved) || saved->ready || !saved->environment ||
-            saved->environment_size < 2 || saved->environment_size > 32768) return 9;
-        if (extended) {
-            if (saved->tail[0] != 127) return 9;
-        } else {
-            if (saved->tail[0] != sizeof(short_tail)-1) return 9;
-            for (i = 0; i < sizeof(short_tail)-1; i++)
-                if (saved->tail[i+1] != (unsigned char)short_tail[i]) return 9;
-        }
+            launch > 0x80000000U-sizeof(*saved) || saved->ready ||
+            saved->environment || saved->environment_size) return 9;
+        for (i = 0; tail[i]; i++)
+            if (saved->tail[i+1] != (unsigned char)tail[i]) return 9;
+        if (saved->tail[0] != i) return 9;
+        if ((snapshot & 3) || snapshot < (uintptr_t)stack ||
+            snapshot > 0x80000000U-sizeof(*vectors) || vectors->path == execfn ||
+            !equal((const char *)(uintptr_t)vectors->path,(const char *)(uintptr_t)execfn)) return 10;
+        args = (const uint32_t *)(uintptr_t)vectors->argv;
+        for (i = 0; i < argc; i++)
+            if (args[i] == stack[i+1] ||
+                !equal((const char *)(uintptr_t)args[i],(const char *)(uintptr_t)stack[i+1])) return 10;
+        if (args[argc]) return 10;
+        args = (const uint32_t *)(uintptr_t)vectors->envp;
+        if (!equal((const char *)(uintptr_t)args[0], "CHECK=660") ||
+            !equal((const char *)(uintptr_t)args[1], "SECOND=value") || args[2])
+            return 10;
     }
     for (i = 0; i < phnum; i++) {
         const uint32_t *ph = (const uint32_t *)(uintptr_t)(phdr + i * 32);

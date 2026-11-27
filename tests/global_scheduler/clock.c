@@ -52,7 +52,7 @@ int main(void)
         if(!scenario) { basepage.p_cmdlin[0]=1; basepage.p_cmdlin[1]='g'; }
         initial=clock_value=wrap ? ULONG_MAX-500:0;
         reads=yields=0; stopped=0;
-        if(!setjmp(stop)) { global_fixture_main(); abort(); }
+        if(!setjmp(stop)) { global_fixture_main(0, NULL); abort(); }
         assert(stopped==(scenario==0 ? 28:scenario==1 ? 10:20));
         assert(disk[6]==stopped && reads==11 && yields==10);
         assert(clock_value-initial==1100UL); /* start sample + exact1000-tick deadline */

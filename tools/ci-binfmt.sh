@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.."
 arch=${1:?usage: tools/ci-binfmt.sh arm|x32|m68k}
 layout=${2:-private}
 suffix=
-staged=
+vector_args=-DNATIVE_VECTOR_FIXTURE
+startup=elfcrt0
 case $arch in
     arm)
         config=virt-arm-aspace; prefix=arm-unknown-ptos-elf-; libc_config=ptos_arm_defconfig
@@ -18,13 +19,13 @@ case $arch in
         libs= ;;
     m68k)
         config=virt-m68k-aspace; prefix=m68k-unknown-ptos-prgelf-; libc_config=mintelf_defconfig
-        flags=-m68000; libs=-lgcc ;;
+        # These ELF probes start with vectors and exercise the legacy calls.
+        flags=-m68000; libs=-lgcc; vector_args= ;;
     *) echo "unknown architecture: $arch" >&2; exit 2 ;;
 esac
 if [ "$layout" = shared ] && [ "$arch" = arm ]; then
     config=virt-arm-cli
     suffix=-shared
-    staged=-DSTAGED_UNCHECKED   # no MMU: staged Pexec modes unchecked (#1018)
 elif [ "$layout" != private ]; then
     echo 'only ARM supports the optional shared layout' >&2
     exit 2
@@ -52,7 +53,7 @@ make -C lib/libcmini BUILDDIR="$libc" CROSSPREFIX="$prefix" "$libc_config"
 common='-fno-pie -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables'
 make -C lib/libcmini BUILDDIR="$libc" CROSSPREFIX="$prefix" ONLY_68K=y dirs
 make -C lib/libcmini BUILDDIR="$libc" CROSSPREFIX="$prefix" ONLY_68K=y \
-    ARCH_CFLAGS="$flags $common" -j4 "$libc/./libcmini.a" "$libc/./objs/crt0.o"
+    ARCH_CFLAGS="$flags $common" -j4 "$libc/./libcmini.a" "$libc/./objs/$startup.o"
 includes=$(${prefix}gcc -print-file-name=include)
 for fixture in driver interpreter; do
     link='-Wl,--emit-relocs,--build-id=none'
@@ -61,10 +62,10 @@ for fixture in driver interpreter; do
         if [ "$fixture" = interpreter ]; then address=0x41000000; fi
         link="$link -Wl,-Ttext-segment=$address,-z,max-page-size=0x1000,-z,noseparate-code,-z,noexecstack"
     fi
-    ${prefix}gcc $flags $common $staged $process_directory -std=gnu90 -Os -Wall -Wextra -Werror \
+    ${prefix}gcc $flags $common $vector_args $process_directory -std=gnu90 -Os -Wall -Wextra -Werror \
         -Wdeclaration-after-statement -ffreestanding -fno-builtin -nostdinc \
         -isystem lib/libcmini/include -isystem "$includes" \
-        -nostdlib -static -no-pie $link "$libc/objs/crt0.o" \
+        -nostdlib -static -no-pie $link "$libc/objs/$startup.o" \
         "tests/binfmt/fixtures/$fixture.c" "$libc/libcmini.a" $libs -o "$build/$fixture.tos"
 done
 python3 tools/run-binfmt-tests.py "$arch" "$build"

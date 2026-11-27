@@ -158,6 +158,11 @@ if os.environ.get('PROCESS_FILES_TEST') == '1':
     assert backend in ('fat', 'pfs'), backend
     config.syms['CONF_WITH_PLUGGABLE_FS'].set_value(2 if backend == 'pfs' else 0)
     assert config.syms['CONF_WITH_PLUGGABLE_FS'].str_value == ('y' if backend == 'pfs' else 'n')
+if config.syms['CONF_WITH_ELF_SHARED'].str_value == 'y' and any(
+        config.syms[name].str_value == 'y' for name in
+        ('CONF_WITH_X86_64_MEMTEST', 'CONF_WITH_EXIT_HANDOFF_TEST')):
+    config.syms['CONF_WITH_ELF_VECTOR_ENTRY_TEST'].set_value(2)
+    assert config.syms['CONF_WITH_ELF_VECTOR_ENTRY_TEST'].str_value == 'y'
 config.write_config()
 PY
         ;;

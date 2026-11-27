@@ -31,7 +31,7 @@ void test_load_fail(void)
         ptest_assert_msg(rc < 0, "truncated ELF unexpectedly loaded");
     }
 
-    rc = Pexec(PE_LOADGO, "C:\\PIEPROBE.TOS", "", 0);
+    rc = test_start_pie_probe();
     ptest_assert_msg(rc == 0,
                      "failed loads exhausted KPROC sidecars");
 

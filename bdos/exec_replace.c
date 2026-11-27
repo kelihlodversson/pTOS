@@ -11,6 +11,10 @@
 #include "ksched.h"
 #include "exec_replace.h"
 #include "string.h"
+#if CONF_WITH_EXEC_REPLACE
+#include "launch_args.h"
+#include "../lib/ldso/startup.h"
+#endif
 #if CONF_WITH_EXEC_REPLACEMENT_TEST
 #include "../include/exec_handoff_test.h"
 #endif
@@ -195,7 +199,8 @@ void kproc_exec_replacement_retire(KPROC_EXEC_REPLACEMENT **handle)
 }
 
 #if CONF_WITH_EXEC_REPLACE
-LONG proc_exec_replace(char *path, char *tail, char *env)
+static LONG exec_replace(char *path, char *tail, char *env,
+                         const DL_START_VECTORS *vectors, PEXECVE_ARGS **args)
 {
     KPROC *source = kproc_retain(run);
     KTHREAD *thread = ksched_exit_thread(run);
@@ -204,14 +209,17 @@ LONG proc_exec_replace(char *path, char *tail, char *env)
     KASPACE *selected = NULL;
     ASPACE *backend;
     LONG error = EACCDN;
-    if (!source || !thread || !path || !tail) goto done;
+    if (!source || !thread || !path || (!tail && !vectors)) goto done;
     backend = aspace_create();
     if (!backend) { error = ENSMEM; goto done; }
     selected = kaspace_adopt(backend);
     if (!selected) { aspace_destroy(backend); error = ENSMEM; goto done; }
     error = kproc_exec_replacement_prepare(source, thread, selected, &receipt);
     if (error) goto done;
-    error = proc_exec_replacement_stage(receipt, path, tail, env);
+    error = proc_exec_replacement_stage(receipt, path, tail, env, vectors);
+    /* Staging has copied all data into the new image. The receipt still
+     * protects this execution, and the old stack may disappear at handoff. */
+    if (args) pexecve_args_release(args);
     if (!error)
         error = kproc_exec_image_prepare(source, kproc_exec_replacement_image(receipt), selected, &bundle);
     if (!error) {
@@ -224,9 +232,21 @@ LONG proc_exec_replace(char *path, char *tail, char *env)
     kproc_exec_image_abort(&bundle);
     kproc_exec_replacement_abort(&receipt);
 done:
+    if (args) pexecve_args_release(args);
     kaspace_put(selected);
     kproc_release(source);
     return error;
+}
+
+LONG proc_exec_replace(char *path, char *tail, char *env)
+{
+    return exec_replace(path, tail, env, NULL, NULL);
+}
+
+LONG proc_exec_replace_vectors(PEXECVE_ARGS **args)
+{
+    DL_START_VECTORS vectors = pexecve_start_vectors(*args);
+    return exec_replace((char *)(*args)->path, NULL, NULL, &vectors, args);
 }
 #endif
 
@@ -344,7 +364,7 @@ LONG kproc_exec_replacement_probe(UWORD fail_after)
 #endif
             char *path=fail_after==0x100 ? valid_program :
                        fail_after==0x101 ? "C:\\NO970.TOS" : "C:\\LOADFAIL.TOS";
-            error=proc_exec_replacement_stage(replacement,path,"",environment);
+            error=proc_exec_replacement_stage(replacement,path,"",environment,NULL);
             if ((fail_after==0x100 && error==E_OK &&
                     !kproc_exec_replacement_image_ready(replacement)) ||
                 (fail_after!=0x100 && error==E_OK))

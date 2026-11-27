@@ -6,6 +6,8 @@
 #include "fs.h"
 #include "proc.h"
 #include "process_exec_internal.h"
+#include "launch_args.h"
+#include "../lib/ldso/startup.h"
 
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
 struct process_exec_handle {
@@ -40,7 +42,8 @@ static LONG dispose_handle(struct process_exec_handle *handle)
     kfree(handle);
     return error;
 }
-static LONG handle_prepare_owned(KPROC *owner, char *path, char *tail, char *environment, char *directory, ULONG policy)
+static LONG handle_prepare_owned(KPROC *owner, char *path, char *tail, char *environment,
+                                 char *directory, ULONG policy, const DL_START_VECTORS *vectors)
 {
     struct process_exec_handle *handle;
     struct process_exec_handle **head;
@@ -62,7 +65,7 @@ static LONG handle_prepare_owned(KPROC *owner, char *path, char *tail, char *env
     /* The synchronous loader acquires every child resource and observer before
      * returning a private reservation. Failed construction transfers nothing. */
     result = proc_exec_prepare(path, tail, environment, directory, policy,
-                               &handle->observer, &handle->prepared);
+                               &handle->observer, &handle->prepared, vectors);
     if (result != E_OK) { kfree(handle); return result; }
     if (ksched_cancellation_pending()) { dispose_handle(handle); return EACCDN; }
     handle->next = *head;
@@ -142,7 +145,20 @@ LONG proc_exec_handle_prepare(KPROC *owner, char *path, char *tail, char *enviro
     KSCHED_CLEANUP_SCOPE scope={0};
     LONG result;
     ksched_cleanup_begin(&scope);
-    result=handle_prepare_owned(owner,path,tail,environment,directory,policy);
+    result=handle_prepare_owned(owner,path,tail,environment,directory,policy,NULL);
+    ksched_cleanup_end(&scope);
+    return result;
+}
+
+LONG proc_exec_handle_prepare_vectors(KPROC *owner, const PEXECVE_ARGS *args,
+                                      char *directory, ULONG policy)
+{
+    KSCHED_CLEANUP_SCOPE scope = {0};
+    const DL_START_VECTORS vectors = pexecve_start_vectors(args);
+    LONG result;
+
+    ksched_cleanup_begin(&scope);
+    result = handle_prepare_owned(owner,(char *)args->path,NULL,NULL,directory,policy,&vectors);
     ksched_cleanup_end(&scope);
     return result;
 }

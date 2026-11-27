@@ -12,6 +12,8 @@
 #include "kheap.h"
 #include "tosvars.h"
 #include "binfmt.h"
+#include "exec_path.h"
+#include "pexecve.h"
 #include "string.h"
 
 static BINFMT_REGISTRY registry;
@@ -130,38 +132,6 @@ static BOOL same_path(const char *a, const char *b)
     }
 }
 
-/* Directory overrides must not change which original script the interpreter
- * opens. Resolve against the parent's drive/per-drive cwd before the override.
- * Scratch storage belongs to the resolver, keeping legacy stacks small. */
-static LONG qualify_program(const char *path, char *out, char *cwd, DISK_ERROR *error)
-{
-    WORD drive = run->p_curdrv;
-    ULONG used = 3, n, i;
-    LONG rc;
-    if (path[0] && path[1] == ':') {
-        int c = (UBYTE)path[0];
-        if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
-        drive = c - 'A'; path += 2;
-    }
-    if (drive < 0 || drive >= 26) return EDRIVE;
-    out[0] = 'A' + drive; out[1] = ':'; out[2] = '\\';
-    if (*path == '\\' || *path == '/') path++;
-    else {
-        rc = DISK_CALL_ERROR(xgetdir(cwd, drive + 1), error);
-        if (rc < 0) return rc;
-        while (*cwd == '\\' || *cwd == '/') cwd++;
-        n = strlen(cwd);
-        if (n >= BINFMT_PATH - used - 1) return ERANGE;
-        memcpy(out + used, cwd, n); used += n;
-        if (out[used - 1] != '\\' && out[used - 1] != '/') out[used++] = '\\';
-    }
-    n = strlen(path);
-    if (n >= BINFMT_PATH - used) return ERANGE;
-    memcpy(out + used, path, n + 1);
-    for (i = 2; i < used + n; i++) if (out[i] == '/') out[i] = '\\';
-    return E_OK;
-}
-
 void binfmt_release_environment(BINFMT_LAUNCH *launch)
 {
     release(launch->environment);
@@ -174,14 +144,20 @@ void binfmt_release(BINFMT_LAUNCH *launch)
     binfmt_release_environment(launch);
     release(launch->tail);
     launch->tail = NULL;
+    release(launch->vector_storage);
+    launch->vector_storage = NULL;
+    memset(&launch->vectors, 0, sizeof(launch->vectors));
 }
 
 LONG binfmt_load_header(char *path, char *tail, char *environment,
-                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch, BOOL qualify)
+                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch,
+                       BOOL qualify, const DL_START_VECTORS *vectors)
 {
     struct redirect_work {
         UBYTE header[BINFMT_HEADER];
         char visited[BINFMT_DEPTH + 1][BINFMT_PATH];
+        char options[BINFMT_DEPTH][BINFMT_SHEBANG + 1];
+        BINFMT_REDIRECT redirects[BINFMT_DEPTH];
         BINFMT_SELECTION selection;
     } *work = NULL;
     LONG rc;
@@ -189,12 +165,17 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
     unsigned int depth = 0, i;
 
     memset(launch, 0, sizeof(*launch));
+    if (vectors && vectors->argc > PEXECVE_MAX_ENTRIES)
+        return ERANGE;
     for (;;) {
         rc = kpgmhdrld_error(path, header, handle, &error);
         if (error.code || rc != EPLFMT || !kpgm_can_interpret()) break;
         if (!work) {
             if (strlen(path) >= BINFMT_PATH) { rc = ERANGE; break; }
-            work = allocate(sizeof(*work));
+            /* Space for a final interpreter name, option/path pairs, the
+             * original arguments after argv[0] and the terminator. */
+            work = allocate(sizeof(*work) + (vectors ?
+                (vectors->argc + 2 * BINFMT_DEPTH + 2) * sizeof(char *) : 0));
             if (!work) { rc = ENSMEM; break; }
             strcpy(work->visited[0], path);
         }
@@ -203,33 +184,67 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
         rc = binfmt_select(&registry, work->header, rc, &work->selection);
         if (rc) { if (rc > 0) rc = EPLFMT; break; }
         if (!depth && qualify) {
-            rc = qualify_program(path, work->visited[0], (char *)work->header, &error);
+            rc = exec_qualify_path(path, work->visited[0], BINFMT_PATH, &error);
             if (rc < 0 || error.code) break;
-            path = work->visited[0];
         }
         if (depth == BINFMT_DEPTH) { rc = EPLFMT; break; }
         for (i = 0; i <= depth; i++)
             if (same_path(work->selection.interpreter, work->visited[i])) break;
         if (i <= depth) { rc = EPLFMT; break; }
-        if (!launch->tail) {
-            launch->tail = allocate(128);
-            if (!launch->tail) { rc = ENSMEM; break; }
+        work->redirects[depth].program = work->visited[depth];
+        work->redirects[depth].interpreter = work->visited[depth + 1];
+        work->redirects[depth].argument = NULL;
+        if (work->selection.has_argument) {
+            strcpy(work->options[depth], work->selection.argument);
+            work->redirects[depth].argument = work->options[depth];
         }
-        {
-            char *next = allocate(BINFMT_ENV_WORK);
+        strcpy(work->visited[++depth], work->selection.interpreter);
+        path = work->visited[depth];
+    }
+    if (!rc && !error.code && depth && vectors) {
+        const char **slots = (const char **)(work + 1);
+        ULONG count = 0;
+        BOOL direct = depth == 1 && work->selection.registry_rule;
+
+        slots[count++] = path;
+        while (depth) {
+            const BINFMT_REDIRECT *redirect = &work->redirects[--depth];
+            if (redirect->argument)
+                slots[count++] = redirect->argument;
+            slots[count++] = redirect->program;
+        }
+        for (i = 1; i < vectors->argc; i++)
+            slots[count++] = vectors->argv[i];
+        slots[count] = NULL;
+        launch->vectors = *vectors;
+        launch->vectors.argv = slots;
+        launch->vectors.argc = count;
+        launch->vectors.original = vectors;
+        launch->vectors.direct_redirect = direct;
+        launch->vector_storage = work;
+        work = NULL;
+    } else if (!rc && !error.code && depth) {
+        /* Apply every prefix to the original argument sequence and emit the
+         * compatibility tail/environment once, for the final load only. */
+        launch->tail = allocate(128);
+        launch->environment = launch->tail ? allocate(BINFMT_ENV_WORK) : NULL;
+        if (!launch->environment)
+            rc = ENSMEM;
+        else
+            rc = binfmt_arguments(environment, tail, work->redirects, depth,
+                                  launch->environment, launch->tail);
+        if (rc)
+            kdos_fclose_error(*handle, &error);
+        else {
             char *argv;
-            if (!next) { rc = ENSMEM; break; }
-            rc = binfmt_arguments(environment, tail, &work->selection, path, next, launch->tail);
-            if (rc) { release(next); break; }
-            binfmt_release_environment(launch);
-            launch->environment = next;
+
             /* The builder always supplies canonical ARGV followed by argv[0].
              * Keep the pathname there so alloc_env() copies it for the loader. */
-            for (argv = next; *argv && strncmp(argv, "ARGV=", 5); argv += strlen(argv) + 1);
+            for (argv = launch->environment; *argv && strncmp(argv, "ARGV=", 5);
+                  argv += strlen(argv) + 1)
+                ;
             launch->path = argv + strlen(argv) + 1;
         }
-        path = launch->path; tail = launch->tail; environment = launch->environment;
-        strcpy(work->visited[++depth], path);
     }
     if (error.code) rc = error.code;
     release(work);

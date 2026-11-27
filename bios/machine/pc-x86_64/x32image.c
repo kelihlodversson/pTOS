@@ -20,6 +20,9 @@
 #include "progimage.h"
 #include "userlayout.h"
 #include "pmem.h"
+#if CONF_WITH_ELF_LOADER
+#include "../../../lib/ldso/startup.h"
+#endif
 
 #define EHDR_SIZE       52
 #define PHDR_SIZE       32
@@ -38,7 +41,8 @@ static ULONG rd32(const UBYTE *p)
 }
 
 /* Reads and validates the program headers of an ELF image into a layout. */
-BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout)
+static BOOL read_image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout,
+                              ULONG *phoff_out, ULONG *phnum_out)
 {
     const UBYTE *e = image->data;
     ULONG phoff, phnum, i, ent;
@@ -81,8 +85,35 @@ BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout)
             layout->end = s->vaddr + s->memsz;
     }
     layout->entry = ent;
-    return layout_valid(layout, TRUE);
+    if (!layout_valid(layout, TRUE))
+        return FALSE;
+    *phoff_out = phoff;
+    *phnum_out = phnum;
+    return TRUE;
 }
+
+BOOL image_layout(const PROG_IMAGE *image, PROG_LAYOUT *layout)
+{
+    ULONG phoff, phnum;
+    return read_image_layout(image, layout, &phoff, &phnum);
+}
+
+#if CONF_WITH_ELF_LOADER
+BOOL image_layout_start(const PROG_IMAGE *image, PROG_LAYOUT *layout,
+                        DL_START_INFO *start)
+{
+    ULONG phoff, phnum;
+
+    if (!read_image_layout(image, layout, &phoff, &phnum))
+        return FALSE;
+    *start = (DL_START_INFO){0};
+    start->entry = layout->entry;
+    start->phnum = phnum;
+    start->phent = PHDR_SIZE;
+    start->phdr_copy = image->data + phoff;
+    return TRUE;
+}
+#endif
 
 BOOL layout_valid(const PROG_LAYOUT *layout, BOOL strict)
 {

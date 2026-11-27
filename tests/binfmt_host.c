@@ -7,6 +7,7 @@
 #include "gemerror.h"
 #include "binfmt.h"
 #include "startup.h"
+#include "argv_legacy.h"
 
 static BINFMT_REGISTRY registry;
 static BINFMT_PARSER parser;
@@ -117,6 +118,9 @@ static void shebangs(void)
 static void dynamic_arguments(const char *const *expected, UWORD count)
 {
     static unsigned char stack[8192];
+    static const char *slots[LEGACY_START_SLOTS(BINFMT_ENV)];
+    const char *filename = *expected[0] ? expected[0] : "APP.TOS";
+    LEGACY_START_ARGS arguments;
     DL_START_INFO info;
     uint32_t rsp, used, argc, offset, address, i, size;
     const uint32_t top = 0x80000000UL, base = top - sizeof(stack);
@@ -125,9 +129,12 @@ static void dynamic_arguments(const char *const *expected, UWORD count)
     assert(size + 1 < BINFMT_ENV);
     memset(&info, 0, sizeof(info));
     info.pagesz = 4096;
-    assert(dl_start_stack(stack, sizeof(stack), top, expected[0], strlen(expected[0]) + 1,
-                          (const unsigned char *)tail, sizeof(tail),
-                          (const unsigned char *)storage, size + 2, &info, &rsp, &used) == DL_OK);
+    info.phent = 32;
+    assert(legacy_start_vectors(&arguments, filename, (const unsigned char *)tail,
+                                sizeof(tail), (const unsigned char *)storage, size + 2,
+                                slots, sizeof(slots) / sizeof(slots[0])) == DL_OK);
+    assert(dl_start_stack(stack, sizeof(stack), top, filename, strlen(filename) + 1,
+                          &arguments.vectors, &info, NULL, &rsp, &used) == DL_OK);
     assert(rsp + used == top && !(rsp & 15));
     offset = rsp - base;
     memcpy(&argc, stack + offset, 4);
@@ -137,6 +144,18 @@ static void dynamic_arguments(const char *const *expected, UWORD count)
         assert(address >= rsp && address < top);
         assert(!strcmp((const char *)stack + address - base, expected[i]));
     }
+}
+
+static LONG single_redirect(const char *environment, const char *input_tail,
+                            const BINFMT_SELECTION *selection, const char *program,
+                            char *output, char result_tail[128])
+{
+    BINFMT_REDIRECT redirect;
+
+    redirect.interpreter = selection->interpreter;
+    redirect.program = program;
+    redirect.argument = selection->has_argument ? selection->argument : NULL;
+    return binfmt_arguments(environment, input_tail, &redirect, 1, output, result_tail);
 }
 
 static void arguments(void)
@@ -155,58 +174,146 @@ static void arguments(void)
     char *large = malloc(BINFMT_ENV + 2);
     assert(large);
     memset(&s, 0, sizeof(s)); strcpy(s.interpreter, "C:\\EMU.TOS");
-    assert(binfmt_arguments(env, input_tail, &s, "C:/APP.TOS", storage, tail) == 0);
+    assert(single_redirect(env, input_tail, &s, "C:/APP.TOS", storage, tail) == 0);
     assert(!memcmp(storage, expected, sizeof(expected) - 1) && tail[0] == 127);
     assert(!strcmp(tail + 1, "'C:/APP.TOS' 'one' '' 'two words' ''"));
     s.has_argument = TRUE; strcpy(s.argument, "-s  --one-argument");
-    assert(binfmt_arguments(env, input_tail, &s, "C:/APP.TOS", storage, tail) == 0);
+    assert(single_redirect(env, input_tail, &s, "C:/APP.TOS", storage, tail) == 0);
     assert(!memcmp(storage, expected_option, sizeof(expected_option) - 1));
     s.has_argument = FALSE;
     input_tail[0] = strlen(classic); strcpy(input_tail + 1, classic);
-    assert(binfmt_arguments("X=1\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
+    assert(single_redirect("X=1\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
     assert(!memcmp(storage, expected_classic, sizeof(expected_classic) - 1));
-    assert(binfmt_arguments("\0", "", &s, "APP.TOS", storage, tail) == 0);
+    assert(single_redirect("\0", "", &s, "APP.TOS", storage, tail) == 0);
     assert(!memcmp(storage, "ARGV=\0C:\\EMU.TOS\0APP.TOS\0\0", 26));
     assert(tail[0] == 7 && !strcmp(tail + 1, "APP.TOS"));
     input_tail[0] = 5; strcpy(input_tail + 1, "fresh");
-    assert(binfmt_arguments(env, input_tail, &s, "APP.TOS", storage, tail) == 0);
+    assert(single_redirect(env, input_tail, &s, "APP.TOS", storage, tail) == 0);
     assert(!memcmp(storage, "DEMO=present\0ARGV=\0C:\\EMU.TOS\0APP.TOS\0fresh\0\0",
                    sizeof("DEMO=present\0ARGV=\0C:\\EMU.TOS\0APP.TOS\0fresh\0\0") - 1));
     assert(tail[0] == 13 && !strcmp(tail + 1, "APP.TOS fresh"));
     dynamic_arguments(stale_argv, 3);
-    /* A short, unquoted chain reparses its own classic tail. The source
-     * and destination tail may be the same buffer in the kernel. */
+    /* A second single redirect also accepts a classic compatibility result
+     * and permits its input and output tail buffers to alias. */
     memcpy(large, storage, BINFMT_ENV);
     strcpy(s.interpreter, "C:\\NEXT.TOS");
-    assert(binfmt_arguments(large, tail, &s, "C:\\EMU.TOS", storage, tail) == 0);
+    assert(single_redirect(large, tail, &s, "C:\\EMU.TOS", storage, tail) == 0);
     assert(!strcmp(tail + 1, "C:\\EMU.TOS APP.TOS fresh") && tail[0] == 24);
     dynamic_arguments(chain_argv, 4);
     strcpy(s.interpreter, "C:\\EMU.TOS");
     input_tail[0] = 127;
-    assert(binfmt_arguments("ARGV=\0old\0it's\0\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
+    assert(single_redirect("ARGV=\0old\0it's\0\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
     assert(tail[0] == 127 && !strcmp(tail + 1, "'APP.TOS' 'it''s'"));
     dynamic_arguments(apostrophe_argv, 3);
-    assert(binfmt_arguments("ARGV=\0old\0literal\"quote\0\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
+    assert(single_redirect("ARGV=\0old\0literal\"quote\0\0", input_tail, &s, "APP.TOS", storage, tail) == 0);
     assert(tail[0] == 127 && !strcmp(tail + 1, "'APP.TOS' 'literal\"quote'"));
     dynamic_arguments(quote_argv, 3);
     input_tail[0] = 5; strcpy(input_tail + 1, "'oops");
-    assert(binfmt_arguments("\0", input_tail, &s, "APP.TOS", storage, tail) == EINVAL);
+    assert(single_redirect("\0", input_tail, &s, "APP.TOS", storage, tail) == EINVAL);
     input_tail[0] = 127; input_tail[1] = 0;
-    assert(binfmt_arguments("ARGV=NULL:9\0old\0arg\0\0", input_tail, &s, "APP.TOS", storage, tail) == EINVAL);
+    assert(single_redirect("ARGV=NULL:9\0old\0arg\0\0", input_tail, &s, "APP.TOS", storage, tail) == EINVAL);
     memset(large, 'a', BINFMT_ENV + 2);
-    assert(binfmt_arguments(large, "", &s, "APP.TOS", storage, tail) == ERANGE);
+    assert(single_redirect(large, "", &s, "APP.TOS", storage, tail) == ERANGE);
     memcpy(large, "ARGV=\0old\0", 10); large[30000] = large[30001] = 0;
-    assert(binfmt_arguments(large, input_tail, &s, "APP.TOS", storage, tail) == 0 && tail[0] == 127);
+    assert(single_redirect(large, input_tail, &s, "APP.TOS", storage, tail) == 0 && tail[0] == 127);
     assert(strlen(storage + 25) > 29000);
     memcpy(large, "X=", 2); memset(large + 2, 'a', BINFMT_ENV - 4);
     large[BINFMT_ENV - 2] = large[BINFMT_ENV - 1] = 0;
-    assert(binfmt_arguments(large, "", &s, "APP.TOS", storage, tail) == ERANGE);
+    assert(single_redirect(large, "", &s, "APP.TOS", storage, tail) == ERANGE);
     free(large);
+}
+
+static void chained_arguments(void)
+{
+    const BINFMT_REDIRECT redirects[] = {
+        { "C:\\FIRST.TOS", "C:\\SCRIPT.TOS", "first option" },
+        { "C:\\FINAL.TOS", "C:\\FIRST.TOS", "second option" }
+    };
+    const char *const expected[] = {
+        "C:\\FINAL.TOS", "second option", "C:\\FIRST.TOS", "first option",
+        "C:\\SCRIPT.TOS", "", "two words", "literal\"quote"
+    };
+    const char env[] = "FLAG=1\0ARGV=NULL:1\0old argv[0]\0 \0two words\0literal\"quote\0\0";
+    const char input_tail[128] = {127, 0};
+
+    assert(binfmt_arguments(env, input_tail, redirects, 2, storage, tail) == 0);
+    assert(tail[0] == 127);
+    dynamic_arguments(expected, sizeof(expected) / sizeof(expected[0]));
+    assert(binfmt_arguments(env, input_tail, redirects, 0, storage, tail) == EINVAL);
+    assert(binfmt_arguments(env, input_tail, redirects, BINFMT_DEPTH + 1, storage, tail) == EINVAL);
+}
+
+static void prg_vectors(void)
+{
+    const char *args[] = { "", "one", "C:\\FILE.PRG" };
+    const char *env[] = { "X=1" };
+    const char *const extended[] = { "", "", "two words", "literal\"quote" };
+    const char *const ambiguous[] = { "", "two words", "a\tb", "a\nb", "it's", "a\"b" };
+    DL_START_VECTORS vectors = {0};
+    char operand[128];
+    static char limit[BINFMT_ENV];
+    unsigned int i;
+
+    vectors.argv = args;
+    vectors.argc = 3;
+    vectors.envp = env;
+    vectors.envc = 1;
+    memset(storage, 0xff, sizeof(storage));
+    memset(tail, 0xff, sizeof(tail));
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(tail[0] == 15 && !strcmp(tail + 1, "one C:\\FILE.PRG") && !tail[127]);
+    assert(!memcmp(storage, "X=1\0\0", 6));
+
+    vectors.argc = 1;
+    vectors.envc = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(!tail[0] && !tail[1] && !storage[0] && !storage[1]);
+
+    vectors.argc = 2;
+    args[1] = operand;
+    memset(operand, 'a', 126);
+    operand[126] = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(tail[0] == 126 && !tail[127] && !memcmp(tail + 1, operand, 126));
+    operand[126] = 'a';
+    operand[127] = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+    dynamic_arguments(args, 2);
+
+    for (i = 0; i < sizeof(ambiguous) / sizeof(ambiguous[0]); i++) {
+        args[1] = ambiguous[i];
+        assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+        dynamic_arguments(args, 2);
+    }
+    args[0] = "caller name";
+    args[1] = "one";
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+    dynamic_arguments(args, 2);
+    vectors.argv = extended;
+    vectors.argc = sizeof(extended) / sizeof(extended[0]);
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK && tail[0] == 127);
+    dynamic_arguments(extended, vectors.argc);
+
+    memset(limit, 'x', sizeof(limit));
+    limit[sizeof(limit) - 2] = 0;
+    env[0] = limit;
+    args[0] = "";
+    vectors.argv = args;
+    vectors.argc = 2;
+    vectors.envc = 1;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == E_OK);
+    assert(!storage[BINFMT_ENV - 2] && !storage[BINFMT_ENV - 1]);
+    args[0] = "caller name";
+    assert(legacy_pack_vectors(&vectors, storage, tail) == ERANGE);
+    args[0] = "";
+    limit[sizeof(limit) - 2] = 'x';
+    limit[sizeof(limit) - 1] = 0;
+    assert(legacy_pack_vectors(&vectors, storage, tail) == ERANGE);
 }
 
 int main(void)
 {
-    rules(); shebangs(); arguments();
+    rules(); shebangs(); arguments(); chained_arguments(); prg_vectors();
     puts("binfmt parser and arguments: PASS");
     return 0;
 }

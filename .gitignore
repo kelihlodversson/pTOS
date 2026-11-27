@@ -90,4 +90,10 @@ __pycache__/
 
 # EmuCON as a program (CONF_EXTERNAL_CLI)
 /emucon.tos
+/runvec.tos
+/pwroffv.tos
+/rebootv.tos
+/coldbtv.tos
+/haltv.tos
+/cliargs.tos
 

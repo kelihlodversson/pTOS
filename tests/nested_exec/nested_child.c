@@ -1,9 +1,9 @@
 /* NESTCH.TOS: one level of a real synchronous nested Pexec chain (#713).
  * Small on purpose, like GROUPCH.TOS: it is launched recursively. Every
  * failed check ends the level with a distinct status >= 90. */
+#include "../entry_args.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
 #include "nested_query.h"
 
 static const char environment[2] = { 0, 0 };
@@ -156,14 +156,14 @@ static int run_chain(const char *tail)
     return 23;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
-    const char *tail = (const char *)_base->p_cmdlin;
+    const char *argument = test_entry_argument(argc, argv);
     int spin;
 
-    switch (tail[1]) {
+    switch (argument[0]) {
     case 'c':
-        return run_chain(tail + 1); /* a level that passes returns normally */
+        return run_chain(argument); /* a level that passes returns normally */
     case 'i':               /* is this launch an associated THREAD? */
         return nested_query(NQ_TID) > 0 ? 1 : 2;
     case 'm':               /* proof of execution for the rollback checks */
@@ -179,7 +179,7 @@ int main(void)
         char next_tail[NESTED_TAIL_BYTES];
         long pid = Pgetpid(), tid = nested_query(NQ_TID);
         chain.remaining = 1; chain.mode = 't'; chain.flag = '-';
-        chain.anchored = tail[0] >= 2 && tail[2] == 'A';
+        chain.anchored = argument[1] == 'A';
         chain.tracked = tid > 0 && !chain.anchored;
         chain.ppid = pid; chain.ptid = tid;
         chain.depth = chain.tracked ? (int)nested_query(NQ_DEPTH) + 1 : 0;

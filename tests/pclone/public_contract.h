@@ -9,6 +9,9 @@ static volatile long phase1_pid;
 static unsigned phase1_resources;
 static int phase1_resource_error;
 static char phase1_parent_path[128], phase1_child_path[128];
+#if defined(TEST_WITH_MMAP)
+static volatile unsigned phase1_mapping_wait;
+#endif
 
 #if defined(__x86_64__)
 volatile unsigned long long clone_abi_argument;
@@ -34,6 +37,9 @@ void clone_abi_entry_body(void *argument)
             phase1_resource_error |= 2;
         if (Dsetpath("C:\\")) phase1_resource_error |= 4;
     }
+#if defined(TEST_WITH_MMAP)
+    while (phase1_mapping_wait) (void)Syield();
+#endif
     /* Public void return ignores the incidental native result register. */
 #if defined(__arm__)
     __asm__ volatile ("mov r0,#91" ::: "r0");
@@ -161,6 +167,7 @@ static void phase1_mapping_matrix(struct ptos_clone_args good, unsigned char *st
     long result;
     int32_t pid, tid;
     unsigned char *cross;
+    unsigned attempts;
     ptest_assert_msg(memory > 0 && code > 0,"native ABI permission/lifetime mappings");
     if (memory <= 0 || code <= 0) {
         if (memory > 0) (void)clone_test_sys6(GEMDOS_MUNMAP,memory,8192,0,0,0,0);
@@ -203,17 +210,32 @@ static void phase1_mapping_matrix(struct ptos_clone_args good, unsigned char *st
                      "publish native instruction mapping without W+X");
     good.entry = (void (*)(void *))code;
     phase1_entered = 0;
+    phase1_mapping_wait = 1;
     result = pclone_trap(&good,32);
-    ptest_assert_msg(result > 0 && result == tid && !phase1_entered,"owned RX entry admitted without dispatch");
+    ptest_assert_msg(result > 0 && result == tid,"owned RX entry admitted");
+#if !defined(TEST_WITH_PREEMPTION)
+    ptest_assert_msg(!phase1_entered,"cooperative admission does not dispatch the RX entry");
     ptest_assert_msg(clone_test_sys6(GEMDOS_MPROT,code,4096,PROT_READ|PROT_WRITE,0,0,0) == -36L &&
-                     clone_test_sys6(GEMDOS_MUNMAP,code,4096,0,0,0,0) == -36L &&
-                     clone_test_sys6(GEMDOS_MPROT,memory,8192,PROT_READ,0,0,0) == -36L &&
+                     clone_test_sys6(GEMDOS_MUNMAP,code,4096,0,0,0,0) == -36L,
+                     "pending entry hold rejects destructive mutation");
+#endif
+    /* A timer can consume the startup leases before the parent is scheduled
+     * again. The stack hold must survive dispatch and the child waits to exit. */
+    ptest_assert_msg(clone_test_sys6(GEMDOS_MPROT,memory,8192,PROT_READ,0,0,0) == -36L &&
                      clone_test_sys6(GEMDOS_MUNMAP,memory,8192,0,0,0,0) == -36L,
-                     "pending entry and stack holds reject destructive mutation");
+                     "live child stack hold rejects destructive mutation");
+    for (attempts = 0; result > 0 && !phase1_entered && attempts < 128; attempts++)
+        (void)Syield();
+    /* The child has tail-jumped out of the entry mapping and cannot return
+     * there. Its startup lease should now be gone even though it is alive. */
+    ptest_assert_msg(phase1_entered == 1 &&
+                     clone_test_sys6(GEMDOS_MPROT,code,4096,PROT_READ,0,0,0) == 0,
+                     "first dispatch releases the RX entry hold before child exit");
+    phase1_mapping_wait = 0;
     phase1_finish(result,pid);
     ptest_assert_msg(clone_test_sys6(GEMDOS_MUNMAP,code,4096,0,0,0,0) == 0 &&
                      clone_test_sys6(GEMDOS_MUNMAP,memory,8192,0,0,0,0) == 0,
-                     "stopped child releases entry/stack holds before final unmap");
+                     "stopped child releases the stack hold before final unmap");
 }
 #endif
 
@@ -338,9 +360,11 @@ static void test_public_contract(unsigned char *stack)
         pid = tid = -99; phase1_entered = 0;
         if (size < 32) request.args.child_pid = (int32_t *)0xffff0000UL;
         result = pclone_trap(&request,size);
-        ptest_assert_msg(result == tid && result > 0 && !phase1_entered &&
-                         (size < 32 ? pid == -99 : pid > 0),
-                         "28..31 prefix, 32 extension, unknown tail and no early dispatch");
+        ptest_assert_msg(result == tid && result > 0 && (size < 32 ? pid == -99 : pid > 0),
+                         "28..31 prefix, 32 extension and unknown tail");
+#if !defined(TEST_WITH_PREEMPTION)
+        ptest_assert_msg(!phase1_entered,"cooperative publication does not dispatch a child");
+#endif
         phase1_finish(result,size < 32 ? -1 : pid);
     }
     phase1_account("prefix",baseline);

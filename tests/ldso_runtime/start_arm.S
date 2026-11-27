@@ -12,6 +12,7 @@ _start:
         add     r2, r2, #4              @ envp: after argv's terminator
         mov     r3, r4
         bl      app_main
+#ifndef PTOS_STATIC_PROBE
         mov     r5, r0
         cmp     r4, #0
         beq     failed
@@ -25,6 +26,7 @@ _start:
 failed:
         mov     r0, #93
 exit:
+#endif
         mov     r1, r0                  @ Pterm(code)
         mov     r0, #0x4c
         svc     1

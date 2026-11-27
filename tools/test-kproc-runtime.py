@@ -50,6 +50,8 @@ with tempfile.TemporaryDirectory(prefix="ptos-kproc-runtime-") as directory:
             flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         elif args.mode == "fortified":
             flags += ["-D_FORTIFY_SOURCE=3", "-fstack-protector-strong"]
-        subprocess.run(cc + ["-std=gnu90", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-iquote", "include", "-I" + str(work), "-Iinclude/machine/" + machine, "-Iinclude/arch/" + arch, "-Ibios/machine/" + machine, "-Ibios/arch/" + arch, "-iquote", "bdos", "-iquote", "bios", "-iquote", "fs", "-iquote", "aes", "-idirafter", "include"] + flags + ["tests/kproc_runtime_host.c", "bdos/kaspace.c", "bdos/kowner.c", "tests/kowner_model.c", "lib/ldso/startup.c", "-Wl,--gc-sections", "-o", str(work / "borrow")], check=True)
+        sources = ["tests/kproc_runtime_host.c", "bdos/kaspace.c", "bdos/kowner.c",
+                   "tests/kowner_model.c", "lib/ldso/startup.c", "bdos/argv_legacy.c"]
+        subprocess.run(cc + ["-std=gnu90", "-O2", "-g", "-Wall", "-Wextra", "-Werror", "-fno-builtin", "-fno-pie", "-no-pie", "-ffunction-sections", "-fdata-sections", "-iquote", "include", "-I" + str(work), "-Iinclude/machine/" + machine, "-Iinclude/arch/" + arch, "-Ibios/machine/" + machine, "-Ibios/arch/" + arch, "-iquote", "bdos", "-iquote", "bios", "-iquote", "fs", "-iquote", "aes", "-idirafter", "include"] + flags + sources + ["-Wl,--gc-sections", "-o", str(work / "borrow")], check=True)
         subprocess.run([str(work / "borrow")], check=True)
         print(f"Production KPROC runtime ownership ({preset}): PASS", flush=True)

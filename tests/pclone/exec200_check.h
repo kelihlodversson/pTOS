@@ -7,8 +7,8 @@
 #ifndef EXEC200_CHECK_H
 #define EXEC200_CHECK_H
 #include "exec200_probe.h"
+#include "../entry_args.h"
 #include <mint/mintbind.h>
-#include <mint/basepage.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,16 +55,16 @@ static void exec200_verify_startup(const char *who)
 /* Everything a replaced program must find: the same PROCESS (PID, TID,
  * parent), the same descriptor at the same position, a new environment,
  * command tail, default DTA, root and basepage, and the next generation. */
-static __attribute__((unused)) void exec200_verify(const char *who, EXEC200_TAIL *t)
+static __attribute__((unused)) void exec200_verify(const char *who, const char *argument, EXEC200_TAIL *t)
 {
     char line[128];
     unsigned length;
     const char *value = getenv("EXEC");
     EXEC_REPLACE_TEST_STATE state;
     exec200_verify_startup(who);
-    length = (unsigned char)_base->p_cmdlin[0];
+    length = strlen(argument);
     if (!length || length > 125) exec200_fail(who, "command tail length", (long)length);
-    memcpy(line, _base->p_cmdlin + 1, length); line[length] = 0;
+    memcpy(line, argument, length + 1);
     if (line[0] == 'F') line[0] = ' ';
     if (sscanf(line, "%lu %ld %lu %lu %lu %lu %ld %d %ld %lu %lu %lu", &t->generation, &t->descriptor,
                &t->pid, &t->tid, &t->root0, &t->root1, &t->parent, &t->nested,
@@ -94,12 +94,23 @@ static __attribute__((unused)) long exec200_next(const char *path, char mode, co
                                                  const char *environment)
 {
     char tail[128];
+#ifdef TEST_NATIVE_ELF_ENTRY
+    char *const argv[] = { (char *)path, tail + 1, NULL };
+    char *explicit_env[] = { (char *)environment, NULL, NULL };
+    extern char **environ;
+#endif
     int length=snprintf(tail + 1, sizeof(tail) - 1, "%s%lu %ld %lu %lu %lu %lu %ld %d %ld %lu %lu %lu",
             mode == 'F' ? "F" : "", t->generation + 1, t->descriptor, t->pid, t->tid, t->root0, t->root1,
             t->parent, t->nested, Fseek(0L, (short)t->descriptor, 1), (unsigned long)_base,
             t->process0, t->process1);
     if (length <= 0 || length > 125) exec200_fail("image", "encode command tail", length);
+#ifdef TEST_NATIVE_ELF_ENTRY
+    if (environment)
+        explicit_env[1] = (char *)environment + strlen(environment) + 1;
+    return Pexecve(200, path, argv, environment ? explicit_env : environ);
+#else
     tail[0] = (char)length;
     return Pexec(200, path, tail, environment);
+#endif
 }
 #endif

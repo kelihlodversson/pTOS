@@ -53,4 +53,7 @@ config CONF_WITH_DYNAMIC_CLI
 	  Use the standard ELF dynamic CRT and libptos.so for the external
 	  x32 console. Embedded consoles retain their static entry contract.
 
+config CONF_WITH_CLI_VECTOR_EXEC
+	def_bool CONF_WITH_CLI && (ARCH_X86_64 || (ARCH_ARM && CONF_EXTERNAL_CLI && CONF_WITH_ELF_LOADER))
+
 endmenu

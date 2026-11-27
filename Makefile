@@ -884,22 +884,22 @@ X32_LDFLAGS_NOQ = -nostdlib -static -no-pie -Wl,--build-id=none,-z,noexecstack \
                   -Wl,-z,noseparate-code -Wl,-Ttext-segment=0x400000
 X32_LDFLAGS = $(X32_LDFLAGS_NOQ) -Wl,-q
 
-x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $^
+x32hello.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -o $@ $(filter %.c %.S,$^)
 
 # The same program linked into the reserved system range: Pexec() has to
 # move it to the default image base and use the relocations kept by -q.
-x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -o $@ $^
+x32reloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS) -Wl,-Ttext-segment=0x08000000 -o $@ $(filter %.c %.S,$^)
 
 # ... and linked for another address without keeping the relocations (no -q):
 # Pexec() must refuse it, not run it with every absolute address wrong.
-x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x08000000 -o $@ $^
+x32noreloc.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) $(X32_LDFLAGS_NOQ) -Wl,-Ttext-segment=0x08000000 -o $@ $(filter %.c %.S,$^)
 
 # ... and one with a 6 MiB bss, bigger than the old image window.
-x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S
-	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $^
+x32big.elf: tests/x32_hello/x32_hello.c tests/x32_hello/x32_start.S tests/x32_probe/startup.h lib/ldso/startup.h
+	$(X32_CC) $(X32_CFLAGS) -DX32_BIG $(X32_LDFLAGS) -Wl,-Ttext-segment=0x20000000 -o $@ $(filter %.c %.S,$^)
 
 .PHONY: x32test
 x32test: x32hello.elf x32reloc.elf x32noreloc.elf x32big.elf
@@ -968,7 +968,7 @@ x32-vdi: obj/x32/libptos-vdi.so.1
 obj/x32/vdi-import-reloc.elf: X32_IMPORT_LINK_BASE = -Wl,-Ttext-segment=0x20000000
 obj/x32/vdi-import-plt.elf: X32_IMPORT_FLAGS = -DVDI_IMPORT_PLT
 obj/x32/vdi-import.elf obj/x32/vdi-import-reloc.elf obj/x32/vdi-import-plt.elf: \
-  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S \
+  tests/x32_vdi_import/vdi_import.c tests/x32_probe/x32_probe_start.S tests/x32_probe/startup.h tests/x32_probe/exec.h lib/ldso/startup.h \
   tests/vdi_contract/vdi_roundtrip.c obj/x32/libptos-vdi.so.1 $(AUTOCONF_H) | obj/x32
 	$(X32_CC) $(filter-out -fno-pie,$(X32_CLI_CFLAGS)) -fPIE -DVDI_IMPORT_TEST $(X32_IMPORT_FLAGS) -Iinclude -Iobj \
 	  -nostdlib -Wl,-pie,--no-dynamic-linker,--build-id=none -Wl,-m,elf32_x86_64 \
@@ -1002,7 +1002,7 @@ $(X32_CLI_OBJ): $(AUTOCONF_H)
 # EmuCON's own sources use cmd.h's standalone definitions and the cli/x32
 # headers; util/ and the generated version use the kernel's.
 X32_CLI_INC = -DSTANDALONE_CONSOLE -DX32_USERLAND -Icli/x32 -Icli/x32/include \
-              -Iinclude -Iobj -Icli
+              -DCLI_VECTOR_EXEC=$(if $(CONF_WITH_CLI_VECTOR_EXEC),1,0) -Iinclude -Iobj -Icli
 X32_UTIL_INC = -Iinclude/arch/x86_64 -Iinclude -Iobj -Iutil
 obj/x32/doprintf.o obj/x32/string.o obj/x32/version.o: X32_CLI_INC = $(X32_UTIL_INC)
 
@@ -1036,10 +1036,11 @@ endif
 ifeq ($(CONF_WITH_X86_64_MEMTEST),y)
 obj/x32/x32probe.elf: tests/pclone/irq_registers.S tests/x32_probe/receipt_fault.c tests/x32_probe/clone_threads.c tests/x32_probe/clone_registers.S tests/x32_probe/clone_public.c tests/x32_probe/x32_probe.c tests/x32_probe/x32_probe_start.S \
                     tests/user_callback/callback_roundtrip.c tests/user_callback/callback_registers.S \
+                    tests/x32_probe/exec.h tests/x32_probe/startup.h lib/ldso/startup.h \
                     include/user_callback.h \
                     tests/vdi_contract/vdi_contract.c tests/vdi_contract/vdi_roundtrip.c \
                     include/vdi_user.h include/vdipb.h include/vdi_service.h include/userptr.h \
-                    obj/x32/libptos-vdi.a include/mman.h include/pclone.h include/threadcalls.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
+                    obj/x32/libptos-vdi.a include/mman.h include/pclone.h include/pexecve.h include/threadcalls.h $(AUTOCONF_H) $(X32_PROBE_LDSO) $(X32_PROBE_LDSO_HEADERS) | obj/x32
 	$(X32_CC) $(X32_CLI_CFLAGS) -Iinclude -Iobj $(X32_CLI_LDFLAGS) -include $(AUTOCONF_H) -o $@ \
 	  $(filter %.c %.S %.a,$^)
 
@@ -1659,7 +1660,7 @@ TEST_FONT_FILES = $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF $(TEST_FONT_STAGE)/FONTS
 TEST_HD_SIZE = 4194304            # 4 MiB, must be power of two for QEMU
 
 # libcmini provides the C library, OS bindings (Fsfirst, Pterm, …) and
-# startup code (minicrt0) for the standalone test harness.
+# startup code for the standalone test harness.
 #
 # Its own Makefile defaults BUILDDIR to "build" inside itself, which would
 # leave build output sitting in the lib/libcmini submodule's working tree
@@ -1765,6 +1766,16 @@ $(LIBCMINI_LIB): $(LIBCMINI_STAMP) $(wildcard $(LIBCMINI_DIR)/sources/*.c $(LIBC
 
 $(LIBCMINI_CRT0): $(LIBCMINI_LIB)
 
+ifdef ARCH_X86_64
+ifeq ($(CONF_WITH_CLI_VECTOR_EXEC),y)
+ifneq ($(CONF_WITH_DYNAMIC_CLI),y)
+# Share libcmini's standard ELF entry with the static console. Its own CRT
+# shim also accepts the basepage entry used when the kernel embeds the image.
+obj/x32/emucon.elf: $(LIBCMINI_LIB)
+endif
+endif
+endif
+
 #
 # EmuCON as a program (CONF_EXTERNAL_CLI): cli/Makefile builds the standalone
 # EmuCON, against the libcmini that is built here, and the file goes on the
@@ -1782,6 +1793,7 @@ else
 EMUCON_MAKE = $(MAKE) -s -C cli CC=$(CC) ARCH=$(if $(ARCH_ARM),arm,m68k) \
     BUILD_M68K_LRA=$(if $(M68K_LRA_FLAGS),y,n) \
     CLI_SSYSTEM=$(if $(filter y,$(CONF_WITH_USER_ASPACE)),1,0) \
+    CLI_VECTOR_EXEC=$(if $(CONF_WITH_CLI_VECTOR_EXEC),1,0) \
     M68K_ELF=$(BUILD_TOOLCHAIN_ELF) \
     M68K_PRG_FLAGS="$(if $(BUILD_TOOLCHAIN_PTOS),-mmintelf)" \
     CROSS_COMPILE=$(CROSS_COMPILE) LIBCMINI_BUILDDIR=$(LIBCMINI_BUILDDIR) \
@@ -1940,11 +1952,15 @@ TEST_CC = $(CC)
 TEST_LIBS = $(LIBS)
 TEST_CPUFLAGS = $(CPUFLAGS)
 endif
+TEST_M68K_PRIVATE_ELF = $(and $(ARCH_M68K),$(CONF_WITH_USER_ASPACE),$(CONF_WITH_ELF_LOADER))
+TEST_VECTOR_ENTRY = $(or $(CONF_WITH_ARM_SHARED_EXEC),$(and $(CONF_WITH_USER_ASPACE),$(or $(ARCH_ARM),$(ARCH_X86_64))))
+
 # ROM-window MMU backends deliberately reject private cloning in aspace_clone.
 # Phase C keeps kernel ownership counters/adapters, but its ROM user proof uses
 # independently loader-created roots rather than advertising private-fork tests.
 TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(OTHERFLAGS) $(WARNFLAGS) -Itests -I$(LIBCMINI_INC) \
+              $(if $(TEST_VECTOR_ENTRY),-DTEST_NATIVE_ELF_ENTRY) \
               $(if $(ARCH_ARM),-mword-relocations) \
               $(if $(CONF_WITH_FAT_FILE_LIFETIMES),-DTEST_WITH_FAT_FILE_LIFETIMES) \
               $(if $(CONF_WITH_KPROC),-DTEST_WITH_KPROC) \
@@ -2011,7 +2027,15 @@ obj/run_tests.o: tests/run_tests.c $(AUTOCONF_H) | obj
 obj/testlib.o: tests/testlib.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-TEST_STARTUP = $(LIBCMINI_CRT0)
+TEST_VECTOR_STARTUP = $(LIBCMINI_OBJDIR)/elfcrt0.o
+
+$(TEST_VECTOR_STARTUP): $(LIBCMINI_LIB)
+	@$(LIBCMINI_MAKE) $@
+
+# The m68k harness can start through ELF vectors and still exercise Pexec.
+TEST_STARTUP = $(if $(or $(TEST_VECTOR_ENTRY),$(and $(TEST_M68K_PRIVATE_ELF),$(BUILD_TOOLCHAIN_ELF))),$(TEST_VECTOR_STARTUP),$(LIBCMINI_CRT0))
+# Some m68k probes are linked as ELF even when the suite defaults to PRG.
+TEST_M68K_ELF_STARTUP = $(if $(TEST_M68K_PRIVATE_ELF),$(TEST_VECTOR_STARTUP),$(TEST_STARTUP))
 
 # Each test suite object depends on its source and the generated run_tests.c.
 define test-suite-rule
@@ -2074,6 +2098,21 @@ endif
 
 runtests.tos: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+
+ifdef LDSO_VECTOR_TEST_PRG
+# minicrt0 only parses the environment. The PRG vector probe needs the
+# full startup that consumes marker 127 and the ARGV=NULL argument block.
+LDSO_VECTOR_TEST_PRG_STARTUP = $(LIBCMINI_OBJDIR)/crt0.o
+$(LDSO_VECTOR_TEST_PRG_STARTUP): $(LIBCMINI_LIB)
+	@$(LIBCMINI_MAKE) $@
+
+obj/pexecve_prg.o: tests/ldso_runtime/pexecve_prg.c $(AUTOCONF_H) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(LDSO_VECTOR_TEST_PRG): $(LDSO_VECTOR_TEST_PRG_STARTUP) obj/pexecve_prg.o $(LIBCMINI_LIB)
+	@mkdir -p $(@D)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ -L$(dir $(LIBCMINI_LIB)) $(TEST_LIBS) -o $@
+endif
 
 ifeq ($(CONF_WITH_FORK_CORE),y)
 TEST_FORK_PARENT_FILES = FORKPAR.TOS
@@ -2138,9 +2177,9 @@ obj/exec200_prg.o: tests/pclone/exec200_image.c $(AUTOCONF_H) | obj
 endif
 ifdef CONF_WITH_ELF_LOADER
 TEST_EXEC200_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
-EXEC200B.TOS: $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
+EXEC200B.TOS: $(TEST_M68K_ELF_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
-	  $(TEST_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  $(TEST_M68K_ELF_STARTUP) obj/exec200_image.o $(TEST_EXEC200_IRQ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
 	  -L$(TEST_EXEC200_LIBGCC_DIR) -lgcc -o $@
 else
 TEST_EXEC200_FILES := $(filter-out EXEC200B.TOS,$(TEST_EXEC200_FILES))
@@ -2161,9 +2200,9 @@ ifdef CONF_WITH_MULTITHREADING
 ifdef CONF_WITH_ELF_LOADER
 TEST_CLONE_ABI_FILES = CLNABI.TOS
 TEST_CLONE_LIBGCC_DIR = $(shell dirname $$($(TEST_CC) $(TEST_CPUFLAGS) -print-libgcc-file-name))
-CLNABI.TOS: $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
+CLNABI.TOS: $(TEST_M68K_ELF_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld --oformat=elf32-m68k -z noexecstack -q -Ttext=0x10000 -Tdata=0x100000 -Tbss=0x200000 -e _start \
-	  $(TEST_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
+	  $(TEST_M68K_ELF_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) -L$(dir $(LIBCMINI_LIB)) -lcmini \
 	  -L$(TEST_CLONE_LIBGCC_DIR) -lgcc -o $@
 endif
 endif
@@ -2186,6 +2225,50 @@ $(eval $(call shutdown-prog,coldboot,2,cold booting))
 $(eval $(call shutdown-prog,halt,3,halting))
 TEST_SHUTDOWN_FILES = poweroff.tos reboot.tos coldboot.tos halt.tos
 
+TEST_DESK_INF = tests/emudesk.inf
+ifeq ($(ARCH_X86_64)$(CONF_WITH_LIBAES),yy)
+TEST_DESK_INF = obj/vector-tests/emudesk.inf
+
+$(TEST_DESK_INF): tests/emudesk.inf
+	@mkdir -p $(@D)
+	sed 's/RUNTESTS\.TOS/RUNVEC.TOS/' $< > $@
+endif
+
+# The native desktop and vector-enabled CLI share the ELF test binaries.
+TEST_VECTOR_CONSOLE = $(or $(CONF_WITH_CLI_VECTOR_EXEC),$(and $(CONF_WITH_CLI),$(CONF_WITH_ARM_SHARED_EXEC)))
+ifneq ($(TEST_VECTOR_CONSOLE)$(filter yy,$(ARCH_X86_64)$(CONF_WITH_LIBAES)),)
+TEST_VECTOR_FILES = runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos
+
+runvec.tos: $(TEST_VECTOR_STARTUP) $(TEST_OBJ) $(TEST_SUITE_OBJ) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+
+pwroffv.tos: obj/poweroff.o
+rebootv.tos: obj/reboot.o
+coldbtv.tos: obj/coldboot.o
+haltv.tos: obj/halt.o
+pwroffv.tos rebootv.tos coldbtv.tos haltv.tos: $(TEST_VECTOR_STARTUP) $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+
+ifeq ($(TEST_VECTOR_CONSOLE),y)
+TEST_VECTOR_FILES += cliargs.tos
+
+obj/cliargs.o: tests/emucon/arguments.c $(AUTOCONF_H) $(LIBCMINI_LIB) | obj
+	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+cliargs.tos: $(TEST_VECTOR_STARTUP) obj/cliargs.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $^ $(TEST_LIBS) -o $@
+ifdef ARCH_X86_64
+ifneq ($(CONF_EXTERNAL_CLI),y)
+# An embedded image also needs a disk copy for the nested console regression.
+TEST_VECTOR_FILES += obj/x32/test-cli/EMUCON.TOS
+obj/x32/test-cli/EMUCON.TOS: obj/x32/emucon.elf
+	@mkdir -p $(@D)
+	@cp $< $@
+endif
+endif
+endif
+endif
+
 # ISOPROBE.TOS: the payload of the isolation suite (tests/isolation/isoprobe.c),
 # linked like runtests.tos.
 ifneq ($(filter isolation,$(TEST_SUITES)),)
@@ -2206,9 +2289,9 @@ obj/high_probe.o: tests/broad_va/high_probe.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 ifdef ARCH_M68K
-HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
+HIIMAGE.TOS: $(TEST_M68K_ELF_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld -m m68kelf -Ttext-segment=0x41000000 -e _start \
-	  $(TEST_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+	  $(TEST_M68K_ELF_STARTUP) obj/high_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
 else
 HIIMAGE.TOS: $(TEST_STARTUP) obj/high_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(if $(ARCH_X86_64),$(X32_LDFLAGS_NOQ)) -Wl,-Ttext-segment=0x41000000,-e_start \
@@ -2263,9 +2346,9 @@ ifdef ARCH_M68K
 # The compiler driver's default m68k link is a PRG ("-pie not supported"):
 # ask the linker for its ELF emulation directly.  libgcc is not needed by the
 # probe.
-pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
+pieprobe.tos: $(TEST_M68K_ELF_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
-	  $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
+	  $(TEST_M68K_ELF_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini -o $@
 else
 pieprobe.tos: $(TEST_STARTUP) obj/pie_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PIE_LDFLAGS) $(TEST_STARTUP) obj/pie_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
@@ -2360,9 +2443,9 @@ endif
 
 ifdef ARCH_M68K
 # (the driver's default m68k link is a PRG: "-pie not supported")
-relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+relocprobe-unpacked.tos: $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld -m m68kelf -pie --no-dynamic-linker -e _start \
-	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 else
 relocprobe-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
@@ -2373,9 +2456,9 @@ ifneq ($(ARCH_ARM)$(ARCH_X86_64),)
 relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(TEST_LD) $(TEST_PTOS_RELOC_LDFLAGS2) $(TEST_STARTUP) obj/reloc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 else
-relocprobe2-unpacked.tos: $(TEST_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
+relocprobe2-unpacked.tos: $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o $(LIBCMINI_LIB)
 	$(CROSS_COMPILE)ld $(if $(BUILD_TOOLCHAIN_PTOS),-m m68kmintelf) --oformat=elf32-m68k -q -Ttext=0x10000 -Tdata=0x20000 -Tbss=0x30000 -e _start \
-	  $(TEST_STARTUP) obj/reloc_probe.o \
+	  $(TEST_M68K_ELF_STARTUP) obj/reloc_probe.o \
 	  -L$(dir $(LIBCMINI_LIB)) -lcmini -L$(TEST_LIBGCC_DIR) -lgcc -o $@
 endif
 
@@ -2482,7 +2565,7 @@ $(LDSO_RUNTIME_DIR)/LIB/X32/LIBDYN.SO: obj/ldso/test/libdyn.so
 endif
 endif
 
-TEST_HD_FILES = $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
+TEST_HD_FILES = $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_FILES) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_DIR) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) $(TEST_VECTOR_FILES) $(TEST_DESK_INF) $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES)
 
 $(TEST_FONT_STAGE)/FONTS/PTOSTEST.TTF: tests/fonts/PTOSTEST.TTF
 	@mkdir -p $(dir $@)
@@ -2498,7 +2581,7 @@ $(TEST_FONT_STAGE)/FONTS/LICENSE.TXT: tests/fonts/LICENSE
 	@mkdir -p $(dir $@)
 	@cp $< $@
 
-test-hd.img: $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) tests/emudesk.inf $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
+test-hd.img: $(TEST_PREEMPT_FILES) $(TEST_FORK_PARENT_FILES) $(TEST_EXEC_HANDOFF_FILES) $(TEST_EXEC200_FILES) $(TEST_IMAGE_POLICY_FILES) $(TEST_CLONE_ABI_FILES) $(TEST_GLOBAL_BUILD) $(TEST_PROCESS_EXEC_FILES) $(TEST_GROUP_FILES) $(TEST_NESTED_FILES) $(LDSO_RUNTIME_FILES) $(LDSO_TEST_APP) $(LDSO_STATIC_TEST_APP) runtests.tos $(EMUCON_TOS) $(EMUDESK_PRG) $(TEST_SHUTDOWN_FILES) $(TEST_VECTOR_FILES) $(TEST_DESK_INF) $(TEST_PIE_FILES) $(TEST_SHARED_VM_FILES) $(TEST_LOAD_FAIL_FILES) $(TEST_PTOS_RELOC_FILES) $(TEST_ISO_FILES) $(TEST_BROAD_VA_FILES) $(TEST_FONT_FILES) $(shell find $(TEST_DESTDIR) -type f)
 	@echo '  MKHD   $@'
 	@./tools/mkhdisk.sh $@ $(TEST_HD_SIZE) $(TEST_HD_FILES) $(if $(TEST_GLOBAL_BUILD),obj/global-stage/AUTO) $(TEST_DESTDIR) $(TEST_FONT_STAGE)
 
@@ -2542,8 +2625,8 @@ ifdef ARCH_ARM
 obj/arm_acc_probe.o: tests/arm_acc_probe.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-ACCPROBE.ACC: $(TEST_STARTUP) obj/arm_acc_probe.o $(LIBCMINI_LIB)
-	$(TEST_LD) $(TEST_LDFLAGS) $(TEST_STARTUP) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
+ACCPROBE.ACC: $(LIBCMINI_CRT0) obj/arm_acc_probe.o $(LIBCMINI_LIB)
+	$(TEST_LD) $(TEST_LDFLAGS) $(LIBCMINI_CRT0) obj/arm_acc_probe.o -L$(dir $(LIBCMINI_LIB)) -lcmini $(TEST_LIBS) -o $@
 
 .PHONY: arm-acc-probe
 arm-acc-probe: ACCPROBE.ACC
@@ -2563,7 +2646,9 @@ endif
 # regardless of .config -- anything gated on it here would silently never
 # run under "make clean", leaving runtests.tos/tests/run_tests.c and
 # lib/libcmini/build/ behind.
+TOCLEAN += runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos cliargs.tos
 TOCLEAN += tests/run_tests.c runtests.tos poweroff.tos reboot.tos coldboot.tos \
+           runvec.tos pwroffv.tos rebootv.tos coldbtv.tos haltv.tos \
            halt.tos pieprobe.tos LOADFAIL.TOS ISOPROBE.TOS HIIMAGE.TOS GROUPCH.TOS NESTCH.TOS PROCXIT.TOS GLOBALCH.TOS GLBSRC.TOS GLBCHK.TOS \
            relocprobe-unpacked.tos PTRELOC.TOS \
            relocprobe2-unpacked.tos PTRELOC2.TOS \

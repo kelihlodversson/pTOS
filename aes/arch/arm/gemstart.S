@@ -264,10 +264,9 @@ C_SYM(dos_exec):
 
         bl      C_SYM(enable_interrupts)
 
-        // refetch parameter registers (shifted up by one)
-        pop     {r1-r4}
-        mov     r0,  #0x4B
-        svc     1                      // ... and execute the Pexec call!
+        // Reenter GEMDOS through the kernel's launch veneer.
+        pop     {r0-r3}
+        bl      C_SYM(trap1_pexec)
         ldr     r4, [sp], #4
         str     r0, [sp,  #4]          // save the result from being stomped on
         bl      C_SYM(disable_interrupts)

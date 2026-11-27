@@ -2,19 +2,27 @@ Process entry contract
 ======================
 
 This document defines the register and stack state at the first instruction
-of a loaded user process.  It applies to the ARM and x32 ports.  It is not
+of a loaded user process.  It applies to the ARM, x32 and m68k ports. It is not
 the syscall ABI; the x32 syscall ABI is a separate contract.
 
 The launcher supplies an explicit entry type.  Startup code must not infer
 the type from p_parent, a filename, or any unspecified register value.
 
-The standard ELF interpreter path (#660), enabled by CONF_WITH_ELF_SHARED,
-has a separate implemented initial stack/auxv ABI (doc/elf-shared.txt): RSP
-is 16-byte aligned and points to argc, followed by 32-bit argv/envp/auxv.
-All general registers except RSP are initially zero, including RDX. The
-interpreter transfers to AT_ENTRY with that stack and supplies its finalizer
-callback in RDX for the application CRT to call before normal Pterm.
-Static ELF, built-in images and classic programs retain the conventions below.
+The standard ELF initial stack (doc/elf-shared.txt) is used for PT_INTERP
+and for static ELF loaded with kernel-owned launch vectors. The initial
+stack pointer is 16-byte aligned and points to argc, followed by 32-bit
+argv, envp and auxv. AT_PTOS_BASEPAGE locates the program's basepage.
+Static vector entry goes directly to AT_ENTRY with AT_BASE zero. The
+dynamic interpreter transfers to AT_ENTRY with a finalizer callback for
+the application CRT. On x32 that callback is in RDX and is zero at static
+vector entry.
+
+On m68k with private user address spaces, Pexec modes 0, 100 and 200
+derive the ELF vectors from the supplied GEMDOS command tail and environment,
+using the same conversion for static and PT_INTERP images. Classic PRGs,
+staged GO modes, and ELF on shared-address-space m68k keep basepage entry.
+Built-in images and internal staged accessories use their established entry
+conventions.
 
     ENTRY_PROGRAM = 0
     ENTRY_ACCESSORY = 1
@@ -52,8 +60,8 @@ the filename, or an unspecified register value.
 m68k
 ----
 
-The established m68k conventions are unchanged and remain distinct.  An
-ordinary program receives its basepage at 4(sp), with A0 cleared.  gotopgm()
+With basepage entry an ordinary program receives its basepage at 4(sp),
+with A0 cleared. gotopgm()
 supplies a desk accessory's basepage in A0.  No entry-type register is added
 to the m68k ABI; startup code must use the launch convention selected by the
 existing launcher.

@@ -260,6 +260,7 @@ LONG binfmt_select(const BINFMT_REGISTRY *r, const UBYTE *data, ULONG length, BI
             if ((data[rule->offset + j] & rule->mask[j]) != (rule->magic[j] & rule->mask[j])) break;
         if (j != rule->length) continue;
         strcpy(out->interpreter, rule->interpreter);
+        out->registry_rule = TRUE;
         return E_OK;
     }
     return 1;                       /* no interpreter selected */

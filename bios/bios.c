@@ -24,6 +24,9 @@
 #include "bios.h"
 #include "shells.h"
 #include "../bdos/bdosstub.h"
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
+#include "../lib/ldso/startup.h"
+#endif
 #if CONF_WITH_BINFMT
 #include "../bdos/binfmt.h"
 #endif
@@ -113,6 +116,33 @@ extern void x86_64_memtest_run(void);
 #define DEF_PATH    "A:\\"      /* default value for path */
 
 static char default_env[ENV_SIZE];  /* default environment area */
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
+static char boot_path[] = "PATH=" DEF_PATH;
+static const char *boot_env[] = { default_env, boot_path };
+
+static LONG boot_exec_vectors(WORD mode, const char *path, char role, BOOL shell)
+{
+    char argument[] = { role, 0 };
+    const char *argv[] = { path, argument };
+    DL_START_VECTORS vectors = {0};
+
+    vectors.argv = argv;
+    vectors.argc = role ? 2 : 1;
+    vectors.envp = boot_env;
+    vectors.envc = shell ? ARRAY_SIZE(boot_env) : 0;
+    return proc_exec_kernel_vectors(mode, path, &vectors);
+}
+#endif
+
+static LONG boot_exec(WORD mode, const char *path, char role)
+{
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
+    return boot_exec_vectors(mode, path, role, FALSE);
+#else
+    char tail[] = { role ? 1 : 0, role, 0 };
+    return Pexec(mode, path, tail, NULL);
+#endif
+}
 
 /*==== External declarations ==============================================*/
 
@@ -129,7 +159,9 @@ static void start_external_cli(char *env);
 #elif CONF_WITH_CLI
 #if CONF_WITH_USER_ASPACE
 #include "progimage.h"
-extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);    /* bdos/kproc.c */
+#if !CONF_WITH_ELF_LOADER
+extern BOOL kproc_set_image(PD *pd, const PROG_IMAGE *image);
+#endif
 void start_builtin_cli(char *env);
 extern void set_owner(void *addr, PD *p);           /* bdos/mem.c */
 extern void proc_free_owned(PD *p);               /* bdos/proc.c */
@@ -314,7 +346,12 @@ extern PFVOID vbl_list[8]; /* Default array for vblqueue */
  */
 static LONG try_shell(const char *path, void *env)
 {
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
+    UNUSED(env);
+    return boot_exec_vectors(PE_LOADGO, path, 0, TRUE);
+#else
     return Pexec(PE_LOADGO, path, "", (char *)env);
+#endif
 }
 #endif
 
@@ -339,35 +376,36 @@ static void start_external_cli(char *env)
 #endif
 
 #if CONF_WITH_USER_ASPACE && CONF_WITH_CLI && !CONF_EXTERNAL_CLI
-/*
- * Runs the built-in EmuCON, an x32 program embedded in this image
- * (cli/arch/x86_64/emucon_image.c), as an ordinary ring-3 process: a
- * basepage and environment from Pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS), the image
- * attached to its kernel record so launching maps its segments as private
- * pages of the process's own address space, then the normal launch.  It
- * enters at the image's own entry point with RDI = basepage and RSI =
- * ENTRY_PROGRAM (doc/process-entry.txt), talks to the kernel only through
- * `syscall`, and returns here, with its exit code, when it calls Pterm().
- */
+/* Start the embedded x32 console without a boot-volume dependency. */
 void start_builtin_cli(char *env)
 {
-    PD *pd = (PD *) trap1_pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
+    PD *pd;
     long rc;
+#if CONF_WITH_ELF_LOADER
+    const char *const argv[] = { "EMUCON.TOS" };
+    const DL_START_VECTORS vectors = {
+        .argv = argv, .argc = ARRAY_SIZE(argv),
+        .envp = boot_env, .envc = ARRAY_SIZE(boot_env)
+    };
+#endif
 
-    if ((long)pd <= 0 && (long)pd >= -256) {    /* a GEMDOS error code */
+    pd = (PD *)Pexec(PE_KERNEL_TAG|PE_BASEPAGEFLAGS, (char *)PF_STANDARD, "", env);
+    if ((long)pd <= 0 && (long)pd >= -256) {
         kcprintf("EmuCON: cannot create its basepage (%ld)\n", (long)pd);
         return;
     }
-    if (!kproc_set_image(pd, emucon_image())) {
-        kcprintf("EmuCON: its x32 image is not valid\n");
-        rc = ENSMEM;
-    } else {
+#if CONF_WITH_ELF_LOADER
+    rc = kproc_set_embedded_elf(pd, emucon_image(), argv[0], &vectors);
+#else
+    rc = kproc_set_image(pd, emucon_image()) ? E_OK : EPLFMT;
+#endif
+    if (rc == E_OK) {
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
         kcprintf("EmuCON: starting the x32 image in ring 3\n");
         rc = Pexec(PE_KERNEL_TAG|PE_GOTHENFREE, "", (char *)pd, env);
-        if (rc < 0)
-            kcprintf("EmuCON: cannot start (%ld)\n", rc);
     }
+    if (rc < 0)
+        kcprintf("EmuCON: cannot start (%ld)\n", rc);
     if (rc < 0) {
         /* a basepage that was never launched (or whose launch was refused)
          * stays with the launcher: release it, its environment and its
@@ -932,9 +970,10 @@ static const char *env_language(void)
 }
 
 /*
- * Build the default environment string: "LANG=xx^PATH=^X:\^^" [where ^=nul]
+ * Build the default environment. Shared ARM uses ordinary PATH=value
+ * so its resident console can pass it directly to ELF children.
  *
- * PATH is last, in the TOS way (the name and the value are two strings):
+ * The classic PATH is last, in the TOS way (name and value in two strings):
  * a program startup that turns that into the usual NAME=value moves the value
  * one byte down and leaves a nul behind, which ends what follows too early.
  */
@@ -946,9 +985,16 @@ static void init_default_environment(void)
     strcat(p,env_language());
     p += strlen(p) + 1;
     strcpy(p,PATH_ENV);
+#if CONF_WITH_ARM_SHARED_EXEC
+    p += sizeof(PATH_ENV) - 1;          /* append the value to PATH= */
+#else
     p += sizeof(PATH_ENV);              /* point to first byte of path string */
+#endif
     strcpy(p,DEF_PATH);
     *p += bootdev;                      /* fix up drive letter */
+#if CONF_WITH_NATIVE_ABI && (CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC)
+    boot_path[sizeof("PATH=") - 1] = *p;
+#endif
     p += sizeof(DEF_PATH);
     *p = '\0';                          /* terminate with double nul */
 }
@@ -1049,13 +1095,13 @@ static void test_first_anchor(void)
 #if CONF_WITH_MULTITHREADING
     /* The first disk executable on the regression image starts with the
      * ordinary mode 0 call from AUTO's still-unmanaged boot controller. */
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     if (status != FIRST_ANCHOR_STATUS || ksched_active())
         fail_first_anchor("boot Pexec(0)", status);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1m", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 'm');
     if (status != FIRST_ANCHOR_STATUS || ksched_active())
         fail_first_anchor("managed Pexec(0)", status);
-    pid = Pexec(PE_ASYNC_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    pid = boot_exec(PE_ASYNC_LOADGO, FIRST_ANCHOR_PATH, 0);
     if (pid <= 0)
         fail_first_anchor("boot Pexec(100)", pid);
     status = ksched_wait((WORD)pid, 0, 0);
@@ -1071,7 +1117,7 @@ static void test_first_anchor(void)
          * is explicitly selected to keep the THREAD-less carrier, even
          * when the public Pclone or Pthjoin gates are disabled. */
         ksched_test_nested(0x20);
-        status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "\1u", NULL);
+        status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 'u');
         if (status != FIRST_ANCHOR_STATUS || ksched_active() || ksched_test_nested(7) != untracked + 1)
             fail_first_anchor("untracked Pexec(0)", status);
     }
@@ -1082,19 +1128,19 @@ static void test_first_anchor(void)
         fail_first_anchor("launch ownership accounting", 0);
 #if CONF_WITH_MULTITHREADING
     kproc_test_fail_kernel_stack(TRUE);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     kproc_test_fail_kernel_stack(FALSE);
     if (status != ENSMEM || ksched_active())
         fail_first_anchor("syscall-stack rollback", status);
     kproc_test_fail_thread_space(TRUE);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     kproc_test_fail_thread_space(FALSE);
     if (status != ENSMEM || ksched_active())
         fail_first_anchor("THREAD address-space retain rollback", status);
     first_anchor_counts(after);
     if (memcmp(before, after, sizeof(before)))
         fail_first_anchor("rollback ownership accounting", 0);
-    status = Pexec(PE_LOADGO, FIRST_ANCHOR_PATH, "", NULL);
+    status = boot_exec(PE_LOADGO, FIRST_ANCHOR_PATH, 0);
     first_anchor_counts(after);
     if (status != FIRST_ANCHOR_STATUS || ksched_active() || memcmp(before, after, sizeof(before)))
         fail_first_anchor("Pexec(0) after rollback", status);
@@ -1121,21 +1167,21 @@ static void run_auto_program(const char* filename)
 #if (CONF_WITH_MULTITHREADING) || CONF_WITH_EXIT_HANDOFF_TEST
         test_first_anchor();
 #endif
-        pid=Pexec(PE_ASYNC_LOADGO,path,"",NULL);
+        pid=boot_exec(PE_ASYNC_LOADGO, path, 0);
         if(pid<=0) panic("native global async admission failed");
         result=ksched_wait((WORD)pid,0,0);
         if((ULONG)result!=((ULONG)pid<<16)) panic("native global async wait failed");
         /* Separate completed synchronous admission, bounded detached pump,
          * then a fresh user launcher whose PD may reuse the first one's. */
-        if(Pexec(PE_LOADGO,"C:\\GLBSRC.TOS","",NULL)) panic("native global launcher failed");
+        if(boot_exec(PE_LOADGO, "C:\\GLBSRC.TOS", 0)) panic("native global launcher failed");
         if(!ksched_active()) panic("native global child lost after launcher return");
         ksched_yield();
         if(!ksched_active()) panic("native global blocked child lost across park");
-        if(Pexec(PE_LOADGO,"C:\\GLBCHK.TOS","",NULL)) panic("native global later entry failed");
+        if(boot_exec(PE_LOADGO, "C:\\GLBCHK.TOS", 0)) panic("native global later entry failed");
         if(ksched_active()) panic("native global records survived final wait");
     } else
 #endif
-    Pexec(PE_LOADGO, path, "", NULL);
+    boot_exec(PE_LOADGO, path, 0);
 #if CONF_WITH_MULTITHREADING
     /* AUTO launches are synchronous, but independently admitted children are
      * not their lifetime dependents. One bounded cooperative opportunity. */
@@ -1347,7 +1393,7 @@ void biosmain(void)
          * Pexec a program called COMMAND.PRG
          * like Atari TOS, it inherits an empty environment
          */
-        Pexec(PE_LOADGO, "COMMAND.PRG", "", NULL);
+        boot_exec(PE_LOADGO, "COMMAND.PRG", 0);
     }
 #if CONF_WITH_CUIS && CONF_EXTERNAL_DESK
     else if (CONF_WITH_CUIS && CONF_EXTERNAL_DESK) {

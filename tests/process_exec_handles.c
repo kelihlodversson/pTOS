@@ -46,12 +46,21 @@ void process_observer_release(PROCESS_OBSERVER **p)
 { struct identity *i; if(!p||!*p)return; i=(struct identity *)*p; CHECK(i->refs); i->refs--; *p=NULL; }
 BOOL process_observer_snapshot(const PROCESS_OBSERVER *p, PROCESS_COMPLETION *out)
 { CHECK(p&&out); *out=((const struct identity *)p)->completion; return TRUE; }
-long proc_exec_prepare(char *path,char *tail,char *env,char *cwd,ULONG policy,KPROC **out,void **prepared)
+long proc_exec_prepare(char *path,char *tail,char *env,char *cwd,ULONG policy,KPROC **out,void **prepared,const struct dl_start_vectors *vectors)
 {
     struct identity *child;
-    CHECK(!*out && !*prepared && path && tail && env && cwd && policy<=PROCESS_EXEC_DEFER_REPLACEMENT);
-    if(request_mode) CHECK(!strcmp(path,"program") && !strcmp(tail,"tail") &&
-                          !memcmp(env,"A=B\0",5) && !strcmp(cwd,"C:\\DIR"));
+    CHECK(!*out && !*prepared && path && cwd && policy<=PROCESS_EXEC_DEFER_REPLACEMENT);
+    if (vectors) {
+        CHECK(!tail && !env && vectors->argc==2 && vectors->envc==1);
+        CHECK(!strcmp(path,"program") && !strcmp(cwd,"C:\\DIR") &&
+              !strcmp(vectors->argv[0],"chosen") && !*vectors->argv[1] && !vectors->argv[2] &&
+              !strcmp(vectors->envp[0],"A=B") && !vectors->envp[1]);
+        CHECK(vectors->classic_tail[0]==3 && !memcmp(vectors->classic_tail+1,"one",4));
+    } else {
+        CHECK(tail && env);
+        if(request_mode) CHECK(!strcmp(path,"program") && !strcmp(tail,"tail") &&
+                              !memcmp(env,"A=B\0",5) && !strcmp(cwd,"C:\\DIR"));
+    }
     if(load_error)return load_error;
     CHECK(loads<16); child=&children[loads++];
     child->refs=2; child->resources=TRUE;

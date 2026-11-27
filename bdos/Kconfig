@@ -148,12 +148,22 @@ config CONF_WITH_LEGACY_PEXEC
       (doc/pexec-legacy-modes.txt).
 
 config CONF_WITH_STAGED_PEXEC
-    def_bool CONF_WITH_LEGACY_PEXEC || !CONF_WITH_USER_ASPACE
+    def_bool CONF_WITH_LEGACY_PEXEC || (!CONF_WITH_USER_ASPACE && !ARCH_ARM)
     help
-      The public staged Pexec modes (3, 5/7, 4/6/104/106) exist: on m68k,
-      and unchecked on kernels without user address spaces (non-MMU ARM,
-      to be deprecated), which cannot tell the kernel's own requests from a
-      program's. MMU ARM and x32 refuse them with EINVFN.
+      Public staged GEMDOS Pexec modes. ARM keeps staged ROM and accessory
+      launches as internal calls only.
+
+config CONF_WITH_LEGACY_ELF_ARGS
+    def_bool CONF_WITH_ELF_SHARED || (CONF_WITH_LEGACY_PEXEC && CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER)
+    help
+      Decode a GEMDOS tail and flat environment for the standard ELF stack.
+      Static m68k ELF uses this even without the runtime linker.
+
+config CONF_WITH_ARM_SHARED_EXEC
+    def_bool ARCH_ARM && !CONF_WITH_USER_ASPACE && CONF_WITH_ELF_LOADER
+    help
+      Use the public Pexecve ABI and standard ELF startup with ARM's
+      synchronous shared-address-space launcher.
 
 config CONF_WITH_SHARED_VM_PEXEC
     def_bool CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC && CONF_WITH_PRG_LOADER
@@ -445,8 +455,16 @@ config CONF_WITH_ELF_SHARED
 	  Eager x32 relocation and dependency discovery are available in the core.
 	  DSO pages use retained file-backed private mappings and write-fault COW.
 	  A complete shared libcmini and advanced ELF features remain separate.
-	  Static ELF and classic PRG loading are unchanged.
 	  The core is built separately from the kernel, in obj/ldso/.
+
+config CONF_WITH_ELF_VECTOR_ENTRY_TEST
+	bool "Native static ELF vector entry probe (test only)"
+	depends on CONF_WITH_ELF_SHARED && CONF_WITH_MULTITHREADING
+	depends on CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
+	help
+	  Load and run STKVEC.ELF from the native regression disk with trusted
+	  argument vectors. The probe uses the ordinary executable loader and
+	  enters user mode through the standard ELF initial stack.
 
 config CONF_WITH_KHEAP
 	bool

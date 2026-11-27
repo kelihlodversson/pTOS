@@ -195,7 +195,9 @@ jobs:
           config.load_config()
           config.syms["CONF_WITH_ELF_SHARED"].set_value(2)
           config.syms["CONF_WITH_MULTITHREADING"].set_value(2)
+          config.syms["CONF_WITH_ELF_VECTOR_ENTRY_TEST"].set_value(2)
           assert config.syms["CONF_WITH_MULTITHREADING"].str_value == "y"
+          assert config.syms["CONF_WITH_ELF_VECTOR_ENTRY_TEST"].str_value == "y"
           config.write_config()
           PY
           make obj/ldso/libldso.a

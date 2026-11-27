@@ -28,7 +28,7 @@ extern BASEPAGE *_base;
     # Only the freestanding harness object uses this header/architecture define
     # to select its managed-worker branch. No CPU context is modeled or tested.
     (work / "string.h").write_text(
-        "int memcmp(const void *, const void *, __SIZE_TYPE__);\n")
+        "int strcmp(const char *, const char *);\n")
     cc = shlex.split(os.environ.get("HOSTCC", "cc"))
     common = ["-std=gnu90", "-Wall", "-Wextra", "-Werror", "-Itests"]
     subprocess.run(cc + common + ["-I" + str(work), "-DTEST_LOG_FILE",

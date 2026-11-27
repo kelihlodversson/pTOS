@@ -48,6 +48,27 @@ void test_gemdos_pointers(void)
     ptest_assert_msg(Frename(0, (const char *)0, "X") == EIMBA, "Frename(old NULL) was not refused");
     ptest_assert_msg(Frename(0, "X", (const char *)0) == EIMBA, "Frename(new NULL) was not refused");
 
+#endif
+
+#ifdef TEST_NATIVE_ELF_ENTRY
+    {
+        const char *args[] = { 0 };
+        const short modes[] = { 0, 3, 5, 100, 200 };
+        unsigned i;
+        for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++)
+            ptest_assert_msg(trap_1_wwlll(0x4b, modes[i], 1, 1, 1) == -32L,
+                             "raw Pexec must return EINVFN before inspecting pointers");
+        ptest_assert_msg(trap_1_wwlll(0x193, 0, 0, (long)args, (long)args) == EIMBA,
+                         "Pexecve(path NULL) was not refused");
+#if defined(__arm__) && !defined(TEST_WITH_USER_ASPACE)
+        ptest_assert_msg(trap_1_wwlll(0x193, 0, 1, (long)args, (long)args) == EIMBA,
+                         "Pexecve(unmapped path) was not refused");
+        ptest_assert_msg(trap_1_wwlll(0x193, 100, 1, 1, 1) == -32L &&
+                         trap_1_wwlll(0x193, 200, 1, 1, 1) == -32L,
+                         "unavailable Pexecve modes must fail before pointer capture");
+#endif
+    }
+#elif defined(TEST_WITH_USER_COPY)
     /* Pexec(mode, path, tail, env): the path of mode 0, the tail of mode 5 */
     ptest_assert_msg(Pexec(0, (void *)0, "", (void *)0) == EIMBA, "Pexec(path NULL) was not refused");
 #ifdef TEST_WITH_STAGED_PEXEC
@@ -57,6 +78,9 @@ void test_gemdos_pointers(void)
     ptest_assert_msg(Pexec(5, (void *)0, (void *)0, (void *)0) == -32L, "Pexec(5) was not refused with EINVFN");
 #endif
 
+#endif
+
+#ifdef TEST_WITH_USER_COPY
     /* and a good pointer still works */
     ptest_assert_msg(Dgetpath(path, 0) == 0, "Dgetpath() with a buffer failed");
     ptest_assert_msg(Fread(0, 0L, buf) == 0, "Fread() of no bytes failed");

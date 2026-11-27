@@ -11,6 +11,6 @@ fi
 ${CC_HOST:-cc} -std=gnu90 -O1 -g -Wall -Wextra -Werror -Wdeclaration-after-statement \
     -UNDEBUG -DBINFMT_HOST_TEST $flags -iquote "$top/include" -iquote "$top/bdos" -iquote "$top/lib/ldso" \
     "$top/bdos/binfmt_rules.c" "$top/bdos/binfmt_args.c" \
-    "$top/lib/ldso/startup.c" \
+    "$top/bdos/argv_legacy.c" "$top/lib/ldso/startup.c" \
     "$top/tests/binfmt_host.c" -o "$build/binfmt-test"
 "$build/binfmt-test"

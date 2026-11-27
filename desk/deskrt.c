@@ -49,6 +49,9 @@ GRECT gl_rfull;                 /* the screen but the menu bar */
 
 /* the basepage of this program, from its startup code (deskstart.S) */
 void *desk_basepage;
+#if CONF_WITH_ARM_SHARED_EXEC
+const char *const *desk_environment;   /* inherited ELF envp */
+#endif
 
 /* what Ssystem() told, once */
 static struct desk_info info;
@@ -144,12 +147,20 @@ static void ibm_size(void)
 static void set_language(void)
 {
 #if CONF_WITH_NLS
+#if CONF_WITH_ARM_SHARED_EXEC
+    const char *const *entry = desk_environment;
+#else
     const char *env = desk_basepage ? (const char *)((PD *)desk_basepage)->p_env : NULL;
+#endif
     char name[3];
 
     nls_init();
-    for ( ; env && *env; env += strlen(env) + 1)
-    {
+#if CONF_WITH_ARM_SHARED_EXEC
+    for ( ; entry && *entry; entry++) {
+        const char *env = *entry;
+#else
+    for ( ; env && *env; env += strlen(env) + 1) {
+#endif
         if (!strncmp(env, "LANG=", 5) && env[5])
         {
             name[0] = env[5];

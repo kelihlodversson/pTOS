@@ -1089,7 +1089,9 @@ static void test_joins(void)
 }
 #endif
 #if defined(TEST_WITH_MULTITHREADING)
+#ifndef TEST_NATIVE_ELF_ENTRY
 static const char group_env[2]={0,0};
+#endif
 static struct {
     volatile long mode, ready, requested, error, returned, peer_done, peer_go, child_go, child_done, atexit_calls;
     volatile long session, window, wait_done, wait_entering;
@@ -1211,11 +1213,19 @@ static int input_wait_admitted(long tid)
 #endif
 }
 
-static long launch_observed_input_child(long session)
+static long launch_observed_input_child(long session, const char *role)
 {
-    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'3',0};
-    return native_cuis6(CUIS_LAUNCH_ATTACH,session,CUIS_LAUNCH_OBSERVE,
-                        (uintptr_t)path,(uintptr_t)tail,(uintptr_t)group_env,0);
+    static const char path[] = "C:\\GROUPCH.TOS";
+    const char *const argv[] = { path, role, 0 };
+    const char *const environment[] = { 0 };
+    PROCESS_EXEC_REQUEST request = {0};
+
+    request.flags = PROCESS_EXEC_VECTOR_ARGS;
+    request.path = (ULONG)(uintptr_t)path;
+    request.tail = (ULONG)(uintptr_t)argv;
+    request.environment = (ULONG)(uintptr_t)environment;
+    return native_cuis6(CUIS_LAUNCH_ATTACH, session, CUIS_LAUNCH_OBSERVE | CUIS_LAUNCH_VECTORS,
+                        (uintptr_t)&request, sizeof(request), 0, 0);
 }
 
 #if defined(TEST_WITH_CUIS_WAIT_TEST)
@@ -1238,7 +1248,6 @@ static void close_while_receipt_waits(void *argument)
 
 static void test_native_receipt_close(void)
 {
-    static const char path[]="C:\\GROUPCH.TOS", tail[]={1,'C',0};
     CUIS_RECEIPT_RECORD receipt={0};
     int32_t peer_pid,tid,status;
     long session, child, result;
@@ -1246,8 +1255,7 @@ static void test_native_receipt_close(void)
     session=native_cuis(CUIS_SESSION_START,0,0);
     ptest_assert_msg(session>=0,"open endpoint for native receipt CLOSE wake");
     if (session<0) return;
-    child=native_cuis6(CUIS_LAUNCH_ATTACH,session,CUIS_LAUNCH_OBSERVE,
-                       (uintptr_t)path,(uintptr_t)tail,(uintptr_t)group_env,0);
+    child = launch_observed_input_child(session, "C");
     ptest_assert_msg(child>0,"launch an observed PROCESS held live until after receipt reclamation");
     if (child<=0) goto end_session;
     receipt.source=receipt.source_low=(ULONG)session;
@@ -1319,7 +1327,7 @@ static void native_resume_peer(void *argument)
         if (!(buttons&1)) (void)Syield();
     } while (!(buttons&1));
     native_resume.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
-    native_resume.child=launch_observed_input_child(native_resume.session);
+    native_resume.child=launch_observed_input_child(native_resume.session, "3");
     if (native_resume.child<=0) { native_resume.error=1; return; }
     do {
         if (native_cuis5(33,native_resume.session,(long)&x,(long)&y,(long)&buttons,(long)&modifiers)) { native_resume.error=1; return; }
@@ -1589,7 +1597,7 @@ static void native_cancel_peer(void *argument)
     } while (!(buttons&1));
     native_cancel.first_tick=Ssystem(S_GETLVAL,0x4baL,0L);
     if (native_cancel.mode) {
-        launched=launch_observed_input_child(native_cancel.session);
+        launched=launch_observed_input_child(native_cancel.session, "3");
         if (launched<=0) {
             native_cancel.error=launched?launched:1;
             printf("resume observer launch result=%ld\r\n",launched); return;
@@ -1856,9 +1864,18 @@ static void group_joiner(void *arg)
 }
 static void group_nested(void *arg)
 {
-    static const char tail[]="\1" "2";
+    static const char path[] = "C:\\GROUPCH.TOS";
+#ifdef TEST_NATIVE_ELF_ENTRY
+    char *const argv[] = { (char *)path, "2", 0 };
+    char *const environment[] = { 0 };
+    long rc = Pexecve(0, path, argv, environment);
+#else
+    static const char tail[] = "\1" "2";
+    long rc = Pexec(0, path, tail, (void *)group_env);
+#endif
     (void)arg;
-    { long rc=Pexec(0,"C:\\GROUPCH.TOS",tail,(void *)group_env); if (rc!=19) group.error=rc; }
+    if (rc != 19)
+        group.error = rc;
     /* Group cancellation must intercept GEMDOS return before this executes. */
     group.returned=1;
 }

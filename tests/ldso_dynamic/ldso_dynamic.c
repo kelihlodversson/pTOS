@@ -15,6 +15,7 @@
 #include "test.h"
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
+#include <stddef.h>
 
 #define EXPECTED 77L
 
@@ -23,6 +24,20 @@
 void test_ldso_dynamic(void);
 
 #ifdef TEST_WITH_ELF_SHARED
+static long launch_dynamic(const char *path)
+{
+#ifdef TEST_NATIVE_ELF_ENTRY
+    char *argv[] = { (char *)path, NULL };
+    char *envp[] = { "PTOSTEST=1", NULL };
+
+    return Pexecve(0, path, argv, envp);
+#else
+    static char environment[] = "PTOSTEST=1\0";
+
+    return Pexec(0, path, "", environment);
+#endif
+}
+
 static void meminfo(unsigned long *free_pages, unsigned long *processes)
 {
     struct {
@@ -78,11 +93,11 @@ static void failing_round(void)
 {
     long rc;
 
-    rc = Pexec(0, "C:\\NEEDMISS.ELF", "", 0L);
+    rc = launch_dynamic("C:\\NEEDMISS.ELF");
     expect(rc == EXIT_NO_LIBRARY, "a program needing a missing library was not refused", rc);
-    rc = Pexec(0, "C:\\NEEDBAD.ELF", "", 0L);
+    rc = launch_dynamic("C:\\NEEDBAD.ELF");
     expect(rc == EXIT_NO_LIBRARY, "a program needing a cut-short library was not refused", rc);
-    rc = Pexec(0, "C:\\NOINTRP.ELF", "", 0L);
+    rc = launch_dynamic("C:\\NOINTRP.ELF");
     expect(rc < 0, "a program with no interpreter was started", rc);
 }
 
@@ -107,7 +122,7 @@ void test_ldso_dynamic(void)
     ptest_begin("ldso_dynamic (#693)");
 #ifdef TEST_WITH_ELF_SHARED
     {
-        long rc = Pexec(0, "C:\\LDSOAPP.ELF", "", 0L);
+        long rc = launch_dynamic("C:\\LDSOAPP.ELF");
 
         if (rc != EXPECTED)
         {

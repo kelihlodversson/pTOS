@@ -215,6 +215,7 @@ int main(void)
     ordering = r'''#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <pthread.h>
 #define CONF_WITH_PREEMPTION 1
 #define CLONE_VM 1
@@ -226,12 +227,19 @@ static pthread_t parent_thread,child_thread;
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed=PTHREAD_COND_INITIALIZER;
 static int waiting,child_done,parent_done,last_status,joins;
+static int nested_launches;
 static int errors,file_handle=8;
 static __thread int current;
+static long x32_exec_argument(short mode,const char *path,const char *argument,const char *const *envp)
+{
+ if(current!=1||mode||strcmp(path,"C:\\X32HELLO.TOS")||argument||envp)abort();
+ nested_launches++;
+ return 0;
+}
 static long call(unsigned fn,uintptr_t a,uintptr_t b,uintptr_t c)
 {
  (void)b;(void)c;
- if(fn==0x4b||fn==0x47)return 0;
+ if(fn==0x47)return 0;
  if(fn==0x40)return 2;
  pthread_mutex_lock(&lock);
  if(fn==GEMDOS_PTHJOIN){
@@ -274,8 +282,8 @@ int main(void)
 {
  if(pthread_create(&parent_thread,0,dispatch,&workers[0]))return 2;
  pthread_join(parent_thread,0);pthread_join(child_thread,0);
- if(last_status!=0x66||joins!=1||errors){
-  fprintf(stderr,"nested-launch siblings completed out of order: final=%x joins=%d errors=%d\n",last_status,joins,errors);
+ if(last_status!=0x66||joins!=1||nested_launches!=1||errors){
+  fprintf(stderr,"nested-launch siblings: final=%x joins=%d launches=%d errors=%d\n",last_status,joins,nested_launches,errors);
   return 1;
  }
  pthread_cond_destroy(&changed);pthread_mutex_destroy(&lock);

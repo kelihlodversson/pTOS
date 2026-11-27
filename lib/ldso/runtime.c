@@ -356,6 +356,7 @@ uint32_t dl_runtime(const uint32_t *stack)
     const unsigned char *header;
     DL_MAPPING root;
     DL_LAUNCH *launch = 0;
+    const DL_LAUNCH_VECTORS *launch_vectors = 0;
     const char *execfn = 0;
     if (dl_self_pointer64 != (uint64_t)(uintptr_t)dl_runtime_fini) return fail();
     argc = stack[0]; argv = stack + 1;
@@ -374,6 +375,7 @@ uint32_t dl_runtime(const uint32_t *stack)
         case 9: entry = aux[1]; break;
         case 31: execfn = (const char *)(uintptr_t)aux[1]; break;
         case DL_AT_PTOS_LAUNCH: launch = (DL_LAUNCH *)(uintptr_t)aux[1]; break;
+        case DL_AT_PTOS_LAUNCH_VECTORS: launch_vectors = (const DL_LAUNCH_VECTORS *)(uintptr_t)aux[1]; break;
         case DL_AT_PTOS_BOOTDRIVE: bootdrive = aux[1]; break;
         case DL_AT_PTOS_LOADBIAS: bias = aux[1]; break;
         }
@@ -400,7 +402,7 @@ uint32_t dl_runtime(const uint32_t *stack)
         if (!hooks(o, i == 0) || !seal(o)) goto error;
     }
     if (!seal(&self) || !executable(entry)) goto error;
-    dl_capture_launch(launch,execfn);
+    dl_capture_launch(launch,launch_vectors,execfn);
     init_array(&objects[0], objects[0].hooks.pre_array, objects[0].hooks.pre_size);
     for (i = 0; i < graph.order_count; i++) {
         OBJECT *o = graph.nodes[graph.order[i]].mapping.cookie;

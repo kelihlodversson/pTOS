@@ -1,3 +1,4 @@
+#include "../x32_probe/exec.h"
 /* Real ring-3 callbacks, nesting, alternate stacks, revocation and faults. */
 #include "config.h"
 #include "portab.h"
@@ -9,7 +10,7 @@ int callback_roundtrip_checks(const char *tail);
 int callback_register_checks(volatile ULONG *counter);
 void callback_badreturn(int ms);
 void callback_badstack(void);
-void callback_lazy_exec(const char *file, const char *tail);
+void callback_lazy_exec(const char *file, const char *const *argv, const char *const *envp);
 
 static LONG raw(ULONG cls, ULONG fn, UQUAD a, UQUAD b, UQUAD c, UQUAD d)
 {
@@ -201,7 +202,7 @@ static int quota_checks(BOOL child)
         ((void (*)(WORD))(uintptr_t)parent)(USER_CALLBACK_CAPS);
     } else {
         CHECK(exchange(125, (uintptr_t)quota_parent, &native) == E_OK);
-        CHECK(raw(1, 0x4b, PE_LOADGO, (uintptr_t)"X32CB.TOS", (uintptr_t)"+", 0) == E_OK);
+        CHECK(x32_exec_argument(PE_LOADGO, "X32CB.TOS", "+", 0) == E_OK);
         CHECK(quota_calls == USER_CALLBACK_CAPS + 1 && !handler_failure);
         /* The full OLD table must not prevent same-owner exchanges. Exactly
          * 63 registration slots remain after the one original handler. Use
@@ -350,7 +351,10 @@ int callback_roundtrip_checks(const char *tail)
             stack.ss_flags = USER_CALLBACK_SS_DISABLE;
             /* Keep the callback frame just below the last backed normal
              * stack page, so the entry copy must allocate a lazy page. */
-            callback_lazy_exec("X32CB.TOS", "&");
+            const char *const args[] = { "X32CB.TOS", "&", 0 };
+            const char *const empty[] = { 0 };
+
+            callback_lazy_exec(args[0], args, empty);
         }
         if (mode == 'O') {
             rc = raw(1, 0x48, 4096, 0, 0, 0);
@@ -358,7 +362,7 @@ int callback_roundtrip_checks(const char *tail)
                 return __LINE__;
             oom_output = (USER_CALLBACK_STACK *)(uintptr_t)(ULONG)rc;
         }
-        rc = raw(1, 0x4b, 0, (uintptr_t)"X32CB.TOS", (uintptr_t)"&", 0);
+        rc = x32_exec_argument(0, "X32CB.TOS", "&", 0);
         /* Deferred termination is checked before this parent resumes user. */
         return __LINE__;
     }
@@ -402,7 +406,7 @@ int callback_roundtrip_checks(const char *tail)
     CHECK(exchange(126, (uintptr_t)parent_motion, &old) == E_OK);
     CHECK(exchange(127, (uintptr_t)cursor, &old) == E_OK);
     CHECK(exchange(134, (uintptr_t)wheel, &old) == E_OK);
-    rc = raw(1, 0x4b, 0, (uintptr_t)"X32CB.TOS", (uintptr_t)"J", 0);
+    rc = x32_exec_argument(0, "X32CB.TOS", "J", 0);
     CHECK(rc == 0);
     CHECK(buttons == 1 && cursors == 1 && wheels == 1 && motion_calls == 1);
     CHECK(previous_motion && ((ULONG (*)(WORD, WORD))(uintptr_t)previous_motion)(5, 6) == MAKE_ULONG(5, 6));

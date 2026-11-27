@@ -40,6 +40,20 @@ static PROCESS_EXEC_REQUEST *request_fixture(void)
     read_failure=0; input_error=EIMBA; output_failure=FALSE; output_prefix=0; output_copies=0;
     return r;
 }
+static PROCESS_EXEC_REQUEST *vector_request_fixture(void)
+{
+    PROCESS_EXEC_REQUEST *r=request_fixture();
+    ULONG argv[] = {0x1600, 0x1610, 0}, envp[] = {0x1620, 0};
+
+    r->flags=PROCESS_EXEC_VECTOR_ARGS;
+    r->classic_tail=0x1500;
+    memcpy(request_memory.bytes+r->tail,argv,sizeof(argv));
+    memcpy(request_memory.bytes+r->environment,envp,sizeof(envp));
+    memcpy(request_memory.bytes+r->classic_tail,"\003one",5);
+    memcpy(request_memory.bytes+0x1600,"chosen",7);
+    memcpy(request_memory.bytes+0x1620,"A=B",4);
+    return r;
+}
 static void test_request_engine(KPROC *owner)
 {
     PROCESS_EXEC_REQUEST *r;
@@ -72,9 +86,9 @@ static void test_request_engine(KPROC *owner)
     CHECK(proc_exec_request(owner,0x1001,72)==EINVAL);
     CHECK(proc_exec_request(owner,0xfffffff0ULL,72)==EIMBA);
     CHECK(proc_exec_request(owner,0x100001000ULL,72)==EIMBA);
-    r->reserved=1; CHECK(proc_exec_request(owner,0x1000,72)==EINVAL);
-    r->reserved=0; r->reserved_tail[1]=1; CHECK(proc_exec_request(owner,0x1000,72)==EINVAL);
-    r->reserved_tail[1]=0; r->handle=5; CHECK(proc_exec_request(owner,0x1000,72)==EINVAL);
+    r->flags=2; CHECK(proc_exec_request(owner,0x1000,72)==EINVAL);
+    r->flags=0; r->reserved=1; CHECK(proc_exec_request(owner,0x1000,72)==EINVAL);
+    r->reserved=0; r->handle=5; CHECK(proc_exec_request(owner,0x1000,72)==EINVAL);
     r->handle=0; r->policy=2; CHECK(proc_exec_request(owner,0x1000,72)==EINVAL);
     r->policy=0; r->operation=999; CHECK(proc_exec_request(owner,0x1000,72)==EINVFN);
     for(i=0;i<5;i++) {
@@ -151,6 +165,27 @@ static void test_request_engine(KPROC *owner)
           children[i].resources && children[i].refs==1 && !*kproc_exec_handles(owner) &&
           !output_copies && allocations==frees && !cleanup_nesting);
     children[i].resources=FALSE; children[i].refs=0;
+
+    i=loads;
+    r=vector_request_fixture();
+    read_failure=0x1610;
+    CHECK(proc_exec_request(owner,0x1000,72)==EIMBA && loads==i && allocations==frees);
+    r=vector_request_fixture();
+    request_memory.bytes[r->classic_tail]=127;
+    CHECK(proc_exec_request(owner,0x1000,72)==EINVAL && loads==i && allocations==frees);
+    r=vector_request_fixture();
+    memcpy(request_memory.bytes+0x1620,"ARGV=",6);
+    CHECK(proc_exec_request(owner,0x1000,72)==EINVAL && loads==i && allocations==frees);
+    for (handle=0;handle<3;handle++) {
+        r=vector_request_fixture(); fail_after=(int)handle;
+        CHECK(proc_exec_request(owner,0x1000,72)==ENSMEM && loads==i && allocations==frees);
+    }
+    fail_after=-1; r=vector_request_fixture();
+    handle=proc_exec_request(owner,0x1000,72);
+    CHECK(handle>0 && loads==i+1 && !output_copies);
+    memset(r,0,sizeof(*r)); r->operation=PROCESS_EXEC_CLOSE; r->handle=handle;
+    CHECK(proc_exec_request(owner,0x1000,72)==E_OK && allocations==frees &&
+          !children[i].refs && !children[i].resources);
     request_mode=FALSE;
     puts("Production PROCESS request: bounded copies, malformed ABI, partial copyout, scalar commit and retryable completion: PASS");
 }

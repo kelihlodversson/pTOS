@@ -92,6 +92,10 @@
  #define FALLTHROUGH do { } while (0)
 #endif
 
+#ifndef CLI_VECTOR_EXEC
+#define CLI_VECTOR_EXEC 0
+#endif
+
 
 /*
  * system calls
@@ -214,6 +218,14 @@ static __inline__ long cli_supexec_(long a)
 #endif /* STANDALONE_CONSOLE */
 
 
+#if !defined(STANDALONE_CONSOLE) && CONF_WITH_ARM_SHARED_EXEC
+#define CLI_ARM_BUILTIN_EXEC 1
+#else
+#define CLI_ARM_BUILTIN_EXEC 0
+#endif
+
+#define CLI_VECTOR_ARGUMENTS (CLI_VECTOR_EXEC || CLI_ARM_BUILTIN_EXEC)
+
 /*
  * program parameters
  */
@@ -222,7 +234,7 @@ static __inline__ long cli_supexec_(long a)
 
 #define IOBUFSIZE       16384L  /* buffer size */
 
-#define MAX_LINE_SIZE   200L    /* must be greater than the largest screen width */
+#define MAX_LINE_SIZE   200L    /* command buffer including its terminating NUL */
 #define HISTORY_SIZE    10      /* number of lines of history */
 #define MAX_ARGS        30      /* maximum number of args we can parse */
 
@@ -340,8 +352,12 @@ extern DTA *dta;
 extern LONG redir_handle;
 extern char user_path[MAXPATHLEN];     /* from PATH command */
 extern WORD current_res, requested_res;
+#if CLI_VECTOR_EXEC
+extern char **environ;
+#else
 extern char *environment;              /* from cmdasm.S, or cmdmain.c's
                                            main() for STANDALONE_CONSOLE */
+#endif
 
 /*
  *  function prototypes

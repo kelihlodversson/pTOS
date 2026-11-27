@@ -75,6 +75,20 @@ void sh_envrn(AES_SHELL_PARAM char **ppath, const char *psrch)
     len = strlen(psrch);
     *ppath = NULL;
 
+#ifdef SH_ENV_VECTOR
+    {
+        const char *const *entry = SH_ENV_VECTOR;
+        if (entry) {
+            for (; *entry; entry++) {
+                if (SH_ENV_ENTRY(*entry) && !strncmp(*entry,psrch,len)) {
+                    *ppath = (char *)*entry + len;
+                    break;
+                }
+            }
+            return;
+        }
+    }
+#endif
     /*
      * scan environment string until double nul
      */

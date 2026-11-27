@@ -14,11 +14,15 @@
  */
 #include "config.h"
 #include <stddef.h>
+#include "gemerror.h"
 #include <mint/osbind.h>
 #include <mint/basepage.h>
+#include <string.h>
 #include "x32rt.h"
 
+#if CONF_WITH_DYNAMIC_CLI || !CONF_WITH_CLI_VECTOR_EXEC
 struct basepage *_base;
+#endif
 
 /* The kernel's PD (include/bdosdefs.h) puts p_env at offset 0x2c. */
 typedef char p_env_offset_is_0x2c[(__builtin_offsetof(struct basepage, p_env) == 0x2c) ? 1 : -1];
@@ -27,11 +31,56 @@ int main(void);
 
 #if CONF_WITH_DYNAMIC_CLI
 #include "../../lib/ldso/client/ptos.h"
+#endif
+
+#if !CONF_WITH_ELF_LOADER && CONF_WITH_CLI_VECTOR_EXEC
+extern char **environ;
+/* The historical block may carry a name ending in '=' and its value as
+ * two strings. Import a private vector and leave the basepage untouched. */
+static int init_environment(const char *block)
+{
+    const char *entry, *next;
+    char *dest;
+    size_t count = 0, bytes = 0, len;
+    size_t i;
+
+    for (entry = block; entry && *entry && strncmp(entry,"ARGV=",5) != 0;
+         entry += len+1) {
+        len = strlen(entry);
+        bytes += len+1;
+        count++;
+    }
+    environ = x32_malloc((count+1)*sizeof(*environ)+bytes);
+    if (!environ)
+        return 0;
+    dest = (char *)(environ+count+1);
+    for (i = 0; count; count--) {
+        len = strlen(block);
+        next = block+len+1;
+        environ[i++] = dest;
+        memcpy(dest,block,len);
+        dest += len;
+        if (count > 1 && strchr(block,'=') == block+len-1 && !strchr(next,'=')) {
+            len = strlen(next);
+            memcpy(dest,next,len);
+            dest += len;
+            next += len+1;
+            count--;
+        }
+        *dest++ = '\0';
+        block = next;
+    }
+    environ[i] = NULL;
+    return 1;
+}
+#endif
+
+#if CONF_WITH_DYNAMIC_CLI
 __attribute__((constructor)) static void console_init(void)
 {
     _base = (struct basepage *)(uintptr_t)ptos_basepage;
 }
-#else
+#elif !CONF_WITH_ELF_LOADER
 /* Entered from x32crt.S with the process-entry contract's registers. */
 void x32_start(struct basepage *bp, long entry_type) __attribute__((noreturn));
 
@@ -41,7 +90,16 @@ void x32_start(struct basepage *bp, long entry_type)
 
     (void)entry_type;           /* ENTRY_PROGRAM: nothing else to select */
     _base = bp;
+#if CONF_WITH_CLI_VECTOR_EXEC
+    if (init_environment(bp->p_env)) {
+        rc = main();
+        x32_free(environ);
+    } else {
+        rc = ENSMEM;
+    }
+#else
     rc = main();
+#endif
     Pterm(rc);
     for (;;)
         ;

@@ -24,10 +24,21 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+struct dl_start_vectors;
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 long xexec_selftest(WORD, char *, char *, char *);
 #endif
+#if ARCH_ARM && !CONF_WITH_USER_ASPACE
+/* Called only from the kernel's reentrant ARM launch veneer. */
+long arm_kernel_exec(const long *args);
+#endif
+#if CONF_WITH_ARM_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
+LONG xpexecve(WORD mode, UQUAD path, UQUAD argv, UQUAD envp);
+#endif
 #if CONF_WITH_USER_ASPACE && CONF_WITH_MULTITHREADING
+#if CONF_WITH_BINFMT
+LONG xpexecve_guest(UQUAD address, UQUAD size);
+#endif
 struct kproc;
 /* Trusted Pexec(100) with an optional explicit CWD and mandatory observer.
  * Kernel-owned empty output handle; acquired before scheduler publication.
@@ -40,7 +51,7 @@ long proc_exec_observe(char *path, char *tail, char *environment, char *director
  * must publish or cancel it exactly once; output references are kernel-owned.
  * Failure leaves both outputs empty and reclaims the unstarted image. */
 long proc_exec_prepare(char *path, char *tail, char *environment, char *directory, ULONG policy,
-                       struct kproc **observer, void **prepared);
+                       struct kproc **observer, void **prepared, const struct dl_start_vectors *vectors);
 #endif
 void x0term(void);
 void xterm(UWORD rc)  NORETURN ;
@@ -86,16 +97,27 @@ struct disk_error;
 LONG kpgmhdrld_error(char *s, PGMHDR01 *hd, FH *h, struct disk_error *error);
 BOOL kpgm_can_interpret(void);
 LONG binfmt_load_header(char *path, char *tail, char *environment,
-                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch, BOOL qualify);
+                       PGMHDR01 *header, FH *handle, BINFMT_LAUNCH *launch,
+                       BOOL qualify, const DL_START_VECTORS *vectors);
 #endif
-LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename);
+/* Use standard ELF entry for trusted vectors or a legacy m68k ELF launch.
+ * Internal load-only callers can still prepare the classic entry. */
+LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
+            const struct dl_start_vectors *vectors, BOOL legacy_elf_vectors);
 
 #if CONF_WITH_ELF_LOADER
 /*
  * in elfld.c
  */
 LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign);
+#if CONF_WITH_USER_ASPACE
+LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors,
+               BOOL legacy_elf_vectors);
+#elif CONF_WITH_ARM_SHARED_EXEC
+LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors);
+#else
 LONG elf_pgmld(FH h, PD *p);
+#endif
 #endif
 
 #if DETECT_NATIVE_FEATURES

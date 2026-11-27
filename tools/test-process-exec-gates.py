@@ -89,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-gates-') as directory:
                 '-fno-pie', '-no-pie', '-ffunction-sections', '-fdata-sections',
                 '-iquote', 'include', '-I'+str(work), '-Iinclude/arch/x86_64',
                 '-idirafter', 'include', '-iquote', 'bdos', '-iquote', 'fs',
-                'tests/process_exec_dispatch.c', '-Wl,--gc-sections', '-o', str(work / name)],
+                'tests/process_exec_dispatch.c', 'bdos/launch_args.c', '-Wl,--gc-sections', '-o', str(work / name)],
                 check=True)
             subprocess.run([str(work / name)], check=True)
         print('PROCESS gate '+name+': selection/build/discovery PASS')

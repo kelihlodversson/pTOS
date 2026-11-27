@@ -9,6 +9,7 @@
 #include "gemerror.h"
 #include "lifecycle.h"
 #include "shell_arguments.h"
+#include "launch.h"
 #include "string.h"
 
 static ULONG bounded_length(const char *text, ULONG limit)
@@ -39,6 +40,7 @@ BOOL aes_shell_path_valid(const char *path, const char *name)
 static BOOL environment_valid(const AES_SHELL_STATE *state)
 {
     ULONG i;
+    if (state->vectors) return TRUE;
     if (state->capture_pending || !state->environment || state->environment_bytes < 2 || state->environment_bytes > AES_SHELL_ENV) return FALSE;
     for (i = 0; i+1 < state->environment_bytes; i++)
         if (!state->environment[i] && !state->environment[i+1]) return TRUE;
@@ -67,6 +69,20 @@ WORD mt_shel_read(char *command, char *tail, AESGLOBAL *global)
     c.state = aes_shell_state(global);
     if (!c.state->startup_ready) return 0;
     aes_shell_read_core(aes_shell, command,tail);
+    return 1;
+}
+
+WORD mt_shel_readve(const char **path, const char *const **argv,
+                   const char *const **envp, AESGLOBAL *global)
+{
+    const DL_LAUNCH_VECTORS *vectors;
+
+    if (!path || !argv || !envp || aes_application_session(global) < 0) return 0;
+    vectors = aes_shell_state(global)->vectors;
+    if (!vectors) return 0;
+    *path = (const char *)(uintptr_t)vectors->path;
+    *argv = (const char *const *)(uintptr_t)vectors->argv;
+    *envp = (const char *const *)(uintptr_t)vectors->envp;
     return 1;
 }
 
@@ -111,30 +127,33 @@ static BOOL shell_absolute(char *result, const char *source)
     for (i = 2; result[i]; i++) if (result[i] == '/') result[i] = '\\';
     return TRUE;
 }
-WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command, const char *tail, AESGLOBAL *global)
+static WORD shell_write(WORD mode, WORD graphical, WORD execution, const void *command,
+                        const char *tail, const char *const *argv,
+                        const char *const *envp, AESGLOBAL *global)
 {
     char path[AES_SHELL_PATH], absolute[AES_SHELL_PATH], directory[AES_SHELL_PATH];
     const char *requested_directory = NULL;
     BOOL set_directory;
-    SHELL_ARGUMENTS arguments;
+    SHELL_ARGUMENTS arguments = {0};
+    PROCESS_EXEC_REQUEST request = {0};
     const char *environment = NULL;
     LONG pid = 0, session;
     UWORD extensions = (UWORD)mode & 0xff00;
     BOOL parse;
-    AES_SHELL_STATE *state;
     WORD kind = GEMAPP;
     mode = (UWORD)mode & 255;
     if (extensions & ~(SW_ENVIRON|SW_DEFDIR)) return 0;
+    if (argv && ((extensions & SW_ENVIRON) || (mode == SWM_LAUNCH && execution != CL_NORMAL))) return 0;
     if (mode == SWM_SHUTDOWN || mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG)
-        return extensions ? 0 : aes_lifecycle_write(mode,graphical,execution,command,global);
+        return extensions || argv ? 0 : aes_lifecycle_write(mode,graphical,execution,command,global);
     if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
     if (mode == SWM_LAUNCH ? (execution != CL_NORMAL && execution != CL_PARSE) :
         (graphical != GEMAPP && graphical != TOSAPP) ||
         (execution != SHW_IMMED && execution != SHW_PARALLEL && execution != SHW_CHAIN) ||
         (execution == SHW_CHAIN && graphical == TOSAPP)) return 0;
     session = aes_application_session(global);
-    if (session < 0 || !command || !tail || (UBYTE)tail[0] > 127) return 0;
-    state = aes_shell_state(global);
+    parse = mode == SWM_LAUNCH && execution == CL_PARSE;
+    if (session < 0 || !command || (!argv && (!tail || (UBYTE)tail[0] > (parse ? 127 : 126)))) return 0;
     if (extensions) {
         const SHELW *extended = command;
         if (extensions & SW_ENVIRON) environment = extended->env;
@@ -157,23 +176,38 @@ WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *comman
             directory[end] = 0;
         }
     }
-    parse = mode == SWM_LAUNCH && execution == CL_PARSE;
-    if (!aes_shell_arguments(path,tail,parse,
-            environment ? environment : parse || (UBYTE)tail[0] == 127 ? state->environment : NULL,
-            environment ? 32766UL : state->environment_bytes,&arguments,global)) return 0;
+    if (!argv && !aes_shell_arguments(path,tail,parse,environment,&arguments,global)) return 0;
+    request.flags = PROCESS_EXEC_VECTOR_ARGS;
+    request.path = (ULONG)(uintptr_t)path;
+    request.tail = (ULONG)(uintptr_t)(argv ? argv : arguments.argv);
+    request.environment = (ULONG)(uintptr_t)(argv ? (envp ? envp : aes_shell_environ()) : arguments.envp);
+    if (set_directory) request.directory = (ULONG)(uintptr_t)directory;
+    if (!argv && !parse) request.classic_tail = (ULONG)(uintptr_t)arguments.classic_tail;
     if (mode == SWM_LAUNCHNOW && execution == SHW_CHAIN) {
-        pid = aes_child_defer(path,arguments.tail,arguments.environment,
-                              set_directory ? directory : NULL) == E_OK ? 1 : 0;
+        pid = aes_child_defer(&request) == E_OK ? 1 : 0;
         goto finished;
     }
     kind = mode == SWM_LAUNCH ? application_kind(path) : graphical;
     if (kind < 0) goto finished;
-    pid = aes_child_launch(session,path,arguments.tail,arguments.environment,
-                           set_directory ? directory : NULL,kind == TOSAPP,
+    pid = aes_child_launch(session,&request,kind == TOSAPP,
                            mode == SWM_LAUNCH || execution == SHW_IMMED);
 finished:
-    if (arguments.environment) (void)aes_resource_discard(arguments.environment);
+    if (arguments.storage) (void)aes_resource_discard(arguments.storage);
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;
+}
+
+WORD mt_shel_write(WORD mode, WORD graphical, WORD execution, const void *command,
+                   const char *tail, AESGLOBAL *global)
+{
+    return shell_write(mode,graphical,execution,command,tail,NULL,NULL,global);
+}
+
+WORD mt_shel_writeve(WORD mode, WORD graphical, WORD execution, const void *command,
+                     char *const argv[], char *const envp[], AESGLOBAL *global)
+{
+    if (!argv) return 0;
+    return shell_write(mode,graphical,execution,command,NULL,
+                       (const char *const *)argv,(const char *const *)envp,global);
 }
 
 WORD mt_shel_envrn(char **result, const char *prefix, AESGLOBAL *global)
