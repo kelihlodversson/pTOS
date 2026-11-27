@@ -266,7 +266,7 @@ static void redirect_vectors(void)
         assert(!strcmp(launch.vectors.argv[1], names[i]));
         assert(launch.vectors.argv[2] == argv[1] && launch.vectors.argv[3] == argv[2]);
         assert(launch.vectors.envp == envp && launch.vectors.envc == 2);
-        assert(launch.vectors.original == &input && launch.vectors.direct_redirect == (i == 0));
+        assert(launch.vectors.original == &input);
         assert(xclose(handle) == 0);
         binfmt_release(&launch);
         assert(!launch.vectors.argv && !allocations && !handles);

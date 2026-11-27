@@ -103,7 +103,7 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
 {
     STACK s;
     uint32_t n, execfn, i, at, phdr;
-    uint32_t aux[28], auxwords = 20, record = 0, snapshot = 0, guest = 0;
+    uint32_t aux[26], auxwords = 20, record = 0, snapshot = 0;
     int status;
 
     *rsp = *used = 0;
@@ -144,25 +144,6 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
             return status;
         if (!aligned_copy(&s, &saved, sizeof(saved), &snapshot))
             return DL_NO_SPACE;
-        if (vectors->direct_redirect) {
-            DL_GUEST_LAUNCH metadata = {0};
-            const unsigned char *slot = buffer + (saved.argv - s.base);
-            unsigned char *argv0 = (unsigned char *)&metadata.argv0;
-
-            for (i = 0; i < sizeof(metadata.argv0); i++)
-                argv0[i] = slot[i];
-            if (original->guest_tail && !aligned_copy(&s, original->guest_tail,
-                    DL_LAUNCH_TAIL, &metadata.tail))
-                return DL_NO_SPACE;
-            if (original->guest_environment) {
-                metadata.environment_size = original->guest_environment_size;
-                if (!aligned_copy(&s, original->guest_environment,
-                                  metadata.environment_size, &metadata.environment))
-                    return DL_NO_SPACE;
-            }
-            if (!aligned_copy(&s, &metadata, sizeof(metadata), &guest))
-                return DL_NO_SPACE;
-        }
     }
     status = vector(&s, vectors->argv, vectors->argc);
     if (status != DL_OK)
@@ -186,9 +167,6 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     }
     if (snapshot) {
         aux[auxwords++] = DL_AT_PTOS_LAUNCH_VECTORS; aux[auxwords++] = snapshot;
-    }
-    if (guest) {
-        aux[auxwords++] = DL_AT_PTOS_GUEST_LAUNCH; aux[auxwords++] = guest;
     }
     aux[auxwords++] = 0; aux[auxwords++] = 0;
     for (i = 0; i < auxwords; i++)

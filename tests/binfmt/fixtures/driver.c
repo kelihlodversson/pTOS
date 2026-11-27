@@ -4,8 +4,10 @@
 #include <string.h>
 #include <mint/osbind.h>
 #include <mint/basepage.h>
-#ifdef PROCESS_DIRECTORY_TEST
+#if defined(NATIVE_VECTOR_FIXTURE) || defined(PROCESS_DIRECTORY_TEST)
 #include <mint/mintbind.h>
+#endif
+#ifdef PROCESS_DIRECTORY_TEST
 #include "../../../include/process_exec.h"
 #endif
 
@@ -208,6 +210,13 @@ int main(void)
     long handle;
     int i;
     puts("binfmt boot: BEGIN");
+#ifdef NATIVE_VECTOR_FIXTURE
+    if (Ssystem(S_INQUIRE, -10L, 0L) != -32L || Ssystem(-10, 0L, 0L) != -32L) {
+        puts("binfmt boot: retired Ssystem mode -10 did not return EINVFN");
+        goto failed;
+    }
+    puts("binfmt retired Ssystem mode -10: PASS");
+#endif
     boot = Dgetdrv();
     if (boot < 0 || boot >= 26) goto failed;
     memset(large, 'a', 1000); large[1000] = 0;

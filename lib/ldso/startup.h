@@ -20,10 +20,6 @@ typedef struct dl_start_vectors {
     uint32_t argc, envc;
     const struct dl_start_vectors *original; /* request before binfmt, if redirected */
     const unsigned char *classic_tail; /* optional original AES short tail, 128 bytes */
-    const unsigned char *guest_tail;
-    const char *guest_environment;
-    uint32_t guest_environment_size;
-    uint32_t direct_redirect; /* single registry-rule hop, argv[1] is the program */
 } DL_START_VECTORS;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
