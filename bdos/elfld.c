@@ -1691,7 +1691,7 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
         slots = xmxalloc(count * sizeof(*slots), MX_PREFTTRAM);
         if (!slots)
             return ENSMEM;
-        status = legacy_start_vectors(&args, filename, p->p_cmdlin, PDCLSIZE,
+        status = legacy_start_vectors(&args, filename, (const UBYTE *)p->p_cmdlin, PDCLSIZE,
                                       env, size, slots, count);
         if (status == DL_OK)
             rc = DISK_CALL_ERROR(elf_shared_stack(h, p, filename, &args.vectors, &place), &error);
