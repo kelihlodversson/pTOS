@@ -58,12 +58,17 @@ until that same deadline. The root checks deadlines after existing IRQ
 wakeups without putting the waiting THREAD on the runnable queue early.
 
 A poll retains the PROCESS descriptor table and uses generation-checked
-references to the existing SFT owners. BIOS handles retain their
+references to the existing SFT owners. Snapshot admission is held only
+while capturing those references, so a sibling can clone inherited
+descriptors while the poll is suspended. BIOS handles retain their
 PROCESS binding generation and fixed device identity. Close, force, reuse
 and media revocation invalidate the original binding. Reusing its
 numeric descriptor does not retarget an in-flight poll. A negative fd
 is ignored. A missing or invalidated nonnegative fd reports POLLNVAL,
 even with no requested events.
+After all readiness callbacks return, poll revalidates each binding.
+Unrelated descriptor changes neither restart a snapshot nor extend a
+finite wait. A descriptor change during sleep prompts another scan.
 While another alias closes, a live binding can still pin the description.
 Its readiness is sampled again after the close, with the original deadline
 and binding generation.

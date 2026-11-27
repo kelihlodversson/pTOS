@@ -13,15 +13,37 @@ static unsigned long poll_ticks(void)
 }
 
 static volatile struct {
-    long replacement, result;
+    long replacement, result, inherited;
     int ran;
 } poll_peer;
 
+static void poll_inherited_alias(void *argument)
+{
+    PTOS_POLLFD fd = {4, PTOS_POLLIN, 0};
+
+    (void)argument;
+    if (poll64(&fd, 1, 0) != 1 || fd.revents != PTOS_POLLIN || Fclose(4))
+        Pterm(94);
+}
+
 static void poll_rebind(void *argument)
 {
+    long stack;
+    int32_t pid = 0;
+
     (void)argument;
     if (poll64(NULL, 0, 40) != 0)
         return;
+    /* The original descriptor is still bound and the waiter has no events.
+     * Its exact references can coexist with a sibling's descriptor snapshot. */
+    stack = Malloc(RUNNABLE_STACK_SIZE);
+    if (stack > 0) {
+        if (launch_entry(poll_inherited_alias, CLONE_VM | CLONE_COPY_ALL_HANDLES,
+                         (void *)stack, &pid, NULL) > 0 && pid > 0)
+            poll_peer.inherited = Pwaitpid(pid, 0, 0) == ((long)pid << 16);
+        if (Mfree((void *)stack))
+            poll_peer.inherited = 0;
+    }
     poll_peer.result = Fclose(4);
     if (!poll_peer.result)
         poll_peer.result = Fforce(4, (short)poll_peer.replacement);
@@ -64,6 +86,34 @@ static void poll_cancel_group(void *argument)
 
 #ifdef TEST_WITH_PLUGGABLE_FS_TEST
 static const char poll_wait_path[] = "P:\\POLLWAIT.TXT";
+
+static void test_poll_churn(void)
+{
+    PTOS_POLLFD fds[2] = {{4, 0, 0}, {0, PTOS_POLLIN, 0}};
+    unsigned char scans = 0;
+    unsigned long start;
+    long result;
+
+    fds[1].fd = Fopen("P:\\POLLCHRN.TXT", 0);
+    ptest_assert_msg(fds[1].fd >= 0, "open the descriptor churn fixture");
+    if (fds[1].fd < 0)
+        return;
+    ptest_assert_msg(Fforce(4, -1) == 0, "bind the mock status vector alias");
+
+    ptest_assert_msg(poll64(&fds[1], 1, 0) == 0 && !fds[1].revents &&
+                     Fread((short)fds[1].fd, 1, &scans) == 1 && scans == 1,
+                     "unrelated descriptor churn never retries a zero-timeout scan");
+    start = poll_ticks();
+    result = poll64(&fds[1], 1, 17);
+    ptest_assert_msg(result == 0 && !fds[1].revents && poll_ticks() - start >= 4 &&
+                     Fread((short)fds[1].fd, 1, &scans) == 1 && scans == 2,
+                     "unrelated descriptor churn sleeps and preserves the original deadline");
+    ptest_assert_msg(poll64(fds, 2, 0) == 1 && fds[0].revents == PTOS_POLLNVAL &&
+                     !fds[1].revents,
+                     "a later readiness callback invalidates an earlier descriptor sample");
+    ptest_assert_msg(Fclose(4) == 0 && Fclose((short)fds[1].fd) == 0,
+                     "close both descriptor churn bindings");
+}
 
 static void poll_provider_producer(void *argument)
 {
@@ -212,11 +262,12 @@ static void test_fpoll_time64(void)
     if (stack <= 0)
         goto done;
 #ifdef TEST_WITH_PLUGGABLE_FS_TEST
+    test_poll_churn();
     test_poll_provider((void *)stack);
 #endif
     if (Fforce(4, (short)first) == 0) {
         poll_peer.replacement = second;
-        poll_peer.ran = 0;
+        poll_peer.ran = poll_peer.inherited = 0;
         result = launch_entry(poll_rebind, CLONE_VM | CLONE_SAME_PROCESS,
                               (void *)stack, NULL, &tid);
         ptest_assert_msg(result > 0, "start a sibling THREAD while the description is still bound");
@@ -226,6 +277,8 @@ static void test_fpoll_time64(void)
             ptest_assert_msg(result == 1 && poll_peer.ran && !poll_peer.result &&
                              fds[0].revents == PTOS_POLLNVAL,
                              "wide finite wait progresses peers and rejects the reused binding");
+            ptest_assert_msg(poll_peer.inherited,
+                             "a sibling clones and reaps inherited descriptors while poll is blocked");
             ptest_assert_msg(join_tid(tid, &status) == 0 && !status && join_tid(tid, 0) == -20L,
                              "reap the sibling exactly once");
             fds[0].events = PTOS_POLLIN;

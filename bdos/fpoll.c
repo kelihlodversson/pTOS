@@ -111,6 +111,13 @@ static LONG poll_bios_status(const POLL_REFERENCE *reference, UWORD events)
     return bios_status(reference->bios, events);
 }
 
+static BOOL poll_binding_current(const PROCESS_FILES *files, LONG fd,
+                                 const POLL_REFERENCE *reference)
+{
+    return reference->generation &&
+           files->binding[fd].generation == reference->generation;
+}
+
 static UWORD poll_revents(const PTOS_POLLFD *fd, const POLL_REFERENCE *reference,
                          POLL_WAIT *wait)
 {
@@ -119,8 +126,7 @@ static UWORD poll_revents(const PTOS_POLLFD *fd, const POLL_REFERENCE *reference
 
     if (fd->fd < 0)
         return 0;
-    if (!reference->generation ||
-        wait->files->binding[fd->fd].generation != reference->generation)
+    if (!poll_binding_current(wait->files, fd->fd, reference))
         return PTOS_POLLNVAL;
 
     if (fd->events & POLL_READ_EVENTS) events |= FS_READY_READ;
@@ -137,8 +143,6 @@ static UWORD poll_revents(const PTOS_POLLFD *fd, const POLL_REFERENCE *reference
     } else {
         ready = DISK_CALL(fs_reference_ready(&reference->file, events));
     }
-    if (wait->files->binding[fd->fd].generation != reference->generation)
-        return PTOS_POLLNVAL;
     if (ready == EAGAIN) {
         /* An admitted alias can be flushing the same description. */
         wait->sample = TRUE;
@@ -159,6 +163,7 @@ static LONG poll_wait(PTOS_POLLFD *fds, ULONG nfds, QUAD timeout, UQUAD start)
 {
     PROCESS_FILE_OPERATION operation = PROCESS_FILE_OPERATION_INIT;
     KSCHED_CLEANUP_SCOPE cleanup = {0};
+    KPROC *owner = NULL;
     POLL_REFERENCE *references = NULL;
     POLL_WAIT wait = {0};
     ULONG i;
@@ -184,6 +189,14 @@ static LONG poll_wait(PTOS_POLLFD *fds, ULONG nfds, QUAD timeout, UQUAD start)
             if (result)
                 goto done;
         }
+        /* Snapshot admission ends with the non-yielding pins. The separate
+         * identity reference owns the table until these pins are released. */
+        owner = kproc_retain_live(operation.owner);
+        if (!owner) {
+            result = EACCDN;
+            goto done;
+        }
+        process_files_operation_end(&operation);
     }
 
     wait.finite = timeout > 0;
@@ -201,22 +214,30 @@ static LONG poll_wait(PTOS_POLLFD *fds, ULONG nfds, QUAD timeout, UQUAD start)
             break;
         }
         ksched_sequence_observe(&readiness_changes, &observation);
-        wait.epoch = wait.files ? wait.files->epoch : 0;
         wait.sample_tick = poll_now();
         wait.sample = FALSE;
 
+        for (i = 0; i < nfds; i++)
+            fds[i].revents = poll_revents(&fds[i], &references[i], &wait);
+
+        /* A later BIOS status vector can reenter and invalidate an earlier
+         * sample. Validate every binding after the last vector has returned. */
+        if (wait.files && wait.files->retiring) {
+            result = EACCDN;
+            break;
+        }
         result = 0;
         for (i = 0; i < nfds; i++) {
-            fds[i].revents = poll_revents(&fds[i], &references[i], &wait);
+            if (fds[i].fd >= 0 && !poll_binding_current(wait.files, fds[i].fd, &references[i]))
+                fds[i].revents = PTOS_POLLNVAL;
             if (fds[i].revents)
                 result++;
         }
-        /* A legacy device status vector can reenter, unlike a typed
-         * readiness provider. Retry a scan that observed a mutation. */
-        if (wait.files && wait.files->epoch != wait.epoch)
-            continue;
         if (result || !timeout || (wait.finite && deadline_reached(poll_now(), wait.deadline)))
             break;
+        /* Changes during the scan are accounted for by binding validation.
+         * Use the current epoch to observe changes while asleep. */
+        wait.epoch = wait.files ? wait.files->epoch : 0;
         status = ksched_wait_cancelable_observed(poll_wake, &wait, &observation);
         if (status != KSCHED_WAIT_READY) {
             result = status == KSCHED_WAIT_CANCELLED ? EACCDN : EINVFN;
@@ -225,13 +246,14 @@ static LONG poll_wait(PTOS_POLLFD *fds, ULONG nfds, QUAD timeout, UQUAD start)
     }
 
 done:
+    process_files_operation_end(&operation);
     if (references) {
         for (i = 0; i < nfds; i++)
             if (references[i].file.owned)
                 fs_reference_unpin(&references[i].file);
         kfree(references);
     }
-    process_files_operation_end(&operation);
+    kproc_release(owner);
     if (ksched_cancellation_pending())
         result = EACCDN;
     ksched_cleanup_end(&cleanup);

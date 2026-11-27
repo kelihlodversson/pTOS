@@ -22,7 +22,10 @@
 #include "gemerror.h"
 #include "string.h"
 #if CONF_WITH_FPOLL_TIME64
+#include "bdosstub.h"
+#include "console.h"
 #include "fpoll_kernel.h"
+#include "process_files.h"
 #endif
 
 #ifndef CONF_PFS_TEST_DRIVE
@@ -34,20 +37,21 @@ static const char pfs_test_contents[] = "Hello from the pluggable filesystem lay
 enum {
     PFS_TEST_ROOT, PFS_TEST_FILE,
 #if CONF_WITH_FPOLL_TIME64
-    PFS_TEST_POLL_CHECK, PFS_TEST_POLL_WAIT,
+    PFS_TEST_POLL_CHECK, PFS_TEST_POLL_WAIT, PFS_TEST_POLL_CHURN,
 #endif
     PFS_TEST_COUNT
 };
 static const char *const pfs_test_names[] = {
     "PFSTEST.TXT",
 #if CONF_WITH_FPOLL_TIME64
-    "POLLCHK.TXT", "POLLWAIT.TXT",
+    "POLLCHK.TXT", "POLLWAIT.TXT", "POLLCHRN.TXT",
 #endif
 };
 
 #if CONF_WITH_FPOLL_TIME64
 /* The producers and observers share mock device state across open files. */
 static BOOL poll_check_ready, poll_wait_sampled, poll_wait_ready;
+static UBYTE poll_churn_samples;
 
 static LONG pfstest_ready(const PFSCOOKIE *fc, UWORD events)
 {
@@ -62,6 +66,14 @@ static LONG pfstest_ready(const PFSCOOKIE *fc, UWORD events)
         if (!poll_wait_ready)
             return 0;
         return (events & FS_READY_READ) | FS_READY_ERROR | FS_READY_HANGUP;
+    }
+    if (fc->index == PFS_TEST_POLL_CHURN) {
+        /* Inject the binding changes a reentrant BIOS status vector can
+         * cause. Bound the injection so a broken retry loop fails the test
+         * rather than hanging the suite. */
+        if (++poll_churn_samples <= 8)
+            return process_files_bind_bios(run, 4, H_Console);
+        return 0;
     }
     return events & FS_READY_READ;
 }
@@ -114,6 +126,8 @@ static LONG pfstest_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE 
 #if CONF_WITH_FPOLL_TIME64
     if (index == PFS_TEST_POLL_CHECK)
         poll_check_ready = FALSE;
+    if (index == PFS_TEST_POLL_CHURN)
+        poll_churn_samples = 0;
 #endif
 
     return E_OK;
@@ -127,6 +141,11 @@ static LONG pfstest_read(PFSCOOKIE *fc, LONG pos, LONG len, UBYTE *buf)
         return EIHNDL;
 
 #if CONF_WITH_FPOLL_TIME64
+    if (fc->index == PFS_TEST_POLL_CHURN && len == 1) {
+        *buf = poll_churn_samples;
+        poll_churn_samples = 0;
+        return 1;
+    }
     if (fc->index == PFS_TEST_POLL_WAIT) {
         /* A two-byte read resets the test device. A one-byte read in the
          * producer acknowledges a sampled wait and publishes readiness. */
