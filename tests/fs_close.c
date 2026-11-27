@@ -85,7 +85,9 @@ static void driver_release(PFSCOOKIE *cookie)
         CHECK(owner.p_uft[0]==NUMSTD+1 && sft[1].f_use==2);
     }
 }
+#ifndef USE_PRODUCTION_PFS_IO
 LONG pfs_handle_close(PFSCOOKIE *cookie) { return cookie->fs->close(cookie); }
+#endif
 static LONG driver_release_file(PFSCOOKIE *cookie)
 { driver_release(cookie); return release_error; }
 static struct pfs_ops driver;

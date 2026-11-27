@@ -49,6 +49,9 @@ static void files_entry(void *argument)
     if (Dgetpath(cwd,3) || ((!strcmp(cwd,files_parent_cwd)) != files_probe.inherit_cwd))
         files_probe.error|=16;
     if (Fread(files_probe.later,1,&c)!=-37L) files_probe.error|=32;
+    if (Fcntl(files_probe.file,0,F_GETFL)!=O_RDWR ||
+        Fcntl(files_probe.duplicate,0,F_GETFL)!=O_RDWR ||
+        Fcntl(files_probe.later,0,F_GETFL)!=-37L) files_probe.error|=256;
     if (files_probe.pid==files_probe.parent || Fread(files_probe.file,1,&a)!=1 || a!='a' ||
         Fread(files_probe.duplicate,1,&b)!=1 || b!='b') files_probe.error|=1;
     if (Fclose(files_probe.file) || Fclose(files_probe.file)!=-37L ||

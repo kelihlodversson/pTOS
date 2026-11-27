@@ -471,6 +471,9 @@ LONG fs_handle_lookup(int h, FS_HANDLE *handle)
     if (IS_BIOS_HANDLE(h)) {
         handle->slot = NULL;
         handle->bios = h;
+#if CONF_WITH_USER_ASPACE
+        handle->incarnation = 0;
+#endif
         return E_OK;
     }
 
@@ -491,6 +494,9 @@ LONG fs_handle_lookup(int h, FS_HANDLE *handle)
 
     handle->slot = slot;
     handle->bios = slot->f_bios;
+#if CONF_WITH_USER_ASPACE
+    handle->incarnation = slot->f_incarnation;
+#endif
     return E_OK;
 }
 

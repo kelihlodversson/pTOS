@@ -580,7 +580,7 @@ long xgsdtof(DOSTIME *buf, WORD h, WORD wrt)
     if (handle.slot->f_pfs.fs)
     {
         UWORD time, date;   /* DOSTIME is packed */
-        long rc = pfs_handle_datime(&handle.slot->f_pfs, &time, &date, wrt);
+        long rc = pfs_handle_datime(&handle, &time, &date, wrt);
 
         if (rc == E_OK)
         {

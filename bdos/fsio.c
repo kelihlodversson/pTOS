@@ -311,7 +311,7 @@ long eof(int h)
         return EIHNDL;
 #if CONF_WITH_PLUGGABLE_FS
     if (handle.slot->f_pfs.fs)
-        return pfs_handle_eof(&handle.slot->f_pfs);
+        return pfs_handle_eof(&handle);
 #endif
     file = handle.slot->f_ofd;
     return file->o_bytnum >= file->o_dfd->o_fileln;
@@ -346,7 +346,7 @@ long xlseek(LONG n, WORD h, WORD flg)
         return 0;
 #if CONF_WITH_PLUGGABLE_FS
     if (handle.slot->f_pfs.fs)
-        return pfs_handle_seek(&handle.slot->f_pfs, n, flg);
+        return pfs_handle_seek(&handle, n, flg);
 #endif
     f = handle.slot->f_ofd;
     if (flg == 2)
@@ -484,7 +484,7 @@ long xread(WORD h, long len, void *ubufr)
     }
 #if CONF_WITH_PLUGGABLE_FS
     if (handle.slot->f_pfs.fs)
-        return pfs_handle_read(&handle.slot->f_pfs, len, ubufr);
+        return pfs_handle_read(&handle, len, ubufr);
 #endif
     return ixread(handle.slot->f_ofd, len, ubufr);
 }
@@ -598,7 +598,7 @@ long xwrite(WORD h, long len, void *ubufr)
     }
 #if CONF_WITH_PLUGGABLE_FS
     if (handle.slot->f_pfs.fs)
-        return pfs_handle_write(&handle.slot->f_pfs, len, ubufr);
+        return pfs_handle_write(&handle, len, ubufr);
 #endif
     /* A FAT write to an existing file opened read-only is TOS compatible. */
     return ixwrite(handle.slot->f_ofd, len, ubufr);

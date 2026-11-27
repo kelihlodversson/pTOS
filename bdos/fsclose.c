@@ -31,6 +31,9 @@ BOOL fs_sft_claim(int n)
     if (!kproc_file_references_allowed(run) || !valid_slot(n) || last_incarnation==~(UQUAD)0) return FALSE;
     f=&sft[n];
     if (f->f_own || f->f_use || f->f_close_busy || f->f_cleanup_refs || f->f_staged_refs) return FALSE;
+#if CONF_WITH_PLUGGABLE_FS
+    if (f->f_io_busy) return FALSE;
+#endif
     f->f_incarnation=++last_incarnation;
     f->f_cleanup_issued=f->f_cleanup_consumed=f->f_cleanup_invalid_from=0;
     f->f_cleanup_first_error=f->f_cleanup_last_error=0;
@@ -41,6 +44,9 @@ void fs_sft_invalidated(int n)
 {
     FTAB *f=&sft[n];
     if (f->f_close_busy) panic("filesystem: invalidation during active close");
+#if CONF_WITH_PLUGGABLE_FS
+    if (f->f_io_busy) panic("filesystem: invalidation during active driver I/O");
+#endif
     /* The filesystem's normal media-invalidation path owns disposal of the
      * handle group. It is not a forced free by the cleanup service. */
     /* Do this before the filesystem makes the numeric slot reusable. Never
@@ -196,6 +202,144 @@ static LONG bounded_close(WORD h, BOOL cleanup, BOOL staged, BOOL dispose, FS_CL
 }
 LONG fs_close_bounded(WORD h, BOOL dispose, FS_CLOSE_REPORT *out)
 { return bounded_close(h,FALSE,FALSE,dispose,out); }
+
+static LONG retain_slot(FTAB *file, FS_FILE_REFERENCE *out)
+{
+    if ((unsigned int)file->f_use == ((unsigned int)~0U >> 1) ||
+        file->f_staged_refs == ~(ULONG)0)
+        return EAGAIN;
+    file->f_use++;
+    file->f_staged_refs++;
+    out->handle = (WORD)(file - sft + NUMSTD);
+    out->incarnation = file->f_incarnation;
+    out->owned = TRUE;
+    return E_OK;
+}
+
+LONG fs_reference_pin(const FS_HANDLE *handle, FS_FILE_REFERENCE *out)
+{
+    FTAB *file;
+
+    if (!handle || !out || out->owned || out->closing)
+        return EINVAL;
+    file = handle->slot;
+    if (handle->bios || !file || !fs_sft_accessible((int)(file - sft)) ||
+        !handle->incarnation || file->f_incarnation != handle->incarnation ||
+        file->f_cleanup_state == FS_CLEANUP_INVALIDATED)
+        return EIHNDL;
+    return retain_slot(file, out);
+}
+
+LONG fs_reference_lookup(const FS_FILE_REFERENCE *reference, FS_HANDLE *out)
+{
+    FTAB *file;
+
+    if (!out)
+        return EINVAL;
+    if (!reference || !reference->owned || !valid_slot(reference->handle - NUMSTD))
+        return EIHNDL;
+    file = &sft[reference->handle - NUMSTD];
+    if (file->f_incarnation != reference->incarnation)
+        return EIHNDL;
+    if (file->f_cleanup_state == FS_CLEANUP_INVALIDATED)
+        return E_CHNG;
+    if (reference->closing || file->f_close_busy)
+        return EACCDN;
+    if (!file->f_own || !file->f_staged_refs || file->f_use <= 0)
+        return EIHNDL;
+    out->slot = file;
+    out->bios = file->f_bios;
+    out->incarnation = file->f_incarnation;
+    return E_OK;
+}
+
+static UWORD file_open_mode(const FS_HANDLE *handle)
+{
+    if (handle->bios)
+        return RW_MODE;
+#if CONF_WITH_PLUGGABLE_FS
+    if (handle->slot->f_pfs.fs)
+        return handle->slot->f_open_mode;
+#endif
+    return handle->slot->f_ofd->o_mod & MODE_FAC;
+}
+
+LONG xfcntl(WORD descriptor, UWORD command)
+{
+    FS_HANDLE handle;
+    LONG error;
+
+    if (command != GEMDOS_F_GETFL)
+        return EINVFN;
+    error = fs_handle_lookup(descriptor, &handle);
+    return error == E_OK ? file_open_mode(&handle) : error;
+}
+
+LONG fs_file_ioctl(WORD descriptor, UWORD command, void *arg, ULONG size)
+{
+#if CONF_WITH_PLUGGABLE_FS
+    FS_HANDLE handle;
+    LONG error = fs_handle_lookup(descriptor, &handle);
+
+    if (error != E_OK)
+        return error;
+    if (!handle.bios && handle.slot->f_pfs.fs)
+        return pfs_handle_ioctl(&handle, command, arg, size);
+#else
+    (void)descriptor;
+    (void)command;
+    (void)arg;
+    (void)size;
+#endif
+    return EINVFN;
+}
+
+LONG fs_reference_ready(const FS_FILE_REFERENCE *reference, UWORD events)
+{
+    FS_HANDLE handle;
+    UWORD mode;
+    LONG error = fs_reference_lookup(reference, &handle);
+
+    if (error != E_OK)
+        return error;
+    mode = file_open_mode(&handle);
+    events &= FS_READY_READ | FS_READY_WRITE;
+    if (mode == WO_MODE)
+        events &= ~FS_READY_READ;
+    if (mode == RO_MODE)
+        events &= ~FS_READY_WRITE;
+#if CONF_WITH_PLUGGABLE_FS
+    if (handle.slot->f_pfs.fs) {
+        PFSCOOKIE *file = &handle.slot->f_pfs;
+        LONG ready = file->fs->ready ? file->fs->ready(file, events) : EINVFN;
+        return ready < 0 ? ready : ready & events;
+    }
+#endif
+    /* Regular FAT files can complete I/O synchronously, including EOF. */
+    return events;
+}
+
+/* A pin does not flush a still-owned file. If it is the final owner, run
+ * the existing consuming close/cleanup protocol before releasing storage. */
+LONG fs_reference_unpin(FS_FILE_REFERENCE *reference)
+{
+    FS_CLOSE_REPORT report;
+
+    if (reference && reference->owned && !reference->closing &&
+        valid_slot(reference->handle - NUMSTD)) {
+        FTAB *file = &sft[reference->handle - NUMSTD];
+
+        if (file->f_incarnation == reference->incarnation && file->f_use > 1 &&
+            file->f_staged_refs && file->f_cleanup_state != FS_CLEANUP_INVALIDATED) {
+            file->f_use--;
+            file->f_staged_refs--;
+            reference->owned = FALSE;
+            return E_OK;
+        }
+    }
+    return fs_reference_close(reference, TRUE, &report);
+}
+
 /* Existing legacy binding resolver for this prerequisite. Stage B replaces
  * resolution for ALL managed descriptors, not just inherited child tables.
  * Caller holds source identity and reversible descriptor admission; this
@@ -246,11 +390,7 @@ static LONG reference_acquire(PD *pd,WORD descriptor,UQUAD expected,FS_FILE_REFE
         if (f->f_own!=pd || (ULONG)f->f_use<=aliases[handle-NUMSTD]+
                 f->f_cleanup_refs+f->f_staged_refs) return EACCDN;
     }
-    if ((unsigned int)f->f_use==((unsigned int)~0U>>1) ||
-        f->f_staged_refs==~(ULONG)0) return EAGAIN;
-    f->f_use++; f->f_staged_refs++;
-    out->handle=handle; out->incarnation=expected; out->owned=TRUE;
-    return E_OK;
+    return retain_slot(f, out);
 }
 LONG fs_reference_acquire(KPROC *source,WORD descriptor,UQUAD expected,FS_FILE_REFERENCE *out)
 {

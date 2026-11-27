@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
     subprocess.run([str(work/'close')],check=True)
 
     subprocess.run(flags+['tests/fs_reference.c','bdos/fsclose.c','bdos/fsopnclo.c',
-        'bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'reference')],check=True)
+        'bdos/fshand.c','bdos/fsmain.c','fs/pfs.c','-Wl,--gc-sections','-o',str(work/'reference')],check=True)
     subprocess.run([str(work/'reference')],check=True)
 
     config.syms['CONF_WITH_MULTITHREADING'].set_value(2)

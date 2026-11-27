@@ -1,5 +1,6 @@
 /* Production checked reference + FAT/PFS close; PROCESS registry/disk modeled. */
 #define main close_backend_fixture_main
+#define USE_PRODUCTION_PFS_IO
 #include "fs_close.c"
 #undef main
 #include "kproc.h"
@@ -51,6 +52,111 @@ static void reentrant_reference_case(BOOL outer_staged,BOOL extra_ordinary,BOOL 
         CHECK(fs_cleanup_retry(&residual,&result)==E_OK && !sft[0].f_use);
     }
     CHECK(!sft[0].f_use && !sft[0].f_cleanup_refs && !sft[0].f_staged_refs);
+}
+
+static LONG test_ready(const PFSCOOKIE *file, UWORD events)
+{
+    CHECK(file == &sft[0].f_pfs && file->pos == 29);
+    CHECK(events == FS_READY_READ);
+    return FS_READY_READ;
+}
+
+static LONG test_control(PFSCOOKIE *file, UWORD command, void *arg, ULONG size)
+{
+    FS_CLOSE_REPORT report;
+
+    CHECK(file == &sft[0].f_pfs && file->pos == 29 && sft[0].f_io_busy);
+    CHECK(sft[0].f_staged_refs == 1 && sft[0].f_use == 2);
+    CHECK(fs_file_ioctl(NUMSTD, command, arg, size) == EACCDN);
+    CHECK(fs_close_once(NUMSTD, FALSE, &report) == E_OK && sft[0].f_use == 1);
+    CHECK(report.disposition == FS_CLOSE_CONSUMED && file->fs == &driver);
+    if (!arg) {
+        errcode = EWRITF;
+        errdrv = 0;
+        rwerr = 0x1234;
+        longjmp(errbuf, 1);
+    }
+    CHECK(size == sizeof(LONG));
+    *(LONG *)arg = file->pos++;
+    return E_OK;
+}
+
+static void operation_callback_case(BOOL disk_fault)
+{
+    unsigned old_closes = closes, old_releases = releases;
+    LONG position = -1;
+
+    CHECK(fs_sft_claim(0));
+    sft[0].f_own = &owner;
+    sft[0].f_use = 1;
+    sft[0].f_pfs.fs = &driver;
+    sft[0].f_pfs.pos = 29;
+    driver.close = driver_close;
+    driver.release_file = driver_release_file;
+    driver.ioctl = test_control;
+    release_error = EWRITF;
+    if (setjmp(errbuf)) {
+        CHECK(disk_fault && errcode == EWRITF && rwerr == 0x1234 && errdrv == 0);
+    } else {
+        CHECK(fs_file_ioctl(NUMSTD, 42, disk_fault ? NULL : &position, sizeof(position)) == E_OK);
+        CHECK(!disk_fault && position == 29);
+    }
+    CHECK(closes == old_closes + 2 && releases == old_releases + 1);
+    CHECK(!sft[0].f_own && !sft[0].f_use && !sft[0].f_staged_refs && !sft[0].f_io_busy);
+    driver.ioctl = NULL;
+}
+
+static void operation_reference_case(void)
+{
+    FS_HANDLE borrowed, held;
+    FS_FILE_REFERENCE pin = FS_FILE_REFERENCE_INIT;
+    FS_CLOSE_REPORT report;
+    unsigned old_closes = closes, old_releases = releases;
+
+    CHECK(fs_sft_claim(0));
+    sft[0].f_own = &owner;
+    sft[0].f_use = 1;
+    sft[0].f_pfs.fs = &driver;
+    sft[0].f_pfs.pos = 29;
+    sft[0].f_open_mode = RO_MODE;
+    driver.close = driver_close;
+    driver.release_file = driver_release_file;
+    pfs_error = E_OK;
+    release_error = EWRITF;
+    CHECK(fs_handle_lookup(NUMSTD, &borrowed) == E_OK);
+    CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL) == RO_MODE);
+    CHECK(xfcntl(H_Console, GEMDOS_F_GETFL) == RW_MODE);
+    CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL + 1) == EINVFN);
+    CHECK(fs_reference_pin(&borrowed, &pin) == E_OK);
+    CHECK(fs_reference_unpin(&pin) == E_OK && !pin.owned);
+    CHECK(closes == old_closes && releases == old_releases);
+    CHECK(fs_reference_pin(&borrowed, &pin) == E_OK);
+    CHECK(fs_close_once(NUMSTD, FALSE, &report) == E_OK);
+    CHECK(report.disposition == FS_CLOSE_CONSUMED && sft[0].f_use == 1);
+    CHECK(fs_handle_lookup(NUMSTD, &held) == EIHNDL);
+    CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL) == EIHNDL);
+    CHECK(fs_reference_lookup(&pin, &held) == E_OK);
+    CHECK(held.slot == borrowed.slot && held.slot->f_pfs.pos == 29);
+    CHECK(fs_reference_ready(&pin, FS_READY_READ) == EINVFN);
+    driver.ready = test_ready;
+    CHECK(fs_reference_ready(&pin, FS_READY_READ | FS_READY_WRITE) == FS_READY_READ);
+    driver.ready = NULL;
+    CHECK(closes == old_closes + 1 && releases == old_releases);
+    CHECK(fs_reference_unpin(&pin) == EWRITF && !pin.owned);
+    CHECK(closes == old_closes + 2 && releases == old_releases + 1);
+    CHECK(!sft[0].f_own && !sft[0].f_use && !sft[0].f_staged_refs);
+
+    open_file();
+    CHECK(fs_reference_pin(&borrowed, &pin) == EIHNDL && !pin.owned);
+    CHECK(fs_handle_lookup(NUMSTD, &borrowed) == E_OK);
+    CHECK(fs_reference_pin(&borrowed, &pin) == E_OK);
+    file.o_dmd = &media;
+    ofd_invalidate_drive(&media);
+    CHECK(fs_reference_lookup(&pin, &held) == E_CHNG);
+    CHECK(fs_reference_ready(&pin, FS_READY_READ) == E_CHNG);
+    CHECK(fs_reference_unpin(&pin) == E_CHNG && !pin.owned);
+    CHECK(!sft[0].f_own && !sft[0].f_use && !sft[0].f_staged_refs);
+    puts("In-flight file pin survives close; release, media revocation and slot reuse conserve references: PASS (host)");
 }
 int main(void)
 {
@@ -162,6 +268,9 @@ int main(void)
     reentrant_reference_case(FALSE,TRUE,FALSE);
     reentrant_reference_case(TRUE,FALSE,FALSE);
     reentrant_reference_case(FALSE,FALSE,TRUE);
+    operation_reference_case();
+    operation_callback_case(FALSE);
+    operation_callback_case(TRUE);
     puts("Reentrant close reserves its exact reference class; no staged owner can fund an ordinary transfer: PASS (host)");
     puts("Numeric close exhaustion unpublishes standard aliases before staged owner release: PASS (host)");
     puts("Production checked live SFT refs: authenticated acquire, alias counts, retirement-independent ownership, exact close/transfer, invalidation and PFS errors: PASS (host)");

@@ -18,6 +18,7 @@
 #include "bdosdefs.h"   /* for PD, used by pfs_proc_exit() below */
 
 struct pfs_ops;
+struct fs_handle;
 struct dta_info;
 
 /* Opaque handle identifying a file or directory within one driver
@@ -193,6 +194,15 @@ struct pfs_ops {
     BOOL (*iterator_valid)(const PFSCOOKIE *,LONG);
     LONG (*close_iterator)(PFSCOOKIE *,LONG);
 
+    /* Optional level check on an opened file held by a live SFT reference.
+     * Return a subset of FS_READY_* or a negative error. This callback is a
+     * synchronous state check: it cannot block, do I/O, or reenter GEMDOS. */
+    LONG (*ready)(const PFSCOOKIE *, UWORD events);
+
+    /* Optional control on a pinned open file. The provider validates the
+     * command and buffer size and may use the buffer only during the call. */
+    LONG (*ioctl)(PFSCOOKIE *, UWORD command, void *arg, ULONG size);
+
 };
 
 typedef struct {
@@ -234,38 +244,33 @@ LONG pfs_register_drive(WORD drive, struct pfs_ops *fs);
  */
 extern struct pfs_ops fat_pfs_ops;
 
-/* Handle-based dispatch for a handle already resolved (by the bdos/
- * caller, via getpfsslot()) to belong to a pluggable driver.  'fc' is
- * the FTAB slot's embedded cookie; position tracking is entirely
- * internal to these three (see PFSCOOKIE.pos above) - callers just
- * pass the handle's ongoing sequential position through, GEMDOS-style.
- *
- * pfs_handle_close() only calls the driver's close(), not release() -
- * the same cookie can be referenced by more than one sft[] entry at once
- * (Fforce()-shared slots, xdup()-copied slots), so the caller must call
- * fs->release() itself, and only once the last sft[] reference is gone -
- * see bdos/fsopnclo.c's xclose().
+/* Handle-based I/O and cursor tracking on the single cookie in the SFT.
+ * The close owner calls pfs_handle_close() to flush before consuming a
+ * reference. It calls the driver's final release after the last reference.
  */
-LONG pfs_handle_read(PFSCOOKIE *fc, LONG len, UBYTE *buf);
-LONG pfs_handle_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf);
+LONG pfs_handle_read(const struct fs_handle *handle, LONG len, UBYTE *buf);
+LONG pfs_handle_write(const struct fs_handle *handle, LONG len, const UBYTE *buf);
 LONG pfs_handle_close(PFSCOOKIE *fc);
+#if CONF_WITH_USER_ASPACE
+LONG pfs_handle_ioctl(const struct fs_handle *handle, UWORD command, void *arg, ULONG size);
+#endif
 
 /* Fseek on a pluggable handle: 'flg' 0/1/2 = from the start, the current
  * position, the end.  Returns the new position, ERANGE for one before
  * the start or past the end (as ixlseek() does for FAT), or EINVFN.
  */
-LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg);
+LONG pfs_handle_seek(const struct fs_handle *handle, LONG n, WORD flg);
 
 /* 1 at the end of the file, 0 before it, or a negative error code -
  * bdos/fsio.c's eof() for a pluggable handle.
  */
-LONG pfs_handle_eof(PFSCOOKIE *fc);
+LONG pfs_handle_eof(const struct fs_handle *handle);
 
 /* Fdatime on a pluggable handle, with the time and date in native byte
  * order.  Only getting them is supported (wrt = 0): pfs_ops has no way
  * to set them, so wrt != 0 gives EACCDN.
  */
-LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt);
+LONG pfs_handle_datime(const struct fs_handle *handle, UWORD *time, UWORD *date, WORD wrt);
 
 /* Called from bdos/proc.c's ixterm() when process 'r' terminates: frees
  * any current-directory cookie and Fsfirst/Fsnext search slots (fs/pfs.c

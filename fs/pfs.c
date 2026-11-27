@@ -1017,7 +1017,7 @@ LONG pfs_do_getdir(char *buf, WORD drv)
     return E_OK;
 }
 
-static LONG pfs_alloc_handle(PFSCOOKIE *fc)
+static LONG pfs_alloc_handle(PFSCOOKIE *fc, UWORD mode)
 {
     WORD i;
 #if CONF_WITH_PROCESS_FILES
@@ -1032,6 +1032,9 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
 
 #if CONF_WITH_USER_ASPACE
     if (!fs_sft_claim(i)) return ENHNDL;
+    sft[i].f_open_mode = mode & MODE_FAC;
+#else
+    (void)mode;
 #endif
     sft[i].f_own = run;
     sft[i].f_use = 1;
@@ -1084,7 +1087,7 @@ LONG pfs_do_open(const char *path, WORD mode)
         return fc.index;
 
     fc.pos = 0;
-    rc = pfs_alloc_handle(&fc);
+    rc = pfs_alloc_handle(&fc, mode);
     if (rc < 0)
     {
         if (fs->close) fs->close(&fc);
@@ -1125,7 +1128,7 @@ LONG pfs_do_create(const char *path, UWORD attr)
         return fc.index;
 
     fc.pos = 0;
-    rc = pfs_alloc_handle(&fc);
+    rc = pfs_alloc_handle(&fc, RW_MODE);
     if (rc < 0)
     {
         if (fs->close) fs->close(&fc);
@@ -1496,7 +1499,7 @@ void pfs_invalidate_fat_drive(WORD drive)
 /* handle-based dispatch (Fread/Fwrite/Fclose)                        */
 /* ------------------------------------------------------------------ */
 
-LONG pfs_handle_read(PFSCOOKIE *fc, LONG len, UBYTE *buf)
+static LONG pfs_file_read(PFSCOOKIE *fc, LONG len, UBYTE *buf)
 {
     LONG n;
 
@@ -1510,7 +1513,7 @@ LONG pfs_handle_read(PFSCOOKIE *fc, LONG len, UBYTE *buf)
     return n;
 }
 
-LONG pfs_handle_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf)
+static LONG pfs_file_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf)
 {
     LONG n;
 
@@ -1546,7 +1549,7 @@ static LONG pfs_handle_fstat(PFSCOOKIE *fc, PFSATTR *attr)
     return fc->fs->fstat(fc, attr);
 }
 
-LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
+static LONG pfs_file_seek(PFSCOOKIE *fc, LONG n, WORD flg)
 {
     PFSATTR attr;
     QUAD target;    /* wide enough for a size of up to 4 GB plus an offset */
@@ -1585,7 +1588,7 @@ LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
     return fc->pos;
 }
 
-LONG pfs_handle_eof(PFSCOOKIE *fc)
+static LONG pfs_file_eof(PFSCOOKIE *fc)
 {
     PFSATTR attr;
     LONG rc;
@@ -1597,7 +1600,7 @@ LONG pfs_handle_eof(PFSCOOKIE *fc)
     return ((ULONG)fc->pos >= attr.size) ? 1 : 0;
 }
 
-LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
+static LONG pfs_file_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
 {
     PFSATTR attr;
     LONG rc;
@@ -1614,3 +1617,66 @@ LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
 
     return E_OK;
 }
+
+
+/* Driver calls can reenter GEMDOS and close the last descriptor. Hold the
+ * opened cookie through cursor completion and release the pin on unwind. */
+#if CONF_WITH_USER_ASPACE
+#define PFS_FILE_CALL(handle, call) \
+__extension__ ({ \
+    const FS_HANDLE *_handle = (handle); \
+    FTAB *_file = _handle->slot; \
+    FS_FILE_REFERENCE _pin = FS_FILE_REFERENCE_INIT; \
+    volatile LONG _status = _file->f_io_busy ? EACCDN : fs_reference_pin(_handle, &_pin); \
+    if (_status == E_OK) { \
+        PFS_DISK_FAILURE _failure; \
+        _file->f_io_busy = TRUE; \
+        _status = PFS_TRY(call, &_failure); \
+        _file->f_io_busy = FALSE; \
+        fs_reference_unpin(&_pin); \
+        if (_failure.raised) { \
+            errcode = _failure.code; rwerr = _failure.rw; errdrv = _failure.drive; \
+            longjmp(errbuf, 1); \
+        } \
+    } \
+    _status; \
+})
+#else
+#define PFS_FILE_CALL(handle, call) (call)
+#endif
+
+LONG pfs_handle_read(const FS_HANDLE *handle, LONG len, UBYTE *buf)
+{
+    return PFS_FILE_CALL(handle, pfs_file_read(&handle->slot->f_pfs, len, buf));
+}
+
+LONG pfs_handle_write(const FS_HANDLE *handle, LONG len, const UBYTE *buf)
+{
+    return PFS_FILE_CALL(handle, pfs_file_write(&handle->slot->f_pfs, len, buf));
+}
+
+LONG pfs_handle_seek(const FS_HANDLE *handle, LONG n, WORD flg)
+{
+    return PFS_FILE_CALL(handle, pfs_file_seek(&handle->slot->f_pfs, n, flg));
+}
+
+LONG pfs_handle_eof(const FS_HANDLE *handle)
+{
+    return PFS_FILE_CALL(handle, pfs_file_eof(&handle->slot->f_pfs));
+}
+
+LONG pfs_handle_datime(const FS_HANDLE *handle, UWORD *time, UWORD *date, WORD wrt)
+{
+    return PFS_FILE_CALL(handle, pfs_file_datime(&handle->slot->f_pfs, time, date, wrt));
+}
+
+#if CONF_WITH_USER_ASPACE
+LONG pfs_handle_ioctl(const FS_HANDLE *handle, UWORD command, void *arg, ULONG size)
+{
+    PFSCOOKIE *file = &handle->slot->f_pfs;
+
+    if (!file->fs->ioctl)
+        return EINVFN;
+    return PFS_FILE_CALL(handle, file->fs->ioctl(file, command, arg, size));
+}
+#endif

@@ -421,6 +421,10 @@ typedef struct
     LONG f_cleanup_first_error, f_cleanup_last_error;
     UWORD f_cleanup_state;
     BOOL f_close_busy, f_close_cleanup, f_close_staged;
+#if CONF_WITH_PLUGGABLE_FS
+    BOOL f_io_busy;
+    UWORD f_open_mode;
+#endif
 #endif
 #if CONF_WITH_PLUGGABLE_FS
     PFSCOOKIE f_pfs;    /* f_pfs.fs != NULL marks a handle owned by a
@@ -433,12 +437,35 @@ typedef struct
 
 /* Borrowed lookup, valid only while the ordinary handle remains admitted.
  * A direct BIOS number has no SFT slot. A legacy BIOS alias has both. */
-typedef struct {
+typedef struct fs_handle {
     FTAB *slot;
     WORD bios;
+#if CONF_WITH_USER_ASPACE
+    UQUAD incarnation;
+#endif
 } FS_HANDLE;
 
 #include "fs_close.h"
+#if CONF_WITH_USER_ASPACE
+/* Retain an admitted file for I/O or readiness across callback boundaries.
+ * Acquire before yielding, and revalidate before using a retained owner. */
+LONG fs_reference_pin(const FS_HANDLE *handle, FS_FILE_REFERENCE *out);
+LONG fs_reference_lookup(const FS_FILE_REFERENCE *reference, FS_HANDLE *out);
+LONG fs_reference_unpin(FS_FILE_REFERENCE *reference);
+
+#define GEMDOS_FCNTL  0x104
+#define GEMDOS_F_GETFL 3
+LONG xfcntl(WORD descriptor, UWORD command);
+
+/* Provider-specific control with a kernel-owned argument buffer. */
+LONG fs_file_ioctl(WORD descriptor, UWORD command, void *arg, ULONG size);
+
+/* Readiness is a level check on a retained file. The caller owns the
+ * reference across registration and must recheck it after waking. */
+#define FS_READY_READ   0x01
+#define FS_READY_WRITE  0x02
+LONG fs_reference_ready(const FS_FILE_REFERENCE *reference, UWORD events);
+#endif
 
 
 
