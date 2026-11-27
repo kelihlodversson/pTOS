@@ -3005,10 +3005,11 @@ initial drive after installing its own menu bar. It uses ordinary independent
 AES4 shell launches, preserves the parent's DTA, honours the boot skip flag,
 and does not relaunch accessories when reloading desktop preferences. These
 are native x32 ELF programs linked with libaes and the shared runtime, not
-legacy kernel-AES accessory images. dynacccrt.o uses the same shared startup
-as dyncrt.o and initializes the standard GEM _app variable to zero in the
-image, so preinitializers and constructors already see accessory state.
-The ordinary dynamic CRT supplies a weak _app=1 definition for applications.
+legacy kernel-AES accessory images. The shell includes PROCESS_EXEC_ACCESSORY
+in the ELF launch request. The common dyncrt.o reads AT_PTOS_ENTRY_TYPE in
+its preinitializer and sets _app before application initialization.
+Link dyncrt.o first. dynacccrt.o is a compatibility name for the same object.
+The same executable can run as a program or as an accessory.
 
 menu_register/mt_menu_register register the caller's application ID and copy a
 nonempty title of up to 127 bytes. The six classic Desk slots return IDs 0..5;

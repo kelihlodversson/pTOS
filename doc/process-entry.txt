@@ -5,8 +5,9 @@ This document defines the register and stack state at the first instruction
 of a loaded user process.  It applies to the ARM, x32 and m68k ports. It is not
 the syscall ABI; the x32 syscall ABI is a separate contract.
 
-The launcher supplies an explicit entry type.  Startup code must not infer
-the type from p_parent, a filename, or any unspecified register value.
+The launcher selects the role. The standard ELF and native basepage
+conventions communicate it explicitly. The classic m68k basepage convention
+encodes it in the entry registers and stack.
 
 The standard ELF initial stack (doc/elf-shared.txt) is used for PT_INTERP
 and for static ELF loaded with kernel-owned launch vectors. The initial
@@ -14,15 +15,34 @@ stack pointer is 16-byte aligned and points to argc, followed by 32-bit
 argv, envp and auxv. AT_PTOS_BASEPAGE locates the program's basepage.
 Static vector entry goes directly to AT_ENTRY with AT_BASE zero. The
 dynamic interpreter transfers to AT_ENTRY with a finalizer callback for
-the application CRT. On x32 that callback is in RDX and is zero at static
-vector entry.
+the application CRT. The callback is in D1 on m68k, R0 on ARM, and RDX on
+x32. Static entry sets it to zero.
 
-On m68k with private user address spaces, Pexec modes 0, 100 and 200
-derive the ELF vectors from the supplied GEMDOS command tail and environment,
-using the same conversion for static and PT_INTERP images. Classic PRGs,
-staged GO modes, and ELF on shared-address-space m68k keep basepage entry.
-Built-in images and internal staged accessories use their established entry
-conventions.
+AT_PTOS_ENTRY_TYPE (0x5006) is an ELF32 auxiliary-vector word. A value of
+zero selects program startup. A value of one selects accessory startup.
+An absent tag also selects program startup. The current kernel emits the
+tag for accessory launches. ELF CRTs
+set the GEM _app variable before application preinitializers and enter the
+same main(argc, argv, envp) in either role. Link the CRT first in the
+executable so its preinitializer precedes the application's. The stack
+and finalizer contract is identical for both roles.
+
+Pexecve starts an ordinary program. A PROCESS_EXEC_PREPARE or
+PROCESS_EXEC_START request can combine PROCESS_EXEC_ACCESSORY with
+PROCESS_EXEC_VECTOR_ARGS for an independent ELF accessory. The external
+desktop selects this flag when launching an .ACC. The flag describes
+startup and grants no permission to the launched process.
+
+The shared-address-space ARM and m68k kernel AES loaders also start
+standard ELF accessories. The executable's PT_NOTE identifies the
+standard CRT through the note name "pTOS" (with its NUL), type
+0x50544f53 and a 32-bit descriptor value of one, all in target byte order.
+The note describes the supported entry convention. Kernel AES supplies
+the accessory role and a stack containing the executable pathname as
+argv[0] and an empty environment. Marked m68k ELF programs also receive
+standard entry when started as applications with classic Pexec(0). Existing
+unmarked staged images use basepage entry, and classic PRGs retain their
+original startup.
 
     ENTRY_PROGRAM = 0
     ENTRY_ACCESSORY = 1

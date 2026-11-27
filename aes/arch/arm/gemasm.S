@@ -69,6 +69,11 @@ C_SYM(gotopgm):
          * stack before switching to UDA_SPSUPER.  Do not use the AES private
          * supervisor stack as that user stack. */
         ldr     r2, [r0, #PD_p_hitpa]
+#if CONF_WITH_ARM_SHARED_EXEC
+        ldr     r3, [r0, #P_A7SAVE] // fresh staged ELF initial SP or zero
+        cmp     r3, #0
+        movne   r2, r3
+#endif
         cps     #0x1f
         mov     sp, r2
         cps     #0x13
@@ -82,6 +87,10 @@ C_SYM(gotopgm):
         orr     r2, r2, #0x10     // set them to user mode
         msr     spsr_cfsx, r2     // overwrite the saved spsr with our mode
         ldr     lr, [r0, #P_TBASE] // Start of the TEXT segment
+#if CONF_WITH_ARM_SHARED_EXEC
+        cmp     r3, #0
+        movne   r0, #0             // no static ELF loader finalizer
+#endif
         movs    pc, lr            // jump to user process in user mode
 
 /*

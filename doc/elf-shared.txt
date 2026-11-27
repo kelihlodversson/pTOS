@@ -529,6 +529,9 @@ Dynamic CRT and client helper
 
 obj/ldso/dyncrt.o is a separate standard-ELF startup object; do not combine it
 with libcmini's existing crt0/minicrt0, which expect a legacy basepage entry.
+Link dyncrt.o first. Its preinitializer reads AT_PTOS_ENTRY_TYPE (0x5006)
+and sets _app before application initializers. The same object serves
+programs and accessories. dynacccrt.o is a compatibility name for dyncrt.o.
 It preserves the original stack and passes RDX, the loader's finalizer, to
 __ptos_start in libptos.so. The helper calls ordinary
 main(int argc, char **argv, char **envp), then exit(main_result).

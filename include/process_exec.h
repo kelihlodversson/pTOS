@@ -13,12 +13,14 @@
 #define PROCESS_EXEC_ASYNC 0UL
 #define PROCESS_EXEC_DEFER_REPLACEMENT 1UL
 #define PROCESS_EXEC_VECTOR_ARGS 1UL
+#define PROCESS_EXEC_ACCESSORY 2UL
 /* Size is a separate Ssystem argument. All current user ABIs have 32-bit
  * addresses; kernel decoding zero-extends these fields, never kernel pointers.
  * PREPARE supplies path/tail/env/CWD and policy. DEFER and START supply
  * the same launch inputs with zero policy and handle. With VECTOR_ARGS, the
  * tail and environment slots carry argv and envp, respectively. classic_tail
  * is an optional address of a 128-byte short tail for legacy shel_read.
+ * ACCESSORY requests ELF accessory startup on PREPARE or START with vectors.
  * Other operations supply only operation/handle. Reserved fields must be zero.
  * PREPARE returns a positive owned handle as its scalar syscall result, COMMIT
  * returns PID and keeps the handle as observer. Neither operation copies out.

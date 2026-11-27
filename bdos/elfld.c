@@ -71,6 +71,7 @@
 #include "../lib/ldso/startup.h"
 #endif
 #if CONF_WITH_SHARED_EXEC
+#include "argv_legacy.h"
 #include "mem.h"
 #include "tosvars.h"
 #endif
@@ -103,6 +104,7 @@
 #define ET_EXEC     2
 #define ET_DYN      3       /* position independent executable (PIE) */
 #define PT_LOAD     1
+#define PT_NOTE     4
 #define SHT_RELA    4
 #define SHT_REL     9
 #define SHF_ALLOC   0x2
@@ -291,6 +293,9 @@ typedef struct {
  */
 typedef struct {
     ULONG   link_base;      /* lowest p_vaddr of any PT_LOAD segment */
+#if CONF_WITH_SHARED_EXEC
+    BOOL    vector_entry;   /* standard entry for a staged accessory */
+#endif
     ULONG   file_end;       /* highest p_vaddr + p_filesz            */
     ULONG   mem_end;        /* highest p_vaddr + p_memsz             */
 } ELFINFO;
@@ -359,6 +364,45 @@ static LONG elf_check_ehdr(const Elf32_Ehdr *e)
     return 0;
 }
 
+#if CONF_WITH_SHARED_EXEC
+/* Only kernel AES uses the note to select between the two staged entry
+ * conventions. Walk a bounded number of aligned notes in the segment. */
+static LONG elf_vector_entry_note(FH h, const Elf32_Phdr *ph)
+{
+    ULONG offset = ph->p_offset;
+    ULONG left = ph->p_filesz;
+    unsigned int count = 0;
+
+    if (offset > ELF_LONG_MAX || left > ELF_LONG_MAX - offset)
+        return EPLFMT;
+    while (left >= 12 && count++ < 64) {
+        ULONG note[3], name, desc;
+        LONG rc = read_at(h, offset, note, sizeof(note));
+        if (rc < 0)
+            return rc;
+        offset += sizeof(note);
+        left -= sizeof(note);
+        if (note[0] > left || note[1] > left)
+            return EPLFMT;
+        name = (note[0] + 3) & ~3UL;
+        desc = (note[1] + 3) & ~3UL;
+        if (name > left || desc > left - name)
+            return EPLFMT;
+        if (note[0] == 5 && note[1] == 4 && note[2] == 0x50544f53UL) {
+            ULONG data[3];
+            rc = read_at(h, offset, data, sizeof(data));
+            if (rc < 0)
+                return rc;
+            if (!memcmp(data, "pTOS", 5))
+                return data[2] == 1 ? 1 : EPLFMT;
+        }
+        offset += name + desc;
+        left -= name + desc;
+    }
+    return 0;
+}
+#endif
+
 /*
  * scan the program headers, filling ELFINFO with the load-time extents.
  * Returns 0 on success or a negative GEMDOS error.
@@ -377,6 +421,9 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
     info->link_base = 0;
     info->file_end = 0;
     info->mem_end = 0;
+#if CONF_WITH_SHARED_EXEC
+    info->vector_entry = FALSE;
+#endif
 
     if (u32_mul_overflow((ULONG)e->e_phnum, (ULONG)e->e_phentsize, &ph_table_size)
      || u32_add_overflow(e->e_phoff, ph_table_size, &span))
@@ -395,6 +442,14 @@ static LONG elf_scan(FH h, const Elf32_Ehdr *e, ELFINFO *info)
 #if !CONF_WITH_ELF_SHARED
         if (ph.p_type == 3)             /* PT_INTERP is never a static fallback */
             return EPLFMT;
+#endif
+#if CONF_WITH_SHARED_EXEC
+        if (!info->vector_entry && ph.p_type == PT_NOTE) {
+            r = elf_vector_entry_note(h, &ph);
+            if (r < 0)
+                return r;
+            info->vector_entry = r != 0;
+        }
 #endif
         if (ph.p_type != PT_LOAD)
             continue;
@@ -491,7 +546,11 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign)
     hd->h01_blen = 0;
 #endif
     hd->h01_slen = 0;
+#if CONF_WITH_SHARED_EXEC
+    hd->h01_res1 = info.vector_entry; /* Synthetic ELF header, internal only. */
+#else
     hd->h01_res1 = 0;
+#endif
     /*
      * main RAM (no PF_TTRAMLOAD/PF_TTRAMMEM), and PF_FASTLOAD: elf_pgmld()
      * only clears the program's own footprint (info.mem_end -
@@ -1171,6 +1230,9 @@ typedef struct {
 #endif
     ULONG phoff;
     DL_START_INFO start;
+#if CONF_WITH_SHARED_EXEC
+    BOOL vector_entry;
+#endif
 } ELFPLACE;
 #endif
 
@@ -1214,7 +1276,9 @@ LONG elf_pgmld(FH h, PD *p)
     r = elf_scan(h, &ehdr, &info);
     if (r < 0L)
         return r;
-
+#if CONF_WITH_SHARED_EXEC
+    place->vector_entry = info.vector_entry;
+#endif
 
     /* the entry point must fall inside the loaded image, or p_tbase would
      * point outside the TPA (underflow below link_base, or past mem_end) */
@@ -1550,10 +1614,10 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
     return r;
 }
 #elif CONF_WITH_SHARED_EXEC
-LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vectors)
+static LONG elf_shared_stack(FH h, PD *p, const char *filename,
+                             const DL_START_VECTORS *vectors, ELFPLACE *place)
 {
-    ELFPLACE place = {0};
-    LONG rc = elf_load_image(h, p, &place);
+    LONG rc = E_OK;
     ULONG top = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_hitpa);
     ULONG image_end = (ULONG)(uintptr_t)USERPTR_TO_PTR(p->p_bbase) + p->p_blen;
     void *headers = NULL;
@@ -1561,28 +1625,26 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
     uint32_t rsp, used;
     int status;
 
-    if (rc != E_OK || !vectors)
-        return rc;      /* Internal staged accessories keep their basepage entry. */
     if (top < image_end || top - image_end < DL_START_CAPACITY)
         return ENSMEM;
-    if (!place.start.phdr) {
+    if (!place->start.phdr) {
         ULONG bytes;
-        if (place.start.phnum > DL_START_CAPACITY / place.start.phent)
+        if (place->start.phnum > DL_START_CAPACITY / place->start.phent)
             return ERANGE;
-        bytes = place.start.phnum * place.start.phent;
+        bytes = place->start.phnum * place->start.phent;
         headers = xmxalloc(bytes, MX_STRAM);
         if (!headers)
             return ENSMEM;
-        rc = DISK_CALL_ERROR(read_at(h, place.phoff, headers, bytes), &error);
-        place.start.phdr_copy = headers;
+        rc = DISK_CALL_ERROR(read_at(h, place->phoff, headers, bytes), &error);
+        place->start.phdr_copy = headers;
     }
     if (rc == E_OK) {
-        place.start.pagesz = 4096;
-        place.start.basepage = (ULONG)(uintptr_t)p;
-        place.start.bootdrive = bootdev;
+        place->start.pagesz = 4096;
+        place->start.basepage = (ULONG)(uintptr_t)p;
+        place->start.bootdrive = bootdev;
         status = dl_start_stack((UBYTE *)(uintptr_t)(top - DL_START_CAPACITY),
                                 DL_START_CAPACITY, top, filename, strlen(filename) + 1,
-                                vectors, &place.start, NULL, &rsp, &used);
+                                vectors, &place->start, NULL, &rsp, &used);
         if (status == DL_OK)
             p->p_areg[7-3] = rsp;
         else
@@ -1592,6 +1654,54 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
         xmfree(headers);
     DISK_RETHROW(error);
     return rc;
+}
+
+LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vectors,
+               BOOL legacy_elf_vectors, BOOL accessory)
+{
+    ELFPLACE place = {0};
+    LONG rc = elf_load_image(h, p, &place);
+
+    if (rc != E_OK)
+        return rc;
+    if (vectors)
+        return elf_shared_stack(h, p, filename, vectors, &place);
+    if (!place.vector_entry)
+        return E_OK;
+    if (accessory) {
+        const char *argv[] = { filename, NULL };
+        const char *envp[] = { NULL };
+        const DL_START_VECTORS entry = {
+            .argv = argv, .envp = envp, .argc = 1, .entry_type = DL_ENTRY_ACCESSORY
+        };
+        return elf_shared_stack(h, p, filename, &entry, &place);
+    }
+    if (legacy_elf_vectors) {
+        const UBYTE *env = USERPTR_TO_PTR(p->p_env);
+        WORD size = proc_envsize((const char *)env);
+        ULONG count;
+        const char **slots;
+        LEGACY_START_ARGS args;
+        DISK_ERROR error = {0};
+        int status;
+
+        if (size < 2)
+            return EPLFMT;
+        count = LEGACY_START_SLOTS(size);
+        slots = xmxalloc(count * sizeof(*slots), MX_PREFTTRAM);
+        if (!slots)
+            return ENSMEM;
+        status = legacy_start_vectors(&args, filename, p->p_cmdlin, PDCLSIZE,
+                                      env, size, slots, count);
+        if (status == DL_OK)
+            rc = DISK_CALL_ERROR(elf_shared_stack(h, p, filename, &args.vectors, &place), &error);
+        else
+            rc = status == DL_NO_SPACE ? ERANGE : EPLFMT;
+        xmfree(slots);
+        DISK_RETHROW(error);
+        return rc;
+    }
+    return E_OK;
 }
 #endif
 

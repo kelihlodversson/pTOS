@@ -189,6 +189,11 @@ static WORD shell_write(WORD mode, WORD graphical, WORD execution, const void *c
     }
     kind = mode == SWM_LAUNCH ? application_kind(path) : graphical;
     if (kind < 0) goto finished;
+    if (kind == GEMAPP) {
+        ULONG length = strlen(path);
+        if (length >= 4 && !strncasecmp(path + length - 4, ".ACC", 4))
+            request.flags |= PROCESS_EXEC_ACCESSORY;
+    }
     pid = aes_child_launch(session,&request,kind == TOSAPP,
                            mode == SWM_LAUNCH || execution == SHW_IMMED);
 finished:

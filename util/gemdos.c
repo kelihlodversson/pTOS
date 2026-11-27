@@ -24,6 +24,9 @@
 #include "asm.h"
 #include "gemdos.h"
 #include "bdosbind.h"
+#if CONF_WITH_SHARED_EXEC && CONF_WITH_ELF_LOADER && CONF_WITH_AES
+#include "../bdos/bdosstub.h"
+#endif
 #if ARCH_ARM
 #include "arch/arm/entry.h"
 #endif
@@ -38,11 +41,20 @@ WORD pgmld(WORD handle, char *pname, LONG **ldaddr)
     LONG    *temp;
     PD      *pd;
 
+#if CONF_WITH_SHARED_EXEC && CONF_WITH_ELF_LOADER && CONF_WITH_AES
+    ret = proc_load_shared_accessory(pname);
+#else
     ret = Pexec(PE_KERNEL_TAG|PE_LOAD, pname, "", NULL);
+#endif
     if (ret < 0L)
         return -1;
 
     *ldaddr = (LONG *)(uintptr_t)(ULONG)ret;
+#if CONF_WITH_SHARED_EXEC && CONF_WITH_ELF_LOADER && CONF_WITH_AES
+    /* A fresh staged ELF stack already has a bounded TPA allocation. */
+    if (((PD *)*ldaddr)->p_areg[7-3])
+        return 0;
+#endif
 
     /* program length = code+data+bss lengths plus basepage length */
     temp = *ldaddr;

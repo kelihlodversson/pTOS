@@ -9,6 +9,9 @@
 #define DL_AT_PTOS_BASEPAGE 0x5000
 #define DL_AT_PTOS_BOOTDRIVE 0x5001
 #define DL_AT_PTOS_LOADBIAS 0x5002
+#define DL_AT_PTOS_ENTRY_TYPE 0x5006
+#define DL_ENTRY_PROGRAM 0
+#define DL_ENTRY_ACCESSORY 1
 
 typedef struct dl_start_info {
     uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias;
@@ -22,6 +25,7 @@ typedef struct dl_start_vectors {
     uint32_t argc, envc;
     const struct dl_start_vectors *original; /* request before binfmt, if redirected */
     const unsigned char *classic_tail; /* optional original AES short tail, 128 bytes */
+    uint32_t entry_type;
 } DL_START_VECTORS;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer

@@ -24,6 +24,7 @@
  */
 
 long xexec(WORD, char *, char *, char *);
+WORD proc_envsize(const char *env);
 struct dl_start_vectors;
 #if CONF_WITH_X86_64_MEMTEST || CONF_WITH_EXIT_HANDOFF_TEST
 long xexec_selftest(WORD, char *, char *, char *);
@@ -100,7 +101,8 @@ LONG binfmt_load_header(char *path, char *tail, char *environment,
 /* Use standard ELF entry for trusted vectors or a legacy m68k ELF launch.
  * Internal load-only callers can still prepare the classic entry. */
 LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
-            const struct dl_start_vectors *vectors, BOOL legacy_elf_vectors);
+            const struct dl_start_vectors *vectors, BOOL legacy_elf_vectors,
+            BOOL accessory);
 
 #if CONF_WITH_ELF_LOADER
 /*
@@ -111,7 +113,8 @@ LONG elf_pgmhdrld(FH h, PGMHDR01 *hd, BOOL *foreign);
 LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors,
                BOOL legacy_elf_vectors);
 #elif CONF_WITH_SHARED_EXEC
-LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors);
+LONG elf_pgmld(FH h, PD *p, const char *filename, const struct dl_start_vectors *vectors,
+               BOOL legacy_elf_vectors, BOOL accessory);
 #else
 LONG elf_pgmld(FH h, PD *p);
 #endif

@@ -46,6 +46,11 @@ long kdos_fseek(long offset, long h, long mode);
 long kdos_fsfirst_at(long name, long att, DTA *dta);
 long kdos_fsnext_at(DTA *dta);
 
+#if CONF_WITH_SHARED_EXEC && CONF_WITH_ELF_LOADER && CONF_WITH_AES
+/* Kernel AES owns the returned staged image and its basepage. */
+LONG proc_load_shared_accessory(char *path);
+#endif
+
 #if CONF_WITH_USER_ASPACE || CONF_WITH_ARM_SHARED_EXEC
 struct dl_start_vectors;
 /* Trusted kernel launch. The loader consumes the vectors before entry. */

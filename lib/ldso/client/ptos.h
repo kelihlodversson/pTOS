@@ -14,6 +14,7 @@ void exit(int status) __attribute__((noreturn));
 void _Exit(int status) __attribute__((noreturn));
 
 /* Startup implementation, called only by the matching dynamic CRT. */
+int __ptos_is_application(char **envp);
 void __ptos_client_init(uint32_t argc, char **argv, char **envp);
 void __ptos_start(const uint32_t *stack, void (*finalizer)(void),
                     int (*main_function)(int, char **, char **)) __attribute__((noreturn));

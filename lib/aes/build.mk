@@ -350,7 +350,7 @@ obj/libaes/shell_arguments.o: lib/aes/shell_arguments.c lib/aes/shell_arguments.
 	$(CC) $(LIBAES_CFLAGS) -Iaes -Iaes/shared -c $< -o $@
 obj/libaes/shell.o: lib/aes/shell_arguments.h
 
-obj/libaes/DESKACC.ACC: tests/x32_desktop/accessory.c obj/x32/libptos-vdi.a obj/ldso/dynacccrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
+obj/libaes/DESKACC.ACC: obj/ldso/dyncrt.o tests/x32_desktop/accessory.c obj/x32/libptos-vdi.a obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter-out $(LIBAES_BINDINGS),$(filter %.c %.o %.a,$^)) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
 
@@ -358,12 +358,11 @@ obj/libaes/lifecycle.o: lib/aes/lifecycle.c lib/aes/lifecycle.h lib/aes/applicat
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 
-obj/libaes/GEMLIFE.PRG: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h include/cuis.h
+obj/libaes/GEMLIFE.PRG: obj/ldso/dyncrt.o tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h include/cuis.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
 	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
-obj/libaes/GEMLIFE.ACC: tests/cuis/gem_lifecycle_child.c tests/cuis/gem_lifecycle_native.c tests/cuis/gem_lifecycle.h obj/ldso/dynacccrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h include/cuis.h
-	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \
-	  -o $@ $(filter %.c %.o,$^) $(LIBAES_BINDINGS) -Lobj/libaes -laes -Lobj/ldso -lptos
+obj/libaes/GEMLIFE.ACC: obj/libaes/GEMLIFE.PRG
+	cp $< $@
 
 obj/libaes/EXPLICIT.PRG: tests/cuis/gem_explicit_child.c obj/ldso/dyncrt.o obj/libaes/libaes.so $(LIBAES_BINDINGS) obj/ldso/libptos.so include/libaes.h include/aesglobal.h
 	$(CC) $(LDSO_APP_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -Iinclude -Iobj \

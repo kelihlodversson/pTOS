@@ -4,27 +4,30 @@
         .type _start,@function
         .hidden main
 _start:
-#ifdef PTOS_ACCESSORY_CRT
-        movw $0, _app(%rip)
-#endif
         movl %edx, %esi
         movl %esp, %edi
         leal main(%rip), %edx
         call __ptos_start@PLT
         ud2
         .size _start,.-_start
-        /* Source-compatible GEM startup state. A linked C runtime may
-         * provide its own strong definition; accessory entry still sets it. */
+        /* The interpreter calls executable preinitializers with argc/argv/envp.
+         * Set the executable's role before its initializers can inspect it. */
+.Lentry_type:
+        subq $8, %rsp
+        movl %edx, %edi
+        call __ptos_is_application@PLT
+        movw %ax, _app(%rip)
+        addq $8, %rsp
+        ret
+        .section .preinit_array,"aw",@preinit_array
+        .balign 4
+        .long .Lentry_type
+        /* A linked C runtime may supply a strong definition. */
         .data
         .weak _app
         .hidden _app
         .type _app,@object
         .size _app,2
 _app:
-#ifdef PTOS_ACCESSORY_CRT
-        /* The interpreter invokes initialization arrays before _start. */
-        .short 0
-#else
         .short 1
-#endif
         .section .note.GNU-stack,"",@progbits
