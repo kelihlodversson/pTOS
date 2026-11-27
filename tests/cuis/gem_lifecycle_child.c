@@ -4,12 +4,17 @@
 #include "gem_lifecycle.h"
 #define VERIFY(c) do { if (!(c)) return 0x6900 | __LINE__; } while (0)
 extern short _app;
+static short initial_app = -1;
+static void record_entry_type(void) { initial_app = _app; }
+static void (*const preinit)(void) __attribute__((used,section(".preinit_array"))) = record_entry_type;
+
 int main(int argc, char **argv)
 {
     short me, parent = 0, menus[2] = { -1,-1 }, windows[3] = { -1,-1,-1 }, message[8], i, kind;
     char role, *digit;
     VERIFY(argc == 3);
     role = argv[1][0]; digit = argv[2];
+    VERIFY(initial_app == _app && (_app != 0) == (role != 'a'));
     while (*digit >= '0' && *digit <= '9') parent = parent*10+*digit++-'0';
     VERIFY(parent > 0 && !*digit && (me = appl_init()) > 0);
     if (role != 'u') VERIFY(shel_write(SWM_NEWMSG,NM_APTERM,0,0,0) == 1);

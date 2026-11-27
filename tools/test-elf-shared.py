@@ -106,7 +106,8 @@ class StartInfo(C.Structure):
 class StartVectors(C.Structure):
     _fields_ = [("argv", C.POINTER(C.c_char_p)), ("envp", C.POINTER(C.c_char_p)),
                 ("argc", C.c_uint32), ("envc", C.c_uint32),
-                ("original", C.c_void_p), ("classic_tail", C.c_void_p)]
+                ("original", C.c_void_p), ("classic_tail", C.c_void_p),
+                ("entry_type", C.c_uint32)]
 
 
 class LegacyStartArgs(C.Structure):
@@ -612,7 +613,8 @@ class Metadata(unittest.TestCase):
 
     def startup(self, args=b'', env=b'CHECK=660\0SECOND=value\0\0', tail=None,
                 capacity=131072, filename=b'C:\\DYNTEST.TOS', load_bias=0, capture=False,
-                explicit=None, phdr_copy=None, original=None, launch_path=None):
+                explicit=None, phdr_copy=None, original=None, launch_path=None,
+                entry_type=0):
         tail = bytes([len(args)]) + args if tail is None else tail
         record = None
         if capture:
@@ -641,6 +643,7 @@ class Metadata(unittest.TestCase):
             original_env_slots = (C.c_char_p * (len(original_env) + 1))(*original_env)
             request = StartVectors(original_slots, original_env_slots, len(original_args), len(original_env))
             vectors.original = C.addressof(request)
+        vectors.entry_type = entry_type
         info = StartInfo(0x400034, 10, 0x401000, 0x800000, 4096, 0x201000, 2, load_bias, 32)
         info.launch_path = launch_path
         if phdr_copy is not None:
@@ -719,7 +722,12 @@ class Metadata(unittest.TestCase):
         else:
             self.assertNotIn(0x5004, aux)
         self.assertNotIn(0x5005, aux)  # Retired emulator adapter record.
+        self.assertEqual(aux.get(0x5006, 0), entry_type)
         return rc, (argv, envp, aux)
+
+    def test_elf_entry_role(self):
+        self.assertEqual(self.startup(entry_type=1)[0], 0)
+        self.assertNotEqual(self.startup(entry_type=2)[0], 0)
 
     def test_standard_initial_stack_launch_capture(self):
         self.assertEqual(self.startup(b'hello', capture=True)[0], 0)

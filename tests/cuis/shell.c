@@ -37,6 +37,7 @@ static UQUAD launched_console;
 static int launches, native_calls;
 static char launched_path[AES_SHELL_PATH], launched_tail[128], launched_directory[AES_SHELL_PATH];
 static char launched_environment[AES_SHELL_ENV], launched_arguments[2048];
+static ULONG launched_flags;
 static char *mock_environment[] = {NULL};
 static void *last_allocation;
 static size_t last_allocation_size;
@@ -84,8 +85,10 @@ static void save_vector(char *buffer, size_t size, const char *const *vector)
 
 static void save_request(const PROCESS_EXEC_REQUEST *request)
 {
-    if (request->flags != PROCESS_EXEC_VECTOR_ARGS ||
+    if (!(request->flags & PROCESS_EXEC_VECTOR_ARGS) ||
+        (request->flags & ~(PROCESS_EXEC_VECTOR_ARGS | PROCESS_EXEC_ACCESSORY)) ||
         request->policy || request->handle) __builtin_abort();
+    launched_flags = request->flags;
     if (request->directory) strcpy(launched_directory,(const char *)wire_pointer(request,request->directory));
     else launched_directory[0] = 0;
     save_vector(launched_environment,sizeof(launched_environment),
@@ -221,7 +224,7 @@ static int unsupported_checks(void)
     LONG before_defer = deferred_calls, before_cancel = cancellations;
     ULONG before_allocation = allocation_attempts;
     for (mode = 0; mode < 256; mode++) {
-        if (mode == SWM_LAUNCH || mode == SWM_LAUNCHNOW || mode == SWM_SHUTDOWN ||
+        if (mode == SWM_LAUNCH || mode == SWM_LAUNCHNOW || mode == SWM_LAUNCHACC || mode == SWM_SHUTDOWN ||
             mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG) continue;
         VERIFY(!shel_write(mode,0,0,(void *)1,(char *)1));
         VERIFY(!mt_shel_write(mode|SW_DEFDIR,GEMAPP,0,(void *)1,(char *)1,&aes_global));
@@ -236,6 +239,7 @@ static int unsupported_checks(void)
         for (j = TOSAPP; j <= GEMAPP; j++)
             VERIFY(!shel_write(SWM_LAUNCHNOW,j,executions[i],(void *)1,(char *)1));
     VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_CHAIN,(void *)1,(char *)1));
+    VERIFY(!shel_write(SWM_LAUNCHACC,GEMAPP,99,(void *)1,(char *)1));
     for (mode = 128; mode < 256; mode++) {
         tail = (char)mode;
         VERIFY(!shel_write(SWM_LAUNCH,GEMAPP,CL_PARSE,(void *)1,&tail));
@@ -334,6 +338,16 @@ static int launch_checks(AESGLOBAL *global)
     before = cancellations; launch_result = ENSMEM;
     VERIFY(!shel_write(SWM_LAUNCHNOW,TOSAPP,SHW_PARALLEL,"NEXT.gTp",minimal) && cancellations == before);
     launch_result = 42; watch_result = 17;
+    found = "GOOD\\NEXT.PRG";
+    VERIFY(shel_write(SWM_LAUNCHACC,GEMAPP,CL_NORMAL,name,minimal) == 42);
+    VERIFY(launched_flags == (PROCESS_EXEC_VECTOR_ARGS | PROCESS_EXEC_ACCESSORY) && !launched_console);
+    VERIFY(shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,name,minimal) == 42);
+    VERIFY(launched_flags == PROCESS_EXEC_VECTOR_ARGS);
+    found = "GOOD\\NEXT.ACC";
+    VERIFY(shel_write(SWM_LAUNCHNOW,GEMAPP,SHW_PARALLEL,"NEXT.ACC",minimal) == 42);
+    VERIFY(launched_flags == PROCESS_EXEC_VECTOR_ARGS);
+    VERIFY(shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,"NEXT.ACC",minimal) == 42);
+    VERIFY(launched_flags == (PROCESS_EXEC_VECTOR_ARGS | PROCESS_EXEC_ACCESSORY));
     VERIFY(current_dta == &caller_dta && !memcmp(&caller_dta,&saved,sizeof(saved)));
     return 0;
 }

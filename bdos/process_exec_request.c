@@ -30,12 +30,14 @@ LONG proc_exec_prepare_user_args(KPROC *owner, const PROCESS_EXEC_REQUEST *reque
     LONG result;
     if (!owner || kproc_live_pd(owner) != run) return EACCDN;
     if (request->handle || request->policy > PROCESS_EXEC_DEFER_REPLACEMENT) return EINVAL;
-    if (request->flags == PROCESS_EXEC_VECTOR_ARGS) {
+    if (request->flags & PROCESS_EXEC_VECTOR_ARGS) {
         ULONG i;
 
         result = pexecve_args_capture(PE_ASYNC_LOADGO,request->path,request->tail,
                                       request->environment,&vectors);
         if (result != E_OK) goto done;
+        if (request->flags & PROCESS_EXEC_ACCESSORY)
+            vectors->entry_type = PTOS_ENTRY_ACCESSORY;
         if (!vectors->argc) { result=EINVAL; goto done; }
         for (i = 0; i < vectors->envc; i++)
             if (!strncmp(vectors->envp[i],"ARGV=",5)) { result=EINVAL; goto done; }
@@ -84,8 +86,15 @@ LONG proc_exec_copy_request(UQUAD address, UQUAD size, PROCESS_EXEC_REQUEST *req
     if (address & 3) return EINVAL;
     result=kproc_copy_from_user_checked(request,address,sizeof(*request));
     if (result!=E_OK) return result;
-    if (request->reserved || (request->flags & ~PROCESS_EXEC_VECTOR_ARGS) ||
-        (!request->flags && request->classic_tail)) return EINVAL;
+    if (request->reserved ||
+        (request->flags & ~(PROCESS_EXEC_VECTOR_ARGS | PROCESS_EXEC_ACCESSORY)) ||
+        (!(request->flags & PROCESS_EXEC_VECTOR_ARGS) &&
+         (request->classic_tail || (request->flags & PROCESS_EXEC_ACCESSORY))))
+        return EINVAL;
+    if ((request->flags & PROCESS_EXEC_ACCESSORY) &&
+        (request->policy || (request->operation != PROCESS_EXEC_PREPARE &&
+                             request->operation != PROCESS_EXEC_START)))
+        return EINVAL;
     return E_OK;
 }
 static LONG exec_request_owned(KPROC *owner, UQUAD address, UQUAD size)

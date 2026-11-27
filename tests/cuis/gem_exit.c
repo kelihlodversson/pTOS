@@ -81,6 +81,7 @@ static int ordered_exit_checks(AESGLOBAL *global)
 int gem_exit_checks(AESGLOBAL *global)
 {
     char tail[3] = { 1,'n',0 };
+    static const char accessory_tail[] = { 2,'c','a',0 };
     short message[8], pid, earlier, a, b, c, d;
     unsigned i;
     static const char roles[] = { 'n','e','f','t' };
@@ -89,6 +90,10 @@ int gem_exit_checks(AESGLOBAL *global)
     VERIFY(appl_getinfo(AES_MESSAGE,&a,&b,&c,&d) == 1 && (a & 0x20) && !b && !c && !d);
     VERIFY(!shel_write(SWM_LAUNCH,0,2,"APPS\\GEMCHILD.PRG",tail));
     VERIFY(!shel_write(SWM_LAUNCH,0,CL_NORMAL,"APPS\\ABSENT.TOS",tail));
+    /* GEM.TOS calls appl_init() from a preinitializer for this argument. */
+    pid = shel_write(SWM_LAUNCHACC,GEMAPP,CL_NORMAL,"APPS\\GEMSHELL.TOS",accessory_tail);
+    VERIFY(pid > 0 && (receive(message,2000,global) & MU_MESAG) && exit_message(message,pid,37));
+    VERIFY(process(0x13a,pid,1,0,0) == (int32_t)(((uint32_t)pid << 16) | 37));
     for (i = 0; i < sizeof(roles); i++) {
         tail[1] = roles[i];
         /* Mode 0 infers GEM from the extension; wisgr is ignored. */

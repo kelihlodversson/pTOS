@@ -504,7 +504,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           tools/ci-binfmt.sh '${{ matrix.arch }}'
-          if [ '${{ matrix.arch }}' = arm ]; then tools/ci-binfmt.sh arm shared; fi
+          tools/ci-binfmt.sh '${{ matrix.arch }}' shared
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -11,7 +11,7 @@ obj-$(CONF_WITH_BINFMT) += binfmt.o binfmt_rules.o
 ifneq ($(CONF_WITH_BINFMT)$(CONF_WITH_LIBAES),)
 obj-y += exec_path.o
 endif
-ifneq ($(CONF_WITH_BINFMT)$(and $(CONF_WITH_MULTITHREADING),$(CONF_WITH_PRG_LOADER)),)
+ifneq ($(CONF_WITH_BINFMT)$(CONF_WITH_PRG_VECTORS),)
 obj-y += binfmt_args.o
 endif
 # a process in an address space of its own: its entry, its switching
@@ -40,11 +40,11 @@ obj-$(CONF_WITH_GEMDOS_SHUTDOWN) += xshutdown.o
 # The kernel shares only load-plan validation and stack construction with
 # ld.so, never its metadata resolver, relocation engine or dependency graph.
 obj-$(CONF_WITH_ELF_SHARED) += elfinterp.o elfimage.o elfimageabi.o
-ifneq ($(CONF_WITH_USER_ASPACE)$(CONF_WITH_ARM_SHARED_EXEC),)
+ifneq ($(CONF_WITH_USER_ASPACE)$(CONF_WITH_SHARED_EXEC),)
 obj-y += launch_args.o
 obj-$(CONF_WITH_ELF_LOADER) += elfstartup.o
 endif
-ifneq ($(CONF_WITH_LEGACY_ELF_ARGS)$(CONF_WITH_ARM_SHARED_EXEC),)
+ifneq ($(CONF_WITH_LEGACY_ELF_ARGS)$(and $(CONF_WITH_SHARED_EXEC),$(CONF_WITH_ELF_LOADER)),)
 obj-y += argv_legacy.o
 endif
 

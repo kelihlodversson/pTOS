@@ -165,6 +165,26 @@ config CONF_WITH_ARM_SHARED_EXEC
       Use the public Pexecve ABI and standard ELF startup with ARM's
       synchronous shared-address-space launcher.
 
+config CONF_WITH_M68K_SHARED_EXEC
+    bool "Pexecve in the shared m68k address space"
+    depends on ARCH_M68K_CLASSIC && !CONF_WITH_USER_ASPACE
+    depends on CONF_WITH_PRG_LOADER || CONF_WITH_ELF_LOADER
+    default y
+    help
+      Provide synchronous Pexecve(0) for the configured executable
+      formats. ELF receives the vector startup stack and PRG receives a
+      classic GEMDOS basepage with synthesized tail and environment.
+      Disable this to save space in a custom ROM.
+
+config CONF_WITH_SHARED_EXEC
+    def_bool CONF_WITH_ARM_SHARED_EXEC || CONF_WITH_M68K_SHARED_EXEC
+
+config CONF_WITH_PEXECVE
+    def_bool CONF_WITH_SHARED_EXEC || (CONF_WITH_USER_ASPACE && (CONF_WITH_MULTITHREADING || CONF_WITH_NATIVE_ABI))
+
+config CONF_WITH_PRG_VECTORS
+    def_bool CONF_WITH_PRG_LOADER && (CONF_WITH_MULTITHREADING || CONF_WITH_M68K_SHARED_EXEC)
+
 config CONF_WITH_SHARED_VM_PEXEC
     def_bool CONF_WITH_MULTITHREADING && CONF_WITH_USER_ASPACE && CONF_WITH_LEGACY_PEXEC && CONF_WITH_PRG_LOADER
     help

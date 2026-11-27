@@ -13,36 +13,58 @@ uint32_t ptos_basepage;
 static uint32_t client_argc;
 static char **client_argv;
 static const uint32_t *client_aux;
+static uint32_t client_entry_type;
 static void (*handlers[EXIT_SLOTS])(void);
 static uint32_t count;
 static int exiting;
 static void (*loader_fini)(void);
 
+static const uint32_t *find_auxiliary_vector(char **envp)
+{
+    uint32_t i;
+    for (i = 0; i < 16384 && envp[i]; i++) ;
+    if (i == 16384) _Exit(127);
+    return (const uint32_t *)(envp + i + 1);
+}
+
+static uint32_t auxiliary_value(const uint32_t *aux, uint32_t type)
+{
+    uint32_t i;
+    for (i = 0; i < 32 && aux[i*2]; i++)
+        if (aux[i*2] == type) return aux[i*2+1];
+    if (i == 32) _Exit(127);
+    return 0;
+}
+
+/* Called from the executable's first preinitializer, before DT_INIT. */
+int __ptos_is_application(char **envp)
+{
+    client_entry_type = auxiliary_value(find_auxiliary_vector(envp), DL_AT_PTOS_ENTRY_TYPE);
+    if (client_entry_type > PTOS_ENTRY_ACCESSORY) _Exit(127);
+    return client_entry_type == PTOS_ENTRY_PROGRAM;
+}
+
 /* DT_INIT receives the same vectors as other ELF initializers. This makes
  * getenv/environ available before dependent libraries' constructors run. */
 void __ptos_client_init(uint32_t argc, char **argv, char **envp)
 {
-    const uint32_t *aux;
-    uint32_t i;
     client_argc = argc;
     client_argv = argv;
     environ = envp;
-    for (i = 0; i < 16384 && envp[i]; i++) ;
-    if (i == 16384) _Exit(127);
-    aux = (const uint32_t *)(envp + i + 1);
-    client_aux = aux;
-    for (i = 0; i < 32 && aux[0]; i++, aux += 2)
-        if (aux[0] == DL_AT_PTOS_BASEPAGE) ptos_basepage = aux[1];
-    if (i == 32 || !ptos_basepage) _Exit(127);
+    client_aux = find_auxiliary_vector(envp);
+    client_entry_type = auxiliary_value(client_aux, DL_AT_PTOS_ENTRY_TYPE);
+    ptos_basepage = auxiliary_value(client_aux, DL_AT_PTOS_BASEPAGE);
+    if (!ptos_basepage || client_entry_type > PTOS_ENTRY_ACCESSORY) _Exit(127);
 }
 
 unsigned long __ptos_getauxval(unsigned long type)
 {
-    uint32_t i;
-    if (!client_aux) return 0;
-    for (i = 0; i < 32 && client_aux[i*2]; i++)
-        if (client_aux[i*2] == type) return client_aux[i*2+1];
-    return 0;
+    return client_aux ? auxiliary_value(client_aux, type) : 0;
+}
+
+uint32_t __ptos_entry_type(void)
+{
+    return client_entry_type;
 }
 
 int32_t ptos_write(int handle, const void *buffer, uint32_t length)

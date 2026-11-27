@@ -22,13 +22,13 @@ semantics: mode 0's `CL_PARSE=1` is distinct from mode 1's `SHW_CHAIN=1`.
 
 Mode / selector | Initial x32 behavior | Remaining scope
 --- | --- | ---
-0, `CL_NORMAL` or `CL_PARSE` | Infer kind from PRG/APP/GTP/ACC versus TOS/TTP, ignoring `wisgr`. Launch concurrently and send one CH_EXIT. Default to the executable directory. | GEMEXT/TOSEXT/ACCEXT overrides and forced identity: [#873](https://github.com/kelihlodversson/pTOS/issues/873).
+0, `CL_NORMAL` or `CL_PARSE` | Infer the role and kind from ACC, PRG/APP/GTP, or TOS/TTP, ignoring `wisgr`. Launch concurrently and send one CH_EXIT. Default to the executable directory. | GEMEXT/TOSEXT/ACCEXT overrides: [#873](https://github.com/kelihlodversson/pTOS/issues/873).
 1, `SHW_IMMED=0`, GEMAPP/TOSAPP | Explicit kind overrides suffix; observed concurrent launch with CH_EXIT. Console runs with an exclusive display/input lease; other applications remain resident. Default to executable directory. | No single-task peer freeze is implied.
 1, `SHW_PARALLEL=100`, GEMAPP/TOSAPP | Inherit caller paths unless SW_DEFDIR is set. No AES child watch/CH_EXIT or automatic reap; ordinary Pwait/Pwaitpid applies. Console lease restores on normal/fault exit. | Maintain this behavior independently of deferred/single-task extensions.
 1, `SHW_CHAIN=1`, GEMAPP | Prepare a detached successor; return 1 when prepared. It starts after process exit and child cleanup, not at appl_exit. Inherit the captured paths unless SW_DEFDIR is set. Failed replacement preserves the previous successor. | Explicit TOSAPP chain returns 0 before reading command/tail; [#873](https://github.com/kelihlodversson/pTOS/issues/873).
 1, `SHW_DOS=2` | Return 0 before reading command/tail. There is no DOS backend. | Historical PC-GEM profile: [#876](https://github.com/kelihlodversson/pTOS/issues/876).
 1, `SHW_SINGLE=101` | Return 0 before reading command/tail. Do not pretend that a parallel launch implements freeze/thaw. | MagiC single-mode profile: [#876](https://github.com/kelihlodversson/pTOS/issues/876), scheduling work #713.
-3, `SWM_LAUNCHACC` | Return 0 before reading command/tail. Existing .ACC startup/launch is not equivalent to forcing accessory identity for an arbitrary filename. | [#873](https://github.com/kelihlodversson/pTOS/issues/873): set CRT `_app` and AES identity before constructors/preinitializers.
+3, `SWM_LAUNCHACC` | Use mode 0 argument, directory and CH_EXIT semantics. Explicitly select ELF accessory startup for any filename. The CRT and libaes use the same launch role. | The runtime and backend contract is in [process-entry.txt](process-entry.txt).
 4, `SWM_SHUTDOWN` | SD_ABORT/SD_PARTIAL/SD_COMPLETE implement consent, refusal, initiator cancellation, ordered AC_CLOSE, AP_TERM and completion. Resident desktop powers off after authenticated completion. | MyAES reboot/options and N.AES diagnostic output are not implemented: [#876](https://github.com/kelihlodversson/pTOS/issues/876). The optional `ignorant` buffer is not populated.
 5, `SWM_REZCHANGE` | Return 0 before reading command or starting shutdown. Desktop live-switch command stays disabled. | A real live x32 display backend is required: [#877](https://github.com/kelihlodversson/pTOS/issues/877).
 7, `SWM_BROADCAST` | Return 0 before reading message buffer. | Standard broadcast and peer/queue semantics: [#874](https://github.com/kelihlodversson/pTOS/issues/874).
@@ -55,7 +55,7 @@ SW_DEFDIR plus SW_ENVIRON | Both fields apply; each unselected SHELW field remai
 SW_PSETLIMIT (0x0100), SW_PRENICE (0x0200), SW_UID (0x1000), SW_GID (0x2000) | Return 0 before reading SHELW or tail, including combinations with implemented flags. Never accept and ignore child policy. | Child-only policy and rollback: [#875](https://github.com/kelihlodversson/pTOS/issues/875). MagiC 6's conflicting bit-12 layout needs explicit profile handling in #876.
 Reserved high bits, including 0x4000/XSHD_FLAGS (0x8000) | Return 0 before reading an extended structure. Extensions on lifecycle modes also fail. | Geneva bit 15 belongs to its separate profile, #876.
 
-`SW_DEFDIR` and `SW_ENVIRON` are accepted only on implemented mode 0/1
+`SW_DEFDIR` and `SW_ENVIRON` are accepted only on implemented mode 0/1/3
 launches. All supplied paths and environments remain subject to the documented
 bounds in `doc/cuis.txt`; invalid caller memory can fault that process.
 Rejecting an unsupported selector before dereference does not establish that

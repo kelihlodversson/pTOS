@@ -49,6 +49,18 @@ int main(int argc, char **argv)
     CHECK(!strcmp(relative, "SUB"));
     if (!strcmp(kind, "NATIVE")) {
         CHECK(argc == 4 && !strcmp(argv[0], "original-name"));
+#ifdef SHARED_M68K_VECTOR_FIXTURE
+        {
+            char path[64];
+            char *const child[] = { "", "one", "two", NULL };
+            char *const envp[] = { "KEY=two words", "FLAG=", NULL };
+            long available = Malloc(-1L);
+
+            sprintf(path, "%c:\\SUB\\VECTORS.TOS", *boot);
+            CHECK(trap_1_wwlll(0x193, 0, (long)path, (long)child, (long)envp) == 78);
+            CHECK(Malloc(-1L) == available);
+        }
+#endif
         start = 1;
     } else {
         CHECK(!strcmp(argv[0], native));

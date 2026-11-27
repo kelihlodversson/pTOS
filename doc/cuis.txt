@@ -3001,14 +3001,18 @@ The same transaction owns failure and retirement for both shell APIs.
 Resident accessories and Desk registration (#863)
 ------------------------------------------------
 The external desktop starts up to six .ACC programs from the root of its
-initial drive after installing its own menu bar. It uses ordinary independent
-AES4 shell launches, preserves the parent's DTA, honours the boot skip flag,
-and does not relaunch accessories when reloading desktop preferences. These
+initial drive after installing its own menu bar. It requests the accessory
+role with SWM_LAUNCHACC, preserves the parent's DTA and honours the boot
+skip flag. It starts accessories once per desktop session. These
 are native x32 ELF programs linked with libaes and the shared runtime, not
-legacy kernel-AES accessory images. dynacccrt.o uses the same shared startup
-as dyncrt.o and initializes the standard GEM _app variable to zero in the
-image, so preinitializers and constructors already see accessory state.
-The ordinary dynamic CRT supplies a weak _app=1 definition for applications.
+legacy kernel-AES accessory images. The shell includes PROCESS_EXEC_ACCESSORY
+in the ELF launch request. The common dyncrt.o reads AT_PTOS_ENTRY_TYPE in
+its preinitializer and sets _app before application initialization.
+Link dyncrt.o first. dynacccrt.o is a compatibility name for the same object.
+libaes derives APP_ACCESSORY from the same launch role when registering
+its session. SWM_LAUNCHACC can use the same pathname as a program launch.
+SWM_LAUNCH infers the role for .ACC files, and SWM_LAUNCHNOW selects
+application startup. The launch and runtime contract is in process-entry.txt.
 
 menu_register/mt_menu_register register the caller's application ID and copy a
 nonempty title of up to 127 bytes. The six classic Desk slots return IDs 0..5;
@@ -3364,8 +3368,8 @@ Shell compatibility scope audit (#871)
 -------------------------------------
 
 The complete mode/flag/tail inventory is in doc/libaes-shell-compatibility.md.
-It distinguishes existing .ACC startup from forced SWM_LAUNCHACC (mode 3),
-which remains unavailable. Missing launch/classification/tail forms are
+It documents .ACC classification and explicit SWM_LAUNCHACC (mode 3).
+Other launch/classification/tail forms are
 tracked by #873; broadcast/shared shell environment by #874; child resource,
 priority and identity flags by #875; vendor execution/thread/lifecycle
 profiles by #876; live x32 mode switching by #877. These are explicit

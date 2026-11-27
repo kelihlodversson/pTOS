@@ -137,9 +137,23 @@ int main(int argc, char **argv, char **envp)
     if (argc > 1 && argv[1][0] == 't') return -1;
     if (argc > 1 && argv[1][0] == 'f') __asm__ volatile ("ud2");
     GEM_TEST_CHECK(argc >= 1 && aes_global.ap_private == 0);
-    if (argc > 1 && argv[1][0] == 'c')
+    if (argc > 1 && argv[1][0] == 'c') {
         GEM_TEST_CHECK(gl_apid > 0 && aes_global.ap_id == gl_apid);
-    else
+        if (argc == 2 && argv[1][1] == 'a' && !argv[1][2]) {
+            short type, client, mode = APP_FIRST;
+            char name[9];
+
+            /* shell_preinit() already registered this client. */
+            while (appl_search(mode,name,&type,&client)) {
+                if (client == gl_apid) {
+                    GEM_TEST_CHECK(type == APP_ACCESSORY && appl_exit());
+                    return 37;
+                }
+                mode = APP_NEXT;
+            }
+            GEM_TEST_CHECK(0);
+        }
+    } else
         GEM_TEST_CHECK(gl_apid == -1 && aes_global.ap_id == -1);
     pid = PROC(0x10b, 0, 0, 0, 0);
     id = appl_init();

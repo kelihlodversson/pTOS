@@ -86,6 +86,8 @@ WORD mt_shel_readve(const char **path, const char *const **argv,
     return 1;
 }
 
+enum { SHELL_ACCESSORY = 2 };
+
 static WORD application_kind(const char *path)
 {
     ULONG length = strlen(path), i;
@@ -96,7 +98,8 @@ static WORD application_kind(const char *path)
         extension[i] = c >= 'a' && c <= 'z' ? c-'a'+'A' : c;
     }
     extension[3] = 0;
-    if (!strcmp(extension,"PRG") || !strcmp(extension,"APP") || !strcmp(extension,"GTP") || !strcmp(extension,"ACC")) return GEMAPP;
+    if (!strcmp(extension,"ACC")) return SHELL_ACCESSORY;
+    if (!strcmp(extension,"PRG") || !strcmp(extension,"APP") || !strcmp(extension,"GTP")) return GEMAPP;
     if (!strcmp(extension,"TOS") || !strcmp(extension,"TTP")) return TOSAPP;
     return -1;
 }
@@ -139,20 +142,21 @@ static WORD shell_write(WORD mode, WORD graphical, WORD execution, const void *c
     const char *environment = NULL;
     LONG pid = 0, session;
     UWORD extensions = (UWORD)mode & 0xff00;
-    BOOL parse;
+    BOOL classify, parse;
     WORD kind = GEMAPP;
     mode = (UWORD)mode & 255;
+    classify = mode == SWM_LAUNCH || mode == SWM_LAUNCHACC;
     if (extensions & ~(SW_ENVIRON|SW_DEFDIR)) return 0;
-    if (argv && ((extensions & SW_ENVIRON) || (mode == SWM_LAUNCH && execution != CL_NORMAL))) return 0;
+    if (argv && ((extensions & SW_ENVIRON) || (classify && execution != CL_NORMAL))) return 0;
     if (mode == SWM_SHUTDOWN || mode == SWM_REZCHANGE || mode == SWM_NEWMSG || mode == SWM_AESMSG)
         return extensions || argv ? 0 : aes_lifecycle_write(mode,graphical,execution,command,global);
-    if (mode != SWM_LAUNCH && mode != SWM_LAUNCHNOW) return 0;
-    if (mode == SWM_LAUNCH ? (execution != CL_NORMAL && execution != CL_PARSE) :
+    if (!classify && mode != SWM_LAUNCHNOW) return 0;
+    if (classify ? (execution != CL_NORMAL && execution != CL_PARSE) :
         (graphical != GEMAPP && graphical != TOSAPP) ||
         (execution != SHW_IMMED && execution != SHW_PARALLEL && execution != SHW_CHAIN) ||
         (execution == SHW_CHAIN && graphical == TOSAPP)) return 0;
     session = aes_application_session(global);
-    parse = mode == SWM_LAUNCH && execution == CL_PARSE;
+    parse = classify && execution == CL_PARSE;
     if (session < 0 || !command || (!argv && (!tail || (UBYTE)tail[0] > (parse ? 127 : 126)))) return 0;
     if (extensions) {
         const SHELW *extended = command;
@@ -162,7 +166,7 @@ static WORD shell_write(WORD mode, WORD graphical, WORD execution, const void *c
     }
     if (!aes_shell_copy(path,command,sizeof(path)) || !*path) return 0;
     if (!mt_shel_find(path,global)) return 0;
-    set_directory = (extensions & SW_DEFDIR) || mode == SWM_LAUNCH || execution == SHW_IMMED;
+    set_directory = (extensions & SW_DEFDIR) || classify || execution == SHW_IMMED;
     if (set_directory) {
         ULONG end;
         if (!shell_absolute(absolute,path)) return 0;
@@ -187,10 +191,13 @@ static WORD shell_write(WORD mode, WORD graphical, WORD execution, const void *c
         pid = aes_child_defer(&request) == E_OK ? 1 : 0;
         goto finished;
     }
-    kind = mode == SWM_LAUNCH ? application_kind(path) : graphical;
+    kind = mode == SWM_LAUNCHACC ? SHELL_ACCESSORY :
+           mode == SWM_LAUNCH ? application_kind(path) : graphical;
     if (kind < 0) goto finished;
+    if (kind == SHELL_ACCESSORY)
+        request.flags |= PROCESS_EXEC_ACCESSORY;
     pid = aes_child_launch(session,&request,kind == TOSAPP,
-                           mode == SWM_LAUNCH || execution == SHW_IMMED);
+                           classify || execution == SHW_IMMED);
 finished:
     if (arguments.storage) (void)aes_resource_discard(arguments.storage);
     return pid > 0 && pid <= 32767 ? (WORD)pid : 0;

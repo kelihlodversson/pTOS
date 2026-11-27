@@ -18,6 +18,7 @@ typedef struct pexecve_args {
     ULONG argc;
     ULONG envc;
     const unsigned char *classic_tail;
+    ULONG entry_type;
 } PEXECVE_ARGS;
 
 /* Copy a bounded string, or a legacy double-NUL environment. On success
@@ -43,6 +44,7 @@ static inline DL_START_VECTORS pexecve_start_vectors(const PEXECVE_ARGS *args)
     vectors.argc = args->argc;
     vectors.envc = args->envc;
     vectors.classic_tail = args->classic_tail;
+    vectors.entry_type = args->entry_type;
     return vectors;
 }
 

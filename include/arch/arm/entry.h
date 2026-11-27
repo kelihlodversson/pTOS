@@ -16,9 +16,6 @@
 #define ARM_ENTRY_PROGRAM       0
 #define ARM_ENTRY_ACCESSORY     1
 
-/* Shared ARM backs its stack at load time, including ELF startup data. */
-#define ARM_SHARED_STACK_SIZE  (256UL * 1024)
-
 /*
  * Desk accessories replace this temporary stack during startup.  It must be
  * retained in their loaded basepage allocation because pstart()/gotopgm()

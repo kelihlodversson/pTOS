@@ -3537,7 +3537,8 @@ static LONG attach_launch_owned(UQUAD session, UQUAD authorization, UQUAD path,
     if (vectors) {
         right = proc_exec_copy_request(path,tail,&request);
         if (!right && (request.operation != PROCESS_EXEC_PREPARE || request.policy ||
-                       request.flags != PROCESS_EXEC_VECTOR_ARGS)) right = EINVAL;
+                       !(request.flags & PROCESS_EXEC_VECTOR_ARGS) ||
+                       (console && (request.flags & PROCESS_EXEC_ACCESSORY)))) right = EINVAL;
     } else {
         request.path = (ULONG)path;
         request.tail = (ULONG)tail;

@@ -119,6 +119,15 @@ C_SYM(gotopgm):
         subi.l  #STACKRESERVE,d0        // Room for the trap stack frame or more
         move.l  d0,UDA_SPSUPER(a2)      // Will be the stack on next trap
 
+#if CONF_WITH_M68K_SHARED_EXEC && CONF_WITH_ELF_LOADER
+        move.l  P_A7SAVE(a0),d0         // fresh staged ELF initial SP or zero
+        beq.s   1f
+        movea.l d0,a1
+        move.l  a1,usp
+        moveq   #0,d1                  // no static ELF loader finalizer
+1:
+#endif
+
 #ifdef __mcoldfire__
         move.w  sr,d0
         bclr    #13,d0                  // Switch to user mode

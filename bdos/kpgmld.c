@@ -188,13 +188,15 @@ LONG kpgmhdrld(char *s, PGMHDR01 *hd, FH *h)
  * hd - the program header read by kpgmhdrld
  */
 LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
-            const struct dl_start_vectors *vectors, BOOL legacy_elf_vectors)
+            const struct dl_start_vectors *vectors, BOOL legacy_elf_vectors,
+            BOOL accessory)
 {
     LONG r;
 
     (void)filename;
     (void)vectors;
     (void)legacy_elf_vectors;
+    (void)accessory;
     switch (pgmld_format) {
 #if CONF_WITH_ELF_LOADER
     case PGMLD_ELF:
@@ -205,8 +207,8 @@ LONG kpgmld(PD *p, FH h, PGMHDR01 *hd, const char *filename,
 #endif
 #if CONF_WITH_USER_ASPACE
         r = elf_pgmld(h, p, filename, vectors, legacy_elf_vectors);
-#elif CONF_WITH_ARM_SHARED_EXEC
-        r = elf_pgmld(h, p, filename, vectors);
+#elif CONF_WITH_SHARED_EXEC
+        r = elf_pgmld(h, p, filename, vectors, legacy_elf_vectors, accessory);
 #else
         r = vectors ? EINVFN : elf_pgmld(h, p);
 #endif

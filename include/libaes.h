@@ -405,20 +405,17 @@ short mt_shel_read(char *command, char *tail, AESGLOBAL *global);
 short mt_shel_readve(const char **path, const char *const **argv, const char *const **envp, AESGLOBAL *global);
 #define SWM_LAUNCH 0
 #define SWM_LAUNCHNOW 1
-#define SWM_LAUNCHACC 3
 #define SWM_BROADCAST 7
 #define SWM_ENVIRON 8
 #define SWM_THRCREATE 20
 #define SWM_THREXIT 21
 #define SWM_THRKILL 22
 #include "gem_lifecycle.h"
-#define CL_NORMAL 0
 #define CL_PARSE 1
 #define CH_EXIT 90
 #define SHW_NOEXEC 0
 #define SHW_EXEC 1
 #define TOSAPP 0
-#define GEMAPP 1
 #define SHW_IMMED 0
 #define SHW_CHAIN 1
 #define SHW_DOS 2

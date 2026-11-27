@@ -3,10 +3,14 @@
 #define LDSO_STARTUP_H
 #include "dynamic.h"
 #include "launch.h"
+#include "../entry_role.h"
 #define DL_START_CAPACITY 196608
+/* Shared-address-space ELF stacks are fully backed in the child's TPA. */
+#define DL_SHARED_STACK_SIZE (256UL * 1024)
 #define DL_AT_PTOS_BASEPAGE 0x5000
 #define DL_AT_PTOS_BOOTDRIVE 0x5001
 #define DL_AT_PTOS_LOADBIAS 0x5002
+#define DL_AT_PTOS_ENTRY_TYPE 0x5006
 
 typedef struct dl_start_info {
     uint32_t phdr, phnum, entry, base, pagesz, basepage, bootdrive, load_bias;
@@ -20,6 +24,7 @@ typedef struct dl_start_vectors {
     uint32_t argc, envc;
     const struct dl_start_vectors *original; /* request before binfmt, if redirected */
     const unsigned char *classic_tail; /* optional original AES short tail, 128 bytes */
+    uint32_t entry_type;
 } DL_START_VECTORS;
 
 /* Construct argc/argv/envp/auxv and private strings in a caller-owned buffer
