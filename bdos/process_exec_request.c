@@ -37,7 +37,7 @@ LONG proc_exec_prepare_user_args(KPROC *owner, const PROCESS_EXEC_REQUEST *reque
                                       request->environment,&vectors);
         if (result != E_OK) goto done;
         if (request->flags & PROCESS_EXEC_ACCESSORY)
-            vectors->entry_type = DL_ENTRY_ACCESSORY;
+            vectors->entry_type = PTOS_ENTRY_ACCESSORY;
         if (!vectors->argc) { result=EINVAL; goto done; }
         for (i = 0; i < vectors->envc; i++)
             if (!strncmp(vectors->envp[i],"ARGV=",5)) { result=EINVAL; goto done; }

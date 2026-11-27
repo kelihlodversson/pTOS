@@ -11,7 +11,7 @@ LIBAES_CONTEXT_HEADERS = lib/aes/menu_state.h lib/aes/shell_state.h lib/aes/reso
     lib/aes/layout.h lib/aes/style.h aes/shared/gemmenubar.h aes/shared/gemdesk.h aes/shared/gemslidegeom.h aes/shared/gemframe.h aes/shared/gemframeids.h \
     include/bdosdefs.h include/libaes.h include/aesglobal.h include/mform.h include/obdefs.h include/grect.h include/portab.h
 obj/libaes/application.o obj/libaes/lifecycle.o obj/libaes/graphics.o obj/libaes/gemwindows.o obj/libaes/desktop.o obj/libaes/draw.o obj/libaes/resources.o obj/libaes/menubar.o obj/libaes/shell.o obj/libaes/startup.o: $(LIBAES_CONTEXT_HEADERS)
-obj/libaes/application.o: lib/aes/application.c lib/aes/lifecycle.h lib/aes/desktop.h lib/aes/graphics.h lib/aes/menubar.h lib/aes/application.h include/libaes.h include/aesglobal.h lib/aes/transport.h lib/aes/native_bindings.h include/cuis.h $(AUTOCONF_H)
+obj/libaes/application.o: lib/aes/application.c lib/aes/lifecycle.h lib/aes/desktop.h lib/aes/graphics.h lib/aes/menubar.h lib/aes/application.h include/libaes.h include/aesglobal.h lib/aes/transport.h lib/aes/native_bindings.h include/cuis.h lib/entry_role.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(CC) $(LIBAES_CFLAGS) -c $< -o $@
 obj/libaes/gemwindows.o: lib/aes/gemwindows.c lib/aes/desktop.h lib/aes/frame_colours.h lib/aes/graphics.h aes/shared/gemslidegeom.h aes/shared/gemsizegeom.h aes/shared/gemmovegeom.h lib/aes/resource_context.h lib/aes/frames.h lib/aes/layout.h aes/shared/gemframegeom.h lib/aes/application.h lib/aes/transport.h include/libaes.h include/aesglobal.h include/cuis.h $(AUTOCONF_H)

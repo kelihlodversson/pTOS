@@ -1672,7 +1672,7 @@ LONG elf_pgmld(FH h, PD *p, const char *filename, const DL_START_VECTORS *vector
         const char *argv[] = { filename, NULL };
         const char *envp[] = { NULL };
         const DL_START_VECTORS entry = {
-            .argv = argv, .envp = envp, .argc = 1, .entry_type = DL_ENTRY_ACCESSORY
+            .argv = argv, .envp = envp, .argc = 1, .entry_type = PTOS_ENTRY_ACCESSORY
         };
         return elf_shared_stack(h, p, filename, &entry, &place);
     }

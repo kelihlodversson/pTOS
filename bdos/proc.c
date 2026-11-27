@@ -1143,7 +1143,7 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
     if (vectors && kpgm_is_prg()) {
         char *prg_environment;
 
-        if (vectors->entry_type == DL_ENTRY_ACCESSORY) {
+        if (vectors->entry_type == PTOS_ENTRY_ACCESSORY) {
 #if CONF_WITH_BINFMT
             binfmt_release(&interpreter);
 #endif

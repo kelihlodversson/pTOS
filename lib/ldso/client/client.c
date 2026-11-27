@@ -40,8 +40,8 @@ static uint32_t auxiliary_value(const uint32_t *aux, uint32_t type)
 int __ptos_is_application(char **envp)
 {
     client_entry_type = auxiliary_value(find_auxiliary_vector(envp), DL_AT_PTOS_ENTRY_TYPE);
-    if (client_entry_type > DL_ENTRY_ACCESSORY) _Exit(127);
-    return client_entry_type == DL_ENTRY_PROGRAM;
+    if (client_entry_type > PTOS_ENTRY_ACCESSORY) _Exit(127);
+    return client_entry_type == PTOS_ENTRY_PROGRAM;
 }
 
 /* DT_INIT receives the same vectors as other ELF initializers. This makes
@@ -54,7 +54,7 @@ void __ptos_client_init(uint32_t argc, char **argv, char **envp)
     client_aux = find_auxiliary_vector(envp);
     client_entry_type = auxiliary_value(client_aux, DL_AT_PTOS_ENTRY_TYPE);
     ptos_basepage = auxiliary_value(client_aux, DL_AT_PTOS_BASEPAGE);
-    if (!ptos_basepage) _Exit(127);
+    if (!ptos_basepage || client_entry_type > PTOS_ENTRY_ACCESSORY) _Exit(127);
 }
 
 unsigned long __ptos_getauxval(unsigned long type)

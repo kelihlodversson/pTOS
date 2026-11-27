@@ -110,7 +110,7 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     if (!buffer || !filename || !vectors || !info || capacity > DL_START_CAPACITY ||
         capacity < 128 || capacity > top || !filenamesize || filenamesize > 1024 ||
         !vectors->argv || !vectors->envp || info->phent < 32 ||
-        vectors->entry_type > DL_ENTRY_ACCESSORY ||
+        vectors->entry_type > PTOS_ENTRY_ACCESSORY ||
         (info->phdr_copy && (info->phdr || !info->phnum)))
         return DL_BAD_ELF;
     n = length(filename, filenamesize);
@@ -163,7 +163,7 @@ int dl_start_stack(unsigned char *buffer, uint32_t capacity, uint32_t top,
     aux[14] = DL_AT_PTOS_BASEPAGE; aux[15] = info->basepage;
     aux[16] = DL_AT_PTOS_BOOTDRIVE; aux[17] = info->bootdrive;
     aux[18] = DL_AT_PTOS_LOADBIAS; aux[19] = info->load_bias;
-    if (vectors->entry_type != DL_ENTRY_PROGRAM) {
+    if (vectors->entry_type != PTOS_ENTRY_PROGRAM) {
         aux[auxwords++] = DL_AT_PTOS_ENTRY_TYPE; aux[auxwords++] = vectors->entry_type;
     }
     if (record) {

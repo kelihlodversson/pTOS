@@ -7,7 +7,7 @@
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/lifecycle.h"
 #include "process_identity.h"
-#include "../../lib/ldso/client/ptos.h"
+#include "../../lib/entry_role.h"
 
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("AES context failure: %d\n", __LINE__); return 1; } } while (0)

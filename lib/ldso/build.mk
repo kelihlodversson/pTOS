@@ -72,7 +72,7 @@ obj/ldso/image_plan.o: lib/ldso/image_plan.c lib/ldso/image.h lib/ldso/dynamic.h
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_CFLAGS) -c $< -o $@
 
-obj/ldso/startup.o: lib/ldso/startup.c lib/ldso/launch.h lib/ldso/startup.h lib/ldso/dynamic.h $(AUTOCONF_H)
+obj/ldso/startup.o: lib/ldso/startup.c lib/ldso/launch.h lib/ldso/startup.h lib/entry_role.h lib/ldso/dynamic.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_CFLAGS) -c $< -o $@
 
@@ -253,7 +253,7 @@ obj/ldso/dynacccrt.o: obj/ldso/dyncrt.o
 obj/ldso/libptos.so: lib/ldso/client/client.c lib/ldso/client/ptos.h \
                     lib/ldso/client/exports.map $(LDSO_CLIENT_MINI) lib/ldso/arch/x32/syscall.c \
                     obj/ldso/sharedutil.o obj/ldso/sharedprint.o obj/ldso/sharedmemory.o \
-                    lib/ldso/runtime.h lib/ldso/startup.h $(AUTOCONF_H)
+                    lib/ldso/runtime.h lib/ldso/startup.h lib/entry_role.h $(AUTOCONF_H)
 	@mkdir -p $(@D)
 	$(LDSO_CC) $(LDSO_LDFLAGS) $(LDSO_CLIENT_CFLAGS) -nostdlib -shared \
 	  -Wl,--no-undefined,--hash-style=sysv,-z,now,-soname,libptos.so,-init,__ptos_client_init \

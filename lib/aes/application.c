@@ -11,8 +11,7 @@
 #include "lifecycle.h"
 #include "string.h"
 #include "process_identity.h"
-#include "../ldso/client/ptos.h"
-#include "../ldso/startup.h"
+#include "../entry_role.h"
 
 static void clear_global(AESGLOBAL *global)
 {
@@ -52,7 +51,7 @@ static void application_label(const char *name, char label[8])
 static BOOL publish_label(LONG handle, BOOL *accessory)
 {
     char name[33], label[8];
-    ULONG tag = __ptos_entry_type() == DL_ENTRY_ACCESSORY ?
+    ULONG tag = __ptos_entry_type() == PTOS_ENTRY_ACCESSORY ?
                 APP_ACCESSORY : APP_APPLICATION;
     LONG result = (LONG)aes_gemdos_call(0x154, 0xfff9, (uintptr_t)name, sizeof(name));
     if (result < 0) return FALSE;
