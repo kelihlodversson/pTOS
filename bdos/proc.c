@@ -1028,6 +1028,11 @@ static long exec_common(WORD flag, char *path, char *tail, char *env,
         if (flag == PE_GO && !prepare_launch(p))
             return ENSMEM;
 #endif
+#if CONF_WITH_M68K_SHARED_EXEC && CONF_WITH_ELF_LOADER
+        /* Modes 4 and 6 always build a fresh basepage entry frame.
+         * A previous execution can leave its trap stack in saved A7. */
+        p->p_areg[7-3] = 0;
+#endif
         proc_go(p, 0);
         /*
          * "should not return ?": on m68k/ARM, proc_go()/gouser() (rwa.S)

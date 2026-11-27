@@ -69,12 +69,15 @@ static long shared_execve(short mode, const char *path, char *const argv[], char
 
 static int shared_prg(void)
 {
+    static const char retained_environment[] = "KEY=two words\0FLAG=\0";
+    static const char retained_tail[] = "\007one two";
     char path[64], raw[64];
     char *const extended[] = { "custom name", "", "two words", "literal\"quote", NULL };
     char *const classic[] = { "", "one", "two", NULL };
     char *const envp[] = { "KEY=two words", "FLAG=", NULL };
     char *const reserved[] = { "ARGV=", NULL };
     long available = Malloc(-1L), loaded;
+    BASEPAGE *retained;
 
     sprintf(path, "%c:\\SUB\\VECTORS.TOS", 'A' + boot);
     sprintf(raw, "%c:\\SUB\\RAW.TOS", 'A' + boot);
@@ -87,9 +90,24 @@ static int shared_prg(void)
         shared_execve(0, path, classic, envp) != 78 ||
         Pexec(0, raw, "", NULL) != 37)
         return 1;
-    loaded = Pexec(3, raw, "", NULL);
-    if (loaded <= 0 || Pexec(6, "", (BASEPAGE *)loaded, NULL) != 37)
+    loaded = Pexec(3, path, retained_tail, retained_environment);
+    if (loaded <= 0)
         return 1;
+    retained = (BASEPAGE *)loaded;
+    /* libcmini reads its basepage at 4(SP) on each start. Pterm leaves
+     * a saved trap stack in A7 before the retained start is repeated. */
+    if (Pexec(4, "", retained, NULL) != 78) {
+        puts("binfmt boot: FAIL first retained PRG launch");
+        return 1;
+    }
+    if (Pexec(4, "", retained, NULL) != 78) {
+        puts("binfmt boot: FAIL second retained PRG launch");
+        return 1;
+    }
+    if (Pexec(6, "", retained, NULL) != 78) {
+        puts("binfmt boot: FAIL final retained PRG launch");
+        return 1;
+    }
     return Malloc(-1L) != available;
 }
 #endif
