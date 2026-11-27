@@ -27,8 +27,10 @@ FreeMiNT's published dispatch table ends at 0x18f. pTOS previously used
 
 The canonical entry is available with native scheduling and checked user
 copy. Unmanaged callers, callback continuations and kernels without
-those facilities return EINVFN. Only m68k also exposes the MiNT TRAP #1
-numbers 0x15a (Fpoll) and 0x11d (Fselect). Their layouts are the original
+those facilities return EINVFN. The 256 KiB Amiga ROM also returns EINVFN
+for the poll calls. The 512 KiB Amiga ROM supports polling with native
+scheduling on the 68030, 68040 and 68060. Only m68k also exposes the MiNT
+TRAP #1 numbers 0x15a (Fpoll) and 0x11d (Fselect). Their layouts are the original
 pointer/ULONG/LONG and UWORD/pointer/pointer/pointer respectively. ARM
 and x32 use libcmini adapters over 0x194.
 

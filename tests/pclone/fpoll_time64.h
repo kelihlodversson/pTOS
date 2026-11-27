@@ -1,6 +1,4 @@
 /* Exercise the production traps from a scheduler-owned test PROCESS. */
-#include "../../include/fpoll_abi.h"
-
 static long poll64(PTOS_POLLFD *fds, uint32_t count, int64_t timeout)
 {
     uint64_t bits = (uint64_t)timeout;

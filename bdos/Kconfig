@@ -64,6 +64,11 @@ config CONF_WITH_PROCESS_FILES_TEST
 
 config CONF_WITH_FPOLL_TIME64
     def_bool CONF_WITH_PROCESS_FILES && CONF_WITH_USER_COPY
+    depends on !TARGET_AMIGA_ROM || CONF_AMIGA_ROM_512K
+    help
+      Provide GEMDOS descriptor polling and monotonic waits. On Amiga the
+      poll engine needs the 512 KB ROM format, also used by the full
+      native 68030 scheduler test profile.
 
 config CONF_WITH_PRIVATE_CLONE
     def_bool CONF_WITH_FORK || (CONF_WITH_PRIVATE_CLONE_TEST && !CONF_M68K_ROM_WINDOW && !CONF_WITH_MFASTCALL)
