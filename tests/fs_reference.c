@@ -127,6 +127,9 @@ static void operation_reference_case(void)
     CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL) == RO_MODE);
     CHECK(xfcntl(H_Console, GEMDOS_F_GETFL) == RW_MODE);
     CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL + 1) == EINVFN);
+    retiring = TRUE;
+    CHECK(fs_reference_pin(&borrowed, &pin) == EACCDN && !pin.owned);
+    retiring = FALSE;
     CHECK(fs_reference_pin(&borrowed, &pin) == E_OK);
     CHECK(fs_reference_unpin(&pin) == E_OK && !pin.owned);
     CHECK(closes == old_closes && releases == old_releases);

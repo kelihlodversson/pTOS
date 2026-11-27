@@ -222,6 +222,8 @@ LONG fs_reference_pin(const FS_HANDLE *handle, FS_FILE_REFERENCE *out)
 
     if (!handle || !out || out->owned || out->closing)
         return EINVAL;
+    if (!kproc_file_references_allowed(run))
+        return EACCDN;
     file = handle->slot;
     if (handle->bios || !file || !fs_sft_accessible((int)(file - sft)) ||
         !handle->incarnation || file->f_incarnation != handle->incarnation ||
