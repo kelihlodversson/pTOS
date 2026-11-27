@@ -450,6 +450,10 @@ typedef struct fs_handle {
 /* Retain an admitted file for I/O or readiness across callback boundaries.
  * Acquire before yielding, and revalidate before using a retained owner. */
 LONG fs_reference_pin(const FS_HANDLE *handle, FS_FILE_REFERENCE *out);
+#if CONF_WITH_FPOLL_TIME64
+/* A live managed alias may retain an SFT slot during another alias's close. */
+LONG fs_reference_pin_poll(WORD backend, UQUAD incarnation, FS_FILE_REFERENCE *out);
+#endif
 LONG fs_reference_lookup(const FS_FILE_REFERENCE *reference, FS_HANDLE *out);
 LONG fs_reference_unpin(FS_FILE_REFERENCE *reference);
 

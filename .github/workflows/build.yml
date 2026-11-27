@@ -552,6 +552,8 @@ jobs:
           SHARED_VM_PEXEC_FS: ${{ matrix.fs }}
           PROCESS_FILES_TEST: '1'
           PROCESS_FILES_FS: ${{ matrix.fs }}
+          # This m68k profile uses the small nested probe to fit the classic window.
+          FPOLL_PROVIDER_TEST: ${{ matrix.arch == 'm68k' && matrix.fs == 'pfs' && matrix.loader != 'prg-only' && '1' || '0' }}
         run: tools/ci-regression.sh "${{ matrix.machine }}"
 
   process-files:
@@ -584,6 +586,7 @@ jobs:
           EXEC_HANDOFF_TEST: '1'
           PROCESS_FILES_TEST: '1'
           PROCESS_FILES_FS: ${{ matrix.fs }}
+          FPOLL_PROVIDER_TEST: ${{ matrix.arch == 'arm' && matrix.fs == 'pfs' && '1' || '0' }}
           REGRESSION_RAW_DISK: '1'
         run: tools/ci-group.sh --names "${{ matrix.machine }}" tools/ci-regression.sh
 

@@ -37,7 +37,7 @@ config CONF_WITH_PLUGGABLE_FS_TEST
 	default n
 	help
 	  Registers a tiny built-in in-memory filesystem driver exposing a
-	  single fixed drive letter with one read-only file, purely to
+	  single fixed drive letter with read-only fixtures, purely to
 	  exercise the pluggable filesystem layer end-to-end without needing
 	  a real driver.  Development/test scaffolding only; say n unless
 	  you are testing the pluggable filesystem layer itself.

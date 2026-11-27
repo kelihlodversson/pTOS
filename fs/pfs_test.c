@@ -9,8 +9,7 @@
  * real transport - gated behind CONF_WITH_PLUGGABLE_FS_TEST, development/
  * test scaffolding only, not a starting point for a real driver.
  *
- * One fixed drive letter, one fixed read-only file "PFSTEST.TXT" in its
- * root directory; nothing else exists on this drive.
+ * One fixed drive letter and a few read-only fixtures in its root directory.
  */
 
 #include "config.h"
@@ -22,20 +21,51 @@
 #include "fs.h"
 #include "gemerror.h"
 #include "string.h"
+#if CONF_WITH_FPOLL_TIME64
+#include "fpoll_kernel.h"
+#endif
 
 #ifndef CONF_PFS_TEST_DRIVE
 #define CONF_PFS_TEST_DRIVE 15     /* P: */
 #endif
 
-static const char pfs_test_filename[] = "PFSTEST.TXT";
 static const char pfs_test_contents[] = "Hello from the pluggable filesystem layer!\r\n";
 
-/* The only two objects this driver ever hands out: the root directory,
- * and the one file.  'index' distinguishes them (0 = root, 1 = file);
- * nothing else is ever looked up.
- */
-#define PFS_TEST_ROOT 0
-#define PFS_TEST_FILE 1
+enum {
+    PFS_TEST_ROOT, PFS_TEST_FILE,
+#if CONF_WITH_FPOLL_TIME64
+    PFS_TEST_POLL_CHECK, PFS_TEST_POLL_WAIT,
+#endif
+    PFS_TEST_COUNT
+};
+static const char *const pfs_test_names[] = {
+    "PFSTEST.TXT",
+#if CONF_WITH_FPOLL_TIME64
+    "POLLCHK.TXT", "POLLWAIT.TXT",
+#endif
+};
+
+#if CONF_WITH_FPOLL_TIME64
+/* The producers and observers share mock device state across open files. */
+static BOOL poll_check_ready, poll_wait_sampled, poll_wait_ready;
+
+static LONG pfstest_ready(const PFSCOOKIE *fc, UWORD events)
+{
+    if (fc->index == PFS_TEST_POLL_CHECK && !poll_check_ready) {
+        /* Publish after observing the old level but before wait admission. */
+        poll_check_ready = TRUE;
+        fpoll_notify();
+        return 0;
+    }
+    if (fc->index == PFS_TEST_POLL_WAIT) {
+        poll_wait_sampled = TRUE;
+        if (!poll_wait_ready)
+            return 0;
+        return (events & FS_READY_READ) | FS_READY_ERROR | FS_READY_HANGUP;
+    }
+    return events & FS_READY_READ;
+}
+#endif
 
 static LONG pfstest_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
 {
@@ -65,17 +95,26 @@ static LONG pfstest_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
 
 static LONG pfstest_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out)
 {
+    LONG index;
+
     if (dir->index != PFS_TEST_ROOT)
         return EPTHNF;
-    if (strcmp(name, pfs_test_filename) != 0)
+    for (index = PFS_TEST_FILE; index < PFS_TEST_COUNT; index++)
+        if (strcmp(name, pfs_test_names[index - PFS_TEST_FILE]) == 0)
+            break;
+    if (index == PFS_TEST_COUNT)
         return EFILNF;
     if (mode != 0)      /* read-only drive: only RO_MODE opens */
         return EACCDN;
 
     out->fs = dir->fs;
-    out->index = PFS_TEST_FILE;
+    out->index = index;
     out->aux = 0;
     out->pos = 0;
+#if CONF_WITH_FPOLL_TIME64
+    if (index == PFS_TEST_POLL_CHECK)
+        poll_check_ready = FALSE;
+#endif
 
     return E_OK;
 }
@@ -84,8 +123,23 @@ static LONG pfstest_read(PFSCOOKIE *fc, LONG pos, LONG len, UBYTE *buf)
 {
     LONG total = (LONG)sizeof(pfs_test_contents) - 1;
 
-    if (fc->index != PFS_TEST_FILE)
+    if (fc->index < PFS_TEST_FILE || fc->index >= PFS_TEST_COUNT)
         return EIHNDL;
+
+#if CONF_WITH_FPOLL_TIME64
+    if (fc->index == PFS_TEST_POLL_WAIT) {
+        /* A two-byte read resets the test device. A one-byte read in the
+         * producer acknowledges a sampled wait and publishes readiness. */
+        if (len == 2) {
+            poll_wait_sampled = poll_wait_ready = FALSE;
+        } else if (len == 1) {
+            if (!poll_wait_sampled)
+                return 0;
+            poll_wait_ready = TRUE;
+            fpoll_notify();
+        }
+    }
+#endif
 
     if (pos >= total)
         return 0;
@@ -101,11 +155,10 @@ static LONG pfstest_readdir(PFSCOOKIE *dir, LONG *cursor, char *name, int namele
 {
     if (dir->index != PFS_TEST_ROOT)
         return ENMFIL;
-    if (*cursor != 0)
-        return ENMFIL;      /* one entry, already returned */
+    if (*cursor >= PFS_TEST_COUNT - PFS_TEST_FILE)
+        return ENMFIL;
 
-    *cursor = 1;
-    strlcpy(name, pfs_test_filename, namelen);
+    strlcpy(name, pfs_test_names[(*cursor)++], namelen);
     outattr->size = sizeof(pfs_test_contents) - 1;
     outattr->dos_attr = FA_RO;
     outattr->date = 0;
@@ -153,7 +206,10 @@ static struct pfs_ops pfs_test_ops = {
     NULL,               /* chattr */
     pfstest_dfree,
     pfstest_mediach,
-    NULL                /* release: nothing to release */
+    NULL,               /* release: nothing to release */
+#if CONF_WITH_FPOLL_TIME64
+    .ready = pfstest_ready,
+#endif
     /* native_handles omitted: defaults to FALSE, since this driver has
      * no handle management of its own - see fs/pfs.h. */
 };

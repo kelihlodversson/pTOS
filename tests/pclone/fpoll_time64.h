@@ -62,6 +62,89 @@ static void poll_cancel_group(void *argument)
     poll_cancel.group_result = term_group(73);
 }
 
+#ifdef TEST_WITH_PLUGGABLE_FS_TEST
+static const char poll_wait_path[] = "P:\\POLLWAIT.TXT";
+
+static void poll_provider_producer(void *argument)
+{
+    unsigned long start = poll_ticks();
+    long fd, result;
+    char byte;
+
+    (void)argument;
+    fd = Fopen(poll_wait_path, 0);
+    if (fd < 0)
+        Pterm(92);
+    /* Retry if this PROCESS got to the driver before the consumer sampled. */
+    do {
+        result = Fread((short)fd, 1, &byte);
+        if (result)
+            break;
+        poll64(NULL, 0, 5);
+    } while (poll_ticks() - start < 100);
+    if (Fclose((short)fd) || result != 1)
+        Pterm(93);
+}
+
+static void test_poll_provider(void *stack)
+{
+    PTOS_POLLFD fd = {0, PTOS_POLLIN, 0};
+    unsigned long start;
+    int32_t pid = 0;
+    long result;
+    char bytes[2];
+    int failures = ptest_failures();
+
+    fd.fd = Fopen("P:\\POLLCHK.TXT", 0);
+    ptest_assert_msg(fd.fd >= 0, "open the check-to-admission provider");
+    if (fd.fd >= 0) {
+        start = poll_ticks();
+        result = poll64(&fd, 1, 2000);
+        ptest_assert_msg(result == 1 && fd.revents == PTOS_POLLIN &&
+                         poll_ticks() - start < 200,
+                         "notify after an unready sample forces a rescan before the deadline");
+        ptest_assert_msg(Fclose((short)fd.fd) == 0, "close the check-to-admission provider");
+    }
+
+    fd.fd = Fopen(poll_wait_path, 0);
+    ptest_assert_msg(fd.fd >= 0, "open the blocked-wait provider");
+    if (fd.fd >= 0) {
+        ptest_assert_msg(Fread((short)fd.fd, sizeof(bytes), bytes) == sizeof(bytes),
+                         "reset the provider before the consumer waits");
+        /* A separate descriptor table prevents a producer file operation
+         * from waking the consumer through its descriptor epoch. The producer
+         * only publishes after the consumer's unready kernel sample. */
+        result = launch_entry(poll_provider_producer, CLONE_VM | CLONE_COPY_CWD,
+                              stack, &pid, NULL);
+        ptest_assert_msg(result > 0 && pid > 0, "launch the independent readiness producer");
+        if (result > 0 && pid > 0) {
+            start = poll_ticks();
+            result = poll64(&fd, 1, 2000);
+            ptest_assert_msg(result == 1 &&
+                             fd.revents == (PTOS_POLLIN | PTOS_POLLERR | PTOS_POLLHUP) &&
+                             poll_ticks() - start < 200,
+                             "provider notification wakes an already blocked consumer");
+            ptest_assert_msg(Pwaitpid(pid, 0, 0) == ((long)pid << 16),
+                             "the producer published and released its own descriptor");
+#if defined(__mc68000__)
+            if (fd.fd >= 0 && fd.fd < 32) {
+                uint32_t mask = 1UL << fd.fd;
+
+                ptest_assert_msg(trap_1_wwlll(GEMDOS_FSELECT, 0, 0, 0, (long)&mask) == 1 &&
+                                 mask == (1UL << fd.fd),
+                                 "terminal events report readiness in an infinite exception-only Fselect");
+            } else {
+                ptest_fail("the provider descriptor fits a legacy Fselect mask");
+            }
+#endif
+        }
+        ptest_assert_msg(Fclose((short)fd.fd) == 0, "close the blocked-wait provider");
+    }
+    if (ptest_failures() == failures)
+        conws("native Fpoll_time64 provider notifications and terminal events: PASS\r\n");
+}
+#endif
+
 static void test_fpoll_time64(void)
 {
     static const char file[] = "FPOLL.TMP";
@@ -128,6 +211,9 @@ static void test_fpoll_time64(void)
     ptest_assert_msg(stack > 0, "allocate a sibling stack");
     if (stack <= 0)
         goto done;
+#ifdef TEST_WITH_PLUGGABLE_FS_TEST
+    test_poll_provider((void *)stack);
+#endif
     if (Fforce(4, (short)first) == 0) {
         poll_peer.replacement = second;
         poll_peer.ran = 0;

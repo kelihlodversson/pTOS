@@ -18,6 +18,11 @@ static PD child_pd,other_pd;
 static KPROC processes[3];
 static unsigned allocations,frees;
 static BOOL fail_allocation,rebind_retained;
+#if CONF_WITH_FPOLL_TIME64
+static FS_FILE_REFERENCE poll_pin = FS_FILE_REFERENCE_INIT;
+static UQUAD poll_generation;
+static BOOL pin_during_flush;
+#endif
 void *kalloc(ULONG bytes)
 { void *p;if(fail_allocation)return NULL;p=malloc(bytes);if(p)allocations++;return p; }
 void kfree(void *p) { if(p){frees++;free(p);} }
@@ -52,6 +57,17 @@ void kproc_standard_file_invalidate(WORD backend)
 void flush(BCB *b)
 {
     if(rebind_retained){rebind_retained=FALSE;CHECK(ixforce(0,NUMSTD+1,&owner)==E_OK);}
+#if CONF_WITH_FPOLL_TIME64
+    if (pin_during_flush) {
+        WORD bios = 0;
+
+        pin_during_flush = FALSE;
+        CHECK(fs_sft_busy(0) && !fs_sft_accessible(0));
+        CHECK(process_files_poll_pin(kproc_files(run), 0, &poll_pin, &bios, &poll_generation) == E_OK);
+        CHECK(poll_pin.owned && poll_pin.handle == NUMSTD && !bios && poll_generation);
+        CHECK(fs_reference_ready(&poll_pin, FS_READY_READ) == EAGAIN);
+    }
+#endif
     legacy_flush(b);
 }
 static void init_process(int i,PD *pd)
@@ -125,6 +141,22 @@ int main(void)
         CHECK(!sft[0].f_use && !sft[0].f_own && !sft[0].f_staged_refs);
     }
     puts("Independent same-number parent/child bindings, both close orders, shared OFD cursor, exact refs: PASS");
+#if CONF_WITH_FPOLL_TIME64
+    run = &owner;
+    descriptor = open_bound();
+    CHECK(ixforce(0, descriptor, &owner) == E_OK);
+    pin_during_flush = TRUE;
+    CHECK(xclose(descriptor) == E_OK && !pin_during_flush);
+    CHECK(kproc_files(run)->binding[0].generation == poll_generation);
+    CHECK(fs_reference_ready(&poll_pin, FS_READY_READ) == FS_READY_READ);
+    CHECK(sft[0].f_use == 2 && sft[0].f_staged_refs == 1);
+    CHECK(fs_reference_unpin(&poll_pin) == E_OK && !poll_pin.owned);
+    CHECK(xclose(0) == E_OK && !sft[0].f_use && !sft[0].f_staged_refs);
+    descriptor = open_bound();
+    CHECK(fs_reference_pin_poll(descriptor, poll_pin.incarnation, &poll_pin) == EIHNDL);
+    CHECK(!poll_pin.owned && xclose(descriptor) == E_OK);
+    puts("Poll pins a live alias during close and rejects a stale SFT incarnation: PASS");
+#endif
     run=&owner;descriptor=open_bound();CHECK(ixforce(0,descriptor,&owner)==E_OK);
     duplicate=(WORD)xdup(0);CHECK(duplicate==NUMSTD+1);
     second=pfs_second();CHECK(second==NUMSTD+2);

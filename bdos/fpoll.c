@@ -90,23 +90,25 @@ static LONG bios_status(WORD handle, UWORD events)
 
 static LONG poll_pin(const PROCESS_FILES *files, LONG fd, POLL_REFERENCE *reference)
 {
-    FS_HANDLE handle;
     LONG error;
 
     if (fd < 0 || fd >= NUMHANDLES)
         return E_OK;
-    error = fs_handle_lookup((WORD)fd, &handle);
-    if (error)
-        return error == EIHNDL || error == EACCDN ? E_OK : error;
+    error = process_files_poll_pin(files, (WORD)fd, &reference->file,
+                                   &reference->bios, &reference->generation);
+    return error == EIHNDL || error == EACCDN ? E_OK : error;
+}
 
-    if (!handle.bios) {
-        error = fs_reference_pin(&handle, &reference->file);
+static LONG poll_bios_status(const POLL_REFERENCE *reference, UWORD events)
+{
+    if (reference->file.owned) {
+        FS_HANDLE handle;
+        LONG error = fs_reference_lookup(&reference->file, &handle);
+
         if (error)
-            return error;
+            return error == EACCDN ? EAGAIN : error;
     }
-    reference->generation = files->binding[fd].generation;
-    reference->bios = handle.bios;
-    return E_OK;
+    return bios_status(reference->bios, events);
 }
 
 static UWORD poll_revents(const PTOS_POLLFD *fd, const POLL_REFERENCE *reference,
@@ -128,13 +130,15 @@ static UWORD poll_revents(const PTOS_POLLFD *fd, const POLL_REFERENCE *reference
     if (reference->bios) {
         /* Legacy BIOS status vectors lack a notification contract. Recheck
          * interested devices at the tick, on their own THREAD's stack. */
-        ready = DISK_CALL(bios_status(reference->bios, events));
+        ready = DISK_CALL(poll_bios_status(reference, events));
         if ((events & FS_READY_WRITE) ||
             ((events & FS_READY_READ) && reference->bios != H_Print))
             wait->sample = TRUE;
     } else {
         ready = DISK_CALL(fs_reference_ready(&reference->file, events));
     }
+    if (wait->files->binding[fd->fd].generation != reference->generation)
+        return PTOS_POLLNVAL;
     if (ready == EAGAIN) {
         /* An admitted alias can be flushing the same description. */
         wait->sample = TRUE;
@@ -317,7 +321,7 @@ LONG xfselect(UWORD timeout, ULONG read_mask, ULONG write_mask, ULONG except_mas
             break;
         }
         for (j = 0; j < 3; j++) {
-            UWORD ready = event[j] | (j < 2 ? PTOS_POLLERR | PTOS_POLLHUP : 0);
+            UWORD ready = event[j] | PTOS_POLLERR | PTOS_POLLHUP;
 
             if ((fds[i].events & event[j]) && (fds[i].revents & ready)) {
                 masks[j] |= 1UL << fds[i].fd;

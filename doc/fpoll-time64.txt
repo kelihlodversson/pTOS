@@ -42,6 +42,8 @@ unsigned WORD interval of zero as indefinite. The optional input/output
 LONG masks select descriptors 0..31. The fourth argument is zero in the
 published TOS documentation. Nonzero selects the exceptional readiness
 mask used by FreeMiNT. The return count is across the supplied masks.
+Terminal error or hangup sets the selected bits in any requested mask,
+including an exception-only wait.
 An invalid selected descriptor clears the masks and returns EIHNDL.
 
 Clock and wait ownership
@@ -62,6 +64,9 @@ and media revocation invalidate the original binding. Reusing its
 numeric descriptor does not retarget an in-flight poll. A negative fd
 is ignored. A missing or invalidated nonnegative fd reports POLLNVAL,
 even with no requested events.
+While another alias closes, a live binding can still pin the description.
+Its readiness is sampled again after the close, with the original deadline
+and binding generation.
 
 The kernel prepares writable user storage, copies the input once and
 holds a mapping lease until after the resulting array is copied out.
