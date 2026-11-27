@@ -1534,14 +1534,7 @@ static LONG pfs_file_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf)
     return n;
 }
 
-/* Only calls the driver's close(), never release() - a single cookie can
- * be referenced by several sft[] entries at once (std-handle redirection
- * via Fforce()/ixforce() bumps the same slot's f_use; xdup() copies the
- * cookie into a second slot), so release() must wait until the caller
- * (bdos/fsopnclo.c's xclose()) sees the last reference go away, exactly
- * like the legacy OFD path calls ixclose() on every close but only frees
- * the sft[] slot itself (sftdel()) once f_use reaches zero.
- */
+/* Flush the shared file. SFT retirement owns its consuming release. */
 LONG pfs_handle_close(PFSCOOKIE *fc)
 {
     return fc->fs->close ? fc->fs->close(fc) : E_OK;

@@ -1,9 +1,8 @@
 /* Actual PROCESS snapshot, trusted DTA cache and PFS iterator owners.
  * Only the disk provider and absent MMU/CPU are modeled. */
 #define PROCESS_SEARCH_FIXTURE
-#define pfs_handle_close descriptor_fixture_pfs_close
+#define USE_PRODUCTION_PFS_IO
 #include "process_files_retirement.c"
-#undef pfs_handle_close
 #undef main
 #include "../fs/pfs.c"
 
