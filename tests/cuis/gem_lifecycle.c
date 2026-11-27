@@ -21,7 +21,7 @@ static short launch(char role, int acc)
     do { reverse[n++] = '0'+pid%10; pid /= 10; } while (pid);
     while (n) tail[used++] = reverse[--n];
     tail[0] = used-1;
-    return shel_write(SWM_LAUNCH,GEMAPP,CL_NORMAL,acc ? "C:\\GEMLIFE.ACC" : "C:\\GEMLIFE.PRG",tail);
+    return shel_write(acc ? SWM_LAUNCHACC : SWM_LAUNCH,GEMAPP,CL_NORMAL,"C:\\GEMLIFE.PRG",tail);
 }
 static int receive(short message[8])
 {

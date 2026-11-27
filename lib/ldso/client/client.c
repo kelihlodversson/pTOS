@@ -13,6 +13,7 @@ uint32_t ptos_basepage;
 static uint32_t client_argc;
 static char **client_argv;
 static const uint32_t *client_aux;
+static uint32_t client_entry_type;
 static void (*handlers[EXIT_SLOTS])(void);
 static uint32_t count;
 static int exiting;
@@ -38,9 +39,9 @@ static uint32_t auxiliary_value(const uint32_t *aux, uint32_t type)
 /* Called from the executable's first preinitializer, before DT_INIT. */
 int __ptos_is_application(char **envp)
 {
-    uint32_t type = auxiliary_value(find_auxiliary_vector(envp), DL_AT_PTOS_ENTRY_TYPE);
-    if (type > DL_ENTRY_ACCESSORY) _Exit(127);
-    return type == DL_ENTRY_PROGRAM;
+    client_entry_type = auxiliary_value(find_auxiliary_vector(envp), DL_AT_PTOS_ENTRY_TYPE);
+    if (client_entry_type > DL_ENTRY_ACCESSORY) _Exit(127);
+    return client_entry_type == DL_ENTRY_PROGRAM;
 }
 
 /* DT_INIT receives the same vectors as other ELF initializers. This makes
@@ -51,6 +52,7 @@ void __ptos_client_init(uint32_t argc, char **argv, char **envp)
     client_argv = argv;
     environ = envp;
     client_aux = find_auxiliary_vector(envp);
+    client_entry_type = auxiliary_value(client_aux, DL_AT_PTOS_ENTRY_TYPE);
     ptos_basepage = auxiliary_value(client_aux, DL_AT_PTOS_BASEPAGE);
     if (!ptos_basepage) _Exit(127);
 }
@@ -58,6 +60,11 @@ void __ptos_client_init(uint32_t argc, char **argv, char **envp)
 unsigned long __ptos_getauxval(unsigned long type)
 {
     return client_aux ? auxiliary_value(client_aux, type) : 0;
+}
+
+uint32_t __ptos_entry_type(void)
+{
+    return client_entry_type;
 }
 
 int32_t ptos_write(int handle, const void *buffer, uint32_t length)

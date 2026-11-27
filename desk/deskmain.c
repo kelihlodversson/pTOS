@@ -2275,7 +2275,7 @@ BOOL deskmain(void)
                 path[0] = pattern[0]; path[1] = ':'; path[2] = '\\';
                 for (i = 0; i < count; i++) {
                     strcpy(path+3,names[i]);
-                    (void)shel_write(SHW_EXEC,TRUE,SHW_PARALLEL,path,tail);
+                    (void)shel_write(SWM_LAUNCHACC,GEMAPP,CL_NORMAL,path,tail);
                 }
             }
         }

@@ -16,6 +16,8 @@
 #include "gemframegeom.h"
 #include "gemslidegeom.h"
 #include "../../lib/aes/layout.h"
+#include "../../lib/ldso/startup.h"
+#include "../../lib/ldso/client/ptos.h"
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("GEM API failure: %d\n", __LINE__); return __LINE__; } } while (0)
 extern void *malloc(__SIZE_TYPE__ bytes);
@@ -45,6 +47,8 @@ static ULONG peer_queries, peer_enumerations;
 #define SIBLING_HANDLE 2147483601L
 static char published_label[8];
 static const char *executable_name = "GemTest.Prg";
+static uint32_t entry_type;
+uint32_t __ptos_entry_type(void) { return entry_type; }
 static LONG active_peer = EFILNF;
 static ULONG peer_state_flags;
 static BOOL live;
@@ -1378,7 +1382,7 @@ static int metadata_checks(void)
 static int lifecycle_poll_checks(void)
 {
     short window, message[8], kind;
-    executable_name = "Poll.ACC"; registered_items = 0;
+    executable_name = "Poll.PRG"; entry_type = DL_ENTRY_ACCESSORY; registered_items = 0;
     CHECK(appl_init() == 7 && menu_register(7,"One") == 0 && menu_register(7,"Two") == 1);
     window = wind_create(0,10,10,100,100);
     CHECK(window > 0 && wind_open(window,10,10,100,100));
@@ -1396,7 +1400,7 @@ static int lifecycle_poll_checks(void)
     CHECK(!wind_get(window,WF_KIND,&kind,NULL,NULL,NULL));
     CHECK(appl_read(APR_NOWAIT,16,message) == 1 && message[0] == AC_CLOSE && !pipe_count);
     lifecycle_test = FALSE;
-    CHECK(appl_exit()); executable_name = "GemTest.Prg";
+    CHECK(appl_exit()); executable_name = "GemTest.Prg"; entry_type = DL_ENTRY_PROGRAM;
     return 0;
 }
 /* Distinct user contexts do not share retained window metadata, even when
@@ -1635,10 +1639,15 @@ int main(void)
         CHECK(appl_find("RENAMED ") == 7 && appl_exit() == 1);
         executable_name = "Clock.ACC";
         CHECK(appl_init() == 7);
+        CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && type == APP_APPLICATION);
+        CHECK(appl_exit() == 1);
+        entry_type = DL_ENTRY_ACCESSORY;
+        CHECK(appl_init() == 7);
         CHECK(aes_lifecycle_write(SWM_NEWMSG,NM_APTERM,0,NULL,&aes_global) == 1);
         CHECK(appl_search(APP_FIRST,name,&type,&found) == 1 && type == APP_ACCESSORY && found == 7);
         CHECK(!__builtin_memcmp(name,"CLOCK   ",9));
         CHECK(appl_exit() == 1);
+        entry_type = DL_ENTRY_PROGRAM;
         executable_name = "GemTest.Prg";
     }
     CHECK(lifecycle_poll_checks() == 0);

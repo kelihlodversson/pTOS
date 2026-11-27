@@ -30,8 +30,21 @@ and finalizer contract is identical for both roles.
 Pexecve starts an ordinary program. A PROCESS_EXEC_PREPARE or
 PROCESS_EXEC_START request can combine PROCESS_EXEC_ACCESSORY with
 PROCESS_EXEC_VECTOR_ARGS for an independent ELF accessory. The external
-desktop selects this flag when launching an .ACC. The flag describes
-startup and grants no permission to the launched process.
+desktop requests this role with shel_write(SWM_LAUNCHACC, ...). libaes
+passes the flag through the PROCESS request and takes its own AES
+classification from the runtime launch role, independently of the
+executable's name. The role describes startup and grants no permission
+to the launched process.
+
+The external desktop and libaes use the same role values on every port.
+The runtime supplies the private __ptos_entry_type() accessor before
+application startup. ELF runtimes obtain it from auxv. A future classic
+PRG runtime can obtain it from the program or accessory basepage entry
+convention. A port must also provide a launch backend that admits the
+requested format and role. The current external PROCESS accessory
+launch supports ELF. ARM and m68k kernel AES can also use the existing
+staged launch described below. The ColdFire libaes port and its launch
+backend remain future work.
 
 The shared-address-space ARM and m68k kernel AES loaders also start
 standard ELF accessories. The executable's PT_NOTE identifies the

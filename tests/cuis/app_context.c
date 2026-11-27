@@ -7,6 +7,7 @@
 #include "../../lib/aes/transport.h"
 #include "../../lib/aes/lifecycle.h"
 #include "process_identity.h"
+#include "../../lib/ldso/client/ptos.h"
 
 #undef CHECK
 #define CHECK(c) do { if (!(c)) { __builtin_printf("AES context failure: %d\n", __LINE__); return 1; } } while (0)
@@ -17,6 +18,8 @@ static ULONG allocations, releases, opens, closes, resets;
 static BOOL fail_allocate, fail_open, fail_label, fail_tag, fail_close, fail_free;
 static LONG pid = 7, next_session = 100;
 static BOOL live[4];
+
+uint32_t __ptos_entry_type(void) { return 0; }
 
 UQUAD aes_memory_call(ULONG function, UQUAD argument)
 {

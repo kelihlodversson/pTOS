@@ -7,6 +7,8 @@
 extern char **environ;
 /* Private auxiliary-vector access for dependent system libraries. */
 unsigned long __ptos_getauxval(unsigned long type);
+/* Launch role for dependent system libraries, available during preinit. */
+uint32_t __ptos_entry_type(void);
 extern uint32_t ptos_basepage;
 int32_t ptos_write(int handle, const void *buffer, uint32_t length);
 int atexit(void (*function)(void));
