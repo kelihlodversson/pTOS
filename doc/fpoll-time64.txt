@@ -15,8 +15,10 @@ signed 32-bit fd at offset 0, unsigned 16-bit events at offset 4 and
 unsigned 16-bit revents at offset 6. A request can contain up to 1024
 entries. A zero count ignores the pointer, even for blocking waits.
 
-There are four ABI LONG arguments: address, count, timeout bits 63..32,
-timeout bits 31..0. The split is explicit even on big-endian m68k.
+The four ABI LONG arguments are the address, count, timeout bits 63..32
+and timeout bits 31..0. The split is explicit even on big-endian m68k.
+FreeMiNT's published dispatch table ends at 0x18f. pTOS previously used
+0x190 through 0x193.
 
   x32:    GEMDOS class and 0x194 in RAX, arguments in RDI/RSI/RDX/R10.
           libc clears the upper halves of the pointer/count slots.
@@ -34,10 +36,11 @@ Timeout is signed milliseconds. Zero takes a snapshot, -1 waits
 indefinitely, positive values up to INT64_MAX wait for an event or
 deadline, and other negatives return EINVAL. Legacy Fpoll interprets any
 negative 32-bit interval as indefinite. Legacy Fselect interprets an
-unsigned WORD interval of zero as indefinite. Its optional input/output
-LONG masks select descriptors 0..31 for read, write and exceptional
-readiness. The return count is across the three masks. An invalid
-selected descriptor clears the masks and returns EIHNDL.
+unsigned WORD interval of zero as indefinite. The optional input/output
+LONG masks select descriptors 0..31. The fourth argument is zero in the
+published TOS documentation. Nonzero selects the exceptional readiness
+mask used by FreeMiNT. The return count is across the supplied masks.
+An invalid selected descriptor clears the masks and returns EIHNDL.
 
 Clock and wait ownership
 ------------------------

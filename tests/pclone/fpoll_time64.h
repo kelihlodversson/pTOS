@@ -73,6 +73,10 @@ static void test_fpoll_time64(void)
     long first, second, stack, worker_stack, result, completion;
     int32_t tid = 0, status = -1, pid = 0;
     int failures = ptest_failures();
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+    MAPPING_LIFETIME_SNAPSHOT files_before, files_after;
+    int baseline;
+#endif
 
     ptest_begin("Fpoll_time64 native ABI and descriptor wait");
     ptest_assert_msg(poll64(fds, 1, -2) == -25L, "reject negative timeout other than -1");
@@ -92,6 +96,13 @@ static void test_fpoll_time64(void)
     fds[1] = (PTOS_POLLFD){first, PTOS_POLLRDNORM | PTOS_POLLWRNORM, 0xffff};
     fds[2] = (PTOS_POLLFD){-1, PTOS_POLLIN, 0xffff};
     fds[3] = (PTOS_POLLFD){INT32_MAX, 0, 0xffff};
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+    ptest_assert_msg(pclone_trap(fds, MLT_FAIL_COPY) == 0, "inject output mapping lease failure");
+    ptest_assert_msg(poll64(fds, 4, 0) == -39L && fds[0].revents == 0xffff &&
+                     fds[1].revents == 0xffff && fds[2].revents == 0xffff &&
+                     fds[3].revents == 0xffff,
+                     "failed copy preparation leaves all output unchanged");
+#endif
     ptest_assert_msg(poll64(fds, 4, INT64_MAX) == 3, "wide deadline and per-entry readiness count");
     ptest_assert_msg(fds[0].revents == (PTOS_POLLIN | PTOS_POLLOUT) &&
                      fds[1].revents == (PTOS_POLLRDNORM | PTOS_POLLWRNORM) &&
@@ -147,6 +158,10 @@ static void test_fpoll_time64(void)
     if (worker_stack > 0) {
         poll_cancel.stack = (void *)worker_stack;
         poll_cancel.waiting = poll_cancel.returned = 0;
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+        baseline = mlt_snapshot(&files_before) == 0;
+        ptest_assert_msg(baseline, "capture exact SFT and OFD counts before cancellation");
+#endif
         result = launch_entry(poll_cancel_group, CLONE_VM | CLONE_COPY_CWD, (void *)stack, &pid, NULL);
         ptest_assert_msg(result > 0 && pid > 0, "launch a separate PROCESS with a blocked sibling");
         if (result > 0 && pid > 0) {
@@ -159,7 +174,14 @@ static void test_fpoll_time64(void)
             ptest_assert_msg((completion >> 16) == pid && (completion & 0xffff) == 73 &&
                              poll_cancel.waiting && !poll_cancel.returned,
                              "group cancellation detaches an infinite poll before USER return");
-            ptest_assert_msg(Fdelete("FPOLLCAN.TMP") == 0, "cancelled poll releases its file before reaping");
+#if defined(TEST_WITH_PRIVATE_CLONE_TEST) && defined(TEST_WITH_MMAP)
+            ptest_assert_msg(baseline && mlt_snapshot(&files_after) == 0 &&
+                             files_after.value[MLT_SFT_SLOTS] == files_before.value[MLT_SFT_SLOTS] &&
+                             files_after.value[MLT_SFT_REFS] == files_before.value[MLT_SFT_REFS] &&
+                             files_after.value[MLT_OFD_REFS] == files_before.value[MLT_OFD_REFS],
+                             "group exit restores exact SFT and OFD counts");
+#endif
+            ptest_assert_msg(Fdelete("FPOLLCAN.TMP") == 0, "remove the reaped group's fixture");
         }
         ptest_assert_msg(Mfree((void *)worker_stack) == 0, "cancelled poll releases its worker stack");
     }

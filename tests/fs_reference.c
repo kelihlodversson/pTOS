@@ -104,6 +104,13 @@ static LONG test_ready(const PFSCOOKIE *file, UWORD events)
     return FS_READY_READ;
 }
 
+static LONG test_terminal_ready(const PFSCOOKIE *file, UWORD events)
+{
+    CHECK(file == &sft[0].f_pfs && file->pos == 29);
+    CHECK(!events);
+    return FS_READY_READ | FS_READY_ERROR | FS_READY_HANGUP;
+}
+
 static LONG test_control(PFSCOOKIE *file, UWORD command, void *arg, ULONG size)
 {
     FS_CLOSE_REPORT report;
@@ -213,6 +220,11 @@ static void operation_reference_case(void)
     CHECK(fs_reference_ready(&pin, FS_READY_READ) == EINVFN);
     driver.ready = test_ready;
     CHECK(fs_reference_ready(&pin, FS_READY_READ | FS_READY_WRITE) == FS_READY_READ);
+    driver.ready = test_terminal_ready;
+    CHECK(fs_reference_ready(&pin, 0) == (FS_READY_ERROR | FS_READY_HANGUP));
+    sft[0].f_close_busy = TRUE;
+    CHECK(fs_reference_ready(&pin, FS_READY_READ) == EAGAIN);
+    sft[0].f_close_busy = FALSE;
     driver.ready = NULL;
     CHECK(closes == old_closes + 1 && releases == old_releases);
     CHECK(fs_reference_unpin(&pin) == EWRITF && !pin.owned);

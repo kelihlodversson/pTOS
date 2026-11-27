@@ -462,7 +462,8 @@ LONG xfcntl(WORD descriptor, UWORD command);
 LONG fs_file_ioctl(WORD descriptor, UWORD command, void *arg, ULONG size);
 
 /* Readiness is a level check on a retained file. The caller owns the
- * reference across registration and must recheck it after waking. */
+ * reference across registration and rechecks it after waking. A close
+ * in progress reports EAGAIN so the waiter can retry the level check. */
 #define FS_READY_READ     0x01
 #define FS_READY_WRITE    0x02
 #define FS_READY_PRIORITY 0x04
