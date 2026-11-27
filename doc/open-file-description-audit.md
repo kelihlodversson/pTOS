@@ -187,6 +187,8 @@ PFS cursor returns `EACCDN`. A callback can consume the last descriptor
 without freeing the cookie. Dropping a temporary pin skips the flush while
 other owners exist and uses bounded final disposal otherwise. The disk-error
 guard unwinds the pin before restoring the original error continuation.
+The scheduler defers a pending group exit until the busy flag and file pin
+are released. The enclosing GEMDOS boundary delivers it after cleanup.
 An open or create that fails slot or binding admission releases the
 unpublished cookie even if the driver's flush raises a disk error. Its
 result remains the original admission error.

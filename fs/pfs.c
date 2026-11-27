@@ -27,6 +27,17 @@
                                  * bdos/proc.c and bdos/umem.c */
 #include "../bdos/bdosstub.h"   /* for run, same convention as fs/fatfs_pfs.c */
 
+#if CONF_WITH_MULTITHREADING
+#include "ksched_cleanup.h"
+#define PFS_CLEANUP_BEGIN(scope) \
+    KSCHED_CLEANUP_SCOPE scope = {0}; \
+    ksched_cleanup_begin(&scope)
+#define PFS_CLEANUP_END(scope) ksched_cleanup_end(&scope)
+#else
+#define PFS_CLEANUP_BEGIN(scope) (void)0
+#define PFS_CLEANUP_END(scope) (void)0
+#endif
+
 /* Disk-error guards are synchronous and retain no caller pointers. Helpers
  * catch in their own frame, returning explicit failure metadata so caller
  * locals never cross a setjmp boundary. The owner then releases temporary
@@ -1062,11 +1073,13 @@ static void pfs_close_unpublished(PFSCOOKIE *file)
 
     /* Admission failed before the caller could use this open file. Flush
      * can fail or unwind, but the unbound cookie still needs its destructor. */
+    PFS_CLEANUP_BEGIN(scope);
     (void)PFS_TRY(pfs_handle_close(file), &failure);
     if (file->fs->release_file)
         file->fs->release_file(file);
     else if (file->fs->release)
         file->fs->release(file);
+    PFS_CLEANUP_END(scope);
 }
 
 LONG pfs_do_open(const char *path, WORD mode)
@@ -1619,8 +1632,9 @@ static LONG pfs_file_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
 }
 
 
-/* Driver calls can reenter GEMDOS and close the last descriptor. Hold the
- * opened cookie through cursor completion and release the pin on unwind. */
+/* Driver calls can reenter GEMDOS and close the last descriptor. Defer group
+ * exit through cursor completion and final unpin, including on disk errors.
+ * The enclosing GEMDOS boundary delivers cancellation after its own cleanup. */
 #if CONF_WITH_USER_ASPACE
 #define PFS_FILE_CALL(handle, call) \
 __extension__ ({ \
@@ -1630,10 +1644,12 @@ __extension__ ({ \
     volatile LONG _status = _file->f_io_busy ? EACCDN : fs_reference_pin(_handle, &_pin); \
     if (_status == E_OK) { \
         PFS_DISK_FAILURE _failure; \
+        PFS_CLEANUP_BEGIN(_cleanup); \
         _file->f_io_busy = TRUE; \
         _status = PFS_TRY(call, &_failure); \
         _file->f_io_busy = FALSE; \
         fs_reference_unpin(&_pin); \
+        PFS_CLEANUP_END(_cleanup); \
         if (_failure.raised) { \
             errcode = _failure.code; rwerr = _failure.rw; errdrv = _failure.drive; \
             longjmp(errbuf, 1); \

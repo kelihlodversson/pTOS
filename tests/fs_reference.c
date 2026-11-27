@@ -4,15 +4,58 @@
 #include "fs_close.c"
 #undef main
 #include "kproc.h"
+#if CONF_WITH_MULTITHREADING
+#include "ksched.h"
+
+/* Model the scheduler's nonreturning group-exit checkpoint. The SFT and
+ * the PFS operation that must defer it are production code. */
+static KSCHED_CLEANUP_SCOPE *active_cleanup;
+static BOOL group_exit_pending;
+static jmp_buf group_exit;
+
+void ksched_cleanup_begin(KSCHED_CLEANUP_SCOPE *scope)
+{
+    CHECK(!active_cleanup && !scope->active);
+    scope->active = TRUE;
+    active_cleanup = scope;
+}
+
+void ksched_cleanup_end(KSCHED_CLEANUP_SCOPE *scope)
+{
+    CHECK(active_cleanup == scope && scope->active);
+    CHECK(!sft[0].f_io_busy && !sft[0].f_staged_refs);
+    scope->active = FALSE;
+    active_cleanup = NULL;
+}
+
+void ksched_cancel_point(void)
+{
+    if (group_exit_pending && !active_cleanup)
+        longjmp(group_exit, 1);
+}
+
+static LONG release_at_cancel_point(PFSCOOKIE *cookie)
+{
+    CHECK(group_exit_pending);
+    ksched_cancel_point();
+    return driver_release_file(cookie);
+}
+#endif
+
 static BOOL source_live=TRUE;
 PD *kproc_live_pd(const KPROC *p)
 { return source_live && p==(KPROC *)&owner ? &owner : NULL; }
 void kproc_standard_file_refs(ULONG *refs)
 {
+#if !CONF_WITH_PROCESS_FILES
     int i;
+#endif
     memset(refs,0,OPNFILES*sizeof(*refs));
+#if !CONF_WITH_PROCESS_FILES
+    /* The older registry reports the legacy aliases itself. */
     for(i=0;i<NUMSTD;i++) if(owner.p_uft[i]>=NUMSTD)
         refs[owner.p_uft[i]-NUMSTD]++;
+#endif
 }
 static BOOL nested_dispose;
 static FS_FILE_REFERENCE *nested_staged_owner;
@@ -70,6 +113,10 @@ static LONG test_control(PFSCOOKIE *file, UWORD command, void *arg, ULONG size)
     CHECK(fs_file_ioctl(NUMSTD, command, arg, size) == EACCDN);
     CHECK(fs_close_once(NUMSTD, FALSE, &report) == E_OK && sft[0].f_use == 1);
     CHECK(report.disposition == FS_CLOSE_CONSUMED && file->fs == &driver);
+#if CONF_WITH_MULTITHREADING
+    group_exit_pending = TRUE;
+    ksched_cancel_point();
+#endif
     if (!arg) {
         errcode = EWRITF;
         errdrv = 0;
@@ -85,6 +132,9 @@ static void operation_callback_case(BOOL disk_fault)
 {
     unsigned old_closes = closes, old_releases = releases;
     LONG position = -1;
+#if CONF_WITH_MULTITHREADING
+    volatile BOOL operation_settled = FALSE;
+#endif
 
     CHECK(fs_sft_claim(0));
     sft[0].f_own = &owner;
@@ -92,17 +142,37 @@ static void operation_callback_case(BOOL disk_fault)
     sft[0].f_pfs.fs = &driver;
     sft[0].f_pfs.pos = 29;
     driver.close = driver_close;
+#if CONF_WITH_MULTITHREADING
+    driver.release_file = release_at_cancel_point;
+#else
     driver.release_file = driver_release_file;
+#endif
     driver.ioctl = test_control;
     release_error = EWRITF;
-    if (setjmp(errbuf)) {
-        CHECK(disk_fault && errcode == EWRITF && rwerr == 0x1234 && errdrv == 0);
-    } else {
-        CHECK(fs_file_ioctl(NUMSTD, 42, disk_fault ? NULL : &position, sizeof(position)) == E_OK);
-        CHECK(!disk_fault && position == 29);
+#if CONF_WITH_MULTITHREADING
+    if (!setjmp(group_exit))
+#endif
+    {
+        if (setjmp(errbuf)) {
+            CHECK(disk_fault && errcode == EWRITF && rwerr == 0x1234 && errdrv == 0);
+        } else {
+            CHECK(fs_file_ioctl(NUMSTD, 42, disk_fault ? NULL : &position, sizeof(position)) == E_OK);
+            CHECK(!disk_fault && position == 29);
+        }
+#if CONF_WITH_MULTITHREADING
+        CHECK(group_exit_pending && !active_cleanup);
+        operation_settled = TRUE;
+        ksched_cancel_point();
+        CHECK(FALSE);
+#endif
     }
     CHECK(closes == old_closes + 2 && releases == old_releases + 1);
     CHECK(!sft[0].f_own && !sft[0].f_use && !sft[0].f_staged_refs && !sft[0].f_io_busy);
+#if CONF_WITH_MULTITHREADING
+    CHECK(operation_settled);
+    group_exit_pending = FALSE;
+    CHECK(fs_sft_claim(0));
+#endif
     driver.ioctl = NULL;
 }
 
@@ -274,6 +344,9 @@ int main(void)
     operation_reference_case();
     operation_callback_case(FALSE);
     operation_callback_case(TRUE);
+#if CONF_WITH_MULTITHREADING
+    puts("PFS callback group exit deferred through final release and disk-error unwind: PASS (host scheduler model)");
+#endif
     puts("Reentrant close reserves its exact reference class; no staged owner can fund an ordinary transfer: PASS (host)");
     puts("Numeric close exhaustion unpublishes standard aliases before staged owner release: PASS (host)");
     puts("Production checked live SFT refs: authenticated acquire, alias counts, retirement-independent ownership, exact close/transfer, invalidation and PFS errors: PASS (host)");

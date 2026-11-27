@@ -28,14 +28,18 @@ with tempfile.TemporaryDirectory(prefix='ptos-close-') as directory:
     subprocess.run(flags+['tests/fs_close.c','bdos/fsclose.c','bdos/fsopnclo.c','bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'close')],check=True)
     subprocess.run([str(work/'close')],check=True)
 
-    subprocess.run(flags+['tests/fs_reference.c','bdos/fsclose.c','bdos/fsopnclo.c',
-        'bdos/fshand.c','bdos/fsmain.c','fs/pfs.c','-Wl,--gc-sections','-o',str(work/'reference')],check=True)
+    reference = flags+['tests/fs_reference.c','bdos/fsclose.c','bdos/fsopnclo.c',
+        'bdos/fshand.c','bdos/fsmain.c','fs/pfs.c','-Wl,--gc-sections','-o',str(work/'reference')]
+    subprocess.run(reference,check=True)
     subprocess.run([str(work/'reference')],check=True)
 
     config.syms['CONF_WITH_MULTITHREADING'].set_value(2)
     config.write_config(str(work/'config'))
     subprocess.run([sys.executable,'tools/genconfig.py','--kconfig','Kconfig','--config',str(work/'config'),
                     '--header',str(work/'autoconf.h'),'--makefile',str(work/'auto.conf')],check=True)
+    subprocess.run(reference,check=True)
+    subprocess.run([str(work/'reference')],check=True)
+
     subprocess.run(flags+['tests/fs_close_rights.c','bdos/fsclose.c','bdos/fsopnclo.c',
         'bdos/fshand.c','bdos/fsmain.c','-Wl,--gc-sections','-o',str(work/'rights')],check=True)
     subprocess.run([str(work/'rights')],check=True)
