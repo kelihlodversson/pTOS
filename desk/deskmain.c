@@ -42,6 +42,7 @@
 #include "deskfpd.h"
 #include "deskwin.h"
 #if CONF_WITH_LIBAES_DESK
+#include "gem_shelw.h"
 #include "deskrefresh.h"
 #include "shutdown.h"
 static BOOL shutdown_pending, shutdown_poweroff;
