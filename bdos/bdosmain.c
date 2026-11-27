@@ -77,8 +77,6 @@ static long xgetver(void);
  */
 #define GEMDOS_FCREATE  0x3c
 #define GEMDOS_FOPEN    0x3d
-#define GEMDOS_FREAD    0x3f
-#define GEMDOS_FWRITE   0x40
 #define GEMDOS_SUPER    0x20
 #define GEMDOS_MXALLOC  0x44
 #define GEMDOS_MALLOC   0x48
@@ -336,9 +334,7 @@ static const FND funcs[] =
     /*
      * disk functions
      *
-     * on these functions the 0x80 flag indicates whether a handle
-     * is required, the low bits represent the parameter ordering,
-     * as usual.
+     * File operations resolve their handle in the common I/O path.
      */
 
     { NI, 0, 0 },
@@ -424,10 +420,10 @@ static const FND funcs[] =
     { F(xcreat),   0, W_N(2,PW) },     /* 0x3C */
     { F(xopen),    0, W_N(2,PW) },     /* 0x3D */
     { F(xclose),   0, W_N(1,W) },      /* 0x3E - will handle its own redirection */
-    { F(xread),    0x82, W_N(3,WLP) }, /* 0x3F */
-    { F(xwrite),   0x82, W_N(3,WLP) }, /* 0x40 */
+    { F(xread),    0, W_N(3,WLP) }, /* 0x3F */
+    { F(xwrite),   0, W_N(3,WLP) }, /* 0x40 */
     { F(xunlink),  0, W_N(1,P) },      /* 0x41 */
-    { F(xlseek),   0x81, W_N(3,LWW) }, /* 0x42 */
+    { F(xlseek),   0, W_N(3,LWW) }, /* 0x42 */
     { F(xchmod),   0, W_N(3,PWW) },    /* 0x43 */
     { F(xmxalloc), 0, W_N(2,RLW) },    /* 0x44 */
     { F(xdup),     0, W_N(1,W) },      /* 0x45 */
@@ -707,7 +703,7 @@ long osif(short *pw)
 #endif
 #endif
 {
-    char **pb, *pb2, *p, ctmp;
+    char *pb2, *p, ctmp;
     BPB *b;
     DMD *dmd;
     DND *dn;
@@ -715,9 +711,8 @@ long osif(short *pw)
 #if CONF_WITH_PROCESS_FILES
     BOOL redirected;
 #endif
-    int isptr;
-    int num, max;
-    long rc, numl;
+    int max;
+    long rc;
     const FND *f;
 
 #if CONF_WITH_USER_COPY
@@ -958,6 +953,14 @@ restrt:
         return 0;
 #endif
 
+#if CONF_WITH_USER_ASPACE
+    if (fn == GEMDOS_FCNTL)
+#if CONF_WITH_NATIVE_ABI
+        return xfcntl((WORD)pw[1], (UWORD)pw[3]);
+#else
+        return xfcntl(pw[1], (UWORD)pw[4]); /* descriptor.w, arg.l, command.w */
+#endif
+#endif
     if (fn < 0 || fn > MAX_FNCALL)      /* a negative number from a WORD would index before funcs[] */
         return EINVFN;
 
@@ -1029,11 +1032,11 @@ restrt:
 #if CONF_WITH_PROCESS_FILES
         redirected=h>0;
         if (process_files_managed(run)) {
-            WORD backend;
-            if (process_files_resolve(run,(WORD)(typ&0x7f),&backend,NULL)!=E_OK) return EIHNDL;
-            /* Downstream xread/xwrite resolve local numbers exactly once. */
-            redirected=backend>=NUMSTD;
-            h=redirected?(typ&0x7f):backend;
+            FS_HANDLE handle;
+            if (fs_handle_lookup(typ & 0x7f,&handle) != E_OK) return EIHNDL;
+            /* The file operations take the local number, not an SFT index. */
+            redirected = !handle.bios;
+            h = redirected ? (typ & 0x7f) : handle.bios;
         }
 #endif
 #if CONF_WITH_PROCESS_FILES
@@ -1113,163 +1116,7 @@ restrt:
             }
         }
 
-        typ = 0;
     }
-
-    if (typ & 0x80)
-    {
-        isptr = 0;      /* numl will be an sft[] pointer, not a plain handle */
-
-#if CONF_WITH_NATIVE_ABI
-        /*
-         * On ARM, pw[] holds one LONG per parameter.  typ encodes the
-         * handle slot in terms of the m68k word layout: 0x81 means the
-         * handle follows a leading LONG argument, so it is the second
-         * LONG (pw[2]) rather than the fourth WORD (pw[3]).
-         */
-        if (typ == 0x81)
-            h = pw[2];
-        else
-            h = pw[1];
-#else
-        if (typ == 0x81)
-            h = pw[3];
-        else
-            h = pw[1];
-#endif
-
-#if CONF_WITH_PROCESS_FILES
-        if (h>=0 && process_files_managed(run)) {
-            WORD backend;
-            LONG error=process_files_resolve(run,(WORD)h,&backend,NULL);
-            if (error) return error;
-            if (backend>=NUMSTD) {
-                isptr=1;numl=(long)sft[backend-NUMSTD].f_ofd;
-#if CONF_WITH_PLUGGABLE_FS
-                if (!numl) numl=(long)sft[backend-NUMSTD].f_pfs.fs;
-#endif
-            } else numl=backend;
-        } else
-#endif
-        if (h >= NUMSTD)
-        {
-            if (h >= NUMHANDLES)
-                return EIHNDL;  /* invalid handle: out of range */
-
-            isptr = 1;
-            numl = (long) sft[h-NUMSTD].f_ofd;
-#if CONF_WITH_PLUGGABLE_FS
-            if (!numl)
-                numl = (long) sft[h-NUMSTD].f_pfs.fs;
-#endif
-        }
-        else if (h >= 0)
-        {
-            h = PD_UFT(run)[h];
-            if (h > 0)
-            {
-                if (h >= NUMHANDLES)
-                    return EIHNDL;  /* invalid handle: out of range */
-
-                isptr = 1;
-                numl = (long) sft[h-NUMSTD].f_ofd;
-#if CONF_WITH_PLUGGABLE_FS
-                if (!numl)
-                    numl = (long) sft[h-NUMSTD].f_pfs.fs;
-#endif
-            }
-            else
-                numl = h;
-        }
-        else
-            numl = h;
-
-        if (!numl)
-            return EIHNDL;  /* invalid handle: media change, etc */
-
-        /*
-         * a negative value is a BIOS handle, but only if it is a handle
-         * (h itself) or a small one from the sft: a pointer into the
-         * higher half is negative too, and is a perfectly good OFD
-         */
-        if (numl < 0 && (!isptr || IS_BIOS_HANDLE(numl)))
-        {       /* prn, aux, con */
-                /* -3   -2   -1  */
-
-            num = numl;
-
-            /*  check for valid handle  */ /* M01.01.0528.01 */
-            if (num < -3)
-                return EIHNDL;
-
-            /* on m68k the buffer word follows the two-word long count */
-#if CONF_WITH_NATIVE_ABI
-            pb = (char **) &pw[3];
-#else
-            pb = (char **) &pw[4];
-#endif
-
-            /* only do things on read and write */
-
-            if (fn == GEMDOS_FREAD)     /* read */
-            {
-#if CONF_WITH_NATIVE_ABI
-                long count = pw[2];
-                /* on m68k, values 0x8000-0xffff become a negative signed
-                 * WORD passed to cgets(), which makes it return 0 without
-                 * reading; keep that same 15-bit limit here */
-                if (count > 0x7FFFL)    /* disallow HUGE reads      */
-                    return 0;
-
-                if (count == 1)
-                {
-                    **pb = conin(HXFORM(num));
-                    return 1;
-                }
-
-                return cgets(HXFORM(num),(int)count,*pb);
-#else
-                if (pw[2])              /* disallow HUGE reads      */
-                    return 0;
-
-                if (pw[3] == 1)
-                {
-                    **pb = conin(HXFORM(num));
-                    return 1;
-                }
-
-                return cgets(HXFORM(num),pw[3],*pb);
-#endif
-            }
-
-            if (fn == GEMDOS_FWRITE)    /* write */
-            {
-#if CONF_WITH_NATIVE_ABI
-                long n, count = pw[2];
-#else
-                long n, count = *(long *)&pw[2];
-#endif
-
-                pb2 = *pb;      /* char * is buffer address */
-
-                for (n = 0; n < count; n++)
-                {
-                    if (num == H_Console)
-                        tabout(HXFORM(num), (unsigned char)*pb2++);
-                    else
-                    {           /* M01.01.1029.01 */
-                        if (Bconout(HXFORM(num), (unsigned char)*pb2++) == 0)
-                            return n;
-                    }
-                }
-
-                return count;
-            }
-
-            return 0;
-        }
-    }
-
 
     /*
      * for Fopen(), Fcreate() we check for special names

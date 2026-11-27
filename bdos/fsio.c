@@ -14,6 +14,7 @@
 #include "fs.h"
 #include "gemerror.h"
 #include "biosbind.h"
+#include "console.h"
 #include "string.h"
 #include "kprint.h"
 #if CONF_WITH_PLUGGABLE_FS
@@ -300,24 +301,20 @@ eof:
  */
 long eof(int h)
 {
-    OFD *f;
+    FS_HANDLE handle;
+    OFD *file;
+    LONG error = fs_handle_lookup(h, &handle);
 
-#if CONF_WITH_PLUGGABLE_FS
-    {
-        FTAB *slot = getpfsslot(h);
-        if (slot)
-            return pfs_handle_eof(&slot->f_pfs);
-    }
-#endif
-
-    f = getofd(h);
-    if (!f)
+    if (error != E_OK)
+        return error;
+    if (handle.bios)
         return EIHNDL;
-
-    if (f->o_bytnum >= f->o_dfd->o_fileln)
-        return 1;
-
-    return 0;
+#if CONF_WITH_PLUGGABLE_FS
+    if (handle.slot->f_pfs.fs)
+        return pfs_handle_eof(&handle);
+#endif
+    file = handle.slot->f_ofd;
+    return file->o_bytnum >= file->o_dfd->o_fileln;
 }
 
 
@@ -339,20 +336,19 @@ long eof(int h)
 
 long xlseek(LONG n, WORD h, WORD flg)
 {
+    FS_HANDLE handle;
     OFD *f;
+    LONG error = fs_handle_lookup(h, &handle);
 
+    if (error != E_OK)
+        return error;
+    if (handle.bios)
+        return 0;
 #if CONF_WITH_PLUGGABLE_FS
-    {
-        FTAB *slot = getpfsslot(h);
-        if (slot)
-            return pfs_handle_seek(&slot->f_pfs, n, flg);
-    }
+    if (handle.slot->f_pfs.fs)
+        return pfs_handle_seek(&handle, n, flg);
 #endif
-
-    f = getofd(h);
-    if (!f)
-        return(EIHNDL);
-
+    f = handle.slot->f_ofd;
     if (flg == 2)
         n += f->o_dfd->o_fileln;
     else if (flg == 1)
@@ -469,26 +465,28 @@ long ixlseek(OFD *p,long n)
 
 long xread(WORD h, long len, void *ubufr)
 {
-    OFD *p;
-    long ret;
+    FS_HANDLE handle;
+    LONG error = fs_handle_lookup(h, &handle);
 
-#if CONF_WITH_PLUGGABLE_FS
-    {
-        FTAB *slot = getpfsslot(h);
-        if (slot)
-            return pfs_handle_read(&slot->f_pfs, len, ubufr);
+    if (error != E_OK)
+        return error;
+    if (handle.bios) {
+        int dev = HXFORM(handle.bios);
+
+        /* GEMDOS console input takes a positive 15-bit count. */
+        if (len <= 0 || len > 0x7fffL)
+            return 0;
+        if (len == 1) {
+            *(char *)ubufr = conin(dev);
+            return 1;
+        }
+        return cgets(dev, (int)len, ubufr);
     }
+#if CONF_WITH_PLUGGABLE_FS
+    if (handle.slot->f_pfs.fs)
+        return pfs_handle_read(&handle, len, ubufr);
 #endif
-
-    p = getofd(h);
-    if (p)
-        ret = ixread(p,len,ubufr);
-    else
-        ret = EIHNDL;
-
-    KDEBUG(("xread(%d,%ld): rc=%ld\n",h,len,ret));
-
-    return ret;
+    return ixread(handle.slot->f_ofd, len, ubufr);
 }
 
 
@@ -579,32 +577,31 @@ long ixread(OFD *p, long len, void *ubufr)
 
 long xwrite(WORD h, long len, void *ubufr)
 {
-    OFD *p;
-    long ret;
+    FS_HANDLE handle;
+    LONG error = fs_handle_lookup(h, &handle);
 
-#if CONF_WITH_PLUGGABLE_FS
-    {
-        FTAB *slot = getpfsslot(h);
-        if (slot)
-            return pfs_handle_write(&slot->f_pfs, len, ubufr);
+    if (error != E_OK)
+        return error;
+    if (handle.bios) {
+        const UBYTE *bytes = ubufr;
+        int dev = HXFORM(handle.bios);
+        long n;
+
+        for (n = 0; n < len; n++) {
+            if (handle.bios == H_Console)
+                tabout(dev, bytes[n]);
+            else if (!Bconout(dev, bytes[n]))
+                break;
+        }
+        /* Preserve the legacy return for a negative count. */
+        return n < len ? n : len;
     }
+#if CONF_WITH_PLUGGABLE_FS
+    if (handle.slot->f_pfs.fs)
+        return pfs_handle_write(&handle, len, ubufr);
 #endif
-
-    p = getofd(h);
-
-    /*
-     * we used to disallow writes to an existing file opened as read-only,
-     * but this is not compatible with Atari TOS ...
-     */
-
-    if (p)
-        ret = ixwrite(p,len,ubufr);
-    else
-        ret = EIHNDL;
-
-    KDEBUG(("xwrite(%d,%ld): rc=%ld\n",h,len,ret));
-
-    return ret;
+    /* A FAT write to an existing file opened read-only is TOS compatible. */
+    return ixwrite(handle.slot->f_ofd, len, ubufr);
 }
 
 /*

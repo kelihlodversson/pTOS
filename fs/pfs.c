@@ -27,6 +27,17 @@
                                  * bdos/proc.c and bdos/umem.c */
 #include "../bdos/bdosstub.h"   /* for run, same convention as fs/fatfs_pfs.c */
 
+#if CONF_WITH_MULTITHREADING
+#include "ksched_cleanup.h"
+#define PFS_CLEANUP_BEGIN(scope) \
+    KSCHED_CLEANUP_SCOPE scope = {0}; \
+    ksched_cleanup_begin(&scope)
+#define PFS_CLEANUP_END(scope) ksched_cleanup_end(&scope)
+#else
+#define PFS_CLEANUP_BEGIN(scope) (void)0
+#define PFS_CLEANUP_END(scope) (void)0
+#endif
+
 /* Disk-error guards are synchronous and retain no caller pointers. Helpers
  * catch in their own frame, returning explicit failure metadata so caller
  * locals never cross a setjmp boundary. The owner then releases temporary
@@ -1017,7 +1028,7 @@ LONG pfs_do_getdir(char *buf, WORD drv)
     return E_OK;
 }
 
-static LONG pfs_alloc_handle(PFSCOOKIE *fc)
+static LONG pfs_alloc_handle(PFSCOOKIE *fc, UWORD mode)
 {
     WORD i;
 #if CONF_WITH_PROCESS_FILES
@@ -1032,6 +1043,9 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
 
 #if CONF_WITH_USER_ASPACE
     if (!fs_sft_claim(i)) return ENHNDL;
+    sft[i].f_open_mode = mode & MODE_FAC;
+#else
+    (void)mode;
 #endif
     sft[i].f_own = run;
     sft[i].f_use = 1;
@@ -1051,6 +1065,21 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc)
     }
 #endif
     return i + NUMSTD;
+}
+
+static void pfs_close_unpublished(PFSCOOKIE *file)
+{
+    PFS_DISK_FAILURE failure;
+
+    /* Admission failed before the caller could use this open file. Flush
+     * can fail or unwind, but the unbound cookie still needs its destructor. */
+    PFS_CLEANUP_BEGIN(scope);
+    (void)PFS_TRY(pfs_handle_close(file), &failure);
+    if (file->fs->release_file)
+        file->fs->release_file(file);
+    else if (file->fs->release)
+        file->fs->release(file);
+    PFS_CLEANUP_END(scope);
 }
 
 LONG pfs_do_open(const char *path, WORD mode)
@@ -1084,12 +1113,9 @@ LONG pfs_do_open(const char *path, WORD mode)
         return fc.index;
 
     fc.pos = 0;
-    rc = pfs_alloc_handle(&fc);
+    rc = pfs_alloc_handle(&fc, mode);
     if (rc < 0)
-    {
-        if (fs->close) fs->close(&fc);
-        if (fs->release) fs->release(&fc);
-    }
+        pfs_close_unpublished(&fc);
 
     return rc;
 }
@@ -1125,12 +1151,9 @@ LONG pfs_do_create(const char *path, UWORD attr)
         return fc.index;
 
     fc.pos = 0;
-    rc = pfs_alloc_handle(&fc);
+    rc = pfs_alloc_handle(&fc, RW_MODE);
     if (rc < 0)
-    {
-        if (fs->close) fs->close(&fc);
-        if (fs->release) fs->release(&fc);
-    }
+        pfs_close_unpublished(&fc);
 
     return rc;
 }
@@ -1496,7 +1519,7 @@ void pfs_invalidate_fat_drive(WORD drive)
 /* handle-based dispatch (Fread/Fwrite/Fclose)                        */
 /* ------------------------------------------------------------------ */
 
-LONG pfs_handle_read(PFSCOOKIE *fc, LONG len, UBYTE *buf)
+static LONG pfs_file_read(PFSCOOKIE *fc, LONG len, UBYTE *buf)
 {
     LONG n;
 
@@ -1510,7 +1533,7 @@ LONG pfs_handle_read(PFSCOOKIE *fc, LONG len, UBYTE *buf)
     return n;
 }
 
-LONG pfs_handle_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf)
+static LONG pfs_file_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf)
 {
     LONG n;
 
@@ -1524,14 +1547,7 @@ LONG pfs_handle_write(PFSCOOKIE *fc, LONG len, const UBYTE *buf)
     return n;
 }
 
-/* Only calls the driver's close(), never release() - a single cookie can
- * be referenced by several sft[] entries at once (std-handle redirection
- * via Fforce()/ixforce() bumps the same slot's f_use; xdup() copies the
- * cookie into a second slot), so release() must wait until the caller
- * (bdos/fsopnclo.c's xclose()) sees the last reference go away, exactly
- * like the legacy OFD path calls ixclose() on every close but only frees
- * the sft[] slot itself (sftdel()) once f_use reaches zero.
- */
+/* Flush the shared file. SFT retirement owns its consuming release. */
 LONG pfs_handle_close(PFSCOOKIE *fc)
 {
     return fc->fs->close ? fc->fs->close(fc) : E_OK;
@@ -1546,7 +1562,7 @@ static LONG pfs_handle_fstat(PFSCOOKIE *fc, PFSATTR *attr)
     return fc->fs->fstat(fc, attr);
 }
 
-LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
+static LONG pfs_file_seek(PFSCOOKIE *fc, LONG n, WORD flg)
 {
     PFSATTR attr;
     QUAD target;    /* wide enough for a size of up to 4 GB plus an offset */
@@ -1585,7 +1601,7 @@ LONG pfs_handle_seek(PFSCOOKIE *fc, LONG n, WORD flg)
     return fc->pos;
 }
 
-LONG pfs_handle_eof(PFSCOOKIE *fc)
+static LONG pfs_file_eof(PFSCOOKIE *fc)
 {
     PFSATTR attr;
     LONG rc;
@@ -1597,7 +1613,7 @@ LONG pfs_handle_eof(PFSCOOKIE *fc)
     return ((ULONG)fc->pos >= attr.size) ? 1 : 0;
 }
 
-LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
+static LONG pfs_file_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
 {
     PFSATTR attr;
     LONG rc;
@@ -1614,3 +1630,69 @@ LONG pfs_handle_datime(PFSCOOKIE *fc, UWORD *time, UWORD *date, WORD wrt)
 
     return E_OK;
 }
+
+
+/* Driver calls can reenter GEMDOS and close the last descriptor. Defer group
+ * exit through cursor completion and final unpin, including on disk errors.
+ * The enclosing GEMDOS boundary delivers cancellation after its own cleanup. */
+#if CONF_WITH_USER_ASPACE
+#define PFS_FILE_CALL(handle, call) \
+__extension__ ({ \
+    const FS_HANDLE *_handle = (handle); \
+    FTAB *_file = _handle->slot; \
+    FS_FILE_REFERENCE _pin = FS_FILE_REFERENCE_INIT; \
+    volatile LONG _status = _file->f_io_busy ? EACCDN : fs_reference_pin(_handle, &_pin); \
+    if (_status == E_OK) { \
+        PFS_DISK_FAILURE _failure; \
+        PFS_CLEANUP_BEGIN(_cleanup); \
+        _file->f_io_busy = TRUE; \
+        _status = PFS_TRY(call, &_failure); \
+        _file->f_io_busy = FALSE; \
+        fs_reference_unpin(&_pin); \
+        PFS_CLEANUP_END(_cleanup); \
+        if (_failure.raised) { \
+            errcode = _failure.code; rwerr = _failure.rw; errdrv = _failure.drive; \
+            longjmp(errbuf, 1); \
+        } \
+    } \
+    _status; \
+})
+#else
+#define PFS_FILE_CALL(handle, call) (call)
+#endif
+
+LONG pfs_handle_read(const FS_HANDLE *handle, LONG len, UBYTE *buf)
+{
+    return PFS_FILE_CALL(handle, pfs_file_read(&handle->slot->f_pfs, len, buf));
+}
+
+LONG pfs_handle_write(const FS_HANDLE *handle, LONG len, const UBYTE *buf)
+{
+    return PFS_FILE_CALL(handle, pfs_file_write(&handle->slot->f_pfs, len, buf));
+}
+
+LONG pfs_handle_seek(const FS_HANDLE *handle, LONG n, WORD flg)
+{
+    return PFS_FILE_CALL(handle, pfs_file_seek(&handle->slot->f_pfs, n, flg));
+}
+
+LONG pfs_handle_eof(const FS_HANDLE *handle)
+{
+    return PFS_FILE_CALL(handle, pfs_file_eof(&handle->slot->f_pfs));
+}
+
+LONG pfs_handle_datime(const FS_HANDLE *handle, UWORD *time, UWORD *date, WORD wrt)
+{
+    return PFS_FILE_CALL(handle, pfs_file_datime(&handle->slot->f_pfs, time, date, wrt));
+}
+
+#if CONF_WITH_USER_ASPACE
+LONG pfs_handle_ioctl(const FS_HANDLE *handle, UWORD command, void *arg, ULONG size)
+{
+    PFSCOOKIE *file = &handle->slot->f_pfs;
+
+    if (!file->fs->ioctl)
+        return EINVFN;
+    return PFS_FILE_CALL(handle, file->fs->ioctl(file, command, arg, size));
+}
+#endif

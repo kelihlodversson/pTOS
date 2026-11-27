@@ -1098,7 +1098,8 @@ static struct pfs_ops v9p_pfs_ops = {
                          * management of its own - see fs/pfs.h. */
     v9p_pfs_fstat,
     v9p_pfs_release_file,
-    v9p_iterator_clone, v9p_iterator_valid, v9p_iterator_close
+    v9p_iterator_clone, v9p_iterator_valid, v9p_iterator_close,
+    NULL, NULL          /* no readiness or ioctl operations */
 };
 
 void v9p_pfs_init(void);   /* called from bios/bios.c after virtio_9p_init() */

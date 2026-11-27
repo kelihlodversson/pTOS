@@ -68,14 +68,15 @@ LONG fileback_get(LONG handle, FILE_BACKING **out)
 {
     FILE_BACKING *b;
     OFD *fd;
+    FS_HANDLE opened;
     *out = NULL;
     fileback_reap();
     if (handle < 0 || handle >= NUMHANDLES) return EIHNDL;
+    if (fs_handle_lookup(handle, &opened) != E_OK || opened.bios) return EIHNDL;
 #if CONF_WITH_PLUGGABLE_FS
-    if (getpfsslot(handle)) return EOPNOTSUPP;
+    if (opened.slot->f_pfs.fs) return EOPNOTSUPP;
 #endif
-    fd = getofd(handle);
-    if (!fd || IS_BIOS_HANDLE(fd)) return EIHNDL;
+    fd = opened.slot->f_ofd;
     if ((fd->o_mod & MODE_FAC) == WO_MODE || (fd->o_dfd->o_flag & (O_MEDIA_LOST | O_CLOSING))) return EACCDN;
     if (fd->o_dfd->o_fileln < 0) return EOPNOTSUPP;
     for (b = backings; b; b = b->next)

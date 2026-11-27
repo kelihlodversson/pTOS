@@ -446,87 +446,67 @@ long xgetdrv(void)
 
 
 /*
- * syshnd - converts handle to another value:
- *
- * if the handle is not a standard handle, returns index into sft[]; else,
- * if the standard handle is mapped to a user handle, returns index into sft[];
- * else returns the bios handle that the standard handle is mapped to.
- *
- * note: does not validate the input argument!
- *
- * Arguments:
- *
- *  h  - handle
+ * Resolve the descriptor once. BIOS values are numbers at the GEMDOS
+ * boundary and never part of the FAT pointer representation.
  */
-static int syshnd(int h)
+LONG fs_handle_lookup(int h, FS_HANDLE *handle)
 {
+    FTAB *slot;
+
+    if (h >= NUMHANDLES || h < BIOS_HANDLE_MIN)
+        return EIHNDL;
+
 #if CONF_WITH_PROCESS_FILES
-    if (process_files_managed(run)) {
+    if (h >= 0 && process_files_managed(run)) {
         WORD backend;
-        if (process_files_resolve(run,(WORD)h,&backend,NULL)!=E_OK) return -1;
-        return backend>=NUMSTD?backend-NUMSTD:backend;
-    }
+        LONG error = process_files_resolve(run, (WORD)h, &backend, NULL);
+        if (error != E_OK)
+            return error;
+        h = backend;
+    } else
 #endif
-    if (h >= NUMSTD)
-        return(h-NUMSTD);
+    if (h >= 0 && h < NUMSTD)
+        h = PD_UFT(run)[h];
 
-    if ((h = PD_UFT(run)[h]) > 0 )
-        return(h-NUMSTD);
+    if (IS_BIOS_HANDLE(h)) {
+        handle->slot = NULL;
+        handle->bios = h;
+#if CONF_WITH_USER_ASPACE
+        handle->incarnation = 0;
+#endif
+        return E_OK;
+    }
 
-    return(h);
+    if (h < NUMSTD || h >= NUMHANDLES)
+        return EIHNDL;
+    h -= NUMSTD;
+#if CONF_WITH_USER_ASPACE
+    if (!fs_sft_accessible(h))
+        return EIHNDL;
+#endif
+    slot = &sft[h];
+    if (!slot->f_bios && !slot->f_ofd
+#if CONF_WITH_PLUGGABLE_FS
+        && !slot->f_pfs.fs
+#endif
+        )
+        return EIHNDL;
+
+    handle->slot = slot;
+    handle->bios = slot->f_bios;
+#if CONF_WITH_USER_ASPACE
+    handle->incarnation = slot->f_incarnation;
+#endif
+    return E_OK;
 }
 
 
-/*
- *  getofd - returns ptr to OFD corresponding to input handle
- *
- *  returns NULL if invalid input handle
- */
+/* A FAT backend borrower within the current GEMDOS operation. */
 OFD *getofd(int h)
 {
-    WORD n;
+    FS_HANDLE handle;
 
-    if ((h < 0) || (h >= NUMHANDLES))
+    if (fs_handle_lookup(h, &handle) != E_OK || !handle.slot)
         return NULL;
-
-    n = syshnd(h);
-    if (n < 0)
-        return NULL;
-#if CONF_WITH_USER_ASPACE
-    if (!fs_sft_accessible(n)) return NULL;
-#endif
-
-    return sft[n].f_ofd;
+    return handle.slot->f_ofd;
 }
-
-
-#if CONF_WITH_PLUGGABLE_FS
-/*
- *  getpfsslot - returns ptr to the sft[] entry for a handle owned by a
- *  pluggable filesystem driver (see fs/pfs.c), or NULL if 'h' is not a
- *  valid handle or does not belong to one.
- *
- *  Mirrors getofd() (above), including std-handle indirection via the
- *  same syshnd(), so every caller of xread()/xwrite()/xclose() - not
- *  just osif() - reaches a pluggable handle correctly.
- */
-FTAB *getpfsslot(int h)
-{
-    WORD n;
-
-    if ((h < 0) || (h >= NUMHANDLES))
-        return NULL;
-
-    n = syshnd(h);
-    if (n < 0)
-        return NULL;
-#if CONF_WITH_USER_ASPACE
-    if (!fs_sft_accessible(n)) return NULL;
-#endif
-
-    if (!sft[n].f_pfs.fs)
-        return NULL;
-
-    return &sft[n];
-}
-#endif

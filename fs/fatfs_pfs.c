@@ -1037,7 +1037,8 @@ struct pfs_ops fat_pfs_ops = {
                      * allocate a real sft[] slot - see fat_open()/
                      * fat_create() and pfs_do_open()/pfs_do_create()
                      * in fs/pfs.c. */,
-    NULL, NULL, fat_iterator_clone, fat_iterator_valid, fat_iterator_close
+    NULL, NULL, fat_iterator_clone, fat_iterator_valid, fat_iterator_close,
+    NULL, NULL          /* native FAT handles provide readiness */
 };
 
 #endif /* CONF_WITH_PLUGGABLE_FS */

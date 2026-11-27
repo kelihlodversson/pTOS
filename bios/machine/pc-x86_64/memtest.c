@@ -1828,7 +1828,7 @@ static void test_invalidated_standard_aliases(void)
     CHECK(PD_UFT(pd)[0]<0 && PD_UFT(pd)[1]<0 && !sft[slot].f_own && !sft[slot].f_use,
           "authoritative invalidation retires aliases before making the numeric slot reusable");
     CHECK(fs_sft_claim(slot) && sft[slot].f_incarnation!=incarnation,"reuse slot with a distinct incarnation");
-    sft[slot].f_ofd=(OFD *)(intptr_t)-1; sft[slot].f_own=saved; sft[slot].f_use=1;
+    sft[slot].f_bios=-1; sft[slot].f_own=saved; sft[slot].f_use=1;
     proc_dispose_process(identity);
     CHECK(!kproc_ref_has_basepage(identity) && sft[slot].f_own==saved && sft[slot].f_use==1,
           "retired PROCESS cannot close a replacement through a stale standard alias");

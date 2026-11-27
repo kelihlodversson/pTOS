@@ -49,6 +49,7 @@ with tempfile.TemporaryDirectory(prefix='ptos-process-observer-') as directory:
     subprocess.run(cc+['-fno-builtin','-std=gnu90','-O2','-Wall','-Wextra','-Werror','-fno-pie','-no-pie',
         '-ffunction-sections','-fdata-sections','-iquote','include','-I'+str(work),
         '-Iinclude/arch/x86_64','-idirafter','include','-iquote','bdos','-iquote','fs',
-        'tests/process_observer.c','bdos/process_observer.c','bdos/kowner.c','tests/kowner_model.c','bdos/fshand.c','bdos/process_files.c','bdos/fsclose.c',
+        'tests/process_observer.c','bdos/process_observer.c','bdos/kowner.c','tests/kowner_model.c',
+        'bdos/fshand.c','bdos/fsmain.c','bdos/process_files.c','bdos/fsclose.c',
         '-Wl,--gc-sections','-o',str(work/'native-owner')],check=True)
     subprocess.run([str(work/'native-owner')],check=True)

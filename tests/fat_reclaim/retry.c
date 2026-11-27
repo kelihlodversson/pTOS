@@ -166,7 +166,7 @@ static int invalidate_mkdir(int detached)
     sft[0].f_ofd = sft[1].f_ofd = &temporary;
     sft[0].f_use = sft[1].f_use = 1;
     sft[2].f_ofd = &unrelated;
-    sft[3].f_ofd = (OFD *)-3L;
+    sft[3].f_bios = -3;
     directory_owned = &dirfile;
     freed = freed_directory = 0;
     ofd_invalidate_drive(&media);
@@ -174,7 +174,7 @@ static int invalidate_mkdir(int detached)
     if (freed != 1 || freed_directory || dirfile.o_disk.o_usecnt != 1)
         return 16;
     if (sft[0].f_ofd || sft[1].f_ofd || sft[0].f_use || sft[1].f_use ||
-        sft[2].f_ofd != &unrelated || sft[3].f_ofd != (OFD *)-3L ||
+        sft[2].f_ofd != &unrelated || sft[3].f_bios != -3 ||
         directory.d_files) return 17;
     memset(sft, 0, sizeof(sft));
     return 0;

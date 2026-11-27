@@ -85,7 +85,9 @@ static void driver_release(PFSCOOKIE *cookie)
         CHECK(owner.p_uft[0]==NUMSTD+1 && sft[1].f_use==2);
     }
 }
+#ifndef USE_PRODUCTION_PFS_IO
 LONG pfs_handle_close(PFSCOOKIE *cookie) { return cookie->fs->close(cookie); }
+#endif
 static LONG driver_release_file(PFSCOOKIE *cookie)
 { driver_release(cookie); return release_error; }
 static struct pfs_ops driver;
@@ -119,6 +121,20 @@ int main(void)
     FS_CLEANUP_TOKEN old,second;
     UQUAD replacement;
     FS_CLEANUP_STATUS status;
+    {
+        FS_HANDLE handle;
+        WORD alias;
+
+        owner.p_uft[0] = H_Aux;
+        alias = (WORD)xdup(0);
+        CHECK(alias == NUMSTD && fs_handle_lookup(alias,&handle) == E_OK);
+        CHECK(handle.slot == &sft[0] && handle.bios == H_Aux && !getofd(alias));
+        CHECK(ixforce(1,alias,&owner) == E_OK && owner.p_uft[1] == H_Aux);
+        CHECK(fs_close_once(alias,FALSE,&result) == E_OK && !sft[0].f_bios);
+        CHECK(fs_handle_lookup(alias,&handle) == EIHNDL);
+        CHECK(fs_handle_lookup(1,&handle) == E_OK && !handle.slot && handle.bios == H_Aux);
+        owner.p_uft[0] = owner.p_uft[1] = H_Console;
+    }
     {
         UBYTE reply[11]={7,0,0,0,121,0,0,0,0,0,0};
         CHECK(v9p_clunk_terminal(reply,7,0));
