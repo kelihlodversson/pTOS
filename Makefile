@@ -2082,14 +2082,15 @@ TEST_LD = $(TEST_CC) $(TEST_CPUFLAGS) -nostartfiles -nostdlib
 
 # Link the test harness as runtests.tos.  On ARM this must stay a
 # relocatable ELF image the pTOS ELF loader can load at a fixed address
-# (--emit-relocs, -Ttext=0); m68k needs neither -- the mintelf toolchain's
-# default linker script already produces a loadable TOS PRG, and forcing
+# (--emit-relocs, zero-based text segment). Set the segment base so allocated
+# notes and .text follow the linker's normal section layout. The default
+# m68k mintelf linker script already produces a loadable TOS PRG. Forcing
 # -Ttext=0 there leaves no room for the ELF program headers ("not enough
 # room for program headers, try linking with -N", and -N in turn needs a
 # linker script variant this toolchain doesn't ship). Named .tos by
 # convention regardless of format.
 ifdef ARCH_ARM
-TEST_LDFLAGS = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start -Wl,-z,noexecstack
+TEST_LDFLAGS = -Wl,-q -Wl,-Ttext-segment=0 -Wl,-e_start -Wl,-z,noexecstack
 else ifdef ARCH_X86_64
 TEST_LDFLAGS = $(X32_LDFLAGS) -Wl,-e_start
 else
@@ -2420,7 +2421,7 @@ obj/reloc_probe.o: tests/ptos_reloc_load/reloc_probe.c $(AUTOCONF_H) | obj
 	$(TEST_CC) $(TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 ifdef ARCH_ARM
-TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext=0 -Wl,-e_start
+TEST_PTOS_RELOC_LDFLAGS  = -Wl,-q -Wl,-Ttext-segment=0 -Wl,-e_start
 TEST_PTOS_RELOC_LDFLAGS2 = -Wl,-pie -Wl,--no-dynamic-linker -Wl,-e_start
 else ifdef ARCH_X86_64
 # x32: a fixed base ET_EXEC linked with -q (RELA, R_X86_64_32), and the ET_DYN
