@@ -18,6 +18,7 @@
 #include "sound.h"
 #include "floppy.h"
 #include "mfp.h"
+#include "fpoll_kernel.h"
 #if CONF_WITH_PREEMPTION
 #include "ksched.h"
 #endif
@@ -96,6 +97,9 @@ void int_timerc(void)
     ksched_preempt_tick();
 #endif
     hz_200++;
+#if CONF_WITH_FPOLL_TIME64
+    fpoll_tick();
+#endif
     /* rotate left, as m68k's rol.w: unsigned, or the sign bit smears in
      * and the sieve ends up 0xffff, making every call the "4th" one */
     timer_c_sieve = (WORD)(((UWORD)timer_c_sieve << 1) | ((UWORD)timer_c_sieve >> 15));

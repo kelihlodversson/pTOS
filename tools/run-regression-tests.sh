@@ -830,6 +830,11 @@ if [ -f "$top/test-dir/STKVEC.ELF" ] &&
     record "native Pexecve syscall" FAIL "configured syscall probe did not execute"
 fi
 
+if grep -q '^#define CONF_WITH_FPOLL_TIME64 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native Fpoll_time64 descriptor generations and scheduler deadlines: PASS' "$suite_log"; then
+    record "native Fpoll_time64" FAIL "configured descriptor and deadline probe did not pass"
+fi
+
 # Generation publication in the check-to-block window must reject sleeping.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&

@@ -303,22 +303,22 @@ LONG fs_reference_ready(const FS_FILE_REFERENCE *reference, UWORD events)
     LONG error = fs_reference_lookup(reference, &handle);
 
     if (error != E_OK)
-        return error;
+        return error == EACCDN ? EAGAIN : error;
     mode = file_open_mode(&handle);
-    events &= FS_READY_READ | FS_READY_WRITE;
+    events &= FS_READY_READ | FS_READY_WRITE | FS_READY_PRIORITY;
     if (mode == WO_MODE)
-        events &= ~FS_READY_READ;
+        events &= ~(FS_READY_READ | FS_READY_PRIORITY);
     if (mode == RO_MODE)
         events &= ~FS_READY_WRITE;
 #if CONF_WITH_PLUGGABLE_FS
     if (handle.slot->f_pfs.fs) {
         PFSCOOKIE *file = &handle.slot->f_pfs;
         LONG ready = file->fs->ready ? file->fs->ready(file, events) : EINVFN;
-        return ready < 0 ? ready : ready & events;
+        return ready < 0 ? ready : ready & (events | FS_READY_ERROR | FS_READY_HANGUP);
     }
 #endif
     /* Regular FAT files can complete I/O synchronously, including EOF. */
-    return events;
+    return events & (FS_READY_READ | FS_READY_WRITE);
 }
 
 /* A pin does not flush a still-owned file. If it is the final owner, run

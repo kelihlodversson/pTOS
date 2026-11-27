@@ -1,0 +1,86 @@
+Fpoll_time64 (GEMDOS 0x194)
+===========================
+
+Fpoll_time64 waits for readiness on the calling PROCESS's descriptors.
+The syscall returns the number of entries reporting an event, zero on
+timeout, or a negative GEMDOS error. Repeated entries are independent
+result slots, including when they refer to the same open file.
+
+ABI
+---
+
+libcmini declares Fpoll_time64(POLLFD *, uint32_t, int64_t) in
+<mint/poll.h>. A POLLFD is 8 bytes in the guest's native byte order:
+signed 32-bit fd at offset 0, unsigned 16-bit events at offset 4 and
+unsigned 16-bit revents at offset 6. A request can contain up to 1024
+entries. A zero count ignores the pointer, even for blocking waits.
+
+There are four ABI LONG arguments: address, count, timeout bits 63..32,
+timeout bits 31..0. The split is explicit even on big-endian m68k.
+
+  x32:    GEMDOS class and 0x194 in RAX, arguments in RDI/RSI/RDX/R10.
+          libc clears the upper halves of the pointer/count slots.
+  ARMv7:  SVC #1, 0x194 in R0, arguments in R1/R2/R3/R4.
+  m68k:   TRAP #1, function WORD then four packed LONGs on the user stack.
+
+The canonical entry is available with native scheduling and checked user
+copy. Unmanaged callers, callback continuations and kernels without
+those facilities return EINVFN. Only m68k also exposes the MiNT TRAP #1
+numbers 0x15a (Fpoll) and 0x11d (Fselect). Their layouts are the original
+pointer/ULONG/LONG and UWORD/pointer/pointer/pointer respectively. ARM
+and x32 use libcmini adapters over 0x194.
+
+Timeout is signed milliseconds. Zero takes a snapshot, -1 waits
+indefinitely, positive values up to INT64_MAX wait for an event or
+deadline, and other negatives return EINVAL. Legacy Fpoll interprets any
+negative 32-bit interval as indefinite. Legacy Fselect interprets an
+unsigned WORD interval of zero as indefinite. Its optional input/output
+LONG masks select descriptors 0..31 for read, write and exceptional
+readiness. The return count is across the three masks. An invalid
+selected descriptor clears the masks and returns EIHNDL.
+
+Clock and wait ownership
+------------------------
+
+The existing 200 Hz boot-CPU interrupt extends a kernel-owned clock.
+Each finite wait derives a single deadline from the entry tick, rounded
+up with one tick allowed for the initial fractional interval. The clock
+is independent of writes to the legacy hz_200 system variable and the
+comparison is valid across wrap. An empty finite poll blocks its THREAD
+until that same deadline. The root checks deadlines after existing IRQ
+wakeups without putting the waiting THREAD on the runnable queue early.
+
+A poll retains the PROCESS descriptor table and uses generation-checked
+references to the existing SFT owners. BIOS handles retain their
+PROCESS binding generation and fixed device identity. Close, force, reuse
+and media revocation invalidate the original binding. Reusing its
+numeric descriptor does not retarget an in-flight poll. A negative fd
+is ignored. A missing or invalidated nonnegative fd reports POLLNVAL,
+even with no requested events.
+
+The kernel prepares writable user storage, copies the input once and
+holds a mapping lease until after the resulting array is copied out.
+Callers must keep the array contents stable while the call is in flight.
+Other errors leave the array untouched. Group cancellation releases the
+file, PROCESS and mapping owners before the existing syscall cancellation
+checkpoint. The scheduler leaf and the root wait predicate never call
+drivers or copy user memory.
+
+Readiness providers
+-------------------
+
+Regular FAT files, including FAT through standard PFS, are readable at
+EOF and ready for access modes the description permits. BIOS standard
+aliases query input and output status outside the scheduler root and
+resample on ticks while blocked because classic BIOS vectors do not have
+a notification API. PFS cookies with no readiness callback report
+POLLERR. There is no socket or pipe provider in this change.
+
+The provider's ready() operation is a level check on a retained open
+file. It may return the requested read, write or priority bits, report
+unrequested error/hangup, or return a GEMDOS error. Providers publish
+the level first, then call fpoll_notify(). The boot-CPU scheduler
+observes a shared sequence before checking levels and tests it again
+when admitting the wait. Wakes are hints and the waiter scans again.
+The caller retains all file references until detachment. There is no
+per-provider wait queue or caller pointer in the producer path.

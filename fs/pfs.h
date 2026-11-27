@@ -195,8 +195,10 @@ struct pfs_ops {
     LONG (*close_iterator)(PFSCOOKIE *,LONG);
 
     /* Optional level check on an opened file held by a live SFT reference.
-     * Return a subset of FS_READY_* or a negative error. This callback is a
-     * synchronous state check: it cannot block, do I/O, or reenter GEMDOS. */
+     * Return requested FS_READY_* bits, terminal ERROR/HANGUP even when
+     * unrequested, or a negative error. The level check cannot block, do I/O,
+     * or reenter GEMDOS. Notify using fpoll_notify() after publishing a
+     * readiness change on configurations that support blocking poll. */
     LONG (*ready)(const PFSCOOKIE *, UWORD events);
 
     /* Optional control on a pinned open file. The provider validates the

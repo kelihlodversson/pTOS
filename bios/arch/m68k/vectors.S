@@ -587,6 +587,11 @@ C_SYM(int_timerc):
         movem.l (sp)+,d0-d1/a0-a1
 #endif
         addq.l  #1, C_SYM(hz_200).w           // increment 200 Hz counter
+#if CONF_WITH_FPOLL_TIME64
+        movem.l d0-d1/a0-a1,-(sp)
+        jsr     C_SYM(fpoll_tick)
+        movem.l (sp)+,d0-d1/a0-a1
+#endif
 
 #ifdef __mcoldfire__
         // Save early ColdFire registers

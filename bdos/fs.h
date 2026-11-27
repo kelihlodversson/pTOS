@@ -463,8 +463,11 @@ LONG fs_file_ioctl(WORD descriptor, UWORD command, void *arg, ULONG size);
 
 /* Readiness is a level check on a retained file. The caller owns the
  * reference across registration and must recheck it after waking. */
-#define FS_READY_READ   0x01
-#define FS_READY_WRITE  0x02
+#define FS_READY_READ     0x01
+#define FS_READY_WRITE    0x02
+#define FS_READY_PRIORITY 0x04
+#define FS_READY_ERROR    0x08
+#define FS_READY_HANGUP   0x10
 LONG fs_reference_ready(const FS_FILE_REFERENCE *reference, UWORD events);
 #endif
 

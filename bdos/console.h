@@ -40,6 +40,10 @@
 void stdhdl_init(void);
 SBYTE get_default_handle(int stdh);
 
+#if CONF_WITH_FPOLL_TIME64
+long console_input_status(WORD device);
+#endif
+
 long xconstat(void);
 long xconostat(void);
 long xprtostat(void);

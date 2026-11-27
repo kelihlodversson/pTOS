@@ -2288,9 +2288,15 @@ void pclone_run_unmanaged_tests(void)
     }
     ptest_pass();
 }
+#if defined(TEST_WITH_FPOLL_TIME64)
+#include "fpoll_time64.h"
+#endif
 void pclone_run_managed_tests(void);
 void pclone_run_managed_tests(void)
 {
+#if defined(TEST_WITH_FPOLL_TIME64)
+    test_fpoll_time64();
+#endif
 #if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
     {
         int stage,cycle;
