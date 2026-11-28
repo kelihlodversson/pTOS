@@ -126,7 +126,6 @@ long xcreat(char *name, UBYTE attr)
  */
 long xopen(char *name, WORD mod)
 {
-    int m = mod & VALID_FOPEN_BITS;
 #if CONF_WITH_USER_ASPACE
     if (!kproc_file_references_allowed(run)) return EACCDN;
 #if CONF_WITH_PROCESS_FILES
@@ -138,9 +137,9 @@ long xopen(char *name, WORD mod)
 #endif
     ofd_reap();
 #if CONF_WITH_PLUGGABLE_FS
-    return pfs_do_open(name, m);
+    return pfs_do_open(name, mod);
 #else
-    return fat_open_path(name, m);
+    return fat_open_path(name, mod & VALID_FOPEN_BITS);
 #endif
 }
 

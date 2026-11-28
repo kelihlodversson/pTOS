@@ -69,8 +69,8 @@ test option enables private test controls. USER_ASPACE can still be built
 with legacy handle routing. Non-MMU builds use the direct close path without
 incarnation, staged and residual fields. The 192 KiB profile defaults to
 traditional FAT deletion, while extended unlink lifetimes and backing pins
-have separate gates. PFS is optional and currently excluded on x32 because
-the pluggable FAT directory cookie stores a pointer in a 32-bit field.
+have separate gates. PFS is optional on x32. FAT keeps the full-width
+directory pointer in its cookie independently of the iterator slot.
 FAT works with and without PFS enabled. [bdos/Kconfig](../bdos/Kconfig) · [fs/Kconfig](../fs/Kconfig)
 
 ## Baseline open descriptions and dispatch

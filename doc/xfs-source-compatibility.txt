@@ -1,0 +1,179 @@
+FreeMiNT XFS source compatibility
+=================================
+
+pTOS can link a FreeMiNT-shaped filesystem driver into the kernel when
+CONF_WITH_XFS is enabled. It uses the existing PFS drive table, path
+resolution, PROCESS descriptor bindings, and exact SFT reference counts.
+FAT and virtio-9p continue to use their existing pfs_ops. Disabling PFS
+keeps the direct FAT path available on small ROM and non-MMU profiles.
+
+Source contract
+---------------
+
+The reference is FreeMiNT 2afc6cd66501d6f1a959f5709626c3ffaae1ff56.
+include/ptos_xfs.h adapts sys/mint/fsops.h, file.h, stat.h and time.h.
+The table field order and signatures of FILESYS and DEVDRV follow the
+reference. A port can replace the upstream kernel header preamble with
+ptos_xfs.h and provide project-specific names for compatible error or
+utility constants. The driver must build with the target kernel compiler
+and flags.
+
+  Target              int / long / pointer     Byte order   Callback ABI
+  pTOS m68k kernel    32 / 32 / 32             big          GCC stack
+  pTOS ARMv7 kernel   32 / 32 / 32             little       AAPCS
+  pTOS x86-64 kernel  32 / 64 / 64             little       SysV AMD64
+  x32 applications    32 / 32 / 32             little       x32 SysV
+
+Drivers serving x32 applications run in the 64-bit kernel. Traditional
+FreeMiNT builds may also use 16-bit int. Neither their binary layouts nor
+foreign target layouts can be linked into pTOS. In a classic m68k
+fastcall kernel, _cdecl selects the stack convention for driver and
+kernel service calls. fcookie.index and FILEPTR.devinfo use native long
+and can carry a native pointer on the supported data models. DOS
+arguments, sizes and status codes remain 32-bit at the GEMDOS boundary.
+Other results that cannot be represented return ERANGE. Use explicit
+endian conversions for on-disk structures. DIR.fsstuff is byte storage,
+so access embedded pointers with memcpy or independently allocated state.
+
+  Source interface             Behavior of the initial bridge
+
+  FILESYS.root/lookup          Find root and one component. PFS walks
+                               GEMDOS paths. A foreign fs cookie returns
+                               ENSAME. Lookup errors keep GEMDOS codes.
+  FILESYS.creat/getdev         Resolve or create an fcookie, ask getdev
+                               for DEVDRV and devinfo, then open the
+                               FILEPTR. Fcreate passes create and
+                               truncate flags and creates a regular inode.
+                               For an existing file, different DOS
+                               attributes require FILESYS.chattr. The
+                               device opens and truncates first so Fcreate
+                               can return a writable handle for FA_RO.
+                               If chattr fails, the adapter closes the
+                               unpublished handle and reports the error.
+                               The provider may already have truncated.
+                               The adapter validates the full Fopen mode.
+                               It supports
+                               regular files and read, write and
+                               read/write modes, with optional deny-none.
+  FILESYS.getxattr             DOS timestamps, size and attributes.
+                               Fdatime queries the same metadata.
+  Directory mutations          PFS owns CWD bindings. The bridge maps
+                               mkdir, rmdir, remove, rename and chattr.
+  FILESYS.dfree                Converts the four GEMDOS counts.
+  FILESYS.opendir/readdir      TOS_SEARCH, with a fresh entry cookie per
+  FILESYS.closedir             successful readdir. FreeMiNT DIR stays
+                               private to its search. Iterator cloning
+                               requires the versioned clone_dir hook.
+  FILESYS.dupcookie/release    An owning cookie has a matched dup and
+                               release. A stateless driver can omit both.
+  DEVDRV.open/read/write       One FILEPTR per shared open description.
+  DEVDRV.lseek/close           The PFS cursor follows transfer counts
+                               and the result of lseek. Final close
+                               consumes the description with links=0.
+  DEVDRV.ioctl/select          Present for source layout. Sized ioctl and
+  DEVDRV.unselect              nonblocking ready use pTOS extensions.
+                               Regular files have synchronous readiness.
+  FILESYS.fscntl               Present for source layout. Path-based
+                               GEMDOS Dcntl dispatch belongs to #981.
+  init_xfs(struct kerinfo *)   A static initializer may use kmalloc,
+                               kfree and default_perm. Kernel version
+                               fields are zero. Other prefix services
+                               are NULL. The remainder of FreeMiNT's
+                               service table is outside this contract.
+
+FS_CASESENSITIVE, FS_NOXBIT and FS_LONGPATH remain visible to the source
+driver. Paths preserve spelling, GEMDOS search retains its existing DOS
+matching, and getname is currently outside dispatch. FS_REENTRANT_L1/L2
+are recognized flags. Drivers must return through their callbacks and
+serialize mutable driver state under the supported cooperative model.
+The bridge does not provide FreeMiNT sleep/wake queues, timeout, TTY,
+locking, scheduler or buffer-cache services. Callbacks must not enter
+GEMDOS or unwind through its disk-error continuations. Drivers may return
+ordinary negative GEMDOS errors. This includes a consuming close, which
+reports its error after releasing the file and cookie once.
+
+Extensions remain outside the FreeMiNT vtables. Include fs/xfs_pfs.h
+for struct ptos_xfs_extensions, with version PTOS_XFS_EXT_VERSION and
+the structure size. clone_dir receives an independent cookie and must
+acquire its own iterator, leaving no new iterator on failure. It must
+leave the original unchanged. An active iterator without this extension
+fails snapshot preparation before child publication. The ready callback
+checks levels without blocking. A producer publishes a change and can
+call fpoll_notify() on kernels supporting it. The ioctl callback receives
+a kernel-owned buffer and explicit size.
+
+GEMDOS file controls
+--------------------
+
+Fcntl(fd, arg, cmd) keeps the GEMDOS WORD/LONG/WORD ABI. F_GETFL continues
+to return the access mode and ignores arg. For other commands, the opened
+file's ioctl_spec callback declares the argument kind and size. It is a pure
+query on the retained FILEPTR. Return EINVFN for an unsupported command.
+The dispatcher consults it before accessing any caller memory.
+
+  Kind                Argument passed to the sized ioctl
+  PFS_IOCTL_NONE      NULL and size 0. The caller's arg is ignored.
+  PFS_IOCTL_SCALAR    A kernel ULONG containing the 32-bit argument value.
+  PFS_IOCTL_IN        A checked copy of the caller's input buffer.
+  PFS_IOCTL_OUT       A zeroed kernel buffer of the declared size.
+  PFS_IOCTL_INOUT     A checked copy of the caller's input buffer.
+
+Declare size 0 for NONE and SCALAR. The buffer kinds declare a nonzero
+size in bytes. Bridge callbacks may use the buffer for the duration of the
+call. For OUT and INOUT the kernel prepares and retains writable backing
+before invoking the driver. It copies the result back only after a
+nonnegative driver result and while the same user-copy lease is valid.
+If the output lease is revoked during the call, Fcntl returns EIMBA.
+A successful device state change has the driver's usual semantics even
+when output publication fails. File references, leases and buffers are
+released on every return path, including an error before dispatch.
+
+Registration and migration
+--------------------------
+
+During driver initialization, call ptos_xfs_init_driver(entry) for an
+upstream-style initializer, then ptos_xfs_mount_drive() with a persistent
+zero-initialized mount object, FILESYS and optional extensions. Boot-time
+registration uses the existing pfs_register_drive() and rejects an
+existing claim. Driver descriptors and their extensions remain live for
+the lifetime of the mount.
+
+New and existing providers coexist. FAT can retain its internal OFD and
+native SFT handoff until its FILESYS/DEVDRV implementation owns exactly
+one open description per open. A virtio-9p port can retain its existing
+fid operations and translate the fid hold/clunk into dupcookie/release.
+Keep its read/write, directory and error behavior as the comparison
+baseline when moving it to XFS. Switching a driver separately needs no
+change to GEMDOS dispatch or PROCESS-local descriptor numbers.
+
+Fdup, Fforce and inheritance retain the same SFT incarnation and share
+one FILEPTR and one cursor. The driver's close is called at final SFT
+release, including when the last owner is a retained kernel pin. Drivers
+that expect per-alias close callbacks for PID record locks are unsupported
+until there is a kernel locking contract. File-backed mappings still
+use the existing FAT path. Poll uses the existing retained SFT checks.
+
+FS_KNOPARSE, FS_NO_C_CACHE, FS_DO_SYNC, FS_OWN_MEDIACHANGE and FS_EXT_3
+require behavior supplied by FreeMiNT which this bridge does not offer.
+Mount requests for those flags fail with EINVFN. Dynamic driver loading,
+mount teardown, redirects to another filesystem, link resolution,
+FreeMiNT stat64 dispatch, and its asynchronous device protocols are
+outside this initial contract. Guest-visible filenames still use the
+established GEMDOS path and search contracts.
+
+Validation
+----------
+
+tests/xfs/freemint-null.inc preserves the null_open, null_read,
+null_write, null_lseek and null_close implementations from FreeMiNT
+sys/dev-null.c at the reference commit. The fixture supplies UNUSED and
+maps EBADARG to the equivalent pTOS ERANGE (-64). The same callbacks run
+as a real DEVDRV on a test mount. The other fixture file checks shared
+cursor and close rights with real GEMDOS Fdup and PROCESS inheritance.
+The tests also exercise Fsfirst/Fsnext and run alongside FAT, and
+alongside virtio-9p on the ARM and m68k virt boards. PC/x86-64 has no
+virtio-9p transport, so its native checks cover FAT and XFS.
+tools/test-process-directory-pfs.py checks native-width pointer storage
+on the hosted kernel model, mount and open rollback, consuming close
+errors and independently cloned search iterators. Its --sanitize option
+runs ASan and UBSan.

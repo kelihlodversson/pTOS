@@ -980,9 +980,9 @@ restrt:
 #if CONF_WITH_USER_ASPACE
     if (fn == GEMDOS_FCNTL)
 #if CONF_WITH_NATIVE_ABI
-        return xfcntl((WORD)pw[1], (UWORD)pw[3]);
+        return xfcntl((WORD)pw[1], (UQUAD)(unsigned long)pw[2], (UWORD)pw[3]);
 #else
-        return xfcntl(pw[1], (UWORD)pw[4]); /* descriptor.w, arg.l, command.w */
+        return xfcntl(pw[1], (ULONG)pwlong((const WORD *)pw, 2), (UWORD)pw[4]);
 #endif
 #endif
     if (fn < 0 || fn > MAX_FNCALL)      /* a negative number from a WORD would index before funcs[] */

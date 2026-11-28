@@ -131,39 +131,10 @@ static LONG fat_dfree(struct pfs_ops *fs, WORD drive, ULONG out[4])
     return E_OK;
 }
 
-/*
- * A directory/file cookie's DND* lives in PFSCOOKIE's plain LONG "index"
- * field (fs/pfs.h: "the core never looks inside index/aux; a driver is
- * free to store whatever it needs there"). LONG is a fixed 32 bits
- * (portab.h) but a DND* is a native pointer, 64 bits on x86-64's
- * higher-half kernel -- a plain (LONG)dn / (DND *)index round-trip there
- * only works because every DND happens to live in the kernel image's own
- * narrow, sign-extension-safe address range; nothing enforces that.
- *
- * When CONF_WITH_PLUGGABLE_FS is off, "aux" is otherwise unused on a
- * directory/file cookie in this file (fat_readdir()'s pool-slot
- * bookkeeping in aux only exists in the pluggable build below), so it's
- * free to spend on the pointer's high 32 bits and make the round-trip
- * exact on every arch. When CONF_WITH_PLUGGABLE_FS is on, aux already
- * means something else there, so this reduces to the previous plain
- * cast -- correct on today's only pluggable-FS-capable archs (m68k/ARM,
- * both 32-bit); the assertion below catches it at compile time if that
- * ever changes.
- *
- * dn/c are expanded more than once: pass plain variables, never an
- * expression with side effects.
- */
-#if CONF_WITH_PLUGGABLE_FS
-typedef char pfscookie_dnd_must_fit_index[BUILD_BUG_ON_ZERO(sizeof(DND *) > sizeof(LONG)) + 1];
-#define DND_TO_COOKIE(dn, c) ((c)->index = (LONG)(dn), (c)->aux = 0)
+/* Keep the full DND identity in the cookie, independently of the search slot
+ * in aux. Native open/create results still put the GEMDOS handle in index. */
+#define DND_TO_COOKIE(dn, c) ((c)->index = (intptr_t)(dn), (c)->aux = 0)
 #define COOKIE_TO_DND(c) ((DND *)(c)->index)
-#else
-#define DND_TO_COOKIE(dn, c) \
-    ((c)->index = (LONG)(ULONG)(UQUAD)(uintptr_t)(dn), \
-     (c)->aux   = (LONG)(ULONG)((UQUAD)(uintptr_t)(dn) >> 32))
-#define COOKIE_TO_DND(c) \
-    ((DND *)(uintptr_t)(((UQUAD)(ULONG)(c)->aux << 32) | (UQUAD)(ULONG)(c)->index))
-#endif
 
 static LONG fat_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out)
 {
@@ -820,7 +791,7 @@ static LONG fat_root(struct pfs_ops *fs, WORD drive, PFSCOOKIE *out)
 
     dn = findit(path, &sp, 1);
     if (DND_IS_ERRCODE(dn))
-        return (LONG)dn;
+        return (LONG)(intptr_t)dn;
     if (!dn)
         return EPTHNF;
 
@@ -840,7 +811,7 @@ static LONG fat_lookup(PFSCOOKIE *dir, const char *path, PFSCOOKIE *out)
 
     dn = findit(abspath, &sp, 1);
     if (DND_IS_ERRCODE(dn))
-        return (LONG)dn;
+        return (LONG)(intptr_t)dn;
     if (!dn)
         return EPTHNF;
 

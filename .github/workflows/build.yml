@@ -564,6 +564,7 @@ jobs:
       matrix:
         include:
           - {arch: x86_64, machine: pc-x86_64, fs: fat, qemu: qemu-system-x86 ovmf}
+          - {arch: x86_64, machine: pc-x86_64, fs: pfs, qemu: qemu-system-x86 ovmf}
           - {arch: arm, machine: virt-arm-aspace, fs: fat, qemu: qemu-system-arm}
           - {arch: arm, machine: virt-arm-aspace, fs: pfs, qemu: qemu-system-arm}
           - {arch: m68k, machine: virt-m68k-aspace, fs: fat, qemu: qemu-system-misc}
@@ -586,7 +587,7 @@ jobs:
           EXEC_HANDOFF_TEST: '1'
           PROCESS_FILES_TEST: '1'
           PROCESS_FILES_FS: ${{ matrix.fs }}
-          FPOLL_PROVIDER_TEST: ${{ matrix.arch == 'arm' && matrix.fs == 'pfs' && '1' || '0' }}
+          FPOLL_PROVIDER_TEST: ${{ matrix.arch != 'm68k' && matrix.fs == 'pfs' && '1' || '0' }}
           REGRESSION_RAW_DISK: '1'
         run: tools/ci-group.sh --names "${{ matrix.machine }}" tools/ci-regression.sh
 

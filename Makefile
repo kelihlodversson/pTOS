@@ -1988,6 +1988,7 @@ TEST_CFLAGS = $(TEST_CPUFLAGS) $(CSTANDARD) $(OPTFLAGS) $(DEBUGFLAGS) \
               $(if $(filter y,$(CONF_WITH_PROCESS_FILES_TEST)),-DTEST_WITH_PROCESS_FILES) \
               $(if $(filter y,$(CONF_WITH_FPOLL_TIME64)),-DTEST_WITH_FPOLL_TIME64) \
               $(if $(filter y,$(CONF_WITH_PLUGGABLE_FS_TEST)),-DTEST_WITH_PLUGGABLE_FS_TEST) \
+              $(if $(and $(filter y,$(CONF_WITH_XFS)),$(filter y,$(CONF_WITH_PLUGGABLE_FS_TEST))),-DTEST_WITH_XFS) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC)),-DTEST_WITH_PROCESS_EXEC) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_TEST)),-DTEST_WITH_PROCESS_EXEC_TEST) \
               $(if $(filter y,$(CONF_WITH_PROCESS_EXEC_DISPATCH)),-DTEST_WITH_PROCESS_EXEC_DISPATCH) \
