@@ -923,6 +923,11 @@ if [ "${FPOLL_PROVIDER_TEST:-0}" = 1 ] &&
    ! grep -aq 'native Fpoll_time64 provider notifications and terminal events: PASS' "$suite_log"; then
     record "native Fpoll_time64 provider notifications" FAIL "notification-driven waits and terminal events did not pass"
 fi
+if grep -qx '#define CONF_WITH_XFS 1' "$top/obj/autoconf.h" &&
+   grep -qx '#define CONF_WITH_PLUGGABLE_FS_TEST 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native FreeMiNT XFS over shared PFS descriptions: PASS' "$suite_log"; then
+    record "native FreeMiNT XFS bridge" FAIL "the XFS fixture did not pass"
+fi
 
 # Native initial-entry marker: independent of the older machine-case matrix.
 case $machine in

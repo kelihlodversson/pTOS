@@ -1050,6 +1050,7 @@ static LONG pfs_alloc_handle(PFSCOOKIE *fc, UWORD mode)
     sft[i].f_own = run;
     sft[i].f_use = 1;
     sft[i].f_ofd = NULL;
+    sft[i].f_bios = 0;
     sft[i].f_pfs = *fc;
 #if CONF_WITH_PROCESS_FILES
     if (process_files_managed(run)) {
@@ -1571,6 +1572,12 @@ static LONG pfs_file_seek(PFSCOOKIE *fc, LONG n, WORD flg)
     if ((flg < 0) || (flg > 2))
         return EINVFN;
 
+    if (fc->fs->seek) {
+        rc = fc->fs->seek(fc, n, flg);
+        if (rc >= 0)
+            fc->pos = rc;
+        return rc;
+    }
     rc = pfs_handle_fstat(fc, &attr);
     if (rc < 0)
         return rc;

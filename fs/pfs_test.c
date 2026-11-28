@@ -236,6 +236,12 @@ static struct pfs_ops pfs_test_ops = {
 void pfs_test_init(void)
 {
     pfs_register_drive(CONF_PFS_TEST_DRIVE, &pfs_test_ops);
+#if CONF_WITH_XFS
+    {
+        extern LONG xfs_test_init(void);
+        xfs_test_init();
+    }
+#endif
 }
 
 #endif /* CONF_WITH_PLUGGABLE_FS_TEST */

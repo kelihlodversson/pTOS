@@ -28,7 +28,7 @@ struct dta_info;
  */
 typedef struct pfs_cookie {
     struct pfs_ops *fs;
-    LONG index;
+    intptr_t index; /* native pointer, driver ID or native GEMDOS handle */
     LONG aux;
     LONG pos;   /* Core-managed sequential position for open files; drivers
                  * leave that position to pfs_handle_read()/write(). Directory
@@ -205,6 +205,9 @@ struct pfs_ops {
      * command and buffer size and may use the buffer only during the call. */
     LONG (*ioctl)(PFSCOOKIE *, UWORD command, void *arg, ULONG size);
 
+    /* An open description can supply its native seek operation. A
+     * successful return is the new shared GEMDOS position. */
+    LONG (*seek)(PFSCOOKIE *, LONG offset, WORD whence);
 };
 
 typedef struct {

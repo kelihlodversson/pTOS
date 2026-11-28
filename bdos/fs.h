@@ -25,7 +25,7 @@
 #include "bdosdefs.h"
 
 #if CONF_WITH_PLUGGABLE_FS
-#include "pfs.h"        /* PFSCOOKIE is embedded by value in FTAB below */
+#include "../fs/pfs.h"  /* PFSCOOKIE is embedded by value in FTAB below */
 #endif
 /* The structures that mirror on-disk records (FCB, DFD's three FCB fields)
  * are packed wherever LONG is aligned to 4: fsopnclo.c copies 10 bytes from
