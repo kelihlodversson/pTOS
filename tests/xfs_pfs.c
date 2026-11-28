@@ -104,6 +104,41 @@ static long _cdecl stat_created(fcookie *cookie, XATTR *attr)
     return E_OK;
 }
 
+static void test_recreate_attributes(PFSCOOKIE *dir)
+{
+    const char *name = "DATA.TXT";
+    PFSCOOKIE file;
+    PFSATTR attrs;
+    unsigned before = allocations;
+    UWORD dos_attr = 0;
+
+    data_size = 3;
+    test_driver.chattr = NULL;
+    CHECK(registered->create(dir, name, 0, &file) == E_OK);
+    CHECK(registered->release_file(&file) == E_OK);
+    data_size = 3;
+    CHECK(registered->create(dir, name, FA_HIDDEN, &file) == EACCDN);
+    CHECK(data_size == 3 && !data_attr && !open_files && !node_refs[2] && allocations == before);
+    test_driver.chattr = test_chattr;
+
+    open_error = EWRITF;
+    CHECK(registered->create(dir, name, FA_HIDDEN, &file) == EWRITF);
+    CHECK(data_size == 3 && !data_attr && !open_files && !node_refs[2] && allocations == before);
+    open_error = 0;
+    CHECK(registered->create(dir, name, FA_HIDDEN | FA_RO, &file) == E_OK);
+    CHECK(registered->fstat(&file, &attrs) == E_OK &&
+          !attrs.size && attrs.dos_attr == (FA_HIDDEN | FA_RO));
+    CHECK(registered->write(&file, 0, 1, (const UBYTE *)"x") == 1);
+    CHECK(registered->release_file(&file) == E_OK);
+    CHECK(registered->create(dir, name, 0, &file) == EACCDN && data_size == 1);
+    CHECK(registered->chattr(dir, name, TRUE, &dos_attr) == E_OK);
+
+    file.index = -1;
+    CHECK(registered->create(dir, name, FA_VOL, &file) == EACCDN);
+    CHECK(file.index == -1 && !data_size && !data_attr && !open_files &&
+          !node_refs[2] && allocations == before);
+}
+
 int main(void)
 {
     PFSCOOKIE root, dir, file, child;
@@ -129,6 +164,8 @@ int main(void)
     CHECK(registered->release_file(&file) == E_OK && !node_refs[3]);
     test_driver.getxattr = test_stat;
     test_driver.creat = NULL;
+
+    test_recreate_attributes(&dir);
 
     open_error = EWRITF;
     CHECK(registered->open(&dir, "DATA.TXT", RO_MODE, &file) == EWRITF);
