@@ -4,7 +4,9 @@
 #include "xfs_pfs.h"
 #include "fs.h"
 #include "gemerror.h"
+#include "fpoll_kernel.h"
 #include "string.h"
+#include "../tests/xfs/event.h"
 
 #define UNUSED(x) (void)(x)
 #define EBADARG ERANGE
@@ -27,13 +29,23 @@ typedef struct {
 
 static XFS_TEST_NODE nodes[] = {
     { "", 0040755, 0 }, { "FIXTURE", 0040755, 0 },
-    { "DATA.TXT", 0100666, 0 }, { "NULL.TXT", 0100666, 0 }
+    { "DATA.TXT", 0100666, 0 }, { "NULL.TXT", 0100666, 0 },
+#if CONF_WITH_FPOLL_TIME64
+    { "EVENT.BIN", 0100666, 0 },
+#endif
 };
 static FILESYS test_driver;
 static char data[64];
 static long data_size;
 static unsigned open_files, open_dirs;
 static LONG open_error, close_error;
+
+#if CONF_WITH_FPOLL_TIME64
+static FILEPTR *armed_event;
+static ULONG event_input, event_payload;
+static LONG unready_samples, event_closes;
+static BOOL event_pending;
+#endif
 
 static XFS_TEST_NODE *test_node(const fcookie *cookie)
 {
@@ -172,9 +184,118 @@ static DEVDRV null_device = {
     .lseek = null_lseek, .close = null_close
 };
 
+#if CONF_WITH_FPOLL_TIME64
+static long _cdecl event_close(FILEPTR *file, int pid)
+{
+    if (file == armed_event) {
+        armed_event = NULL;
+        event_pending = FALSE;
+        event_closes++;
+    }
+    return test_close(file, pid);
+}
+
+static long _cdecl event_read(FILEPTR *file, char *buffer, long size)
+{
+    if (file != armed_event || !event_pending)
+        return EAGAIN;
+    if (size != sizeof(event_payload))
+        return ERANGE;
+    memcpy(buffer, &event_payload, sizeof(event_payload));
+    event_pending = FALSE;
+    return sizeof(event_payload);
+}
+
+static long _cdecl event_write(FILEPTR *file, const char *buffer, long size)
+{
+    ULONG value;
+
+    if (size != sizeof(value))
+        return ERANGE;
+    if (!armed_event || file == armed_event || unready_samples < 2 || event_pending)
+        return EAGAIN;
+    memcpy(&value, buffer, sizeof(value));
+    event_payload = value ^ event_input;
+    event_pending = TRUE;
+    fpoll_notify();
+    return sizeof(value);
+}
+
+static DEVDRV event_device = {
+    .open = test_open, .read = event_read, .write = event_write, .close = event_close
+};
+
+static long _cdecl test_ready(const FILEPTR *file, UWORD events)
+{
+    if (file->dev != &event_device)
+        return events & (FS_READY_READ | FS_READY_WRITE);
+    if (file == armed_event && (events & FS_READY_READ)) {
+        if (event_pending)
+            return FS_READY_READ;
+        unready_samples++;
+    }
+    return 0;
+}
+
+static long _cdecl test_ioctl_spec(const FILEPTR *file, UWORD command, PFS_IOCTL_SPEC *spec)
+{
+    switch (command) {
+    case XFS_TEST_ARM:
+        if (file->dev != &event_device)
+            break;
+        *spec = (PFS_IOCTL_SPEC){ PFS_IOCTL_INOUT, sizeof(ULONG) };
+        return E_OK;
+    case XFS_TEST_SAMPLE_COUNT:
+    case XFS_TEST_CLOSE_COUNT:
+        if (file->dev != &data_device)
+            break;
+        *spec = (PFS_IOCTL_SPEC){ PFS_IOCTL_NONE, 0 };
+        return E_OK;
+    case XFS_TEST_SCALAR:
+        if (file->dev != &event_device)
+            break;
+        *spec = (PFS_IOCTL_SPEC){ PFS_IOCTL_SCALAR, 0 };
+        return E_OK;
+    }
+    return EINVFN;
+}
+
+static long _cdecl test_ioctl(FILEPTR *file, UWORD command, void *buffer, ULONG size)
+{
+    PFS_IOCTL_SPEC spec;
+    ULONG *arg = buffer;
+
+    if (test_ioctl_spec(file, command, &spec) != E_OK)
+        return EINVFN;
+    if (spec.kind == PFS_IOCTL_NONE) {
+        if (buffer || size)
+            return EINVAL;
+        return command == XFS_TEST_CLOSE_COUNT ? event_closes : unready_samples;
+    }
+    if (!arg || size != sizeof(*arg))
+        return EINVAL;
+    if (command == XFS_TEST_SCALAR)
+        return *arg == XFS_TEST_INPUT ? E_OK : EINVAL;
+    if (armed_event)
+        return EACCDN;
+    if (*arg != XFS_TEST_INPUT)
+        return EINVAL;
+    armed_event = file;
+    event_input = *arg;
+    event_pending = FALSE;
+    unready_samples = 0;
+    *arg = XFS_TEST_REPLY;
+    return E_OK;
+}
+#endif
+
 static DEVDRV * _cdecl test_getdev(fcookie *cookie, long *special)
 {
     *special = cookie->index;
+#if CONF_WITH_FPOLL_TIME64
+    if (test_node(cookie) == &nodes[4])
+        return &event_device;
+#endif
     return test_node(cookie) == &nodes[2] ? &data_device : &null_device;
 }
 
@@ -199,7 +320,7 @@ static long _cdecl test_readdir(DIR *dir, char *name, int size, fcookie *out)
             return ENMFIL;
         node = &nodes[1];
     } else {
-        if (index >= 2)
+        if (index >= sizeof(nodes) / sizeof(nodes[0]) - 2)
             return ENMFIL;
         node = &nodes[2 + index];
     }
@@ -234,7 +355,10 @@ static FILESYS test_driver = {
 };
 static const struct ptos_xfs_extensions test_extensions = {
     .version = PTOS_XFS_EXT_VERSION, .size = sizeof(test_extensions),
-    .clone_dir = test_clone_dir
+    .clone_dir = test_clone_dir,
+#if CONF_WITH_FPOLL_TIME64
+    .ready = test_ready, .ioctl = test_ioctl, .ioctl_spec = test_ioctl_spec
+#endif
 };
 
 static FILESYS * _cdecl test_init(struct kerinfo *kernel)

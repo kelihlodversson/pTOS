@@ -19,6 +19,9 @@
 #include "string.h"
 #include "kprint.h"
 #include "kproc.h"
+#if CONF_WITH_USER_ASPACE
+#include "kheap.h"
+#endif
 #if CONF_WITH_PROCESS_FILES
 #include "../bdos/process_files.h"
 #include "biosext.h"
@@ -1701,5 +1704,69 @@ LONG pfs_handle_ioctl(const FS_HANDLE *handle, UWORD command, void *arg, ULONG s
     if (!file->fs->ioctl)
         return EINVFN;
     return PFS_FILE_CALL(handle, file->fs->ioctl(file, command, arg, size));
+}
+
+static LONG pfs_user_ioctl(PFSCOOKIE *file, UWORD command, UQUAD arg)
+{
+    PFS_IOCTL_SPEC spec = {0};
+    KPROC_USER_COPY output = {0};
+    PFS_DISK_FAILURE failure = {0};
+    ULONG scalar = (ULONG)arg;
+    void *buffer;
+    LONG result = file->fs->ioctl_spec(file, command, &spec);
+
+    if (result < 0)
+        return result;
+    switch (spec.kind) {
+    case PFS_IOCTL_NONE:
+        return spec.size ? EINVAL : file->fs->ioctl(file, command, NULL, 0);
+    case PFS_IOCTL_SCALAR:
+        return spec.size ? EINVAL : file->fs->ioctl(file, command, &scalar, sizeof(scalar));
+    case PFS_IOCTL_IN:
+    case PFS_IOCTL_OUT:
+    case PFS_IOCTL_INOUT:
+        if (!spec.size)
+            return EINVAL;
+        break;
+    default:
+        return EINVAL;
+    }
+
+    if (!arg || arg != scalar)
+        return EIMBA;
+    buffer = kalloc(spec.size);
+    if (!buffer)
+        return ENSMEM;
+
+    /* Hold the writable range before changing device state, including COW
+     * and lazy backing. Keep the lease through final output publication. */
+    result = E_OK;
+    if (spec.kind != PFS_IOCTL_IN)
+        result = kproc_user_copy_begin(&output, scalar, spec.size, TRUE);
+    if (!result && spec.kind != PFS_IOCTL_OUT)
+        result = kproc_copy_from_user_checked(buffer, scalar, spec.size);
+    if (!result) {
+        result = PFS_TRY(file->fs->ioctl(file, command, buffer, spec.size), &failure);
+        if (result >= 0 && output.active && !kproc_user_copy_write(&output, buffer))
+            result = EIMBA;
+    }
+    kproc_user_copy_end(&output);
+    kfree(buffer);
+    if (failure.raised) {
+        errcode = failure.code;
+        rwerr = failure.rw;
+        errdrv = failure.drive;
+        longjmp(errbuf, 1);
+    }
+    return result;
+}
+
+LONG pfs_handle_user_ioctl(const FS_HANDLE *handle, UWORD command, UQUAD arg)
+{
+    PFSCOOKIE *file = &handle->slot->f_pfs;
+
+    if (!file->fs->ioctl_spec || !file->fs->ioctl)
+        return EINVFN;
+    return PFS_FILE_CALL(handle, pfs_user_ioctl(file, command, arg));
 }
 #endif

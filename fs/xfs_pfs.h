@@ -16,6 +16,7 @@ struct ptos_xfs_extensions {
     long _cdecl (*clone_dir)(DIR *dst, const DIR *src);
     long _cdecl (*ready)(const FILEPTR *, UWORD events);
     long _cdecl (*ioctl)(FILEPTR *, UWORD command, void *buffer, ULONG size);
+    long _cdecl (*ioctl_spec)(const FILEPTR *, UWORD command, PFS_IOCTL_SPEC *);
 };
 
 /* Static storage, initially zero. The existing PFS drive table is the

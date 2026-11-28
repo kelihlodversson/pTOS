@@ -1,3 +1,152 @@
+#if defined(TEST_WITH_FPOLL_TIME64)
+#include "../xfs/event.h"
+
+static const uint32_t event_producer_value = UINT32_C(0x369cd58a);
+static volatile short xfs_rebind_control;
+
+static int xfs_wait_for_block(short control)
+{
+    unsigned long start = poll_ticks();
+
+    /* ARM resets the samples. One is from the zero-time check. The
+     * second comes from the blocking wait with the old file pinned. */
+    do {
+        if (Fcntl(control, 0, XFS_TEST_SAMPLE_COUNT) >= 2)
+            return 1;
+        poll64(NULL, 0, 5);
+    } while (poll_ticks() - start < 100);
+    return 0;
+}
+
+static void xfs_event_producer(void *argument)
+{
+    long control = Fopen(XFS_TEST_CONTROL_PATH, 0);
+    long file = Fopen(XFS_TEST_EVENT_PATH, 1);
+
+    (void)argument;
+    if (control < 0 || file < 0 || !xfs_wait_for_block((short)control))
+        Pterm(80);
+    if (Fwrite((short)file, sizeof(event_producer_value), &event_producer_value) !=
+        sizeof(event_producer_value) || Fclose((short)file) || Fclose((short)control))
+        Pterm(81);
+}
+
+static void xfs_event_rebind(void *argument)
+{
+    long replacement;
+
+    (void)argument;
+    if (!xfs_wait_for_block(xfs_rebind_control) || Fclose(4))
+        Pterm(82);
+    replacement = Fopen("R:\\FIXTURE\\NULL.TXT", 2);
+    if (replacement < 0 || Fforce(4, (short)replacement) || Fclose((short)replacement))
+        Pterm(83);
+}
+
+static void test_xfs_ioctl(void)
+{
+    PTOS_POLLFD fd = {0, PTOS_POLLIN, 0};
+    uint32_t value = XFS_TEST_INPUT;
+    int32_t pid = 0, tid = 0, status = -1;
+    unsigned long start;
+    long stack, control, closes, result;
+    int failures = ptest_failures();
+
+    ptest_begin("XFS Fcntl ioctl and retained poll ownership");
+    fd.fd = Fopen(XFS_TEST_EVENT_PATH, 0);
+    control = Fopen(XFS_TEST_CONTROL_PATH, 0);
+    stack = Malloc(RUNNABLE_STACK_SIZE);
+    ptest_assert_msg(fd.fd >= 0 && control >= 0 && stack > 0,
+                     "open the device, its observer and a worker stack");
+    if (fd.fd < 0 || control < 0 || stack <= 0)
+        goto done;
+
+    ptest_assert_msg(Fcntl(32767, &value, XFS_TEST_ARM) == -37L &&
+                     Fcntl((short)fd.fd, 0, XFS_TEST_ARM) == -40L &&
+                     Fcntl((short)fd.fd, 1, XFS_TEST_ARM) == -40L &&
+                     Fcntl((short)fd.fd, 1, 0x7aff) == -32L &&
+                     Fcntl((short)fd.fd, 1, F_GETFL) == 0 &&
+                     Fcntl((short)fd.fd, XFS_TEST_INPUT, XFS_TEST_SCALAR) == 0,
+                     "invalid inputs, unknown commands, scalar and F_GETFL");
+#ifdef TEST_WITH_MMAP
+    {
+        long page = clone_test_sys6(GEMDOS_MMAP, 0, 4096, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+        ptest_assert_msg(page > 0, "map a readable ioctl argument");
+        if (page > 0) {
+            *(uint32_t *)page = XFS_TEST_INPUT;
+            ptest_assert_msg(clone_test_sys6(GEMDOS_MPROT, page, 4096, PROT_READ, 0, 0, 0) == 0 &&
+                             Fcntl((short)fd.fd, page, XFS_TEST_ARM) == -40L &&
+                             *(const uint32_t *)page == XFS_TEST_INPUT,
+                             "reject a read-only output before arming the device");
+            ptest_assert_msg(clone_test_sys6(GEMDOS_MUNMAP, page, 4096, 0, 0, 0, 0) == 0,
+                             "release the rejected output mapping");
+        }
+    }
+#endif
+    closes = Fcntl((short)control, 1, XFS_TEST_CLOSE_COUNT);
+    ptest_assert_msg(closes >= 0 && Fcntl((short)fd.fd, &value, XFS_TEST_ARM) == 0 &&
+                     value == XFS_TEST_REPLY && poll64(&fd, 1, 0) == 0 && !fd.revents,
+                     "the device sees the input, returns its reply and is initially unready");
+    result = launch_entry(xfs_event_producer, CLONE_VM | CLONE_COPY_CWD,
+                          (void *)stack, &pid, NULL);
+    ptest_assert_msg(result > 0 && pid > 0, "launch a producer with an independent descriptor table");
+    if (result > 0 && pid > 0) {
+        start = poll_ticks();
+        result = poll64(&fd, 1, 2000);
+        ptest_assert_msg(result == 1 && fd.revents == PTOS_POLLIN && poll_ticks() - start < 200,
+                         "device publication wakes the blocked poll before its deadline");
+        ptest_assert_msg(Pwaitpid(pid, 0, 0) == ((long)pid << 16), "the producer released its own files");
+        ptest_assert_msg(poll64(&fd, 1, 0) == 1 && fd.revents == PTOS_POLLIN &&
+                         Fread((short)fd.fd, sizeof(value), &value) == sizeof(value) &&
+                         value == (event_producer_value ^ XFS_TEST_INPUT) &&
+                         poll64(&fd, 1, 0) == 0 && !fd.revents,
+                         "readiness is persistent until Fread consumes the exact payload");
+    }
+    ptest_assert_msg(Fclose((short)fd.fd) == 0 &&
+                     Fcntl((short)control, 0, XFS_TEST_CLOSE_COUNT) == closes + 1,
+                     "close the first device description once");
+
+    fd.fd = Fopen(XFS_TEST_EVENT_PATH, 0);
+    value = XFS_TEST_INPUT;
+    ptest_assert_msg(fd.fd >= 0, "open a fresh description for the descriptor reuse run");
+    if (fd.fd >= 0) {
+        result = Fforce(4, (short)fd.fd);
+        ptest_assert_msg(result == 0, "bind the fresh description to a known descriptor");
+        if (result)
+            goto done;
+        ptest_assert_msg(Fclose((short)fd.fd) == 0, "leave only the binding the sibling will replace");
+        fd.fd = 4;
+        ptest_assert_msg(Fcntl(4, &value, XFS_TEST_ARM) == 0 && poll64(&fd, 1, 0) == 0 &&
+                         !fd.revents, "arm the fresh description and sample it unready");
+        xfs_rebind_control = (short)control;
+        result = launch_entry(xfs_event_rebind, CLONE_VM | CLONE_SAME_PROCESS,
+                              (void *)stack, NULL, &tid);
+        ptest_assert_msg(result > 0, "start the sibling that replaces the polled descriptor");
+        if (result > 0) {
+            ptest_assert_msg(poll64(&fd, 1, 2000) == 1 && fd.revents == PTOS_POLLNVAL,
+                             "the retained device reports POLLNVAL after its descriptor changes");
+            ptest_assert_msg(join_tid(tid, &status) == 0 && !status, "the sibling replaced the binding");
+            ptest_assert_msg(poll64(&fd, 1, 0) == 1 && fd.revents == PTOS_POLLIN && Fwrite(4, 1, "x") == 1,
+                             "a new poll and write use the replacement description");
+            ptest_assert_msg(Fcntl((short)control, 0, XFS_TEST_CLOSE_COUNT) == closes + 2,
+                             "the old retained FILEPTR closes exactly once");
+        }
+    }
+done:
+    if (fd.fd >= 0)
+        Fclose((short)fd.fd);
+    if (control >= 0)
+        Fclose((short)control);
+    if (stack > 0)
+        ptest_assert_msg(Mfree((void *)stack) == 0, "release the device probe stack");
+    ptest_pass();
+    if (ptest_failures() == failures)
+        conws("native XFS Fcntl and pollable device ownership: PASS\r\n");
+}
+#endif
+
 /* Exercise the mounted source driver through GEMDOS's real SFT bindings. */
 static void xfs_inherited_reader(void *argument)
 {

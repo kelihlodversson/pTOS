@@ -928,6 +928,12 @@ if grep -qx '#define CONF_WITH_XFS 1' "$top/obj/autoconf.h" &&
    ! grep -aq 'native FreeMiNT XFS over shared PFS descriptions: PASS' "$suite_log"; then
     record "native FreeMiNT XFS bridge" FAIL "the XFS fixture did not pass"
 fi
+if grep -qx '#define CONF_WITH_XFS 1' "$top/obj/autoconf.h" &&
+   grep -qx '#define CONF_WITH_PLUGGABLE_FS_TEST 1' "$top/obj/autoconf.h" &&
+   grep -qx '#define CONF_WITH_FPOLL_TIME64 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native XFS Fcntl and pollable device ownership: PASS' "$suite_log"; then
+    record "native XFS Fcntl and pollable device" FAIL "the device ioctl, notify and close fixture did not pass"
+fi
 
 # Native initial-entry marker: independent of the older machine-case matrix.
 case $machine in

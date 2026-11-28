@@ -457,6 +457,15 @@ static LONG xfs_ioctl(PFSCOOKIE *fc, UWORD command, void *buffer, ULONG size)
     return xfs_result(ext->ioctl((FILEPTR *)fc->index, command, buffer, size));
 }
 
+static LONG xfs_ioctl_spec(const PFSCOOKIE *fc, UWORD command, PFS_IOCTL_SPEC *spec)
+{
+    const struct ptos_xfs_extensions *ext = xfs_mount(fc->fs)->extensions;
+
+    if (!ext || !ext->ioctl_spec || !ext->ioctl)
+        return EINVFN;
+    return xfs_result(ext->ioctl_spec((const FILEPTR *)fc->index, command, spec));
+}
+
 static LONG xfs_mkdir(PFSCOOKIE *dir, const char *name)
 {
     fcookie *fc = xfs_dir_cookie(dir);
@@ -566,7 +575,8 @@ static const struct pfs_ops xfs_ops = {
     .close_iterator = xfs_close_directory,
     .ready = xfs_ready,
     .ioctl = xfs_ioctl,
-    .seek = xfs_seek
+    .seek = xfs_seek,
+    .ioctl_spec = xfs_ioctl_spec
 };
 
 LONG ptos_xfs_mount_drive(WORD drive, struct ptos_xfs_mount *mount, FILESYS *driver,

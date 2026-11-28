@@ -300,15 +300,22 @@ static UWORD file_open_mode(const FS_HANDLE *handle)
     return handle->slot->f_ofd->o_mod & MODE_FAC;
 }
 
-LONG xfcntl(WORD descriptor, UWORD command)
+LONG xfcntl(WORD descriptor, UQUAD arg, UWORD command)
 {
     FS_HANDLE handle;
-    LONG error;
+    LONG error = fs_handle_lookup(descriptor, &handle);
 
-    if (command != GEMDOS_F_GETFL)
-        return EINVFN;
-    error = fs_handle_lookup(descriptor, &handle);
-    return error == E_OK ? file_open_mode(&handle) : error;
+    if (error != E_OK)
+        return error;
+    if (command == GEMDOS_F_GETFL)
+        return file_open_mode(&handle);
+#if CONF_WITH_PLUGGABLE_FS
+    if (!handle.bios && handle.slot->f_pfs.fs)
+        return DISK_CALL(pfs_handle_user_ioctl(&handle, command, arg));
+#else
+    (void)arg;
+#endif
+    return EINVFN;
 }
 
 LONG fs_file_ioctl(WORD descriptor, UWORD command, void *arg, ULONG size)

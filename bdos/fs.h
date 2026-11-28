@@ -459,7 +459,7 @@ LONG fs_reference_unpin(FS_FILE_REFERENCE *reference);
 
 #define GEMDOS_FCNTL  0x104
 #define GEMDOS_F_GETFL 3
-LONG xfcntl(WORD descriptor, UWORD command);
+LONG xfcntl(WORD descriptor, UQUAD arg, UWORD command);
 
 /* Provider control with a kernel-owned buffer and an installed disk-error
  * scope. A provider may return a status or raise a normal disk error. */

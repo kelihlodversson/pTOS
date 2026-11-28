@@ -93,6 +93,32 @@ checks levels without blocking. A producer publishes a change and can
 call fpoll_notify() on kernels supporting it. The ioctl callback receives
 a kernel-owned buffer and explicit size.
 
+GEMDOS file controls
+--------------------
+
+Fcntl(fd, arg, cmd) keeps the GEMDOS WORD/LONG/WORD ABI. F_GETFL continues
+to return the access mode and ignores arg. For other commands, the opened
+file's ioctl_spec callback declares the argument kind and size. It is a pure
+query on the retained FILEPTR. Return EINVFN for an unsupported command.
+The dispatcher consults it before accessing any caller memory.
+
+  Kind                Argument passed to the sized ioctl
+  PFS_IOCTL_NONE      NULL and size 0. The caller's arg is ignored.
+  PFS_IOCTL_SCALAR    A kernel ULONG containing the 32-bit argument value.
+  PFS_IOCTL_IN        A checked copy of the caller's input buffer.
+  PFS_IOCTL_OUT       A zeroed kernel buffer of the declared size.
+  PFS_IOCTL_INOUT     A checked copy of the caller's input buffer.
+
+Declare size 0 for NONE and SCALAR. The buffer kinds declare a nonzero
+size in bytes. Bridge callbacks may use the buffer for the duration of the
+call. For OUT and INOUT the kernel prepares and retains writable backing
+before invoking the driver. It copies the result back only after a
+nonnegative driver result and while the same user-copy lease is valid.
+If the output lease is revoked during the call, Fcntl returns EIMBA.
+A successful device state change has the driver's usual semantics even
+when output publication fails. File references, leases and buffers are
+released on every return path, including an error before dispatch.
+
 Registration and migration
 --------------------------
 

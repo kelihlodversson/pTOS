@@ -4,6 +4,8 @@
 #include "fs_close.c"
 #undef main
 #include "kproc.h"
+#include "kheap.h"
+#include <stdlib.h>
 #if CONF_WITH_MULTITHREADING
 #include "ksched.h"
 
@@ -201,9 +203,9 @@ static void operation_reference_case(void)
     pfs_error = E_OK;
     release_error = EWRITF;
     CHECK(fs_handle_lookup(NUMSTD, &borrowed) == E_OK);
-    CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL) == RO_MODE);
-    CHECK(xfcntl(H_Console, GEMDOS_F_GETFL) == RW_MODE);
-    CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL + 1) == EINVFN);
+    CHECK(xfcntl(NUMSTD, 0, GEMDOS_F_GETFL) == RO_MODE);
+    CHECK(xfcntl(H_Console, 0, GEMDOS_F_GETFL) == RW_MODE);
+    CHECK(xfcntl(NUMSTD, 0, GEMDOS_F_GETFL + 1) == EINVFN);
     retiring = TRUE;
     CHECK(fs_reference_pin(&borrowed, &pin) == EACCDN && !pin.owned);
     retiring = FALSE;
@@ -214,7 +216,7 @@ static void operation_reference_case(void)
     CHECK(fs_close_once(NUMSTD, FALSE, &report) == E_OK);
     CHECK(report.disposition == FS_CLOSE_CONSUMED && sft[0].f_use == 1);
     CHECK(fs_handle_lookup(NUMSTD, &held) == EIHNDL);
-    CHECK(xfcntl(NUMSTD, GEMDOS_F_GETFL) == EIHNDL);
+    CHECK(xfcntl(NUMSTD, 0, GEMDOS_F_GETFL) == EIHNDL);
     CHECK(fs_reference_lookup(&pin, &held) == E_OK);
     CHECK(held.slot == borrowed.slot && held.slot->f_pfs.pos == 29);
     CHECK(fs_reference_ready(&pin, FS_READY_READ) == EINVFN);
@@ -243,6 +245,137 @@ static void operation_reference_case(void)
     CHECK(!sft[0].f_own && !sft[0].f_use && !sft[0].f_staged_refs);
     puts("In-flight file pin survives close; release, media revocation and slot reuse conserve references: PASS (host)");
 }
+
+#define CONTROL_ADDRESS 0x1200UL
+#define CONTROL_COMMAND 0x7b00
+static ULONG control_word;
+static BOOL control_readable, control_writable, control_fault;
+static unsigned control_leases, control_allocations, control_calls;
+static PFS_IOCTL_SPEC control_spec;
+
+void *kalloc(ULONG bytes)
+{
+    void *buffer = calloc(1, bytes);
+
+    CHECK(buffer != NULL);
+    control_allocations++;
+    return buffer;
+}
+
+void kfree(void *buffer)
+{
+    CHECK(buffer != NULL && control_allocations == 1);
+    control_allocations--;
+    free(buffer);
+}
+
+LONG kproc_user_copy_begin(KPROC_USER_COPY *copy, VADDR address, ULONG bytes, BOOL write)
+{
+    CHECK(!copy->active && !control_leases && bytes == sizeof(control_word) && write);
+    if (address != CONTROL_ADDRESS || !control_writable)
+        return EIMBA;
+    control_leases++;
+    copy->active = TRUE;
+    return E_OK;
+}
+
+LONG kproc_copy_from_user_checked(void *buffer, VADDR address, ULONG bytes)
+{
+    CHECK(bytes == sizeof(control_word));
+    if (address != CONTROL_ADDRESS || !control_readable)
+        return EIMBA;
+    memcpy(buffer, &control_word, bytes);
+    return E_OK;
+}
+
+BOOL kproc_user_copy_write(KPROC_USER_COPY *copy, const void *buffer)
+{
+    CHECK(copy->active && control_leases == 1);
+    if (!control_writable)
+        return FALSE;
+    memcpy(&control_word, buffer, sizeof(control_word));
+    return TRUE;
+}
+
+void kproc_user_copy_end(KPROC_USER_COPY *copy)
+{
+    if (copy->active) {
+        CHECK(control_leases == 1);
+        control_leases--;
+        copy->active = FALSE;
+    }
+}
+
+static LONG user_control_spec(const PFSCOOKIE *cookie, UWORD command, PFS_IOCTL_SPEC *spec)
+{
+    CHECK(cookie == &sft[0].f_pfs && sft[0].f_staged_refs == 1);
+    if (command != CONTROL_COMMAND)
+        return EINVFN;
+    *spec = control_spec;
+    return E_OK;
+}
+
+static LONG user_control(PFSCOOKIE *cookie, UWORD command, void *buffer, ULONG bytes)
+{
+    ULONG *word = buffer;
+
+    CHECK(cookie == &sft[0].f_pfs && sft[0].f_staged_refs == 1 && sft[0].f_io_busy);
+    CHECK(command == CONTROL_COMMAND && bytes == sizeof(*word));
+    CHECK(word != &control_word && *word == (control_spec.kind == PFS_IOCTL_OUT ? 0 : 17));
+    CHECK(control_leases == (control_spec.kind == PFS_IOCTL_IN ? 0 : 1));
+    control_calls++;
+    *word = 123;
+    if (control_fault) {
+        errcode = EWRITF;
+        errdrv = 0;
+        longjmp(errbuf, 1);
+    }
+    return E_OK;
+}
+
+static void public_control_case(void)
+{
+    FS_CLOSE_REPORT report;
+
+    CHECK(fs_sft_claim(0));
+    sft[0].f_own = &owner;
+    sft[0].f_use = 1;
+    sft[0].f_pfs.fs = &driver;
+    driver.release_file = driver_release_file;
+    driver.ioctl_spec = user_control_spec;
+    driver.ioctl = user_control;
+    control_spec = (PFS_IOCTL_SPEC){ PFS_IOCTL_INOUT, sizeof(control_word) };
+    control_word = 17;
+    control_readable = TRUE;
+    CHECK(xfcntl(NUMSTD, 1, CONTROL_COMMAND + 1) == EINVFN);
+    CHECK(xfcntl(NUMSTD, CONTROL_ADDRESS, CONTROL_COMMAND) == EIMBA);
+    CHECK(xfcntl(NUMSTD, (1ULL << 32) | CONTROL_ADDRESS, CONTROL_COMMAND) == EIMBA);
+    CHECK(!control_calls && !control_leases && !control_allocations);
+
+    control_writable = TRUE;
+    control_fault = TRUE;
+    CHECK(xfcntl(NUMSTD, CONTROL_ADDRESS, CONTROL_COMMAND) == EWRITF);
+    CHECK(control_word == 17 && !control_leases && !control_allocations);
+    control_fault = FALSE;
+    CHECK(xfcntl(NUMSTD, CONTROL_ADDRESS, CONTROL_COMMAND) == E_OK && control_word == 123);
+
+    control_spec.kind = PFS_IOCTL_IN;
+    control_word = 17;
+    control_writable = FALSE;
+    CHECK(xfcntl(NUMSTD, CONTROL_ADDRESS, CONTROL_COMMAND) == E_OK && control_word == 17);
+    control_spec.kind = PFS_IOCTL_OUT;
+    control_writable = TRUE;
+    control_readable = FALSE;
+    CHECK(xfcntl(NUMSTD, CONTROL_ADDRESS, CONTROL_COMMAND) == E_OK && control_word == 123);
+    CHECK(control_calls == 4 && !control_leases && !control_allocations &&
+          sft[0].f_use == 1 && !sft[0].f_staged_refs && !sft[0].f_io_busy);
+    driver.ioctl = NULL;
+    driver.ioctl_spec = NULL;
+    release_error = E_OK;
+    CHECK(fs_close_once(NUMSTD, FALSE, &report) == E_OK);
+    puts("Public Fcntl checked argument staging, disk unwind and exact reference cleanup: PASS (host)");
+}
+
 int main(void)
 {
     FS_FILE_REFERENCE a=FS_FILE_REFERENCE_INIT,b=FS_FILE_REFERENCE_INIT;
@@ -356,6 +489,7 @@ int main(void)
     operation_reference_case();
     operation_callback_case(FALSE);
     operation_callback_case(TRUE);
+    public_control_case();
 #if CONF_WITH_MULTITHREADING
     puts("PFS callback group exit deferred through final release and disk-error unwind: PASS (host scheduler model)");
 #endif

@@ -46,6 +46,17 @@ typedef struct pfs_attr {
     UWORD time;         /* GEMDOS packed time, as returned by Fsfirst */
 } PFSATTR;
 
+/* Fcntl command metadata supplied by the opened file's provider. The size
+ * is zero for NONE and SCALAR. The sized ioctl receives NULL/0 for NONE,
+ * a kernel ULONG for SCALAR, or a kernel buffer of the specified size. */
+typedef struct {
+    enum {
+        PFS_IOCTL_NONE, PFS_IOCTL_SCALAR, PFS_IOCTL_IN, PFS_IOCTL_OUT,
+        PFS_IOCTL_INOUT
+    } kind;
+    UWORD size;
+} PFS_IOCTL_SPEC;
+
 /*
  * Per-driver operations vtable.  Every entry is optional; fs/pfs.c treats
  * a NULL entry as "this driver doesn't support that operation" and
@@ -208,6 +219,9 @@ struct pfs_ops {
     /* An open description can supply its native seek operation. A
      * successful return is the new shared GEMDOS position. */
     LONG (*seek)(PFSCOOKIE *, LONG offset, WORD whence);
+
+    /* Pure, nonblocking query. EINVFN for unsupported public commands. */
+    LONG (*ioctl_spec)(const PFSCOOKIE *, UWORD command, PFS_IOCTL_SPEC *);
 };
 
 typedef struct {
@@ -258,6 +272,7 @@ LONG pfs_handle_write(const struct fs_handle *handle, LONG len, const UBYTE *buf
 LONG pfs_handle_close(PFSCOOKIE *fc);
 #if CONF_WITH_USER_ASPACE
 LONG pfs_handle_ioctl(const struct fs_handle *handle, UWORD command, void *arg, ULONG size);
+LONG pfs_handle_user_ioctl(const struct fs_handle *handle, UWORD command, UQUAD arg);
 #endif
 
 /* Fseek on a pluggable handle: 'flg' 0/1/2 = from the start, the current
