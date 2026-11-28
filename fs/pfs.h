@@ -222,6 +222,10 @@ struct pfs_ops {
 
     /* Pure, nonblocking query. EINVFN for unsupported public commands. */
     LONG (*ioctl_spec)(const PFSCOOKIE *, UWORD command, PFS_IOCTL_SPEC *);
+
+    /* The provider validates the entire Fopen mode word. Other providers
+     * continue to receive only the legacy access bits. */
+    BOOL full_open_mode;
 };
 
 typedef struct {

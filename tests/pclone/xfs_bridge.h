@@ -147,6 +147,43 @@ done:
 }
 #endif
 
+static void xfs_check_open_mode(const char *path)
+{
+    static const short unsupported[] = { 0x10, 0x100 }; /* deny read/write, nonblocking */
+    static const char fat_path[] = "C:\\XFSFLAG.TMP";
+    const short deny_none = 0x42; /* read/write, deny none */
+    long fd;
+    unsigned i;
+
+    for (i = 0; i < sizeof(unsupported) / sizeof(unsupported[0]); i++) {
+        fd = Fopen(path, unsupported[i]);
+        ptest_assert_msg(fd == -32L, "XFS rejects unsupported Fopen flags at the GEMDOS trap");
+        if (fd >= 0)
+            Fclose((short)fd);
+    }
+    fd = Fopen(path, deny_none);
+    ptest_assert_msg(fd >= 0, "XFS accepts explicit deny-none at the GEMDOS trap");
+    if (fd >= 0) {
+#ifdef TEST_WITH_FPOLL_TIME64
+        ptest_assert_msg(Fcntl((short)fd, 0, XFS_TEST_OPEN_FLAGS) == deny_none &&
+                         Fcntl((short)fd, 0, F_GETFL) == 2,
+                         "deny-none reaches FILEPTR.flags while F_GETFL reports access bits");
+#endif
+        ptest_assert_msg(Fclose((short)fd) == 0, "close the deny-none description");
+    }
+
+    fd = Fcreate(fat_path, 0);
+    ptest_assert_msg(fd >= 0, "create a FAT file for the legacy masking check");
+    if (fd >= 0) {
+        ptest_assert_msg(Fclose((short)fd) == 0, "close the initial FAT description");
+        fd = Fopen(fat_path, unsupported[0] | unsupported[1]);
+        ptest_assert_msg(fd >= 0, "FAT still ignores the legacy high mode bits");
+        if (fd >= 0)
+            ptest_assert_msg(Fclose((short)fd) == 0, "close the masked FAT description");
+        ptest_assert_msg(Fdelete(fat_path) == 0, "remove the FAT fixture");
+    }
+}
+
 /* Exercise the mounted source driver through GEMDOS's real SFT bindings. */
 static void xfs_inherited_reader(void *argument)
 {
@@ -197,6 +234,7 @@ static void test_xfs_bridge(void)
     ptest_assert_msg(Fclose((short)fd) == 0 && Fread(4, 1, &byte) == 1 &&
                      byte == 'd' && Fclose(4) == 0,
                      "final close belongs to the last binding");
+    xfs_check_open_mode(path);
 
     fd = Fopen("R:\\FIXTURE\\NULL.TXT", 2);
     ptest_assert_msg(fd >= 0, "open the unchanged FreeMiNT DEVDRV callback subset");

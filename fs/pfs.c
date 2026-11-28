@@ -1102,6 +1102,8 @@ LONG pfs_do_open(const char *path, WORD mode)
     if (!fs)
         return EDRIVE;
 
+    if (!fs->full_open_mode)
+        mode &= VALID_FOPEN_BITS;
     rc = pfs_resolve_dir(fs, drive, path, &dir, &name, &owned);
     if (rc < 0)
         return rc;

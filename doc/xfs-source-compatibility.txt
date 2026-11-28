@@ -43,7 +43,9 @@ so access embedded pointers with memcpy or independently allocated state.
   FILESYS.creat/getdev         Resolve or create an fcookie, ask getdev
                                for DEVDRV and devinfo, then open the
                                FILEPTR. Fcreate passes create and
-                               truncate flags. The adapter supports
+                               truncate flags and creates a regular inode.
+                               The adapter validates the full Fopen mode.
+                               It supports
                                regular files and read, write and
                                read/write modes, with optional deny-none.
   FILESYS.getxattr             DOS timestamps, size and attributes.

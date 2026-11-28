@@ -310,7 +310,7 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
     memset(file, 0, sizeof(*file));
     rc = xfs_lookup_component(parent, name, &file->fc);
     if (rc == EFILNF && (flags & XFS_CREAT) && driver->creat) {
-        rc = xfs_result(driver->creat(parent, name, 0666, dos_attr, &file->fc));
+        rc = xfs_result(driver->creat(parent, name, XFS_IFREG | 0666, dos_attr, &file->fc));
         if (rc >= 0) {
             created = TRUE;
             rc = xfs_validate(driver, &file->fc);
@@ -576,7 +576,8 @@ static const struct pfs_ops xfs_ops = {
     .ready = xfs_ready,
     .ioctl = xfs_ioctl,
     .seek = xfs_seek,
-    .ioctl_spec = xfs_ioctl_spec
+    .ioctl_spec = xfs_ioctl_spec,
+    .full_open_mode = TRUE
 };
 
 LONG ptos_xfs_mount_drive(WORD drive, struct ptos_xfs_mount *mount, FILESYS *driver,

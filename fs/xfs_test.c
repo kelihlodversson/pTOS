@@ -24,16 +24,16 @@ long _cdecl null_lseek(FILEPTR *, long, int);
 typedef struct {
     const char *name;
     unsigned mode;
-    unsigned references;
 } XFS_TEST_NODE;
 
-static XFS_TEST_NODE nodes[] = {
-    { "", 0040755, 0 }, { "FIXTURE", 0040755, 0 },
-    { "DATA.TXT", 0100666, 0 }, { "NULL.TXT", 0100666, 0 },
+static const XFS_TEST_NODE nodes[] = {
+    { "", 0040755 }, { "FIXTURE", 0040755 },
+    { "DATA.TXT", 0100666 }, { "NULL.TXT", 0100666 },
 #if CONF_WITH_FPOLL_TIME64
-    { "EVENT.BIN", 0100666, 0 },
+    { "EVENT.BIN", 0100666 },
 #endif
 };
+static unsigned node_refs[ARRAY_SIZE(nodes)];
 static FILESYS test_driver;
 static char data[64];
 static long data_size;
@@ -47,18 +47,18 @@ static LONG unready_samples, event_closes;
 static BOOL event_pending;
 #endif
 
-static XFS_TEST_NODE *test_node(const fcookie *cookie)
+static const XFS_TEST_NODE *test_node(const fcookie *cookie)
 {
-    return (XFS_TEST_NODE *)(intptr_t)cookie->index;
+    return (const XFS_TEST_NODE *)(intptr_t)cookie->index;
 }
 
-static void test_cookie(fcookie *out, unsigned short drive, XFS_TEST_NODE *node)
+static void test_cookie(fcookie *out, unsigned short drive, const XFS_TEST_NODE *node)
 {
     out->fs = &test_driver;
     out->dev = drive;
     out->aux = 0;
     out->index = (long)(intptr_t)node;
-    node->references++;
+    node_refs[node - nodes]++;
 }
 
 static long _cdecl test_root(int drive, fcookie *out)
@@ -69,7 +69,7 @@ static long _cdecl test_root(int drive, fcookie *out)
 
 static long _cdecl test_lookup(fcookie *dir, const char *name, fcookie *out)
 {
-    XFS_TEST_NODE *node = test_node(dir), *target = NULL;
+    const XFS_TEST_NODE *node = test_node(dir), *target = NULL;
     unsigned i;
 
     if (!strcmp(name, "."))
@@ -96,11 +96,11 @@ static long _cdecl test_dup(fcookie *out, fcookie *cookie)
 
 static long _cdecl test_release(fcookie *cookie)
 {
-    XFS_TEST_NODE *node = test_node(cookie);
+    const XFS_TEST_NODE *node = test_node(cookie);
 
-    if (!node || !node->references)
+    if (!node || !node_refs[node - nodes])
         return EINTRN;
-    node->references--;
+    node_refs[node - nodes]--;
     cookie->index = 0;
     return E_OK;
 }
@@ -247,6 +247,7 @@ static long _cdecl test_ioctl_spec(const FILEPTR *file, UWORD command, PFS_IOCTL
         return E_OK;
     case XFS_TEST_SAMPLE_COUNT:
     case XFS_TEST_CLOSE_COUNT:
+    case XFS_TEST_OPEN_FLAGS:
         if (file->dev != &data_device)
             break;
         *spec = (PFS_IOCTL_SPEC){ PFS_IOCTL_NONE, 0 };
@@ -270,6 +271,8 @@ static long _cdecl test_ioctl(FILEPTR *file, UWORD command, void *buffer, ULONG 
     if (spec.kind == PFS_IOCTL_NONE) {
         if (buffer || size)
             return EINVAL;
+        if (command == XFS_TEST_OPEN_FLAGS)
+            return file->flags;
         return command == XFS_TEST_CLOSE_COUNT ? event_closes : unready_samples;
     }
     if (!arg || size != sizeof(*arg))
@@ -311,7 +314,7 @@ static long _cdecl test_opendir(DIR *dir, int flags)
 static long _cdecl test_readdir(DIR *dir, char *name, int size, fcookie *out)
 {
     unsigned index = dir->index;
-    XFS_TEST_NODE *node;
+    const XFS_TEST_NODE *node;
 
     if (!dir->fsstuff[0])
         return EIHNDL;
