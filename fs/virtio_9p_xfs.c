@@ -183,15 +183,10 @@ static void v9p_filename8_3(char *dest, int destlen, const char *source)
  * current-directory cache (pfs_cwd_get()) keeps handing back the same
  * fid across separate Fopen/Fcreate/... calls for a relative path.
  *
- * Keyed by the directory's *fid number*, not its 9p qid.path as #157's
- * plan originally called for: PFSCOOKIE (fs/pfs.h) has no spare field to
- * stash a qid.path in alongside the fid it already carries in 'index'.
- * This is still fully correct as long as every place that clunks a fid
- * also invalidates its cache slot (v9p_pfs_release() below) - a live fid
- * always names the same directory for its whole lifetime, and once
- * clunked it can never be looked up again, so a later fid that happens
- * to reuse the same pool-slot number can never collide with a stale
- * entry - v9p_dircache_invalidate() has already dropped it by then.
+ * Slots are keyed by fid number. Release drops the slot before the
+ * transport can reuse the number. Absolute paths and cached current
+ * directories can hold different fids for the same host directory, so
+ * successful directory mutations invalidate all listings.
  *
  * Cache-assisted, not cache-required: v9p_resolve_name() only ever
  * trusts the cache for a HIT (a positive match), never for a miss - the
@@ -205,7 +200,7 @@ static void v9p_filename8_3(char *dest, int destlen, const char *source)
  * rescan; a directory with more real entries than
  * CONF_VIRTIO_9P_MAX_DIRCACHE_ENTRIES, or a real name too long for
  * V9P_DIRCACHE_NAMELEN, simply never gets that entry cached, so it's
- * always resolved live too. Only costs speed, never a wrong answer. */
+ * always resolved live too. */
 #define V9P_DIRCACHE_NAMELEN  32
 
 typedef struct
@@ -235,23 +230,22 @@ static WORD v9p_dircache_find(ULONG fid)
     return -1;
 }
 
-/* Drops 'fid's cache slot, if any - called whenever 'fid' is clunked
- * (see this section's own comment on why that keeps the fid-keyed cache
- * safe) or whenever this driver mutates a directory it might have
- * cached (create/mkdir/rmdir/remove/either side of rename) - no
- * fine-grained patching, the whole slot just goes stale. */
-static void v9p_dircache_invalidate(ULONG fid)
+/* Other fids can alias the directory changed by this operation. */
+static void v9p_dircache_invalidate(void)
 {
-    WORD i = v9p_dircache_find(fid);
+    WORD i;
 
-    if (i >= 0)
+    for (i = 0; i < CONF_VIRTIO_9P_MAX_DIRCACHE; i++)
         v9p_dircache[i].used = FALSE;
 }
 
 /* Drop the cache before clunk can release the transport's fid slot. */
 static LONG v9p_clunk_uncached(ULONG fid)
 {
-    v9p_dircache_invalidate(fid);
+    WORD i = v9p_dircache_find(fid);
+
+    if (i >= 0)
+        v9p_dircache[i].used = FALSE;
     return v9p_clunk(fid);
 }
 
@@ -543,7 +537,7 @@ static long _cdecl v9p_xfs_creat(fcookie *dir, const char *name, unsigned mode,
         v9p_clunk(fid);
         return rc;
     }
-    v9p_dircache_invalidate((ULONG)dir->index);
+    v9p_dircache_invalidate();
     v9p_cookie(out, dir->dev, fid, V9P_COOKIE_OPEN);
     return E_OK;
 }
@@ -740,7 +734,7 @@ static long _cdecl v9p_xfs_mkdir(fcookie *dir, const char *name, unsigned mode)
     rc = v9p_mkdir((ULONG)dir->index, name, 0755, NULL);
 
     if (rc >= 0)
-        v9p_dircache_invalidate((ULONG)dir->index);
+        v9p_dircache_invalidate();
 
     return rc;
 }
@@ -756,7 +750,7 @@ static long _cdecl v9p_xfs_rmdir(fcookie *dir, const char *name)
 
     rc = v9p_unlinkat((ULONG)dir->index, realname, V9P_AT_REMOVEDIR);
     if (rc >= 0)
-        v9p_dircache_invalidate((ULONG)dir->index);
+        v9p_dircache_invalidate();
 
     return rc;
 }
@@ -772,7 +766,7 @@ static long _cdecl v9p_xfs_remove(fcookie *dir, const char *name)
 
     rc = v9p_unlinkat((ULONG)dir->index, realname, 0);
     if (rc >= 0)
-        v9p_dircache_invalidate((ULONG)dir->index);
+        v9p_dircache_invalidate();
 
     return rc;
 }
@@ -805,10 +799,7 @@ static long _cdecl v9p_xfs_rename(fcookie *olddir, char *oldname,
 
     rc = v9p_renameat((ULONG)olddir->index, realoldname, (ULONG)newdir->index, newname);
     if (rc >= 0)
-    {
-        v9p_dircache_invalidate((ULONG)olddir->index);
-        v9p_dircache_invalidate((ULONG)newdir->index);
-    }
+        v9p_dircache_invalidate();
 
     return rc;
 }

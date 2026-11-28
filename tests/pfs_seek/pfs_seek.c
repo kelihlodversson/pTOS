@@ -29,6 +29,36 @@
 
 void test_pfs_seek(void);
 
+static void test_directory_cache(const char *directory)
+{
+    static const char absolute[] = "Q:\\XFS9P\\CACHE.TXT";
+    static const char relative[] = "Q:CACHE.TXT";
+    char saved[128] = "Q:\\";
+    long fd, rc;
+
+    if (Dgetpath(saved + 2, DRIVE_Q + 1) != 0 || Dsetpath(directory) != 0) {
+        ptest_fail("set the host current directory for the cache test");
+        return;
+    }
+    if (!saved[2])
+        saved[2] = '\\';
+    fd = Fcreate(absolute, 0);
+    ptest_assert_msg(fd >= 0, "create the host cache fixture");
+    if (fd >= 0) {
+        ptest_assert_msg(Fclose((short)fd) == 0, "close the host cache fixture");
+        fd = Fopen(relative, 0);
+        ptest_assert_msg(fd >= 0, "populate the current-directory listing cache");
+        if (fd >= 0)
+            ptest_assert_msg(Fclose((short)fd) == 0, "close the relative cache fixture");
+        ptest_assert_msg(Fdelete(absolute) == 0, "delete the cached file through an absolute path");
+        rc = Dcreate(relative);
+        ptest_assert_msg(rc == 0, "a relative mkdir sees the absolute deletion");
+        if (rc == 0)
+            ptest_assert_msg(Ddelete(absolute) == 0, "remove the replacement directory");
+    }
+    ptest_assert_msg(Dsetpath(saved) == 0, "restore the host current directory");
+}
+
 static void test_directory(void)
 {
     static const char dir[] = "Q:\\XFS9P";
@@ -82,6 +112,7 @@ static void test_directory(void)
         ptest_fail("start a host-directory search");
     }
     (void)Fsetdta(saved);
+    test_directory_cache(dir);
     ptest_assert_msg(Fdelete(first) == 0 && Fdelete(second) == 0 && Ddelete(dir) == 0,
                      "release the host directory and its files");
 }
