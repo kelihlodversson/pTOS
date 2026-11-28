@@ -425,7 +425,7 @@ bios_copts = -Iutil
 bdos_copts = -Ifs
 
 # fatfs_pfs.c (fs/) wraps the built-in FAT filesystem, so it needs bdos/'s
-# private headers.  virtio_9p_pfs.c similarly wraps bios/virtio_9p.c's
+# private headers.  virtio_9p_xfs.c similarly wraps bios/virtio_9p.c's
 # fid-level API, needing -Ibios.
 fs_copts = -Ibdos -Ibios
 

@@ -494,8 +494,8 @@ long xclose(WORD h)
 
         /*
          * close() runs on every xclose() of this slot, same as ixclose()
-         * does for the legacy OFD path below; release() only runs once
-         * the last sft[] reference to this cookie is gone (mirrors
+         * does for the legacy OFD path below; the file destructor runs
+         * once the last sft[] reference to this cookie is gone (mirrors
          * sftdel() being called only when f_use reaches zero), so a
          * duplicated binding to the same slot keeps the driver's
          * resources alive until the last owner releases the cookie.
@@ -512,14 +512,12 @@ long xclose(WORD h)
 #endif
         if (!(--sft[h-NUMSTD].f_use))
         {
-#if CONF_WITH_USER_ASPACE
             if (pfs->release_file) {
                 LONG released=pfs->release_file(&sft[h-NUMSTD].f_pfs);
                 if (rc>=0) rc=released;
-            } else
-#endif
-            if (pfs->release)
+            } else if (pfs->release) {
                 pfs->release(&sft[h-NUMSTD].f_pfs);
+            }
             sft[h-NUMSTD].f_pfs.fs = 0;
             sft[h-NUMSTD].f_own = 0;
         }

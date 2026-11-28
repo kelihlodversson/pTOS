@@ -78,7 +78,7 @@ static void test_mount_admission(void)
     unsupported.version++;
     CHECK(ptos_xfs_mount_drive(17, &mount, &test_driver, &unsupported) == EINVFN);
     unsupported = test_extensions;
-    unsupported.size--;
+    unsupported.size = offsetof(struct ptos_xfs_extensions, flags) - 1;
     CHECK(ptos_xfs_mount_drive(17, &mount, &test_driver, &unsupported) == EINVFN);
     test_driver.fsflags = FS_NO_C_CACHE;
     CHECK(ptos_xfs_mount_drive(17, &mount, &test_driver, NULL) == EINVFN);

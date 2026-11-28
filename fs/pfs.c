@@ -1568,27 +1568,14 @@ static LONG pfs_handle_fstat(PFSCOOKIE *fc, PFSATTR *attr)
     return fc->fs->fstat(fc, attr);
 }
 
-static LONG pfs_file_seek(PFSCOOKIE *fc, LONG n, WORD flg)
+LONG pfs_bounded_seek(LONG position, ULONG size, LONG offset, WORD whence)
 {
-    PFSATTR attr;
-    QUAD target;    /* wide enough for a size of up to 4 GB plus an offset */
-    LONG rc;
+    QUAD target;
 
-    if ((flg < 0) || (flg > 2))
+    if (whence < 0 || whence > 2)
         return EINVFN;
-
-    if (fc->fs->seek) {
-        rc = fc->fs->seek(fc, n, flg);
-        if (rc >= 0)
-            fc->pos = rc;
-        return rc;
-    }
-    rc = pfs_handle_fstat(fc, &attr);
-    if (rc < 0)
-        return rc;
-
-    target = n;
-    if (flg == 2)
+    target = offset;
+    if (whence == 2)
     {
         /*
          * A driver caps a size of 4 GB or more at 0xffffffff (PFSATTR.size
@@ -1597,20 +1584,37 @@ static LONG pfs_file_seek(PFSCOOKIE *fc, LONG n, WORD flg)
          * -2^31 would land on 0x7fffffff: refuse them all.  (A file of
          * exactly 0xffffffff bytes loses that one valid seek.)
          */
-        if (attr.size == 0xffffffffUL)
+        if (size == 0xffffffffUL)
             return ERANGE;
-        target += attr.size;
+        target += size;
     }
-    else if (flg == 1)
-        target += fc->pos;
+    else if (whence == 1)
+        target += position;
 
     /* within the file, and a position a LONG can hold */
-    if ((target < 0) || (target > (QUAD)attr.size) || (target > 0x7fffffffL))
+    if ((target < 0) || (target > (QUAD)size) || (target > 0x7fffffffL))
         return ERANGE;
 
-    fc->pos = (LONG)target;
+    return (LONG)target;
+}
 
-    return fc->pos;
+static LONG pfs_file_seek(PFSCOOKIE *fc, LONG n, WORD flg)
+{
+    PFSATTR attr;
+    LONG rc;
+
+    if (flg < 0 || flg > 2)
+        return EINVFN;
+    if (fc->fs->seek) {
+        rc = fc->fs->seek(fc, n, flg);
+    } else {
+        rc = pfs_handle_fstat(fc, &attr);
+        if (rc >= 0)
+            rc = pfs_bounded_seek(fc->pos, attr.size, n, flg);
+    }
+    if (rc >= 0)
+        fc->pos = rc;
+    return rc;
 }
 
 static LONG pfs_file_eof(PFSCOOKIE *fc)

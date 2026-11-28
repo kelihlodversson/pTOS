@@ -47,6 +47,7 @@
 #endif
 #define OSM_PAYLOAD (OSM_PAYLOAD_BYTES/sizeof(WORD))
 #define BLOCK_PAD (BLOCK_PAD_BYTES/sizeof(WORD))
+#define OSM_LAST_MEMTYPE ((CONF_WITH_XFS && !CONF_WITH_KHEAP) ? MEMTYPE_XFS : MEMTYPE_KPROC)
 
 #define NUM_OSM_BLOCKS  118         /* more than TOS, probably larger than necessary */
 #define LEN_OSM_BLOCK   (BLOCK_PAD_BYTES+OSM_PAYLOAD_BYTES)      /* in bytes */
@@ -304,8 +305,8 @@ void xmfremd(MD *md)
  * are no free blocks on the list, we call getosm to get a block from
  * the os memory pool.
  *
- * If we cannot get memory for an MDBLOCK or a KPROC, we return NULL (the
- * request will fail).  Otherwise we will attempt to free up DNDs to make
+ * If we cannot get memory for an MDBLOCK, KPROC or XFS object, we return
+ * NULL. Otherwise we will attempt to free up DNDs to make
  * space and if that fails, the system will be halted.
  *
  * Arguments:
@@ -315,7 +316,7 @@ void *xmgetblk(WORD memtype)
 {
     WORD i, j, w, *m, *q, **r;
 
-    if ((memtype < MEMTYPE_MDBLOCK) || (memtype > MEMTYPE_KPROC))
+    if ((memtype < MEMTYPE_MDBLOCK) || (memtype > OSM_LAST_MEMTYPE))
     {
         dbggtblk++;
         return NULL;
@@ -348,10 +349,8 @@ void *xmgetblk(WORD memtype)
             break;
         }
 
-        /* no memory available for an MDBLOCK or KPROC, that's (sort of) OK:
-         * both are optional allocations whose callers report the failure
-         * to their own caller instead of halting the whole system */
-        if ((memtype == MEMTYPE_MDBLOCK) || (memtype == MEMTYPE_KPROC))
+        /* Optional allocations report exhaustion to their caller. */
+        if (memtype == MEMTYPE_MDBLOCK || memtype >= MEMTYPE_KPROC)
             break;
 
         /*

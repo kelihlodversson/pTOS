@@ -121,7 +121,7 @@ clunks the fid on final release. It has no flush hook. As implemented, a
 negative result after earlier successful chunks is returned as an error and
 the PFS cursor does not advance. A dispatch refactor must preserve existing
 partial-I/O and error conventions or change them in a separately tested
-increment. [fsio.c](../bdos/fsio.c) · [pfs.c](../fs/pfs.c) · [virtio_9p_pfs.c](../fs/virtio_9p_pfs.c)
+increment. [fsio.c](../bdos/fsio.c) · [pfs.c](../fs/pfs.c) · [virtio_9p_xfs.c](../fs/virtio_9p_xfs.c)
 
 ## Mapping pins, revocation and execution boundaries
 

@@ -93,7 +93,6 @@
 #define V9P_MAX_MOUNT_TAG  32   /* QEMU's own MAX_TAG_LEN */
 #define V9P_NOFID    0xFFFFFFFFUL
 #define V9P_MAXWELEM 16         /* 9P2000.L's own per-Twalk component cap */
-#define V9P_QTDIR    0x80       /* qid.type bit: this qid is a directory */
 #define P9_GETATTR_BASIC  ((UQUAD)0x7ff)  /* mode|nlink|uid|gid|rdev|atime|mtime|ctime|ino|size|blocks */
 
 static VIRTIO_DEV v9p_dev;
@@ -1387,7 +1386,7 @@ LONG v9p_statfs(ULONG fid, P9STATFS *out)
 
     /* type[4] bsize[4] blocks[8] bfree[8] bavail[8] files[8] ffree[8]
      * fsid[8] namelen[4] - only bsize/blocks/bfree have a GEMDOS Dfree()
-     * use (see v9p_pfs_dfree() in fs/virtio_9p_pfs.c). */
+     * use (see v9p_xfs_dfree() in fs/virtio_9p_xfs.c). */
     if ((ULONG)rc < 7 + 4 + 4 + 8 + 8)
     {
         KDEBUG(("virtio_9p: Rstatfs reply too short\n"));

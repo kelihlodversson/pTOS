@@ -193,8 +193,7 @@ extern void pfs_test_init(void); /* found in fs/pfs_test.c */
 #endif
 
 #if CONF_WITH_VIRTIO_9P
-extern void virtio_9p_init(void); /* found in virtio_9p.h */
-extern void v9p_pfs_init(void); /* found in fs/virtio_9p_pfs.c */
+#include "virtio_9p.h"
 #endif
 
 /*==== Declarations =======================================================*/
@@ -777,22 +776,6 @@ static void bios_init(void)
     blkdev_init();      /* floppy and harddisk initialisation */
     KDEBUG(("after blkdev_init()\n"));
 
-#if CONF_WITH_PLUGGABLE_FS_TEST
-    /* after blkdev_init(), which resets drvbits - see fs/pfs_test.c */
-    KDEBUG(("pfs_test_init()\n"));
-    pfs_test_init();
-    KDEBUG(("after pfs_test_init()\n"));
-#endif
-
-#if CONF_WITH_VIRTIO_9P
-    KDEBUG(("virtio_9p_init()\n"));
-    virtio_9p_init();
-    KDEBUG(("after virtio_9p_init()\n"));
-    KDEBUG(("v9p_pfs_init()\n"));
-    v9p_pfs_init();
-    KDEBUG(("after v9p_pfs_init()\n"));
-#endif
-
     /* initialize BIOS components */
 
     KDEBUG(("parport_init()\n"));
@@ -877,6 +860,23 @@ static void bios_init(void)
     osinit_after_xmaddalt();    /* initialize BDOS (part 2) */
     KDEBUG(("after osinit_after_xmaddalt()\n"));
     boot_status |= DOS_AVAILABLE;   /* track progress */
+
+    /* Pluggable drivers can allocate their root cookies from the BDOS pool. */
+#if CONF_WITH_PLUGGABLE_FS_TEST
+    /* after blkdev_init(), which resets drvbits - see fs/pfs_test.c */
+    KDEBUG(("pfs_test_init()\n"));
+    pfs_test_init();
+    KDEBUG(("after pfs_test_init()\n"));
+#endif
+
+#if CONF_WITH_VIRTIO_9P
+    KDEBUG(("virtio_9p_init()\n"));
+    virtio_9p_init();
+    KDEBUG(("after virtio_9p_init()\n"));
+    KDEBUG(("v9p_xfs_init()\n"));
+    v9p_xfs_init();
+    KDEBUG(("after v9p_xfs_init()\n"));
+#endif
 
     /* Enable VBL processing */
     swv_vec = os_header.reseth; /* reset system on monitor change & jump to _main */

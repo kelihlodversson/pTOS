@@ -7,14 +7,8 @@
 #include "gemerror.h"
 #include "kheap.h"
 #include "kproc.h"
+#include "mem.h"
 #include "string.h"
-
-#define XFS_IFMT   0170000
-#define XFS_IFDIR  0040000
-#define XFS_IFREG  0100000
-#define XFS_DENY_NONE 0x0040
-#define XFS_CREAT  0x0200
-#define XFS_TRUNC  0x0400
 
 /* One independently owned cookie per directory owner. The search's cookie
  * also owns its DIR, so an active cursor never gets copied with a PFS token. */
@@ -24,36 +18,80 @@ typedef struct {
     BOOL opened;
 } XFS_DIRECTORY;
 
+#if !CONF_WITH_KHEAP
+typedef char XFS_DIRECTORY_fits_osmem[(sizeof(XFS_DIRECTORY) <= OSM_PAYLOAD_BYTES) ? 1 : -1];
+typedef char XFS_FILEPTR_fits_osmem[(sizeof(FILEPTR) <= OSM_PAYLOAD_BYTES) ? 1 : -1];
+#endif
+
 static LONG xfs_result(long result)
 {
     return result < INT32_MIN || result > INT32_MAX ? ERANGE : (LONG)result;
 }
 
-static void * _cdecl xfs_kmalloc(ulong bytes)
+#if CONF_WITH_MFASTCALL
+/* The m68k SDK reads indirect cdecl pointer results in A0 in a
+ * fastcall function. The XFS stack ABI returns them in D0. */
+FILESYS *ptos_xfs_call_init(PTOS_XFS_INIT init, struct kerinfo *services);
+DEVDRV *ptos_xfs_call_getdev(DEVDRV * _cdecl (*getdev)(fcookie *, long *),
+                            fcookie *cookie, long *special);
+void * _cdecl ptos_xfs_cdecl_kmalloc(ulong bytes);
+void *ptos_xfs_alloc(ulong bytes);
+#else
+static
+#endif
+void *ptos_xfs_alloc(ulong bytes)
 {
+#if CONF_WITH_KHEAP
     return bytes <= UINT32_MAX ? kalloc((ULONG)bytes) : NULL;
+#else
+    return bytes && bytes <= OSM_PAYLOAD_BYTES ? xmgetblk(MEMTYPE_XFS) : NULL;
+#endif
 }
 
 static void _cdecl xfs_kfree(void *address)
 {
+#if CONF_WITH_KHEAP
     kfree(address);
+#else
+    if (address)
+        xmfreblk(address);
+#endif
 }
 
 FILESYS *ptos_xfs_init_driver(PTOS_XFS_INIT init)
 {
     static struct kerinfo services = {
         .default_perm = 0666,
-        .kmalloc = xfs_kmalloc,
+#if CONF_WITH_MFASTCALL
+        .kmalloc = ptos_xfs_cdecl_kmalloc,
+#else
+        .kmalloc = ptos_xfs_alloc,
+#endif
         .kfree = xfs_kfree
     };
 
+#if CONF_WITH_MFASTCALL
+    return init ? ptos_xfs_call_init(init, &services) : NULL;
+#else
     return init ? init(&services) : NULL;
+#endif
 }
 
 static const struct ptos_xfs_mount *xfs_mount(const struct pfs_ops *ops)
 {
     /* Mount ops is the first member, and only installed for XFS drives. */
     return (const struct ptos_xfs_mount *)ops;
+}
+
+static UWORD xfs_extension_flags(const struct ptos_xfs_extensions *ext)
+{
+    return ext && ext->size >= offsetof(struct ptos_xfs_extensions, flags) + sizeof(ext->flags)
+        ? ext->flags : 0;
+}
+
+static UWORD xfs_flags(const struct pfs_ops *ops)
+{
+    return xfs_extension_flags(xfs_mount(ops)->extensions);
 }
 
 static fcookie *xfs_dir_cookie(const PFSCOOKIE *cookie)
@@ -103,7 +141,7 @@ static LONG xfs_root(struct pfs_ops *ops, WORD drive, PFSCOOKIE *out)
     XFS_DIRECTORY *directory;
     LONG rc;
 
-    directory = kalloc(sizeof(*directory));
+    directory = ptos_xfs_alloc(sizeof(*directory));
     if (!directory)
         return ENSMEM;
     memset(directory, 0, sizeof(*directory));
@@ -111,7 +149,7 @@ static LONG xfs_root(struct pfs_ops *ops, WORD drive, PFSCOOKIE *out)
     if (rc >= 0)
         rc = xfs_validate(driver, &directory->dir.fc);
     if (rc < 0)
-        kfree(directory);
+        xfs_kfree(directory);
     else
         xfs_publish(out, ops, directory);
     return rc;
@@ -172,13 +210,13 @@ static LONG xfs_lookup_dir(const PFSCOOKIE *dir, const char *path, PFSCOOKIE *ou
     XFS_DIRECTORY *directory;
     LONG rc;
 
-    directory = kalloc(sizeof(*directory));
+    directory = ptos_xfs_alloc(sizeof(*directory));
     if (!directory)
         return ENSMEM;
     memset(directory, 0, sizeof(*directory));
     rc = xfs_descend(xfs_dir_cookie(dir), path, &directory->dir.fc);
     if (rc < 0)
-        kfree(directory);
+        xfs_kfree(directory);
     else
         xfs_publish(out, dir->fs, directory);
     return rc;
@@ -199,7 +237,7 @@ static LONG xfs_close_directory(PFSCOOKIE *fc, LONG position)
     if (directory->opened)
         rc = xfs_result(directory->dir.fc.fs->closedir(&directory->dir));
     released = xfs_release(&directory->dir.fc);
-    kfree(directory);
+    xfs_kfree(directory);
     return rc < 0 ? rc : released;
 }
 
@@ -208,14 +246,15 @@ static void xfs_release_directory(PFSCOOKIE *fc)
     xfs_close_directory(fc, 0);
 }
 
-static LONG xfs_stat(fcookie *fc, PFSATTR *out)
+static LONG xfs_stat(const struct pfs_ops *ops, fcookie *fc, PFSATTR *out)
 {
     XATTR attr;
     LONG rc = xfs_result(fc->fs->getxattr(fc, &attr));
 
     if (rc < 0)
         return rc;
-    if (attr.size < 0)
+    if (attr.size < 0 && (sizeof(long) > sizeof(ULONG) ||
+                          !(xfs_flags(ops) & PTOS_XFS_UNSIGNED_DOS_FIELDS)))
         return ERANGE;
     out->size = (ulong)attr.size > UINT32_MAX ? UINT32_MAX : (ULONG)attr.size;
     out->dos_attr = attr.attr;
@@ -251,7 +290,7 @@ static LONG xfs_readdir(PFSCOOKIE *fc, LONG *position, char *name, int size,
     rc = xfs_validate(driver, &entry);
     if (rc < 0)
         return rc;
-    rc = xfs_stat(&entry, attr);
+    rc = xfs_stat(fc->fs, &entry, attr);
     xfs_release(&entry);
     return rc;
 }
@@ -304,7 +343,7 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
     LONG rc;
     BOOL created = FALSE;
 
-    file = kalloc(sizeof(*file));
+    file = ptos_xfs_alloc(sizeof(*file));
     if (!file)
         return ENSMEM;
     memset(file, 0, sizeof(*file));
@@ -319,16 +358,22 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
     if (rc < 0)
         goto failed;
 
-    rc = xfs_result(driver->getxattr(&file->fc, &attr));
-    if (rc < 0)
-        goto release;
-    if ((attr.mode & XFS_IFMT) != XFS_IFREG ||
-        (!created && (flags & MODE_FAC) != RO_MODE && (attr.attr & FA_RO))) {
-        rc = EACCDN;
-        goto release;
+    if (!(xfs_flags(dir->fs) & PTOS_XFS_LEGACY_OPEN)) {
+        rc = xfs_result(driver->getxattr(&file->fc, &attr));
+        if (rc < 0)
+            goto release;
+        if ((attr.mode & XFS_IFMT) != XFS_IFREG ||
+            (!created && (flags & MODE_FAC) != RO_MODE && (attr.attr & FA_RO))) {
+            rc = EACCDN;
+            goto release;
+        }
     }
 
+#if CONF_WITH_MFASTCALL
+    file->dev = ptos_xfs_call_getdev(driver->getdev, &file->fc, &file->devinfo);
+#else
     file->dev = driver->getdev(&file->fc, &file->devinfo);
+#endif
     if (!file->dev || !file->dev->open || !file->dev->close) {
         rc = !file->dev && file->devinfo < 0 ? xfs_result(file->devinfo) : EINVFN;
         goto release;
@@ -344,7 +389,7 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
 release:
     xfs_release(&file->fc);
 failed:
-    kfree(file);
+    xfs_kfree(file);
     return rc;
 }
 
@@ -353,7 +398,8 @@ static LONG xfs_open(PFSCOOKIE *dir, const char *name, WORD mode, PFSCOOKIE *out
     /* Admit the usual GEMDOS access modes and explicit deny-none.
      * Kernel share-denial, append and nonblocking semantics need a
      * separate admission contract before their flags can be accepted. */
-    if (((UWORD)mode & ~(MODE_FAC | XFS_DENY_NONE)) || (mode & MODE_FAC) > RW_MODE)
+    if (!(xfs_flags(dir->fs) & PTOS_XFS_LEGACY_OPEN) &&
+        (((UWORD)mode & ~(MODE_FAC | XFS_DENY_NONE)) || (mode & MODE_FAC) > RW_MODE))
         return EINVFN;
     return xfs_open_file(dir, name, mode, 0, out);
 }
@@ -371,9 +417,13 @@ static LONG xfs_release_file(PFSCOOKIE *fc)
     fc->index = 0;
     file->links = 0;
     file->pos = fc->pos;
+#if CONF_WITH_KPROC
     rc = xfs_result(file->dev->close(file, run ? kproc_pid(run) : 0));
+#else
+    rc = xfs_result(file->dev->close(file, 0));
+#endif
     released = xfs_release(&file->fc);
-    kfree(file);
+    xfs_kfree(file);
     return rc < 0 ? rc : released;
 }
 
@@ -430,7 +480,7 @@ static LONG xfs_fstat(PFSCOOKIE *fc, PFSATTR *out)
 {
     FILEPTR *file = (FILEPTR *)fc->index;
 
-    return xfs_stat(&file->fc, out);
+    return xfs_stat(fc->fs, &file->fc, out);
 }
 
 static LONG xfs_ready(const PFSCOOKIE *fc, UWORD events)
@@ -515,7 +565,7 @@ static LONG xfs_chattr(PFSCOOKIE *dir, const char *name, BOOL set, UWORD *flags)
     if (set)
         rc = fc.fs->chattr ? xfs_result(fc.fs->chattr(&fc, *flags)) : EACCDN;
     else {
-        rc = xfs_stat(&fc, &attr);
+        rc = xfs_stat(dir->fs, &fc, &attr);
         if (rc >= 0)
             *flags = attr.dos_attr;
     }
@@ -540,7 +590,9 @@ static LONG xfs_dfree(struct pfs_ops *ops, WORD drive, ULONG out[4])
     rc = xfs_result(directory->fs->dfree(directory, counts));
     if (rc >= 0) {
         for (i = 0; i < 4; i++) {
-            if (counts[i] < 0 || (ulong)counts[i] > UINT32_MAX) {
+            if ((counts[i] < 0 && (sizeof(long) > sizeof(ULONG) ||
+                                  !(xfs_flags(ops) & PTOS_XFS_UNSIGNED_DOS_FIELDS))) ||
+                (ulong)counts[i] > UINT32_MAX) {
                 rc = ERANGE;
                 break;
             }
@@ -586,6 +638,7 @@ LONG ptos_xfs_mount_drive(WORD drive, struct ptos_xfs_mount *mount, FILESYS *dri
     const long supported = FS_CASESENSITIVE | FS_NOXBIT | FS_LONGPATH |
                            FS_REENTRANT_L1 | FS_REENTRANT_L2 | FS_EXT_1 | FS_EXT_2;
     LONG rc;
+    UWORD flags;
 
     if (!mount || !driver)
         return EINVAL;
@@ -594,9 +647,17 @@ LONG ptos_xfs_mount_drive(WORD drive, struct ptos_xfs_mount *mount, FILESYS *dri
     if (!driver->root || !driver->lookup || !driver->getxattr || !driver->getdev ||
         (driver->release && !driver->dupcookie) || (driver->fsflags & ~supported))
         return EINVFN;
-    if (ext && (ext->version != PTOS_XFS_EXT_VERSION || ext->size < sizeof(*ext)))
+    if (ext && (ext->version != PTOS_XFS_EXT_VERSION ||
+                ext->size < offsetof(struct ptos_xfs_extensions, flags)))
+        return EINVFN;
+    flags = xfs_extension_flags(ext);
+    if (flags & ~PTOS_XFS_EXT_FLAGS)
         return EINVFN;
     mount->ops = xfs_ops;
+    if (flags & PTOS_XFS_LEGACY_OPEN)
+        mount->ops.full_open_mode = FALSE;
+    if (flags & PTOS_XFS_NO_DOS_ATTRIB)
+        mount->ops.chattr = NULL;
     mount->driver = driver;
     mount->extensions = ext;
     rc = pfs_register_drive(drive, &mount->ops);

@@ -3,9 +3,14 @@ FreeMiNT XFS source compatibility
 
 pTOS can link a FreeMiNT-shaped filesystem driver into the kernel when
 CONF_WITH_XFS is enabled. It uses the existing PFS drive table, path
-resolution, PROCESS descriptor bindings, and exact SFT reference counts.
-FAT and virtio-9p continue to use their existing pfs_ops. Disabling PFS
-keeps the direct FAT path available on small ROM and non-MMU profiles.
+resolution and SFT ownership, including PROCESS descriptor bindings on
+managed profiles. Virtio-9p registers through XFS. FAT still uses its existing
+pfs_ops. Disabling PFS keeps the direct FAT path available on small ROM profiles.
+
+XFS is available with PFS on both MMU and non-MMU builds. The adapter uses
+the kernel heap where available. Otherwise its FILEPTR, DIR and driver
+allocation service share the existing BDOS kernel pool. The latter has a
+128-byte payload per allocation and reports exhaustion to the caller.
 
 Source contract
 ---------------
@@ -95,6 +100,13 @@ checks levels without blocking. A producer publishes a change and can
 call fpoll_notify() on kernels supporting it. The ioctl callback receives
 a kernel-owned buffer and explicit size.
 
+The optional flags field is used when covered by the extension's size.
+PTOS_XFS_LEGACY_OPEN keeps the historic Fopen access-bit mask and leaves
+file type and permission admission to the driver. PTOS_XFS_UNSIGNED_DOS_FIELDS
+preserves 32-bit unsigned GEMDOS sizes and disk counts returned through
+the signed long fields on ILP32. PTOS_XFS_NO_DOS_ATTRIB retains the legacy
+unsupported Fattrib behavior for mounts without DOS attributes.
+
 GEMDOS file controls
 --------------------
 
@@ -129,15 +141,19 @@ upstream-style initializer, then ptos_xfs_mount_drive() with a persistent
 zero-initialized mount object, FILESYS and optional extensions. Boot-time
 registration uses the existing pfs_register_drive() and rejects an
 existing claim. Driver descriptors and their extensions remain live for
-the lifetime of the mount.
+the lifetime of the mount. Fastcall m68k kernels bridge the pointer
+returns of init_xfs and FILESYS.getdev from the XFS stack ABI (D0) to the
+kernel ABI (A0). The allocator service provides its result in both
+registers.
 
-New and existing providers coexist. FAT can retain its internal OFD and
-native SFT handoff until its FILESYS/DEVDRV implementation owns exactly
-one open description per open. A virtio-9p port can retain its existing
-fid operations and translate the fid hold/clunk into dupcookie/release.
-Keep its read/write, directory and error behavior as the comparison
-baseline when moving it to XFS. Switching a driver separately needs no
-change to GEMDOS dispatch or PROCESS-local descriptor numbers.
+FAT retains its internal OFD and native SFT handoff. Virtio-9p (9fs) uses
+FILESYS and DEVDRV over the existing fid-level transport. Each owning
+fcookie releases its fid through Tclunk. Directory duplication obtains a
+fresh fid. A DIR stores the full 64-bit wire offset in its own storage,
+and an inherited search clones the position onto an independently opened
+directory fid. The existing case-insensitive 8.3 lookup and TOS searches
+remain in the driver. The canonical directory syscall work is tracked
+under #198.
 
 Fdup, Fforce and inheritance retain the same SFT incarnation and share
 one FILEPTR and one cursor. The driver's close is called at final SFT

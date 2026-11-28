@@ -948,6 +948,16 @@ virt-arm|virt-m68k-aspace|virt-m68k-mmu|raspi2b-aspace)
 esac
 # End native initial-entry marker.
 
+case $machine in
+virt-arm|virt-m68k|virt-m68k-mmu|virt-m68k-aspace)
+    if grep -qx '#define CONF_WITH_VIRTIO_9P 1' "$top/obj/autoconf.h" &&
+       grep -qx '#define CONF_VIRTIO_9P_DRIVE 16' "$top/obj/autoconf.h" &&
+       ! grep -aqF 'native virtio-9p through XFS: PASS' "$suite_log"; then
+        record "native virtio-9p XFS" FAIL "the default host drive did not pass filesystem tests"
+    fi
+    ;;
+esac
+
 
 if grep -q '^#define CONF_WITH_PREEMPTION 1' "$top/obj/autoconf.h"; then
     case $machine in
