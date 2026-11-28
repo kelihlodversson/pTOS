@@ -29,14 +29,103 @@
 
 void test_pfs_seek(void);
 
+static void test_directory_cache(const char *directory)
+{
+    static const char absolute[] = "Q:\\XFS9P\\CACHE.TXT";
+    static const char relative[] = "Q:CACHE.TXT";
+    char saved[128] = "Q:\\";
+    long fd, rc;
+
+    if (Dgetpath(saved + 2, DRIVE_Q + 1) != 0 || Dsetpath(directory) != 0) {
+        ptest_fail("set the host current directory for the cache test");
+        return;
+    }
+    if (!saved[2])
+        saved[2] = '\\';
+    fd = Fcreate(absolute, 0);
+    ptest_assert_msg(fd >= 0, "create the host cache fixture");
+    if (fd >= 0) {
+        ptest_assert_msg(Fclose((short)fd) == 0, "close the host cache fixture");
+        fd = Fopen(relative, 0);
+        ptest_assert_msg(fd >= 0, "populate the current-directory listing cache");
+        if (fd >= 0)
+            ptest_assert_msg(Fclose((short)fd) == 0, "close the relative cache fixture");
+        ptest_assert_msg(Fdelete(absolute) == 0, "delete the cached file through an absolute path");
+        rc = Dcreate(relative);
+        ptest_assert_msg(rc == 0, "a relative mkdir sees the absolute deletion");
+        if (rc == 0)
+            ptest_assert_msg(Ddelete(absolute) == 0, "remove the replacement directory");
+    }
+    ptest_assert_msg(Dsetpath(saved) == 0, "restore the host current directory");
+}
+
+static void test_directory(void)
+{
+    static const char dir[] = "Q:\\XFS9P";
+    static const char first[] = "Q:\\XFS9P\\ALPHA.TXT";
+    static const char second[] = "Q:\\XFS9P\\BETA.TXT";
+    static const char pattern[] = "Q:\\XFS9P\\*.TXT";
+    _DTA a, b, *saved = (_DTA *)Fgetdta();
+    long fd;
+
+    if (Dcreate(dir) != 0) {
+        ptest_fail("create a directory on the host drive");
+        return;
+    }
+    fd = Fcreate(first, 0);
+    if (fd >= 0) {
+        ptest_assert_msg(Fwrite((short)fd, 1, "x") == 1, "write the first host file");
+        ptest_assert_msg(Fclose((short)fd) == 0, "close the first host file");
+    } else {
+        ptest_fail("create the first host file");
+    }
+
+    /* Fcreate targets the existing host spelling and truncates that file. */
+    fd = Fcreate("Q:\\xfs9p\\alpha.txt", 0);
+    ptest_assert_msg(fd >= 0, "recreate through a case-insensitive spelling");
+    if (fd >= 0)
+        ptest_assert_msg(Fseek(0, (short)fd, 2) == 0 && Fclose((short)fd) == 0,
+                         "recreate truncates the original file");
+    ptest_assert_msg(Frename(0, first, second) == 0, "rename the existing host file");
+    fd = Fcreate(first, 0);
+    ptest_assert_msg(fd >= 0 && Fclose((short)fd) == 0, "create the second directory entry");
+
+    (void)Fsetdta(&a);
+    if (Fsfirst(pattern, 0) == 0) {
+        char first_name[14];
+
+        strcpy(first_name, a.dta_name);
+        (void)Fsetdta(&b);
+        ptest_assert_msg(Fsfirst(pattern, 0) == 0 && !strcmp(first_name, b.dta_name),
+                         "a separate search starts at the same entry");
+        (void)Fsetdta(&a);
+        if (Fsnext() == 0) {
+            ptest_assert_msg(strcmp(first_name, a.dta_name) && Fsnext() == -49L,
+                             "the first search reaches EOF");
+            (void)Fsetdta(&b);
+            ptest_assert_msg(Fsnext() == 0 && !strcmp(a.dta_name, b.dta_name) && Fsnext() == -49L,
+                             "the other search still owns its cursor");
+        } else {
+            ptest_fail("the first search continues independently");
+        }
+    } else {
+        ptest_fail("start a host-directory search");
+    }
+    (void)Fsetdta(saved);
+    test_directory_cache(dir);
+    ptest_assert_msg(Fdelete(first) == 0 && Fdelete(second) == 0 && Ddelete(dir) == 0,
+                     "release the host directory and its files");
+}
+
 void test_pfs_seek(void)
 {
     char data[FIXTURE_N];
     char buf[FIXTURE_N];
     _DOSTIME dt;
+    _DISKINFO disk;
     long rc;
     short fd, saved;
-    int i;
+    int i, failures = ptest_failures();
 
     ptest_begin("pfs_seek (#589)");
 
@@ -45,6 +134,9 @@ void test_pfs_seek(void)
         conws("SKIP (no Q: drive)\r\n");
         return;
     }
+
+    ptest_assert_msg(Dfree(&disk, DRIVE_Q + 1) == 0 && disk.b_clsiz == 1 && disk.b_secsiz > 0,
+                     "host Dfree reports its block geometry");
 
     for (i = 0; i < FIXTURE_N; i++)
         data[i] = (char)(i * 13 + 5);
@@ -138,7 +230,19 @@ void test_pfs_seek(void)
     }
 
     Fclose(fd);
+    for (i = 0; i < 128; i++) {
+        /* The old provider ignored high Fopen bits. Every iteration must
+         * return its fid before the next open can acquire the slot. */
+        rc = Fopen(FIXTURE, 0x100);
+        if (rc < 0 || Fclose((short)rc)) {
+            ptest_fail("host opens retain legacy mode masking and release each fid");
+            break;
+        }
+    }
     Fdelete(FIXTURE);
+    test_directory();
 
     ptest_pass();
+    if (ptest_failures() == failures)
+        conws("native virtio-9p through XFS: PASS\r\n");
 }

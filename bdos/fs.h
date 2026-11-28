@@ -446,6 +446,13 @@ typedef struct fs_handle {
 } FS_HANDLE;
 
 #include "fs_close.h"
+/* Readiness bits shared with filesystem providers. */
+#define FS_READY_READ     0x01
+#define FS_READY_WRITE    0x02
+#define FS_READY_PRIORITY 0x04
+#define FS_READY_ERROR    0x08
+#define FS_READY_HANGUP   0x10
+
 #if CONF_WITH_USER_ASPACE
 /* Retain an admitted file for I/O or readiness across callback boundaries.
  * Acquire before yielding, and revalidate before using a retained owner. */
@@ -468,11 +475,6 @@ LONG fs_file_ioctl(WORD descriptor, UWORD command, void *arg, ULONG size);
 /* Readiness is a level check on a retained file. The caller owns the
  * reference across registration and rechecks it after waking. A close
  * in progress reports EAGAIN so the waiter can retry the level check. */
-#define FS_READY_READ     0x01
-#define FS_READY_WRITE    0x02
-#define FS_READY_PRIORITY 0x04
-#define FS_READY_ERROR    0x08
-#define FS_READY_HANGUP   0x10
 LONG fs_reference_ready(const FS_FILE_REFERENCE *reference, UWORD events);
 #endif
 

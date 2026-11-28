@@ -283,6 +283,7 @@ LONG pfs_handle_user_ioctl(const struct fs_handle *handle, UWORD command, UQUAD 
  * position, the end.  Returns the new position, ERANGE for one before
  * the start or past the end (as ixlseek() does for FAT), or EINVFN.
  */
+LONG pfs_bounded_seek(LONG position, ULONG size, LONG offset, WORD whence);
 LONG pfs_handle_seek(const struct fs_handle *handle, LONG n, WORD flg);
 
 /* 1 at the end of the file, 0 before it, or a negative error code -

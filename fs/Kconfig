@@ -22,13 +22,15 @@ config CONF_WITH_PLUGGABLE_FS
 
 config CONF_WITH_XFS
 	bool "FreeMiNT XFS source compatibility for built-in drivers"
-	depends on CONF_WITH_PLUGGABLE_FS && CONF_WITH_USER_ASPACE
+	depends on CONF_WITH_PLUGGABLE_FS
 	default y
 	help
 	  Bridge a statically linked FILESYS/DEVDRV driver to the existing
-	  PFS drive table and shared GEMDOS file descriptions. The native
-	  kernel calling convention and pointer width apply. This option
-	  does not load FreeMiNT binary modules.
+	  PFS drive table and shared GEMDOS file descriptions. This uses
+	  native pointer widths and the XFS stack convention on m68k.
+	  Binary FreeMiNT modules are outside this interface. Virtio-9p
+	  enables the bridge on its supported machines, including builds
+	  without an MMU.
 
 config CONF_WITH_PLUGGABLE_FS_TEST
 	bool "Pluggable filesystem self-test driver"

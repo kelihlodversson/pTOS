@@ -49,6 +49,7 @@ void *xmgetblk(WORD memtype);
 #define MEMTYPE_DND     2
 #define MEMTYPE_OFD     3
 #define MEMTYPE_KPROC   4
+#define MEMTYPE_XFS     5
 
 /*  xmfreblk - free up memory allocated through mgetblk */
 void xmfreblk(void *m);

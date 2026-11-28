@@ -286,6 +286,7 @@ config CONF_WITH_VIRTIO_INPUT
 config CONF_WITH_VIRTIO_9P
 	bool "virtio-9p (9P2000.L) GEMDOS host directory driver"
 	depends on CONF_WITH_VIRTIO && CONF_WITH_PLUGGABLE_FS
+	select CONF_WITH_XFS
 	default y
 	help
 	  Exposes a QEMU virtio-9p-device host directory ("-fsdev local ...
@@ -309,8 +310,8 @@ config CONF_VIRTIO_9P_MAX_FIDS
 	default 96
 	range 16 256
 	help
-	  Fixed pool of 9p fid slots, one per live pluggable-fs cookie this
-	  driver owns (see fs/pfs.h's PFSCOOKIE). Budget: OPNFILES (40) +
+	  Fixed pool of 9p fid slots, one per live XFS cookie this driver
+	  owns. Budget: OPNFILES (40) +
 	  CONF_PFS_MAX_CWD (default 40) + CONF_PFS_MAX_SEARCHES (default 8)
 	  + headroom for fids held transiently mid-call (e.g. while walking
 	  a multi-component path).

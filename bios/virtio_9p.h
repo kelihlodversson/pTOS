@@ -12,6 +12,8 @@
 
 #if CONF_WITH_VIRTIO_9P
 
+#define V9P_QTDIR 0x80 /* qid.type bit identifying directories */
+
 /* A 9P qid: a stable per-file/directory identity the server hands back
  * from root()/Twalk/Tlopen/... - not a GEMDOS concept, opaque to callers
  * outside this driver. */
@@ -26,10 +28,10 @@ typedef struct
  * the 9P2000.L dialect via Tversion, and attaches (Tattach) to get the
  * persistent root fid v9p_root_fid() returns. No effect if no matching
  * device is found. Called once from bios/bios.c, after blkdev_init() and
- * before fs/virtio_9p_pfs.c's own v9p_pfs_init(), which registers the
- * pfs_ops adapter against the fid-level API below.
+ * before v9p_xfs_init() registers the host drive through XFS.
  */
 void virtio_9p_init(void);
+void v9p_xfs_init(void);
 
 /* TRUE once virtio_9p_init() has found a device, completed Tversion, and
  * successfully attached (Tattach) - i.e. the fid-level API below is safe
@@ -37,7 +39,7 @@ void virtio_9p_init(void);
 BOOL virtio_9p_present(void);
 
 /* The fid Tattach established at init; never Tclunk'd, lives for the
- * driver's whole lifetime. A directory pfs_ops.root() implementation
+ * driver's whole lifetime. The XFS root callback
  * Twalks from this fid (0 components) to get its own, independently
  * releasable fid. */
 ULONG v9p_root_fid(void);
@@ -59,12 +61,8 @@ LONG v9p_walk(ULONG fromfid, WORD nwname, const char *const *wname,
  * error in either case; no automatic retry or retained PROCESS is involved. */
 LONG v9p_clunk(ULONG fid);
 
-/* Opens 'fid' for I/O (Tlopen) with Linux-style open(2) flags - GEMDOS's
- * Fopen mode 0/1/2 (RO_MODE/WO_MODE/RW_MODE, bdos/fs.h) map directly onto
- * O_RDONLY/O_WRONLY/O_RDWR (0/1/2), confirmed against fs/fatfs_pfs.c's
- * fat_open(), which passes GEMDOS's mode straight through to xopen()
- * unmodified - the caller (fs/virtio_9p_pfs.c) can pass its WORD mode
- * argument here as-is, widened to ULONG. */
+/* Opens 'fid' for I/O (Tlopen) with Linux-style open(2) flags. GEMDOS
+ * RO_MODE/WO_MODE/RW_MODE use the same values as Linux access modes. */
 LONG v9p_lopen(ULONG fid, ULONG flags);
 
 /* Reads up to 'count' bytes at 'offset' from 'fid' (already Tlopen'd)
@@ -92,15 +90,11 @@ LONG v9p_getattr(ULONG fid, P9GETATTR *out);
 /* Reads exactly one directory entry (Treaddir) from 'dir_fid', starting
  * at the opaque 9P offset '*offset' (0 to start a fresh listing) and
  * advancing '*offset' to the next entry's own offset on success - the
- * caller (fs/virtio_9p_pfs.c) is responsible for remembering that value
- * across calls (e.g. in its own Fsfirst/Fsnext search-slot pool, mirroring
- * fs/fatfs_pfs.c's fat_readdir_pool[]), since a 9P offset is a full UQUAD
- * and doesn't fit PFSCOOKIE's plain LONG fields. 'name' receives the
+ * caller keeps that 64-bit offset across calls. 'name' receives the
  * entry's real (long) name, truncated to fit 'namelen' if necessary;
  * '*is_dir' (if non-NULL) reports whether the entry's own qid is a
  * directory (qid.type's QTDIR bit) - this is the authoritative source
- * pfs_ops.readdir() callers should use, not a fresh Tgetattr, since it
- * comes for free with the entry itself. Returns E_OK, ENMFIL once the
+ * directory entry type. Returns E_OK, ENMFIL once the
  * directory is exhausted at or after '*offset', or a negative gemerror.h
  * code. */
 LONG v9p_readdir_one(ULONG dir_fid, UQUAD *offset, char *name, int namelen,
