@@ -34,3 +34,11 @@ C_SYM(ptos_xfs_cdecl_kmalloc):
         move.l  (sp)+,d2
         move.l  a0,d0
         rts
+
+        .globl  C_SYM(ptos_xfs_cdecl_kfree)
+C_SYM(ptos_xfs_cdecl_kfree):
+        move.l  4(sp),a0
+        move.l  d2,-(sp)
+        jsr     C_SYM(ptos_xfs_free)
+        move.l  (sp)+,d2
+        rts

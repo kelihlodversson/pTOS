@@ -143,8 +143,8 @@ registration uses the existing pfs_register_drive() and rejects an
 existing claim. Driver descriptors and their extensions remain live for
 the lifetime of the mount. Fastcall m68k kernels bridge the pointer
 returns of init_xfs and FILESYS.getdev from the XFS stack ABI (D0) to the
-kernel ABI (A0). The allocator service provides its result in both
-registers.
+kernel ABI (A0). The allocation services preserve the stack ABI's D2,
+and kmalloc provides its result in both return registers.
 
 FAT retains its internal OFD and native SFT handoff. Virtio-9p (9fs) uses
 FILESYS and DEVDRV over the existing fid-level transport. Each owning

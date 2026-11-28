@@ -35,7 +35,9 @@ FILESYS *ptos_xfs_call_init(PTOS_XFS_INIT init, struct kerinfo *services);
 DEVDRV *ptos_xfs_call_getdev(DEVDRV * _cdecl (*getdev)(fcookie *, long *),
                             fcookie *cookie, long *special);
 void * _cdecl ptos_xfs_cdecl_kmalloc(ulong bytes);
+void _cdecl ptos_xfs_cdecl_kfree(void *address);
 void *ptos_xfs_alloc(ulong bytes);
+void ptos_xfs_free(void *address);
 #else
 static
 #endif
@@ -48,7 +50,10 @@ void *ptos_xfs_alloc(ulong bytes)
 #endif
 }
 
-static void _cdecl xfs_kfree(void *address)
+#if !CONF_WITH_MFASTCALL
+static
+#endif
+void ptos_xfs_free(void *address)
 {
 #if CONF_WITH_KHEAP
     kfree(address);
@@ -64,10 +69,11 @@ FILESYS *ptos_xfs_init_driver(PTOS_XFS_INIT init)
         .default_perm = 0666,
 #if CONF_WITH_MFASTCALL
         .kmalloc = ptos_xfs_cdecl_kmalloc,
+        .kfree = ptos_xfs_cdecl_kfree
 #else
         .kmalloc = ptos_xfs_alloc,
+        .kfree = ptos_xfs_free
 #endif
-        .kfree = xfs_kfree
     };
 
 #if CONF_WITH_MFASTCALL
@@ -149,7 +155,7 @@ static LONG xfs_root(struct pfs_ops *ops, WORD drive, PFSCOOKIE *out)
     if (rc >= 0)
         rc = xfs_validate(driver, &directory->dir.fc);
     if (rc < 0)
-        xfs_kfree(directory);
+        ptos_xfs_free(directory);
     else
         xfs_publish(out, ops, directory);
     return rc;
@@ -216,7 +222,7 @@ static LONG xfs_lookup_dir(const PFSCOOKIE *dir, const char *path, PFSCOOKIE *ou
     memset(directory, 0, sizeof(*directory));
     rc = xfs_descend(xfs_dir_cookie(dir), path, &directory->dir.fc);
     if (rc < 0)
-        xfs_kfree(directory);
+        ptos_xfs_free(directory);
     else
         xfs_publish(out, dir->fs, directory);
     return rc;
@@ -237,7 +243,7 @@ static LONG xfs_close_directory(PFSCOOKIE *fc, LONG position)
     if (directory->opened)
         rc = xfs_result(directory->dir.fc.fs->closedir(&directory->dir));
     released = xfs_release(&directory->dir.fc);
-    xfs_kfree(directory);
+    ptos_xfs_free(directory);
     return rc < 0 ? rc : released;
 }
 
@@ -389,7 +395,7 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
 release:
     xfs_release(&file->fc);
 failed:
-    xfs_kfree(file);
+    ptos_xfs_free(file);
     return rc;
 }
 
@@ -423,7 +429,7 @@ static LONG xfs_release_file(PFSCOOKIE *fc)
     rc = xfs_result(file->dev->close(file, 0));
 #endif
     released = xfs_release(&file->fc);
-    xfs_kfree(file);
+    ptos_xfs_free(file);
     return rc < 0 ? rc : released;
 }
 
