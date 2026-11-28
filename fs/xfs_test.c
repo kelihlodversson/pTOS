@@ -37,6 +37,7 @@ static unsigned node_refs[ARRAY_SIZE(nodes)];
 static FILESYS test_driver;
 static char data[64];
 static long data_size;
+static UWORD data_attr;
 static unsigned open_files, open_dirs;
 static LONG open_error, close_error;
 
@@ -113,8 +114,18 @@ static long _cdecl test_stat(fcookie *cookie, XATTR *attr)
     attr->mode = node->mode;
     if (node < &nodes[2])
         attr->attr = FA_SUBDIR;
-    else if (node == &nodes[2])
+    else if (node == &nodes[2]) {
         attr->size = data_size;
+        attr->attr = data_attr;
+    }
+    return E_OK;
+}
+
+static long _cdecl test_chattr(fcookie *cookie, int attr)
+{
+    if (test_node(cookie) != &nodes[2] || (attr & ~FA_NORM))
+        return EACCDN;
+    data_attr = (UWORD)attr;
     return E_OK;
 }
 
@@ -353,6 +364,7 @@ static long _cdecl test_clone_dir(DIR *out, const DIR *source)
 
 static FILESYS test_driver = {
     .root = test_root, .lookup = test_lookup, .getxattr = test_stat,
+    .chattr = test_chattr,
     .getdev = test_getdev, .release = test_release, .dupcookie = test_dup,
     .opendir = test_opendir, .readdir = test_readdir, .closedir = test_closedir
 };

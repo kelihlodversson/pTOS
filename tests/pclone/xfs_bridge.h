@@ -236,6 +236,19 @@ static void test_xfs_bridge(void)
                      "final close belongs to the last binding");
     xfs_check_open_mode(path);
 
+    fd = Fcreate(path, 2); /* FA_HIDDEN */
+    ptest_assert_msg(fd >= 0, "replace an XFS file with the hidden attribute");
+    if (fd >= 0) {
+        ptest_assert_msg(Fattrib(path, 0, 0) == 2 && Fseek(0, (short)fd, 2) == 0,
+                         "replacement changes the attribute and truncates the file");
+        ptest_assert_msg(Fclose((short)fd) == 0, "close the hidden XFS description");
+    }
+    fd = Fcreate(path, 0);
+    ptest_assert_msg(fd >= 0, "replace the hidden XFS file with normal attributes");
+    if (fd >= 0)
+        ptest_assert_msg(Fattrib(path, 0, 0) == 0 && Fclose((short)fd) == 0,
+                         "replacement clears the hidden attribute");
+
     fd = Fopen("R:\\FIXTURE\\NULL.TXT", 2);
     ptest_assert_msg(fd >= 0, "open the unchanged FreeMiNT DEVDRV callback subset");
     if (fd >= 0)

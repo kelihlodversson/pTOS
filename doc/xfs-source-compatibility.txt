@@ -44,6 +44,13 @@ so access embedded pointers with memcpy or independently allocated state.
                                for DEVDRV and devinfo, then open the
                                FILEPTR. Fcreate passes create and
                                truncate flags and creates a regular inode.
+                               For an existing file, different DOS
+                               attributes require FILESYS.chattr. The
+                               device opens and truncates first so Fcreate
+                               can return a writable handle for FA_RO.
+                               If chattr fails, the adapter closes the
+                               unpublished handle and reports the error.
+                               The provider may already have truncated.
                                The adapter validates the full Fopen mode.
                                It supports
                                regular files and read, write and

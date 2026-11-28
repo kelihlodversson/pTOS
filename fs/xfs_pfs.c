@@ -294,6 +294,17 @@ static LONG xfs_iterator_clone(const PFSCOOKIE *source, LONG position,
     return E_OK;
 }
 
+static LONG xfs_close_file(FILEPTR *file)
+{
+    LONG rc, released;
+
+    file->links = 0;
+    rc = xfs_result(file->dev->close(file, run ? kproc_pid(run) : 0));
+    released = xfs_release(&file->fc);
+    kfree(file);
+    return rc < 0 ? rc : released;
+}
+
 static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
                           UWORD dos_attr, PFSCOOKIE *out)
 {
@@ -303,6 +314,7 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
     XATTR attr;
     LONG rc;
     BOOL created = FALSE;
+    BOOL change_attr;
 
     file = kalloc(sizeof(*file));
     if (!file)
@@ -327,6 +339,11 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
         rc = EACCDN;
         goto release;
     }
+    change_attr = !created && (flags & XFS_TRUNC) && (UWORD)attr.attr != dos_attr;
+    if (change_attr && !driver->chattr) {
+        rc = EACCDN;
+        goto release;
+    }
 
     file->dev = driver->getdev(&file->fc, &file->devinfo);
     if (!file->dev || !file->dev->open || !file->dev->close) {
@@ -338,6 +355,14 @@ static LONG xfs_open_file(PFSCOOKIE *dir, const char *name, UWORD flags,
     rc = xfs_result(file->dev->open(file));
     if (rc < 0)
         goto release;
+    /* Open the writable file before applying attributes such as FA_RO. */
+    if (change_attr) {
+        rc = xfs_result(driver->chattr(&file->fc, dos_attr));
+        if (rc < 0) {
+            xfs_close_file(file);
+            return rc;
+        }
+    }
     xfs_publish(out, dir->fs, file);
     return E_OK;
 
@@ -366,15 +391,10 @@ static LONG xfs_create(PFSCOOKIE *dir, const char *name, UWORD attr, PFSCOOKIE *
 static LONG xfs_release_file(PFSCOOKIE *fc)
 {
     FILEPTR *file = (FILEPTR *)fc->index;
-    LONG rc, released;
 
     fc->index = 0;
-    file->links = 0;
     file->pos = fc->pos;
-    rc = xfs_result(file->dev->close(file, run ? kproc_pid(run) : 0));
-    released = xfs_release(&file->fc);
-    kfree(file);
-    return rc < 0 ? rc : released;
+    return xfs_close_file(file);
 }
 
 static LONG xfs_transfer_result(FILEPTR *file, long result, LONG position, LONG len)
