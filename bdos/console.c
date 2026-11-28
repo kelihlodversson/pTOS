@@ -167,6 +167,13 @@ static long constat(int h)
     return (bufptr->add > bufptr->remove) ? -1L : Bconstat(h);
 }
 
+#if CONF_WITH_FPOLL_TIME64
+long console_input_status(WORD device)
+{
+    return constat(device);
+}
+#endif
+
 
 /*
  * xconstat - Function 0x0B - Console input status

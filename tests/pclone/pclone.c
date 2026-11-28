@@ -1,6 +1,7 @@
 /* User-mode Pclone checks through the real GEMDOS trap, not kernel calls. */
 #include "test.h"
 #include "../../include/pclone.h"
+#include "../../include/fpoll_abi.h"
 #include "../../include/threadcalls.h"
 #include "../../include/shared_pexec_test.h"
 #include "../../include/mman.h"
@@ -2288,9 +2289,15 @@ void pclone_run_unmanaged_tests(void)
     }
     ptest_pass();
 }
+#if defined(TEST_WITH_FPOLL_TIME64)
+#include "fpoll_time64.h"
+#endif
 void pclone_run_managed_tests(void);
 void pclone_run_managed_tests(void)
 {
+#if defined(TEST_WITH_FPOLL_TIME64)
+    test_fpoll_time64();
+#endif
 #if defined(TEST_WITH_EXEC_REPLACEMENT_TEST)
     {
         int stage,cycle;
@@ -2413,6 +2420,15 @@ void test_pclone(void);
 void test_pclone(void)
 {
     ptest_begin("pclone");
+#if !defined(TEST_WITH_FPOLL_TIME64) && (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__))
+    ptest_assert_msg(trap_1_wllll(GEMDOS_FPOLL_TIME64, 0, 0, 0, 0) == -32L,
+                     "disabled Fpoll_time64 returns EINVFN");
+#if defined(__mc68000__)
+    ptest_assert_msg(trap_1_wlll(GEMDOS_FPOLL, 0, 0, 0) == -32L &&
+                     trap_1_wwlll(GEMDOS_FSELECT, 1, 0, 0, 0) == -32L,
+                     "disabled m68k poll adapters return EINVFN");
+#endif
+#endif
 #if (defined(__arm__) || defined(__mc68000__) || defined(__x86_64__)) && (!defined(TEST_WITH_MULTITHREADING) || !defined(TEST_WITH_USER_ASPACE))
     ptest_assert_msg(pclone_trap((void *)0x80001000UL,32) == -32L,
                      "disabled/non-MMU Pclone fails before reading invalid user input");

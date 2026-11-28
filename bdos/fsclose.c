@@ -232,6 +232,40 @@ LONG fs_reference_pin(const FS_HANDLE *handle, FS_FILE_REFERENCE *out)
     return retain_slot(file, out);
 }
 
+#if CONF_WITH_PROCESS_FILES
+static BOOL ordinary_close_active(const FTAB *file)
+{
+    return file->f_close_busy && !file->f_close_cleanup && !file->f_close_staged;
+}
+#endif
+
+#if CONF_WITH_FPOLL_TIME64
+LONG fs_reference_pin_poll(WORD backend, UQUAD incarnation, FS_FILE_REFERENCE *out)
+{
+    FTAB *file;
+
+    if (!out || out->owned || out->closing)
+        return EINVAL;
+    if (!kproc_file_references_allowed(run))
+        return EACCDN;
+    if (!valid_slot(backend - NUMSTD) || !incarnation)
+        return EIHNDL;
+    file = &sft[backend - NUMSTD];
+    if (file->f_incarnation != incarnation || !file->f_own ||
+        file->f_cleanup_state == FS_CLEANUP_INVALIDATED ||
+        file->f_use <= 0 || (ULONG)file->f_use <=
+        file->f_cleanup_refs + file->f_staged_refs + ordinary_close_active(file))
+        return EIHNDL;
+    if (!file->f_bios && !file->f_ofd
+#if CONF_WITH_PLUGGABLE_FS
+        && !file->f_pfs.fs
+#endif
+        )
+        return EIHNDL;
+    return retain_slot(file, out);
+}
+#endif
+
 LONG fs_reference_lookup(const FS_FILE_REFERENCE *reference, FS_HANDLE *out)
 {
     FTAB *file;
@@ -303,22 +337,22 @@ LONG fs_reference_ready(const FS_FILE_REFERENCE *reference, UWORD events)
     LONG error = fs_reference_lookup(reference, &handle);
 
     if (error != E_OK)
-        return error;
+        return error == EACCDN ? EAGAIN : error;
     mode = file_open_mode(&handle);
-    events &= FS_READY_READ | FS_READY_WRITE;
+    events &= FS_READY_READ | FS_READY_WRITE | FS_READY_PRIORITY;
     if (mode == WO_MODE)
-        events &= ~FS_READY_READ;
+        events &= ~(FS_READY_READ | FS_READY_PRIORITY);
     if (mode == RO_MODE)
         events &= ~FS_READY_WRITE;
 #if CONF_WITH_PLUGGABLE_FS
     if (handle.slot->f_pfs.fs) {
         PFSCOOKIE *file = &handle.slot->f_pfs;
         LONG ready = file->fs->ready ? file->fs->ready(file, events) : EINVFN;
-        return ready < 0 ? ready : ready & events;
+        return ready < 0 ? ready : ready & (events | FS_READY_ERROR | FS_READY_HANGUP);
     }
 #endif
     /* Regular FAT files can complete I/O synchronously, including EOF. */
-    return events;
+    return events & (FS_READY_READ | FS_READY_WRITE);
 }
 
 /* A pin does not flush a still-owned file. If it is the final owner, run
@@ -436,7 +470,7 @@ LONG fs_reference_unpublish(WORD backend,UQUAD incarnation,FS_FILE_REFERENCE *ou
     if (!f->f_own || f->f_use<=0 || (ULONG)f->f_use<f->f_staged_refs+f->f_cleanup_refs)
         panic("descriptor exact ordinary reference lost");
     ordinary=(ULONG)f->f_use-f->f_staged_refs-f->f_cleanup_refs;
-    active=f->f_close_busy && !f->f_close_cleanup && !f->f_close_staged;
+    active=ordinary_close_active(f);
     if (ordinary<=active) return EACCDN;
     if (f->f_staged_refs==~(ULONG)0) return EAGAIN;
     f->f_staged_refs++;

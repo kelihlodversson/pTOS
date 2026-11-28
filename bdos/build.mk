@@ -17,6 +17,7 @@ endif
 # a process in an address space of its own: its entry, its switching
 obj-$(CONF_WITH_PROCESS_ASPACES) += $(if $(or $(ARCH_ARM),$(ARCH_M68K)),uspaceasm.o uspace.o) $(if $(ARCH_M68K),fpuctx.o)
 obj-$(CONF_WITH_USER_COPY) += uaccess.o
+obj-$(CONF_WITH_FPOLL_TIME64) += fpoll.o
 obj-$(CONF_WITH_USER_CALLBACKS) += user_callback.o callback_entry.o
 
 # Ssystem() (bdos/ssystem.c) is needed by every non-m68k/ColdFire arch --

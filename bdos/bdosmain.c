@@ -48,6 +48,7 @@
 #include "shutdown.h"
 #include "mintproc.h"
 #include "pexecve.h"
+#include "fpoll_kernel.h"
 #include "uaccess.h"
 #include "bdosstub.h"
 #include "tosvars.h"
@@ -727,6 +728,29 @@ long osif(short *pw)
 
 restrt:
     fn = pw[0];
+
+#if CONF_WITH_FPOLL_TIME64
+    /* The canonical timeout is two ABI LONGs, high word first. */
+#if CONF_WITH_NATIVE_ABI
+#define POLL_ARG(n) ((UQUAD)(unsigned long)pw[n])
+#else
+#define POLL_ARG(n) ((ULONG)pwlong((const WORD *)pw, 2 * (n) - 1))
+#endif
+    if (fn == GEMDOS_FPOLL_TIME64) {
+        QUAD timeout = (QUAD)(((UQUAD)(ULONG)POLL_ARG(3) << 32) | (ULONG)POLL_ARG(4));
+        return xfpoll_time64(POLL_ARG(1), POLL_ARG(2), timeout);
+    }
+#if ARCH_M68K
+    if (fn == GEMDOS_FPOLL) {
+        LONG timeout = (LONG)POLL_ARG(3);
+        return xfpoll_time64(POLL_ARG(1), POLL_ARG(2), timeout < 0 ? -1 : timeout);
+    }
+    if (fn == GEMDOS_FSELECT)
+        return xfselect((UWORD)pw[1], pwlong((const WORD *)pw, 2),
+                        pwlong((const WORD *)pw, 4), pwlong((const WORD *)pw, 6));
+#endif
+#undef POLL_ARG
+#endif
 
 #if CONF_WITH_PEXECVE
     if (fn == GEMDOS_PEXECVE) {

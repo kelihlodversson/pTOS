@@ -830,6 +830,11 @@ if [ -f "$top/test-dir/STKVEC.ELF" ] &&
     record "native Pexecve syscall" FAIL "configured syscall probe did not execute"
 fi
 
+if grep -q '^#define CONF_WITH_FPOLL_TIME64 1' "$top/obj/autoconf.h" &&
+   ! grep -aq 'native Fpoll_time64 descriptor generations and scheduler deadlines: PASS' "$suite_log"; then
+    record "native Fpoll_time64" FAIL "configured descriptor and deadline probe did not pass"
+fi
+
 # Generation publication in the check-to-block window must reject sleeping.
 if grep -q '^#define CONF_WITH_EXIT_HANDOFF_TEST 1' "$top/obj/autoconf.h" &&
    grep -q '^#define CONF_WITH_MULTITHREADING 1' "$top/obj/autoconf.h" &&
@@ -913,6 +918,10 @@ esac
 if grep -q '^#define CONF_WITH_PROCESS_FILES_TEST 1$' "$top/obj/autoconf.h" &&
    ! grep -aq 'native PROCESS descriptor inheritance/ownership: PASS' "$suite_log"; then
     record "native PROCESS descriptor inheritance" FAIL "real local-descriptor/rollback/ownership cases did not pass"
+fi
+if [ "${FPOLL_PROVIDER_TEST:-0}" = 1 ] &&
+   ! grep -aq 'native Fpoll_time64 provider notifications and terminal events: PASS' "$suite_log"; then
+    record "native Fpoll_time64 provider notifications" FAIL "notification-driven waits and terminal events did not pass"
 fi
 
 # Native initial-entry marker: independent of the older machine-case matrix.

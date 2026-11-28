@@ -170,22 +170,61 @@ void process_files_search_invalidate(PROCESS_FILES *table,WORD drive)
     process_files_invalidate_epoch(table);
 }
 
-LONG process_files_resolve(PD *pd,WORD descriptor,WORD *backend,UQUAD *incarnation)
+static LONG live_binding(const PROCESS_FILES *table, WORD descriptor,
+                         const PROCESS_FILE_BINDING **out)
 {
-    PROCESS_FILES *table=kproc_files(pd);
     const PROCESS_FILE_BINDING *binding;
-    WORD h;
-    if (!table || !valid_descriptor(descriptor) || !backend) return EIHNDL;
+    if (!table || !valid_descriptor(descriptor)) return EIHNDL;
     if (table->retiring) return EACCDN;
     binding=&table->binding[descriptor];
     if (binding->state==FILE_OPENING) return EACCDN;
     if (binding->state!=FILE_LIVE || !binding->generation) return EIHNDL;
+    *out = binding;
+    return E_OK;
+}
+
+LONG process_files_resolve(PD *pd,WORD descriptor,WORD *backend,UQUAD *incarnation)
+{
+    const PROCESS_FILE_BINDING *binding;
+    WORD h;
+    LONG error;
+
+    if (!backend) return EIHNDL;
+    error = live_binding(kproc_files(pd), descriptor, &binding);
+    if (error) return error;
     h=binding->handle;
     if (h>=0 && (!valid_backend(h) || !binding->incarnation ||
         sft[h-NUMSTD].f_incarnation!=binding->incarnation || !fs_sft_accessible(h-NUMSTD))) return EIHNDL;
     *backend=h;if (incarnation) *incarnation=binding->incarnation;
     return E_OK;
 }
+
+#if CONF_WITH_FPOLL_TIME64
+LONG process_files_poll_pin(const PROCESS_FILES *table, WORD descriptor,
+                            FS_FILE_REFERENCE *out, WORD *bios, UQUAD *generation)
+{
+    const PROCESS_FILE_BINDING *binding;
+    LONG error = live_binding(table, descriptor, &binding);
+    WORD handle;
+
+    if (error)
+        return error;
+    handle = binding->handle;
+    if (IS_BIOS_HANDLE(handle)) {
+        *bios = handle;
+    } else {
+        if (!valid_backend(handle))
+            return EIHNDL;
+        error = fs_reference_pin_poll(handle, binding->incarnation, out);
+        if (error)
+            return error;
+        *bios = sft[handle - NUMSTD].f_bios;
+    }
+    *generation = binding->generation;
+    return E_OK;
+}
+#endif
+
 LONG process_files_open_begin(PD *pd,WORD backend)
 {
     PROCESS_FILES *table=kproc_files(pd);

@@ -55,6 +55,11 @@ PROCESS_FILES *kproc_ref_files(struct kproc *owner);
 BOOL process_files_managed(PD *pd);
 LONG process_files_change_admission(PD *pd);
 LONG process_files_resolve(PD *,WORD descriptor,WORD *backend,UQUAD *incarnation);
+#if CONF_WITH_FPOLL_TIME64
+/* Capture the exact binding under a live PROCESS file operation. */
+LONG process_files_poll_pin(const PROCESS_FILES *, WORD descriptor,
+                            FS_FILE_REFERENCE *, WORD *bios, UQUAD *generation);
+#endif
 LONG process_files_open_begin(PD *,WORD backend);
 LONG process_files_open_end(PD *,WORD descriptor,WORD backend);
 LONG process_files_bind_bios(PD *,WORD descriptor,WORD bios);

@@ -61,13 +61,13 @@ k=kconfiglib.Kconfig()
 k.load_config()
 assert k.syms['CONF_WITH_USER_ASPACE'].str_value == 'y'
 # The full native owner/admission kernel needs more than the 256-KB 030
-# profile. Use the existing 512-KB image format on the same CPU/MMU; ordinary
-# scheduler-disabled 256-KB lanes above remain part of the default matrix.
+# profile. The 512-KB image format exercises it and polling on the same CPU/MMU.
 k.syms['CONF_AMIGA_ROM_512K'].set_value(2)
 assert k.syms['CONF_AMIGA_ROM_512K'].str_value == 'y'
 for name in ('CONF_WITH_MULTITHREADING','CONF_WITH_EXIT_HANDOFF_TEST'):
     k.syms[name].set_value(2)
     assert k.syms[name].str_value == 'y', name
+assert k.syms['CONF_WITH_FPOLL_TIME64'].str_value == 'y'
 if os.environ.get('IRQ_COPY_PROOF') == '1':
     # Copied return is qualified only for the stack ABI on 040. Keep the
     # ordinary 030/060 fastcall lanes; this separate proof uses the existing
